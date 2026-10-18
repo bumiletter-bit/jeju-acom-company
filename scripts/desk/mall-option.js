@@ -99,7 +99,9 @@ async function runRename(P, orderId, actor, mode) {
         const rec = { at: new Date().toISOString(), order_id: orderId, by: actor, cno: P.R.cno, group: P.C.groups[P.gi].name, from: P.from, to: P.to, variant: P.variant ? P.variant.code : null };
         await M.stepLog(orderId, `자사몰 옵션 이름: 「${noNum(P.from).slice(-24)}」 → 「${noNum(P.to).slice(-24)}」`);
         const res = await runRename(P, orderId, actor, 'rename');
-        const ok = !!res && res.ok === true;
+        const notApplied = !!res && res.ok === true && (res.not_applied === true || (Array.isArray(res.not_applied) && res.not_applied.length > 0) || res.to_visible === false);
+        const ok = !!res && res.ok === true && !notApplied;
+        if (notApplied) P.notes.push('카페24 가 이름을 안 바꿨어요 — 관리자 화면에서 바꿔 주세요(상품 [수정] → 옵션/재고 설정 → 옵션값 글자 고치기 → 저장 · 품목은 그대로)');
         if (ok && res.kept === false) P.notes.push('🔴 서버 대조: 품목 값이 바뀌었어요 — ' + JSON.stringify({ removed: res.removed, changed: res.changed }).slice(0, 200));
         if (ok) { list.push(rec); prev[P.R.nno] = list.slice(-5); await M.cfgSet(LAST_KEY, prev); }
         await M.audit('cafe24_option_rename', 'cafe24_product', P.R.cno, { tool: 'mall-option', order_id: orderId, naver_no: P.R.nno, ...rec, result: res }, actor);
@@ -109,8 +111,8 @@ async function runRename(P, orderId, actor, mode) {
         if (!now.some(v => nrm(v) === nrm(P.to))) bad.push('새 값이 아직 안 보여요');
         if (now.some(v => nrm(v) === nrm(P.from))) bad.push('옛 값이 아직 남아 있어요');
         if (P.variant) { const v = aft.vars.find(x => x.code === P.variant.code); if (!v) bad.push(`품목 ${P.variant.code} 가 사라졌어요(🔴 총괄에게 바로)`); else if (v.add !== P.variant.add || v.selling !== P.variant.selling || v.display !== P.variant.display) bad.push(`품목 ${P.variant.code} 값이 바뀌었어요(추가금 ${P.variant.add}→${v.add} · ${P.variant.selling}/${P.variant.display}→${v.selling}/${v.display})`); }
-        console.log(JSON.stringify({ ok: ok && !bad.length, changed: ok, ...out, runner: ok ? undefined : res, recheck_bad: bad, undo: `node scripts/desk/mall-option.js revert ${P.R.nno} <지시 id>`,
-            note: ok ? (bad.length ? '바꿨지만 다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 list 로 확인하고 그래도 다르면 총괄에게' : '옵션 이름을 네이버와 같게 바꿨어요(품목·추가금·판매/진열 그대로). 자사몰 화면은 네이버 스냅샷으로 그려져 이미 네이버 글자예요.') : '카페24가 거절했어요 — 바꾼 것 없음' }, null, 1));
+        console.log(JSON.stringify({ ok: ok && !bad.length, changed: ok, not_applied: notApplied || undefined, ...out, runner: ok ? undefined : res, recheck_bad: bad, undo: `node scripts/desk/mall-option.js revert ${P.R.nno} <지시 id>`,
+            note: notApplied ? '카페24 가 이름을 안 바꿨어요 — 관리자 화면에서 바꿔 주세요(상품 [수정] → 옵션/재고 설정 → 옵션값 글자 고치기 → 저장). 바꾼 것 없음' : ok ? (bad.length ? '바꿨지만 다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 list 로 확인하고 그래도 다르면 총괄에게' : '옵션 이름을 네이버와 같게 바꿨어요(품목·추가금·판매/진열 그대로). 자사몰 화면은 네이버 스냅샷으로 그려져 이미 네이버 글자예요.') : '카페24가 거절했어요 — 바꾼 것 없음' }, null, 1));
     } else if (cmd === 'revert') {
         const orderId = parseInt(args[1], 10); if (!orderId) throw new Error('사용: revert <상품> <지시 id>');
         const R = await resolve(args[0]); const actor = await M.who(orderId);
@@ -121,10 +123,11 @@ async function runRename(P, orderId, actor, mode) {
         if (C.groups[gi].values.some(v => nrm(v) === nrm(last.from))) throw new Error(`옛 값 「${last.from}」 과 같은 값이 이미 있어요 — 되돌리면 같은 이름이 둘이 돼요(되돌리지 않음)`);
         const raw = await M.c24({ action: 'option_rename', product_no: Number(R.cno), group: last.group, from: last.to, to: last.from, order_id: orderId, revert: true, created_by: actor });
         const res = (raw && raw.opt) || { ok: false, error: '러너 결과에 opt 칸이 없어요', raw };
-        const ok = res.ok === true;
+        const notApplied = res.ok === true && (res.not_applied === true || (Array.isArray(res.not_applied) && res.not_applied.length > 0) || res.to_visible === false);
+        const ok = res.ok === true && !notApplied;
         if (ok) { prev[R.nno] = list.slice(0, -1); await M.cfgSet(LAST_KEY, prev); }
         await M.audit('cafe24_option_rename', 'cafe24_product', R.cno, { tool: 'mall-option', mode: 'revert', order_id: orderId, naver_no: R.nno, back_from: last.to, back_to: last.from, result: res }, actor);
-        console.log(JSON.stringify({ ok, reverted: ok, from: last.to, to: last.from, runner: ok ? undefined : res, note: ok ? '옛 이름으로 되돌렸어요(품목 그대로) — 3분 뒤 list 로 확인' : '카페24가 거절했어요 — 바꾼 것 없음' }, null, 1));
+        console.log(JSON.stringify({ ok, reverted: ok, from: last.to, to: last.from, runner: ok ? undefined : res, not_applied: notApplied || undefined, note: notApplied ? '카페24 가 이름을 안 바꿨어요 — 관리자 화면에서 옛 이름으로 고쳐 주세요' : ok ? '옛 이름으로 되돌렸어요(품목 그대로) — 3분 뒤 list 로 확인' : '카페24가 거절했어요 — 바꾼 것 없음' }, null, 1));
     } else {
         console.log('사용: list <상품> | rename-plan <상품> "<지금 값>" "<새 값>" | rename <…> <지시 id> | revert <상품> <지시 id>\n' + ADD_GUIDE);
     }

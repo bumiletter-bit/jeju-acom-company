@@ -24,8 +24,8 @@ function fake(opts = {}) {
     const optView = (pr) => ({ option: { has_option: pr.groups.length ? 'T' : 'F', option_type: 'T', option_list_type: 'S', options: pr.groups.map(g => ({ option_name: g.option_name, ...(g.display ? { option_display_type: g.display } : {}),
         option_value: g.values.map((t, i) => ({ option_text: t, value_no: null, ...((g.vmeta && g.vmeta[i]) || {}) })) })) } });
     const varView = (pr) => ({ variants: pr.variants.map(v => ({ variant_code: v.code, options: v.vals.map((x, i) => ({ name: pr.groups[i].option_name, value: x })), additional_amount: v.add, selling: v.selling, display: v.display })) });
-    st.apiGet = async (p, q) => {
-        st.calls.push('GET ' + p);
+    st.apiGet = async (p, q, h) => {
+        st.calls.push('GET ' + p); (st.hdr = st.hdr || []).push({ m: 'GET', p, v: h && h['X-Cafe24-Api-Version'] || null });
         if (p === '/api/v2/admin/products') return { products: Object.entries(st.products).filter(([, x]) => !q.product_name || x.name === q.product_name).map(([n, x]) => ({ product_no: Number(n), product_name: x.name, display: x.display, selling: x.selling })) };
         const m = prodOf(p); const pr = m && st.products[m.no];
         if (!pr) throw err(404, 'No product');
@@ -33,8 +33,8 @@ function fake(opts = {}) {
         if (m.sub === '/variants') return varView(pr);
         return { product: { product_no: m.no, product_name: pr.name, display: pr.display, selling: pr.selling } };
     };
-    st.apiReq = async (method, p, body) => {
-        st.calls.push(method + ' ' + p); st.writes.push({ method, p, body });
+    st.apiReq = async (method, p, body, h) => {
+        st.calls.push(method + ' ' + p); st.writes.push({ method, p, body }); (st.hdr = st.hdr || []).push({ m: method, p, v: h && h['X-Cafe24-Api-Version'] || null });
         if (method === 'POST' && p === '/api/v2/admin/products') { const no = ++st.seq; st.products[no] = { name: body.request.product_name, display: body.request.display, selling: body.request.selling, groups: [], variants: [] }; return { product: { product_no: no } }; }
         const m = prodOf(p); const pr = m && st.products[m.no];
         if (!pr) throw err(404, 'No product');
@@ -153,13 +153,31 @@ const G = (name, vals) => ({ option_name: name, option_value: vals.map(t => ({ o
     const cx = await run({ action: 'test_product_create' }, kx.deps);
     const rx = await run({ action: 'option_rename', product_no: cx.product_no, from: '테스트A', to: '테스트A2' }, kx.deps);
     ok(rx.ok && rx.kept === false && rx.changed.length === 1 && /add: 0.00 → 500.00/.test(rx.changed[0]), '품목 추가금이 바뀌면 kept false · changed 로 보고', rx);
+    // PUT 은 오류 없이 끝났는데 이름이 안 바뀜(실측 10/18 시험 상품 120) → ok false · not_applied
+    const kn2 = mk({ sideEffect: (pr) => { pr.groups[0].values = ['테스트A', '테스트B']; for (const v of pr.variants) v.vals = [v.code.endsWith('A') ? '테스트A' : '테스트B']; } });
+    const cn2 = await run({ action: 'test_product_create' }, kn2.deps);
+    const rn2 = await run({ action: 'option_rename', product_no: cn2.product_no, from: '테스트A', to: '테스트A2' }, kn2.deps);
+    ok(!rn2.ok && rn2.not_applied === true && rn2.to_visible === false && /이름이 안 바뀌었어요/.test(rn2.error), 'PUT 통과했지만 이름 그대로 = 실패로 보고(not_applied)', rn2);
     // PUT 실패
     const kf = mk({ putFail: true });
     const cf = await run({ action: 'test_product_create' }, kf.deps);
     const rf = await run({ action: 'option_rename', product_no: cf.product_no, from: '테스트A', to: '테스트A2' }, kf.deps);
     ok(!rf.ok && rf.code === 400 && rf.variants_unchanged === true, 'PUT 실패 = 코드·사유 · 품목 그대로 확인', rf);
 
-    console.log('④ audit · 꼴');
+    console.log('④ 버전 머리글 = 옵션 길에만');
+    {
+        const hs = k.cp.hdr || [];
+        const opt = hs.filter(x => /\/options$/.test(x.p) && (x.m === 'GET' || x.m === 'PUT'));
+        const other = hs.filter(x => !(/\/options$/.test(x.p) && (x.m === 'GET' || x.m === 'PUT')));
+        ok(opt.length >= 4 && opt.every(x => x.v === '2026-09-01') && other.length >= 3 && other.every(x => x.v === null),
+            'X-Cafe24-Api-Version 2026-09-01 = 옵션 GET·PUT 에만 · 품목·상품·등록 길은 머리글 없음(종전)', { opt: opt.length, other: other.map(x => x.m + ' ' + x.p + ' ' + x.v) });
+        // cafe24.js: 머리글 인자 안 주면 요청 머리글이 종전과 같음(송장·mall-price 무영향)
+        const c24 = fs.readFileSync(path.join(__dirname, '..', 'cafe24.js'), 'utf8');
+        ok(/async function apiGet\(path, query, extraHeaders\)/.test(c24) && /async function apiReq\(method, path, body, extraHeaders\)/.test(c24) && (c24.match(/\.\.\.\(extraHeaders \|\| \{\}\)/g) || []).length === 2,
+            'cafe24.js apiGet·apiReq = 머리글 인자 선택(없으면 {} 펼침 = 종전 머리글)');
+    }
+
+    console.log('⑤ audit · 꼴');
     ok(audits.length >= 4 && audits.every(x => x.source === 'cafe24-option' && x.targetId === null), 'audit source cafe24-option · targetId null', audits.map(x => x.action));
     const acts = new Set(audits.map(x => x.action));
     ok(['cafe24_test_product_create', 'cafe24_options_put', 'cafe24_options_put_failed', 'cafe24_option_rename', 'cafe24_option_rename_failed'].every(x => acts.has(x)), 'audit 종류 5', [...acts]);

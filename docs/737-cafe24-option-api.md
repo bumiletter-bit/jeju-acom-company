@@ -42,3 +42,7 @@
 ## 미확정(2)
 1. 옵션 수정 PUT 으로 **기존 묶음 안에 값 하나 추가**가 되는지 — 문서는 「항목 추가 불가」 · 시험 상품에서 1회로 확정(운영 상품 금지).
 2. 상품당 옵션·옵션값 최대 개수 — 문서 없음.
+
+## 실측(#739 · 2026-10-18 · 시험 상품 c120 · 진열·판매 안 함)
+- **옵션값 추가 = 불가 확정**: 옵션 수정 PUT 에 값 하나를 늘려 보내면 카페24 **422 「number of Existing option value and edited option value is wrong」** → 미확정 1 닫힘(새 값은 관리자 화면에서만).
+- **옵션 이름 바꾸기 = 아직 안 됨(원인 미확정)**: 문서 꼴(options + original_options)로 보내면 PUT 은 오류 없이 끝나지만 **재조회에서 이름이 안 바뀜** · 값을 글자 꼴로 보내면 422 **「Existing option value does not exist」**. Api-Version 머리글 등 시험 중 → 확정 전까지 **이름 바꾸기도 카페24 관리자 화면에서**(창구 mall-option.js 는 rename-plan 으로 전/후만 보여 줌 · rename 은 카페24 가 안 바꾸면 그렇게 알림).

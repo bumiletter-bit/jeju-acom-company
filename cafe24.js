@@ -144,13 +144,14 @@ async function getToken(force = false) {
 
 // ── 주문 조회 (유일한 API 호출 — 429/5xx 백오프 + 호출 간 600ms) ──
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-async function apiGet(path, query) {
+// #739: extraHeaders(선택) = 옵션 API 길에만 X-Cafe24-Api-Version 등 · 안 주면 종전과 같은 요청(송장·mall-price 무영향)
+async function apiGet(path, query, extraHeaders) {
     let token = await getToken();
     const qs = query ? '?' + new URLSearchParams(query).toString() : '';
     let retried401 = false;
     for (let attempt = 0; ; attempt++) {
         const res = await fetch(`${API_BASE}${path}${qs}`, {
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(extraHeaders || {}) },
         });
         // 401(토큰 만료·무효) → 강제 갱신 후 정확히 1회 재시도 (2026-07-26 실장애 수정의 2중 방어)
         if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }
@@ -167,13 +168,13 @@ async function apiGet(path, query) {
 }
 
 // #248-③: 쓰기 겸용 요청 — apiGet과 동일한 401 갱신·429/5xx 백오프 2중 방어
-async function apiReq(method, path, body) {
+async function apiReq(method, path, body, extraHeaders) {
     let token = await getToken();
     let retried401 = false;
     for (let attempt = 0; ; attempt++) {
         const res = await fetch(`${API_BASE}${path}`, {
             method,
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(extraHeaders || {}) },
             body: body != null ? JSON.stringify(body) : undefined,
         });
         if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }

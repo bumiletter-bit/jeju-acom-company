@@ -15409,6 +15409,8 @@ const CAF_TEST_NAME = '테스트 옵션(시험용 · 구매 금지)';
 const CAF_TEST_KEY = 'cafe24_test_products', CAF_RENAME_KEY = 'cafe24_option_rename';
 const CAF_TEST_OPTION = { option_name: '테스트 옵션', values: ['테스트A', '테스트B'] };
 const CAF_MAX_TEXT = 100, CAF_MAX_GROUPS = 10, CAF_MAX_VALUES = 100;
+// 옵션 API 길에만 버전 머리글(실측 10/18: 머리글 없이 = original_options 를 못 짝지음 422 · apidocs 최신 = 2026-09-01) · 품목·상품 길은 종전 그대로
+const CAF_OPT_HEADERS = { 'X-Cafe24-Api-Version': '2026-09-01' };
 const cafP = (no) => `/api/v2/admin/products/${no}`;
 // 옵션 GET 응답 → 우리 꼴 [{ option_name, values:[글자] }] + 원문 칸(option_type 등)
 function cafOptsOf(r) {
@@ -15475,7 +15477,7 @@ async function cafe24OptRun(req, deps) {
         detail: e && e.detail ? JSON.stringify(e.detail).slice(0, 300) : null, ...(extra || {}) });
     const testList = async () => { const v = await cfgGet(CAF_TEST_KEY); return v && Array.isArray(v.products) ? v : { products: [] }; };
     const isTest = async (no) => (await testList()).products.some(p => String(p.product_no) === String(no));
-    const getOpts = async (no) => cafOptsOf(await apiGet(cafP(no) + '/options', { shop_no: 1 }));
+    const getOpts = async (no) => cafOptsOf(await apiGet(cafP(no) + '/options', { shop_no: 1 }, CAF_OPT_HEADERS));
     const getVars = async (no) => cafVarsOf(await apiGet(cafP(no) + '/variants', { shop_no: 1 }));
     if (!CAF_OPT_ACTIONS.includes(action)) return fail('action 이 아니에요');
 
@@ -15548,7 +15550,7 @@ async function cafe24OptRun(req, deps) {
     try { before = await getVars(no); } catch (e) { return cErr(e, '품목 조회'); }
     let optsBefore = null;
     try { optsBefore = await getOpts(no); } catch (_) { /* 비교용 */ }
-    try { await apiReq('PUT', cafP(no) + '/options', { shop_no: 1, request: body }); }
+    try { await apiReq('PUT', cafP(no) + '/options', { shop_no: 1, request: body }, CAF_OPT_HEADERS); }
     catch (e) {
         await auditW(action === 'options_put' ? 'cafe24_options_put_failed' : 'cafe24_option_rename_failed', { product_no: no, test, code: e && e.status || null, reason: e && e.reason ? String(e.reason).slice(0, 200) : null });
         let after = null; try { after = await getVars(no); } catch (_) {}
@@ -15560,6 +15562,11 @@ async function cafe24OptRun(req, deps) {
     // rename 뒤 옵션 재조회에 새 이름이 보이고 옛 이름이 사라졌는지(같은 묶음)
     const toV = action === 'option_rename' && optsAfter ? optsAfter.groups.some(g => g.values.includes(String(req.to).trim()) && !g.values.includes(req.from)) : null;
     if (action === 'option_rename') diff.to_visible = toV;
+    // 실측 10/18(시험 상품 120): PUT 이 오류 없이 끝났는데 이름이 안 바뀐 경우가 있음 → 성공으로 보고하지 않는다
+    if (action === 'option_rename' && toV === false) {
+        await auditW('cafe24_option_rename_failed', { product_no: no, test, not_applied: true, from: req.from, to: String(req.to).trim() });
+        return fail('카페24 가 수정 요청을 받았지만 이름이 안 바뀌었어요(재조회에 새 이름 없음) — 관리자 화면에서 확인', { product_no: no, test, put: true, not_applied: true, ...diff, options_after: optsAfter, variants_after: after });
+    }
     await auditW(action === 'options_put' ? 'cafe24_options_put' : 'cafe24_option_rename', { product_no: no, test, ...(action === 'option_rename' ? { from: req.from, to: String(req.to).trim() } : {}), variants_kept: diff.kept, removed: diff.removed, added: diff.added.map(x => x.code), changed: diff.changed });
     return { ok: true, action, product_no: no, test, put: true, options_before: optsBefore, options_after: optsAfter, variants_before: before, variants_after: after, ...diff,
         ...(action === 'option_rename' ? { revert: { action: 'option_rename', product_no: no, from: String(req.to).trim(), to: req.from } } : {}) };
