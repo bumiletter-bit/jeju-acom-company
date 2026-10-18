@@ -9386,6 +9386,23 @@ function stripMapWidgets(html) {
 }
 // 지시 #150→#155: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'ig',cols,srcs}|{t:'x',html}] — 원본 등장 순서 그대로.
 //   #155: 스마트에디터 imageStrip(이미지 N열 병렬)을 ig 블록으로 보존 — 1열 세로 나열로 뭉개지던 결손 수정.
+// #747 그림을 감싼 <a> 가 우리 네이버 상품 주소면 그 상품 번호(자사몰 상세가 그림 링크를 자사몰 상품으로 바꿔 걸게) — 지도·블로그·그 밖 = null
+//   href 또는 스마트에디터 data-linkdata JSON 의 link(&quot; 풀어서) · 대상 = smartstore.naver.com/akkome · brand.naver.com/jejuakkome 의 /products/<번호>
+const DETAIL_NAVER_PRODUCT_RE = /^https?:\/\/(?:m\.)?(?:smartstore\.naver\.com\/akkome|brand\.naver\.com\/jejuakkome)\/products\/(\d{5,15})(?:[/?#]|$)/i;
+function detailLinkNoBefore(str, pos) {
+    const head = str.slice(0, pos), low = head.toLowerCase();
+    const open = Math.max(low.lastIndexOf('<a '), low.lastIndexOf('<a\n'), low.lastIndexOf('<a\t')), close = low.lastIndexOf('</a');
+    if (open < 0 || close > open) return null;
+    const tagEnd = head.indexOf('>', open);
+    if (tagEnd < 0) return null;
+    const tag = head.slice(open, tagEnd + 1);
+    const cands = [];
+    const h = tag.match(/\shref\s*=\s*("([^"]*)"|'([^']*)')/i); if (h) cands.push(h[2] != null ? h[2] : h[3]);
+    const d = tag.match(/\sdata-linkdata\s*=\s*("([^"]*)"|'([^']*)')/i);
+    if (d) { try { const j = JSON.parse(String(d[2] != null ? d[2] : d[3]).replace(/&quot;/g, '"').replace(/&amp;/g, '&')); if (j && typeof j.link === 'string') cands.push(j.link); } catch (_) { /* 꼴 다름 = 무시 */ } }
+    for (const u of cands) { const mm = String(u || '').replace(/&amp;/g, '&').trim().match(DETAIL_NAVER_PRODUCT_RE); if (mm) return mm[1]; }
+    return null;
+}
 function parseDetailBlocks(html) {
     let s = stripMapWidgets(html);
     // 위험 태그는 내용째 제거 (텍스트 추출 전 — script/style 내부 텍스트 유입 방지)
@@ -9407,10 +9424,11 @@ function parseDetailBlocks(html) {
             }
             if (end < 0) break;
             const inner = s.slice(sm.index, end);
-            const srcs = [...inner.matchAll(/<img[^>]+src="([^"]+)"/g)].map(x => x[1])
-                .filter(u => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(u));
+            const hits = [...inner.matchAll(/<img[^>]+src="([^"]+)"/g)].filter(x => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(x[1]));
+            const srcs = hits.map(x => x[1]);
+            const lks = hits.map(x => detailLinkNoBefore(inner, x.index));   // #747 srcs 와 같은 순서 · 링크 없으면 null
             const idx = strips.length;
-            strips.push({ t: 'ig', cols: Math.max(2, parseInt(sm[1], 10) || 2), srcs });
+            strips.push({ t: 'ig', cols: Math.max(2, parseInt(sm[1], 10) || 2), srcs, ...(lks.some(Boolean) ? { lks } : {}) });
             s = s.slice(0, sm.index) + `IG${idx}` + s.slice(end);
             sre.lastIndex = sm.index + 8;
         }
@@ -9431,7 +9449,7 @@ function parseDetailBlocks(html) {
     while ((m = re.exec(s))) {
         pushText(s.slice(last, m.index));
         const src = (m[0].match(/src="([^"]+)"/i) || [])[1];
-        if (src && /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(src)) blocks.push({ t: 'i', src });
+        if (src && /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(src)) { const lk = detailLinkNoBefore(s, m.index); blocks.push(lk ? { t: 'i', src, lk } : { t: 'i', src }); }   // #747 lk = 네이버 상품 번호
         last = re.lastIndex;
     }
     pushText(s.slice(last));
