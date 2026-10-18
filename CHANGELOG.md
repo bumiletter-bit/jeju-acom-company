@@ -1,3 +1,8 @@
+## v5.9.554 (2026-10-18) — #731·#732 쿠팡 brandId 찾기(윙 티켓 승인완료인데 검색에 없음 → 브랜드 검색 API)
+
+- **#731(대표 「대표가 할 거 창 띄워줘 · 로그인할게 · 니가 진행해」)**: 크롬 확장으로 윙 열림(차단 없음) · 상품관리 › 브랜드 관리 「신규 브랜드 등록」 탭에 **「제주아꼼이네」 티켓 599149514 · 승인완료 2026-08-18** 이미 있음 → 새 등록 불필요 · 그런데 브랜드 검색(제주아꼼이네·아꼼이)·내 브랜드 목록(0건)에 없어 brandId 를 못 읽음 · 워커1 쓰기 0 · 멈춤.
+- **#732**: relay 2026-10-18.3 = POST …/marketplace/brands/search(바디 brandName·countPerPage ≤10·page · vendorId 없음) · 서버 op brand_search { q, page? }(읽기 · 지시 불필요) → { total, brands[{brandId("KR-5" 꼴 글자), brandName, …}], exact } · 배포 뒤 제주아꼼이네·아꼼이네·jejuakkome·akkome 4가지 검색(아래 결과 줄).
+
 ## v5.9.553 (2026-10-18) — #729 쿠팡 2차 실시험 끝(임시저장 왕복 · 승인 요청 0회 · 삭제 확인) · 핫픽스: 「임시저장중」 상태 = 저장 계열(되돌리기가 심사에 올라가는 틈 차단)
 
 - **실시험(워커1 · 임시저장 16418375236 「테스트 카라향(시험용)」)**: create_saved(GENERIC) 6초 ✓ → 10분 뒤 get_full 10초 ✓(statusName 「임시저장」 · 상세 그림 10칸 → 상세 한 줄 = 서버 거절 ✓) → update_full(이름+옵션명) 16초 ✓ requested false → **실측: 전체 수정 직후 상태가 잠시 「임시저장중」** → 약 2분 뒤 「임시저장」 복귀(이력 「판매자 임시저장」) → revert_full 13초 ✓ 이름 원복 → delete_saved 10초 ✓ → approval 「상품삭제」. 승인 요청 0회 · 실상품 무접촉 · audit 9 · 시험 지시 2928 삭제. 쿠팡 응답 꼴 = statusName 한글(임시저장/임시저장중/상품삭제) · histories(status·comment·createdBy·createdAt KST).

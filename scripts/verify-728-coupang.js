@@ -589,6 +589,19 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
             && audits.every(x => x.targetId === null && x.source === 'coupang-item-write'), '상품 audit 9종 · targetId null', [...pa]);
     }
 
+    console.log('⑩ #732 brand_search(읽기 · 지시 불필요)');
+    {
+        const seen = [];
+        const call = async (r) => { seen.push(r); if (r.method === 'POST' && /\/marketplace\/brands\/search$/.test(r.path)) return { code: 'SUCCESS', data: { page: 1, countPerPage: 10, totalCount: 2, items: [{ brandId: 'KR-77001', brandName: '제주아꼼이네', brandLogoUrl: null, isUIDRequired: false }, { brandId: 'KR-77002', brandName: '제주아꼼이네몰' }] } }; throw new Error('모르는 호출 ' + r.path); };
+        const bs = await run({ op: 'brand_search', q: '제주아꼼이네' }, { pool: fakePool(ORDERS), call, audit, gapMs: 0 });
+        ok(bs.ok && bs.total === 2 && bs.brands.length === 2 && bs.brands[0].brandId === 'KR-77001' && bs.exact.length === 1 && bs.exact[0].brandId === 'KR-77001' && seen.length === 1 && seen[0].method === 'POST' && !seen[0].query
+            && JSON.stringify(seen[0].body) === JSON.stringify({ brandName: '제주아꼼이네', countPerPage: 10, page: 1 }) && bs.brands[0].uid_required === false,
+            'brand_search = POST …/brands/search 하나 · 바디 3칸 · 쿼리 없음 · brandId 글자(KR-…) · exact', bs);
+        const nq = await run({ op: 'brand_search', q: ' ' }, { pool: fakePool(ORDERS), call, audit, gapMs: 0 });
+        const arr = await run({ op: 'brand_search', q: 'akkome' }, { pool: fakePool(ORDERS), call: async () => ({ code: 'SUCCESS', data: [{ id: 5, name: 'AKKOME' }] }), audit, gapMs: 0 });
+        ok(!nq.ok && /q/.test(nq.error) && arr.ok && arr.brands[0].brandId === '5' && arr.brands[0].brandName === 'AKKOME' && arr.exact.length === 0, '빈 q 거절 · 배열 응답·다른 칸 이름도 읽음', [nq, arr]);
+    }
+
     console.log(`\n결과 ${pass}/${pass + failN}`);
     process.exit(failN ? 1 : 0);
 })().catch(e => { console.error('검증 오류', e); process.exit(1); });

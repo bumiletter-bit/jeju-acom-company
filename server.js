@@ -16664,7 +16664,7 @@ async function coupangItemWriteRun(req, deps) {
     const callG = async (r) => cpwData(await callRaw(r));
     const op = req && req.op;
     const fail = (error, extra) => ({ ok: false, op, error, ...(extra || {}) });
-    if (!['list', 'backup', 'apply', 'revert', 'approval', ...CPW_PRODUCT_OPS].includes(op)) return fail('op 는 list·backup·apply·revert(옵션) · get_full·create_saved·update_full·revert_full·delete_saved·request_approval·approval(상품) 중 하나');
+    if (!['list', 'backup', 'apply', 'revert', 'approval', 'brand_search', ...CPW_PRODUCT_OPS].includes(op)) return fail('op 는 list·backup·apply·revert(옵션) · get_full·create_saved·update_full·revert_full·delete_saved·request_approval·approval(상품) · brand_search 중 하나');
     const by = req.created_by ? String(req.created_by).slice(0, 80) : null;
     // audit_logs.target_id 는 INTEGER — 쿠팡 번호(10자리↑)는 넘치므로 null · 번호는 changes 에
     const auditW = (action, changes) => audit({ action, targetType: 'coupang_item', targetId: null,
@@ -16713,6 +16713,7 @@ async function coupangItemWriteRun(req, deps) {
     }
 
     if (op === 'approval') return cpwApproval(req, { callG, fail, cpErr });   // #729 읽기만 · 지시 불필요
+    if (op === 'brand_search') return cpwBrandSearch(req, { callRaw, fail, cpErr });   // #732 읽기만 · 지시 불필요
 
     // 쓰기·보관은 지시가 있어야(누구 지시든 · 승인 검사 없음 — 되묻기 1회는 창구 규칙 몫 · #727 과 같음)
     const orderId = parseInt(req && req.order_id, 10);
@@ -17141,6 +17142,26 @@ async function cpwProductRun(op, req, x) {
             approval_note: saved ? CPW_SAVED_NOTE : CPW_APPROVAL_NOTE, ...(op === 'update_full' ? { patch_keys: Object.keys(req.patch) } : {}),
             ...(now ? {} : { error_note: '저장은 됐지만 재조회 실패 — Wing 에서 확인' }) };
     } finally { cpwInFlight.delete(key); }
+}
+// #732 brand_search — 읽기만(지시 불필요): 쿠팡 브랜드 검색 → 상위 20 + total · 등록 바디 brandId 찾기용
+//   워커2 확정(10/18): POST …/brands/search · 바디 { brandName, countPerPage(최대 10), page } · 쿼리 없음 · vendorId 안 넣음
+//   응답 data{ page, countPerPage, totalCount, items[{ brandId("KR-5" 꼴 글자), brandName, brandLogoUrl, isUIDRequired, allowedUIDTypes }] } · 400 = brandName 없음
+const CPW_BRAND_PATH = `${CPW_BASE}/brands/search`;
+const CPW_BRAND_PER_PAGE = 10;
+async function cpwBrandSearch(req, x) {
+    const { callRaw, fail, cpErr } = x;
+    const q = typeof req.q === 'string' ? req.q.trim().slice(0, 50) : '';
+    if (!q) return fail('q(브랜드명)가 필요해요');
+    const page = Math.max(1, Math.min(50, parseInt(req.page, 10) || 1));
+    let r;
+    try { r = cpwData(await callRaw({ method: 'POST', path: CPW_BRAND_PATH, body: { brandName: q, countPerPage: CPW_BRAND_PER_PAGE, page } })); }
+    catch (e) { return cpErr(e, '브랜드 검색'); }
+    const list = Array.isArray(r) ? r : (r && (r.items || r.content || r.brands)) || [];
+    const total = r && !Array.isArray(r) ? (r.totalCount != null ? r.totalCount : r.totalElements != null ? r.totalElements : list.length) : list.length;
+    const brands = (Array.isArray(list) ? list : []).slice(0, CPW_BRAND_PER_PAGE).map(b => ({ brandId: b.brandId != null ? String(b.brandId) : b.id != null ? String(b.id) : null,
+        brandName: b.brandName || b.name || null, ...(b.isUIDRequired != null ? { uid_required: b.isUIDRequired } : {}), ...(b.allowedUIDTypes ? { uid_types: b.allowedUIDTypes } : {}) }));
+    const exact = brands.filter(b => b.brandName === q || b.brandNameEn === q);
+    return { ok: true, op: 'brand_search', q, page, total: Number(total) || 0, brands, exact };
 }
 // approval — 읽기만(지시 불필요): 단건 statusName + 이력 최근 10줄(반려 사유 comment)
 async function cpwApproval(req, x) {
