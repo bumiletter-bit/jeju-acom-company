@@ -450,7 +450,7 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
         await t({ item_names: { '카라향 3kg': 'y'.repeat(151) } }, /1~150자/, '옵션명 151자 거절');
         await t({ item_names: { '카라향 3kg': '카라향 5kg' } }, /겹쳐요/, '다른 옵션과 같은 이름 거절');
         await t({ detail_html: '<script>x</script>' }, /script/, '상세 script 거절');
-        await t({ images: ['https://evil.example/x.jpg'] }, /새 그림 주소는 못 넣어요.*미확정/, '새 외부 그림 주소 거절(미확정)');
+        await t({ images: ['https://evil.example/x.jpg'] }, /allow_external_images 가 켜져 있을 때만/, '외부 그림 주소 = 설정 꺼짐이면 거절(기본)');
         await t({ images: ['vendor_inventory/b.jpg'] }, /남는 그림이 없어요/, '그림이 하나도 안 남는 옵션 거절');
         ok(k.cp.puts.length === 0, '거절 동안 PUT 0');
 
@@ -579,6 +579,91 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
         const kr = mkp(); kr.cp.prods[SPC].statusName = '승인반려';
         const ra = await run({ op: 'request_approval', ...base, seller_product_id: SPC }, kr.deps);
         ok(ra.ok && kr.cp.approvals[0] === SPC && ra.status_after === '심사중', '반려 상품 승인 요청 = PUT approvals', ra);
+        // #733-B 상세 블록 · 외부 그림 · 옵션 추가
+        {
+            const BL = [{ type: 'html', html: '<p>타이벡 감귤</p>' }, { type: 'image', url: 'vendor_inventory/x.jpg' }, { type: 'image', url: 'https://shop-phinf.pstatic.net/a.jpg' }];
+            const kb = mkp(); kb.cp.prods[SPC].statusName = '임시저장';
+            const gb = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kb.deps);
+            const off = await run({ op: 'update_full', ...base, backup_id: gb.backup_id, patch: { detail_blocks: BL } }, kb.deps);
+            ok(!off.ok && /detail_blocks 3: 외부 그림 주소는 설정 allow_external_images/.test(off.error) && kb.cp.puts.length === 0, '외부 그림 블록 = 설정 꺼짐이면 거절 · 쿠팡 그림은 통과(3번째에서 걸림)', off);
+            kb.db.cfg = { allow_external_images: true };
+            const tb = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: gb.backup_id, patch }, kb.deps); ok(!x.ok && re.test(x.error), name, x); };
+            await tb({ detail_blocks: [{ type: 'image', url: 'http://x.example/a.jpg' }] }, /https:\/\/ 공개 주소만/, 'http 그림 거절(설정 켜도)');
+            await tb({ detail_blocks: [{ type: 'html', html: '<script>x</script>' }] }, /script/, '블록 html script 거절');
+            await tb({ detail_blocks: [{ type: 'video', url: 'https://a/b' }] }, /image 또는 html/, '블록 type 거절');
+            await tb({ detail_blocks: BL, detail_html: '<p>x</p>' }, /하나만/, 'detail_html + detail_blocks 같이 거절');
+            const on = await run({ op: 'update_full', ...base, backup_id: gb.backup_id, patch: { detail_blocks: BL } }, kb.deps);
+            const pc = kb.cp.puts[0];
+            ok(on.ok && on.requested === false && pc.items.every(it => it.contents.length === 3 && it.contents[0].contentsType === 'TEXT' && it.contents[1].contentsType === 'IMAGE_NO_SPACE' && it.contents[2].contentDetails[0].content === 'https://shop-phinf.pstatic.net/a.jpg'),
+                '그림 구성 상품도 contents 통째 교체(글 1 · 그림 2 · 모든 옵션 같게)', pc && pc.items.map(it => it.contents));
+            ok(on.items_after && on.items_after[0].contents === 'TEXT:TEXT,IMAGE_NO_SPACE:IMAGE,IMAGE_NO_SPACE:IMAGE' && on.items_after[0].content_images.length === 2, '결과 items_after = 상세 꼴·상세 그림 주소', on.items_after);
+            // 대표·추가 그림 외부 주소 → vendorPath
+            const kv = mkp(); kv.cp.prods[SPC].statusName = '임시저장'; kv.db.cfg = { allow_external_images: true };
+            const gv = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kv.deps);
+            const iv = await run({ op: 'update_full', ...base, backup_id: gv.backup_id, patch: { images: ['https://cdn.example.com/new.jpg', 'vendor_inventory/a.jpg'] } }, kv.deps);
+            const im = kv.cp.puts[0] && kv.cp.puts[0].items[0].images;
+            ok(iv.ok && im && im[0].vendorPath === 'https://cdn.example.com/new.jpg' && im[0].imageType === 'REPRESENTATION' && im[1].cdnPath === 'vendor_inventory/a.jpg' && im[1].imageType === 'DETAIL', '새 외부 대표 그림 = vendorPath · 있던 그림 = cdnPath 그대로', im);
+            // 변환 모듈(워커2) 꽂기
+            const kmod = mkp(); kmod.cp.prods[SPC].statusName = '임시저장';
+            const gm = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kmod.deps);
+            const conv = (bl) => [{ contentsType: 'HTML', contentDetails: [{ content: 'M:' + bl.length, detailType: 'TEXT' }] }];
+            const um = await run({ op: 'update_full', ...base, backup_id: gm.backup_id, patch: { detail_blocks: [{ type: 'html', html: '<p>a</p>' }] } }, { ...kmod.deps, detailBlocksToContents: conv });
+            ok(um.ok && kmod.cp.puts[0].items[0].contents[0].contentsType === 'HTML' && kmod.cp.puts[0].items[0].contents[0].contentDetails[0].content === 'M:1', 'deps.detailBlocksToContents 가 있으면 그 변환을 씀', kmod.cp.puts[0] && kmod.cp.puts[0].items[0].contents);
+            // 실제 모듈(워커2 detail-blocks.js toCoupangContents)을 꽂은 꼴 = 러너와 같음
+            const DB = require(path.join(__dirname, '..', 'detail-blocks.js'));
+            const kr = mkp(); kr.cp.prods[SPC].statusName = '임시저장'; kr.db.cfg = { allow_external_images: true };
+            const gr = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kr.deps);
+            const ur = await run({ op: 'update_full', ...base, backup_id: gr.backup_id, patch: { detail_blocks: BL } }, { ...kr.deps, detailBlocksToContents: (bl) => DB.toCoupangContents(bl) });
+            const rc = kr.cp.puts[0] && kr.cp.puts[0].items[0].contents;
+            ok(ur.ok && rc && rc.length === 3 && rc[0].contentsType === 'TEXT' && rc[2].contentsType === 'IMAGE_NO_SPACE' && rc[2].contentDetails[0].content === 'https://shop-phinf.pstatic.net/a.jpg', '실제 detail-blocks.js 변환 = 글 TEXT · 그림 IMAGE_NO_SPACE(모듈 꼴)', rc);
+            // 옵션 추가(임시저장) → 되돌리기 = 빠짐
+            const ka = mkp(); ka.cp.prods[SPC].statusName = '임시저장';
+            const ga = await run({ op: 'get_full', ...base, seller_product_id: SPC }, ka.deps);
+            const ta = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: ga.backup_id, patch }, ka.deps); ok(!x.ok && re.test(x.error), name, x); };
+            await ta({ items_add: [{ itemName: '카라향 3kg', price: 10000, stock: 1 }] }, /겹쳐요/, '옵션 추가 이름 겹침 거절');
+            await ta({ items_add: [{ itemName: '새', price: 10005, stock: 1 }] }, /10원 단위/, '옵션 추가 10원 단위 거절');
+            await ta({ items_add: [{ itemName: '새', price: 10000, stock: 1, vendorItemId: 1 }] }, /허용되지 않은 칸 vendorItemId/, '옵션 추가 번호 칸 거절');
+            const ua = await run({ op: 'update_full', ...base, backup_id: ga.backup_id, patch: { items_add: [{ itemName: '타이벡 3kg', price: 25800, stock: 99999 }] } }, ka.deps);
+            const pa2 = ka.cp.puts[0];
+            const nw = pa2 && pa2.items[2];
+            ok(ua.ok && pa2.items.length === 3 && nw.itemName === '타이벡 3kg' && nw.salePrice === 25800 && nw.maximumBuyCount === 99999 && !('sellerProductItemId' in nw) && !('vendorItemId' in nw) && nw.originalPrice === 50000 && /승인 뒤/.test(ua.items_add_note),
+                '옵션 추가 = 마지막 옵션 틀 · 번호 칸 없이 · 가격·재고 · 결과 안내', [nw, ua.items_add_note]);
+            const ra = await run({ op: 'revert_full', ...base, backup_id: ga.backup_id }, ka.deps);
+            ok(ra.ok && ka.cp.puts[1].items.length === 2 && ka.cp.puts[1].requested === false, '임시저장 옵션 추가 되돌리기 = 보관본(옵션 빠짐) · 승인 요청 안 함', ra);
+            // 구매옵션 값(attributes): 틀 복사 그대로면 다른 옵션과 같아 거절 · 주면 그 칸만 바꿈
+            const kt = mkp(); kt.cp.prods[SPC].statusName = '임시저장';
+            kt.cp.prods[SPC].items[0].attributes = [{ attributeTypeName: '중량', attributeValueName: '3kg' }, { attributeTypeName: '등급', attributeValueName: '' }];
+            kt.cp.prods[SPC].items[1].attributes = [{ attributeTypeName: '중량', attributeValueName: '5kg' }, { attributeTypeName: '등급', attributeValueName: '' }];
+            const gt = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kt.deps);
+            const xt = await run({ op: 'update_full', ...base, backup_id: gt.backup_id, patch: { items_add: [{ itemName: '카라향 10kg', price: 69800, stock: 1 }] } }, kt.deps);
+            ok(!xt.ok && /구매옵션 값\(중량 등\)을 같이 주세요/.test(xt.error) && kt.cp.puts.length === 0, 'attributes 안 주면(틀 복사 = 5kg 중복) 거절', xt);
+            const yt = await run({ op: 'update_full', ...base, backup_id: gt.backup_id, patch: { items_add: [{ itemName: '카라향 10kg', price: 69800, stock: 1, attributes: [{ attributeTypeName: '중량', attributeValueName: '10kg' }] }] } }, kt.deps);
+            const at3 = kt.cp.puts[0] && kt.cp.puts[0].items[2].attributes;
+            ok(yt.ok && at3 && at3.length === 2 && at3[0].attributeValueName === '10kg' && at3[1].attributeTypeName === '등급' && kt.cp.puts[0].items[1].attributes[0].attributeValueName === '5kg', 'attributes 주면 그 칸만 10kg · 틀(5kg 옵션)은 그대로', at3);
+            // revert 느슨 비교 = 상세 꼴·그림 장수까지 — 임시저장 이름 수정 뒤 Wing 에서 상세만 바꾸면 force 없이 거절
+            const kl = mkp(); kl.cp.prods[SPC].statusName = '임시저장';
+            const gl = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kl.deps);
+            await run({ op: 'update_full', ...base, backup_id: gl.backup_id, patch: { name: '테스트 카라향' } }, kl.deps);
+            kl.cp.prods[SPC].items[0].contents.push({ contentsType: 'IMAGE', contentDetails: [{ content: 'vendor_inventory/z.jpg', detailType: 'IMAGE' }] });
+            const rl = await run({ op: 'revert_full', ...base, backup_id: gl.backup_id }, kl.deps);
+            ok(!rl.ok && /force/.test(rl.error) && kl.cp.puts.length === 1, 'Wing 에서 상세만 바뀜 = 느슨 비교도 걸림(force 필요)', rl);
+            // 그림 주소만 CDN 으로 바뀐 것은 통과(장수·꼴 같음)
+            const kc2 = mkp(); kc2.cp.prods[SPC].statusName = '임시저장';
+            const gc2 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kc2.deps);
+            await run({ op: 'update_full', ...base, backup_id: gc2.backup_id, patch: { name: '테스트 카라향' } }, kc2.deps);
+            kc2.cp.prods[SPC].items[0].images[0].cdnPath = 'vendor_inventory/changed.jpg';
+            const rc2 = await run({ op: 'revert_full', ...base, backup_id: gc2.backup_id }, kc2.deps);
+            ok(rc2.ok, '그림 주소만 바뀐 것(장수·꼴 같음) = 느슨 비교 통과', rc2);
+            // 승인된 상품: 옵션 추가는 승인행 · 되돌리기는 추가 옵션이 번호를 받으면 거절(승인 옵션 삭제 불가)
+            const kp = mkp();
+            const gp = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kp.deps);
+            const up = await run({ op: 'update_full', ...base, backup_id: gp.backup_id, patch: { items_add: [{ itemName: '타이벡 3kg', price: 25800, stock: 10 }] } }, kp.deps);
+            ok(up.ok && up.requested === true && /승인 전까지/.test(up.approval_note), '승인된 상품 옵션 추가 = 승인행(requested true)', up);
+            kp.cp.prods[SPC].sellerProductName = kp.cp.puts[0].sellerProductName;   // 승인 뒤 = 보낸 값이 반영된 모습
+            kp.cp.prods[SPC].items.push({ ...JSON.parse(JSON.stringify(kp.cp.puts[0].items[2])), sellerProductItemId: 509, vendorItemId: null });   // 승인 뒤 새 옵션이 번호를 받은 모습(틀 복사 그대로)
+            const rp = await run({ op: 'revert_full', ...base, backup_id: gp.backup_id }, kp.deps);
+            ok(!rp.ok && /승인된 상품에선 되돌리기로 못 빼요/.test(rp.error) && kp.cp.puts.length === 1, '승인된 상품의 추가 옵션 = 되돌리기 거절(Wing 판매중지 안내)', rp);
+        }
         // 동시 · audit
         const ks = mkp();
         const slow = { ...ks.deps, call: async (r) => { await new Promise(res => setTimeout(res, 20)); return ks.cp.call(r); } };

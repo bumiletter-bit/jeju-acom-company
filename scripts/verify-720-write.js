@@ -86,6 +86,12 @@ function fakeNaver(product, opts = {}) {
             st.puts.push(r.body);
             const wasOut = st.product.originProduct.statusType === 'OUTOFSTOCK';
             st.product = JSON.parse(JSON.stringify(r.body));
+            {   // #733-B: id 없는 새 조합에 네이버가 새 id 를 주는 척(지금 가장 큰 id + 1 부터) · opts.addReorder = 새 조합을 맨 앞으로(순서 바뀜 흉내)
+                const oc = st.product.originProduct.detailAttribute.optionInfo.optionCombinations;
+                let mx = Math.max(0, ...oc.filter(o => o.id != null).map(o => Number(o.id)));
+                for (const o of oc) if (o.id == null) o.id = ++mx;
+                if (opts.addReorder) oc.sort((a, b) => b.id - a.id);
+            }
             if (opts.putZeroStock) for (const o of st.product.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;   // 재고가 0 으로 들어간 척
             sum();
             if (st.product.originProduct.stockQuantity === 0) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 조합 전부 0 = 품절
@@ -789,6 +795,50 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(mod.npwDetailSame('<p class="a ">x</p><!-- c --><img src="y" />', '<p class="a">x</p><img src="y">') && !mod.npwDetailSame('<p>x</p>', '<p>y</p>'), 'npwDetailSame: 거름만 다르면 같음 · 글이 다르면 다름');
         // #726 실측: 네이버가 target="_blank" 를 지움(레드키위·VIP) → 그 차이만이면 같음 · href 가 다르면 다름
         ok(mod.npwDetailSame('<a href="https://x/1" target="_blank" rel="noopener" class="l">', '<a href="https://x/1" rel="noopener" class="l">') && !mod.npwDetailSame('<a href="https://x/1" target="_blank">', '<a href="https://x/2">'), 'npwDetailSame: target 만 지워진 것 = 같음 · 링크 주소가 다르면 다름');
+    }
+
+    console.log('⑯ #733-B 옵션 추가(options_add) → 재조회로 새 id → 되돌리기 = 숨김(usable false · 삭제 없음)');
+    {
+        const ADD = [{ name1: '10kg', price: 20000, stock: 5 }];
+        const k = mk();
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options_add: ADD } }, k.deps);
+        const sent = k.nv.puts[0] && k.nv.puts[0].originProduct.detailAttribute.optionInfo.optionCombinations;
+        ok(ap.ok && sent && sent.length === 3 && sent[0].id === 1 && sent[1].id === 2 && sent[2].id == null && sent[2].optionName1 === '10kg' && sent[2].stockQuantity === 5 && sent[2].usable === true,
+            '바디 = 기존 조합 id 그대로 전부 + 새 조합 id 없이 끝에', sent);
+        ok(ap.new_options && ap.new_options.length === 1 && ap.new_options[0].id === 3 && ap.new_options[0].name === '10kg' && ap.new_options[0].pay === 49000,
+            '결과 new_options = 재조회로 받은 새 id · 이름 · 결제가', ap.new_options);
+        ok(ap.unexpected_paths.length === 0 && ap.not_applied.length === 0 && ap.sale_ok.ok === true && ap.option_ids_kept === true, '기존 옵션 무변경(unexpected 0 · id 유지 · sale_ok ✓)', [ap.unexpected_paths, ap.not_applied, ap.sale_ok]);
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
+        const back = k.nv.product.originProduct.detailAttribute.optionInfo.optionCombinations;
+        ok(rv.ok && back.length === 3 && back.find(o => o.id === 3).usable === false && JSON.stringify(rv.hidden_options) === '["3"]' && rv.same_as_before === true && rv.sale_ok.ok === true,
+            '되돌리기 = 새 조합 usable false(배열에 남김) · same_as_before · sale_ok ✓', [rv.hidden_options, rv.residual_paths, rv.sale_ok]);
+        // 네이버가 새 조합을 앞으로 옮겨도(순서 바뀜) id 순 비교라 unexpected 0
+        const k2 = mk(null, { addReorder: true });
+        const b2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k2.deps);
+        const a2 = await run({ op: 'apply', order_id: 101, backup_id: b2.backup_id, patch: { options_add: [{ name1: '10kg', price: 20000, stock: 5 }, { name1: '15kg', price: 30000, stock: 0 }] } }, k2.deps);
+        ok(a2.ok && a2.unexpected_paths.length === 0 && a2.new_options.map(x => x.id).join() === '3,4' && a2.sale_ok.ok === true, '순서가 바뀌어도 unexpected 0 · 새 id 2개', [a2.unexpected_paths, a2.new_options]);
+        // 거절
+        const kx = mk();
+        const bx = await run({ op: 'backup', product_no: CH, order_id: 101 }, kx.deps);
+        const t = async (patch, re, name) => { const x = await run({ op: 'apply', order_id: 101, backup_id: bx.backup_id, patch }, kx.deps); ok(!x.ok && re.test(x.error), name, x); };
+        await t({ options_add: [{ name1: 'a', name2: 'b', price: 0, stock: 1 }] }, /옵션명 1칸이라 name2/, '단 수 다름(name2) 거절');
+        await t({ options_add: [{ name1: '2.5kg', price: 0, stock: 1 }] }, /같은 이름 조합이 이미/, '이미 있는 이름 거절');
+        await t({ options_add: [{ name1: 'x', price: 0, stock: 1 }, { name1: 'x', price: 0, stock: 1 }] }, /같은 이름 조합이 이미/, '추가 안에서 이름 겹침 거절');
+        await t({ options_add: [{ id: 9, name1: 'x', price: 0, stock: 1 }] }, /id 는 못 넣음/, 'id 칸 거절');
+        await t({ options_add: [{ name1: 'x', price: 0, stock: 1 }], options: [{ id: 1, stock: 3 }] }, /따로 보내/, '옵션 수정과 같이 = 거절');
+        await t({ options_add: [{ name1: 'x', price: 0, stock: -1 }] }, /재고는 0 이상/, '재고 음수 거절');
+        await t({ options_add: [{ name1: 'x', price: 1.5, stock: 1 }] }, /추가금은 정수/, '추가금 소수 거절');
+        await t({ options_add: [{ name1: 'x', price: 900000, stock: 1 }] }, /10배/, '결제가 10배 거절');
+        await t({ options_add: Array.from({ length: 11 }, (_, i) => ({ name1: 'n' + i, price: 0, stock: 1 })) }, /10개까지/, '11개 거절');
+        ok(kx.nv.puts.length === 0, '거절 동안 PUT 0');
+        // 품절 상품에 재고 있는 옵션 추가 = 판매 복귀 길(auto_sale)
+        const PO = JSON.parse(JSON.stringify(PRODUCT)); PO.originProduct.statusType = 'OUTOFSTOCK'; PO.originProduct.stockQuantity = 0;
+        for (const o of PO.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;
+        const ko = mk(PO, { putSaleOk: true });
+        const bo = await run({ op: 'backup', product_no: CH, order_id: 101 }, ko.deps);
+        const ao = await run({ op: 'apply', order_id: 101, backup_id: bo.backup_id, patch: { options_add: [{ name1: '10kg', price: 20000, stock: 5 }] } }, ko.deps);
+        ok(ao.ok && ao.auto_sale === true && ko.nv.product.originProduct.statusType === 'SALE' && ao.new_options[0].id === 3, '품절 상품 옵션 추가(재고>0) = 판매 복귀 길 · 새 id', [ao.auto_sale, ao.sale_attempts, ao.new_options]);
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

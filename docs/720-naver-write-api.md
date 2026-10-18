@@ -157,3 +157,23 @@
 2. 조회 응답 복사 때 빼야 할 칸 → 첫 등록 400 invalidInputs/message(「InvalidInputs 가 없거나 부족하면 message 로 판단」 공식).
 3. statusType 을 SUSPENSION 으로 바로 등록 가능한지 → 안 시험(WAIT 등록 + change-status 로 우회).
 4. 다른 상품 이미지 URL 재사용 → 안 시험(재업로드로 우회).
+
+---
+
+# 타이벡 오픈 대비(#733-A · 워커3 · 2026-10-18) — 기존 상품에 옵션 추가
+
+## ① 통째 PUT 으로 새 옵션 추가
+| 항목 | 내용 | 근거 |
+|---|---|---|
+| 새 항목(id 없음) 추가 | 공식 문서·포럼에 「기존 상품에 조합 추가」를 직접 다룬 글 없음 → **미확정 · 테스트 한라봉 실 PUT 로**. 단서 = ⓐ 수정 API 는 「포함 안 한 정보는 제거」(#1903) = 배열이 통째로 새 상태가 된다는 뜻 → 기존 항목을 **id 그대로 전부 남기고** 새 항목을 id 없이 덧붙이는 꼴이 논리상 맞음 ⓑ 등록 때 id 는 넣지 않고 네이버가 붙임(#1637) ⓒ 같은 id 를 두 번 보내면 거절(#1894). 실측(#721-B): 기존 옵션만 고친 PUT 에서 id 그대로. | https://github.com/commerce-api-naver/commerce-api/discussions/1903 · /1637 · /1894 |
+| 기존 id 유지 | 위 실측대로 유지됨(값만 바꾼 경우). 새 항목을 덧붙였을 때 기존 id 가 그대로인지 = 실 PUT 재조회로 대조(바뀌면 「옵션 재생성」 기록). | #721-B 실측 |
+| optionCombinationGroupNames(묶음 이름·단 수) 변경 | 문서 없음 → **미확정 · 실 PUT 로**. 🔴 단 수(optionGroupName 개수)를 바꾸면 모든 조합의 optionName1~n 꼴이 바뀌어 기존 옵션이 사실상 새로 만들어질 가능성이 큼(주문 연결 = sellerManagerCode 로 하니 실해는 작지만 시험 상품에서만). **추천 = 타이벡은 기존 단 수·이름 그대로 두고 값(optionName)만 추가.** 그룹 최대 3. | #1194 · #605 |
+| 새 옵션의 sellerManagerCode | 조합 칸에 있음(판매자가 정하는 값 · 주문 optionManageCode 와 같은 값 · #1637). 새 항목에 넣어 보내면 됨(필수 아님 · 우리 상품은 지금 비어 있음 = #721-B). | /1637 |
+
+## ② 옵션 추가 때 재고·useStockManagement
+- 조합형 상품 총 재고 = 조합 재고 합 자동 · `originProduct.stockQuantity` 는 보내도 무시(빼도 됨) · `useStockManagement:true` 그대로 · 새 조합에 `stockQuantity` · `price`(판매가 대비 추가금 · 음수 가능 · #721-B) · `usable:true` 를 넣는다. 근거 = #1194(2023-11-14) · #605.
+- 품절 상태 상품에 재고 있는 새 조합을 넣으면 statusType SALE 도 같이(#726 실측 「품절 풀기 = 통째 PUT statusType SALE + 재고」).
+
+## 미확정(#733) — 테스트 한라봉 13817259794 실 PUT 1회로 닫힘
+1. id 없는 새 조합 추가가 되는지 · 기존 id 유지.
+2. optionCombinationGroupNames 이름·단 수 변경 가능 여부(타이벡엔 안 씀).

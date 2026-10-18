@@ -73,3 +73,35 @@
 2. **같은 값으로 PUT**(재고 n→n · 가격 현재가) 이 SUCCESS 로 오는지 — 실측 1회(no-op 시험용).
 3. 승인필요 전체 수정을 **승인완료 실상품**에 보냈을 때 심사 중 상태·기존 판매 지속 여부 — 문서 없음 → 1차 범위 밖.
 4. 단건 조회 `statusName` 이 한글인지 영문 코드인지 — 실조회 1건.
+
+---
+
+# 타이벡 오픈 대비(#733-A · 워커3 · 2026-10-18) — 상세·이미지·옵션 추가 · 브랜드
+
+## ③ contents(상세) 꼴
+- `contents[]` 반복 · **contentsType 9종 = IMAGE · IMAGE_NO_SPACE · TEXT · IMAGE_TEXT · TEXT_IMAGE · IMAGE_IMAGE · TEXT_TEXT · TITLE · HTML** · `contentDetails[{ content, detailType: IMAGE | TEXT }]`.
+- TEXT/HTML 안 허용 태그 목록 = **문서 없음 → 미확정 · 임시저장 실 PUT 로**(공식 예시는 TEXT content 에 `<html><div><img src=…></div></html>` 를 넣음 = img·div 는 받는 것으로 보임). 우리 상세는 그림 위주라 **IMAGE(그림 1장) 항목 여러 개** 또는 **HTML 1항목에 img 나열** 이 안전.
+- 그림 항목(detailType IMAGE)의 content 에 외부 https URL 을 넣으면 쿠팡이 가져가는지 = 문서는 images[].vendorPath 에만 「http:// 로 시작하면 자동 다운로드해 쿠팡 CDN 에 추가 · 80·443 포트만」 을 적음 → contents 의 그림도 같은지는 **미확정 · 실 PUT 재조회(쿠팡 CDN 주소로 바뀌는지)**.
+- 근거: https://developers.coupang.com/ko/api/products/product-creation
+
+## ④ images[](대표·추가 그림)
+- `imageOrder`(0,1,2…) · `imageType` = REPRESENTATION(정사각 대표 · 필수 1) · DETAIL(최대 9) · USED_PRODUCT · **3MB 이하 · 정사각 · JPG/PNG · 500×500~5000×5000px** · `cdnPath`(쿠팡 CDN 에 올린 경우) 와 `vendorPath`(업체 경로 · 200자) 중 하나 이상 필수 · **vendorPath 가 http(s) 경로면 쿠팡이 자동 다운로드해 CDN 에 추가 · 80/443 포트만**(도메인 제한 문구 없음).
+- **쿠팡 이미지 업로드 전용 API = 없음**(상품 API 22종 목록에 업로드 API 없음) → 우리 그림은 **공개 https 주소(회사 Render · 자사몰 CDN 등)를 vendorPath 로** 주면 됨. 수정 때는 조회 응답의 기존 cdnPath 를 그대로 두면 기존 그림 유지.
+- 근거: 위 등록 문서 · https://developers.coupang.com/hc/en-us/sections/360005046534(상품 API 목록)
+
+## ⑤ 전체 수정으로 새 item 추가
+- 공식: 「옵션 추가 : sellerProductItemId 를 입력하지 않고 items 배열을 추가하여 전송」 · 기존 item 은 조회 JSON 그대로(sellerProductItemId·vendorItemId 유지) · 삭제 = 배열에서 빼기(단 **승인완료 이력 옵션은 삭제 불가**) · 새 item 의 vendorItemId = **승인완료 뒤 발급**(그 전 null) → 새 옵션의 가격·재고·판매상태 4종 API 는 승인 뒤부터.
+- 근거: https://developers.coupang.com/ko/api/products/modify-product
+
+## ⑥ 승인행인지
+- 전체 수정 PUT 은 **「이 API 를 사용하면 승인 후에 반영됩니다」** → 상세·이미지·옵션 추가 = **전부 승인행(즉시 아님)**. 즉시 = 옵션별 가격·재고·판매상태 API 와 배송·반품지 partial 뿐. 🔵 타이벡 오픈(10/26)에 쓰려면 **며칠 전 미리 전체 수정 + requested:true** 로 심사를 걸어 둬야 함(심사 시간은 문서 없음). 심사 중 기존 판매가 계속되는지는 여전히 미확정(#728 미확정 3).
+
+## ⑦ 브랜드 GENERIC · brandId
+- 등록 문서: `brand` = 표준 브랜드명(공백·특수문자 없이) · **브랜드 없으면 GENERIC** · `brandId`(예: KR-5) = 필수 표시 없음 · 수정 문서엔 brandId 칸 자체가 안 나옴 → 기존 승인 상품은 조회 응답의 brand 글자 그대로 보내면 될 것으로 봄. 단 쿠팡 공지(2026)로 API 등록 상품에 「브랜드·바코드(GTIN) 또는 모델번호·구매옵션」 필수화가 예고됨(누락 시 등록 실패·노출 제한 가능) → **미확정 · 테스트 상품 임시저장 실 PUT 로**(brandId 요구 400 이 나는지).
+- 근거: 위 등록·수정 문서 · 쿠팡 브랜드 필수화 공지(sellernow 요약 · 원문 Wing 공지 확인 필요)
+
+## 미확정(#733) — 임시저장 상품 / 테스트 한라봉 실 PUT 로
+1. contents TEXT/HTML 허용 태그.
+2. contents 그림의 외부 URL 자동 다운로드 여부.
+3. GENERIC 상품 전체 수정 때 brandId 요구 여부(브랜드 필수화 공지 영향).
+4. 승인 심사 시간·심사 중 기존 판매 지속(#728 미확정 3 과 같음).

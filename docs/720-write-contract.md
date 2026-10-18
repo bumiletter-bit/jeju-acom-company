@@ -152,3 +152,10 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - 그래서 서버가 상세 수정을 잠근다: 설정 `agent_office_config 'naver_product_write'` = `{ detail_enabled: true }` 일 때만 `detail_html` apply · 행 없음·false = 「상세 수정은 대표 확정 대기 — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨(#720-D)」 거절. 판매 상태는 그대로 허용.
 - 판매 상태 왕복(SALE → SUSPENSION → SALE)은 실측 정상 · 잔여 0 · 상세 바이트 동일.
 - 다음 바퀴 후보(지금 안 함): 상세 갈래 잔여 비교를 「거름 적용한 원본」 기준으로 · 숨김 표시는 style 대신 HTML 주석 · 품절 → 판매 복귀는 change-status 에 stockQuantity(조합 합) — 문서 ④ 「품절에서 판매 중으로 변경 시 재고 수량 입력 필수」.
+
+## #733-B 옵션 추가 — patch `options_add`
+- `options_add:[{ name1, name2?, name3?, price, stock, manage_code? }]`(1~10) · 옵션명 칸 수 = 지금 상품의 단 수(optionCombinationGroupNames · 없으면 첫 조합) — 다르면 거절(옵션 재생성 위험) · 같은 이름 조합(숨김 포함)·추가 안 겹침 거절 · id 칸 거절 · 추가금 정수 · 재고 0 이상 정수 · manage_code → sellerManagerCode(50자) · 결제가(판매가 − 즉시할인 + 추가금)가 0 이하·기본 결제가의 10배↑/10분의 1↓ 거절 · **`options`·`status` 와 같이 못 씀**(따로).
+- 바디 = 지금 값(cur) 위에 기존 조합 id 그대로 전부 + 새 조합 id 없이 끝에(usable true) → 통째 PUT(put_enabled 잠금 대상) · 품절(OUTOFSTOCK) 상품에 재고 > 0 옵션 추가 = 판매 복귀 길(auto_sale · toSale).
+- 재조회: 새 조합 = 지금 id 목록에 없고 이름이 같은 것 → `new_options[{ i, id, name, price, stock, usable, pay }]` · 비교는 조합을 id 순으로 정렬해(네이버가 순서를 바꿔도 흔들리지 않게) · 기대 경로 = 새 자리 + 상품 재고 합 · 못 찾음 = not_applied `options_add.i` · 가격·재고·usable 다름 = `options_add.i.price` 등 · sale_ok 기준 = 보관본 + 새 조합(id 채움).
+- revert = **새 조합 usable:false(배열에 남김 · 삭제 금지)** + 같은 보관본의 다른 칸 되돌림 → same_as_before = 보관본 + 숨긴 조합 기준 · 결과 `hidden_options[id]` · 숨김 안 먹으면 residual `option_still_usable:<id>`.
+- (워커3 점검 ⓓ) revert 는 새 조합을 **이름으로** 찾음(npwFindAdded) → 적용 뒤 사람이 그 옵션 이름을 바꾸면 숨김 대상에서 빠져 판매 가능한 채 남음 · 결과엔 드러남(보관본에 없는 조합이라 residual 경로 → same_as_before false · 무해). 다음 바퀴 후보 = apply 때 new_options id 를 보관본 result_json 에 적어 두었으니(이미 있음) revert 가 그 id 로 찾게.

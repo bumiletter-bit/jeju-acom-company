@@ -38,7 +38,7 @@ const syncMap = { map: { 2: { c24: 10, minAdd: 0 }, 1: { c24: 11, minAdd: -5200 
 (async () => {
     // ── A. 가짜 자료 — 어긋남 5종 + 참고 ──
     const rep = await PC.build({ pool: null, snapshots, c24Products, pages, syncMap, pricingNames: [], now: NOW });
-    eq([rep.ok, rep.summary.pages, rep.summary.pages_naver, rep.summary.pages_mall, rep.source.mall, rep.source.coupang, rep.source.history_from], [true, 11, 7, 4, 'given', 'excluded', ymd(10)], '보고 뼈대(페이지 11 = 네이버 7 + 자사몰 4 · 쿠팡 제외 표시)');
+    eq([rep.ok, rep.summary.pages, rep.summary.pages_naver, rep.summary.pages_mall, rep.source.mall, rep.source.coupang, rep.source.history_from], [true, 11, 7, 4, 'given', 'none', ymd(10)], '보고 뼈대(페이지 11 = 네이버 7 + 자사몰 4 · 쿠팡 연결 안 됨 표시 #733)');
     eq(Object.keys(rep.summary.issues_by_kind).sort().map(k => k + ":" + rep.summary.issues_by_kind[k]), ["mall_vs_naver:1", "missing:1", "stale:1", "tier_mismatch:1", "vip_not_lower:1", "vip_same:1"], '종류별 1건씩(tier_mismatch · mall_vs_naver · vip_not_lower · stale · missing + 참고 vip_same)');
     const P = k => rep.pages.find(p => p.key === k); const G = frag => rep.groups.find(g => g.label.includes(frag)); const K = (g, kind) => g.issues.filter(i => i.kind === kind);
     eq([P('naver:1').tier, P('naver:3').tier, P('naver:4').tier, P('mall:10').tier, P('mall:12').tier, P('mall:10').linked, P('naver:2').linked, P('naver:6').ignore, P('naver:5').sold], ['normal', 'vip', 'gift', 'normal', 'vip', 'naver:2', 'mall:10', true, false], '등급: 설정 vip · 이름 「선물세트」 gift · 이름 「VIP」 vip · 자사몰은 짝의 등급 · 연결 · 제외 · 품절');
@@ -71,7 +71,7 @@ const syncMap = { map: { 2: { c24: 10, minAdd: 0 }, 1: { c24: 11, minAdd: -5200 
     eq([rep.summary.groups_with_issue, rep.summary.vip_pages.slice().sort(), P('mall:13').options], [2, ['mall:12', 'naver:3'], 0], '요약: 문제 묶음 2(참고만 있는 묶음 제외) · VIP 페이지 2 · 옵션 못 읽은 상품도 페이지 목록에');
     ok(rep.groups[0].issues.some(i => !PC.NOTE_KINDS.includes(i.kind)), '문제 있는 묶음이 맨 위');
     const txt = PC.toText(rep);
-    ok(/페이지끼리 값 다름 1/.test(txt) && /자사몰 ↔ 네이버 다름 1/.test(txt) && /VIP 가 더 비쌈 1/.test(txt) && /한쪽만 안 바뀜 1/.test(txt) && /참고: /.test(txt) && /쿠팡 제외/.test(txt), '글 표: 종류별 건수 · 참고 줄 · 쿠팡 제외');
+    ok(/페이지끼리 값 다름 1/.test(txt) && /자사몰 ↔ 네이버 다름 1/.test(txt) && /VIP 가 더 비쌈 1/.test(txt) && /한쪽만 안 바뀜 1/.test(txt) && /참고: /.test(txt) && /쿠팡 연결 안 됨/.test(txt), '글 표: 종류별 건수 · 참고 줄 · 쿠팡 연결 안 됨(#733)');
     ok(!/undefined|NaN|\[object/.test(txt), '글 표에 깨진 값 없음');
     // 자사몰 없이
     const r2 = await PC.build({ pool: null, snapshots, pages, syncMap, pricingNames: [], now: NOW });

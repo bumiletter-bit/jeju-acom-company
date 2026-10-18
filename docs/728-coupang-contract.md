@@ -69,3 +69,13 @@ source `coupang-item-write` · targetType `coupang_item` · targetId null(번호
 - 실패 기록 = `result_json.update_failed` / `revert_failed{ code, at }` · applied_at·reverted_at 안 찍힘.
 - 1차 op(backup·apply·revert)에 상품 보관본 id 를 넣으면 거절 · update/revert 에 등록 기록 행을 넣어도 거절.
 - 🔵 미확정(첫 실시험에서 봄): 등록 400 이 요구하는 뺄 칸 · 단건 statusName 한글/영문 · 승인완료 상품 전체 수정 중 기존 판매 지속 여부(문서 없음 → 창구 되묻기 + 카드 안내) · 우리 상품 상세(contents) 꼴(글 한 칸이 아니면 detail_html 거절 — get_full 의 contents 요약으로 먼저 봄).
+
+## 8. #733-B 상세 블록 · 외부 그림 · 옵션 추가(update_full 확장 · 타이벡 10/26 오픈 대비)
+- `detail_blocks:[{type:'image', url} | {type:'html', html}]`(1~60) → 워커2 `detail-blocks.js` toCoupangContents(러너 deps.detailBlocksToContents · 없으면 기본 = 그림 IMAGE_NO_SPACE · 글 TEXT) → **모든 옵션의 contents 통째 교체**(그림 구성 상품도 됨) · `detail_html` 과 같이 못 씀 · html 에 script 거절.
+- 그림 주소 규칙(블록 그림 · `images` 새 주소 공통): 쿠팡 그림(`vendor_inventory/…` · `*.coupangcdn.com`) = 늘 허용 · 그 밖 = **https 공개 주소 + 설정 `agent_office_config 'coupang_item_write'.allow_external_images === true` 일 때만**(기본 꺼짐) · http·따옴표·공백 든 주소 거절. 쿠팡엔 그림 올리기 API 없음 → 공개 주소를 넣으면 쿠팡이 받아 CDN 저장(규격 정사각 500~5000px · 3MB · JPG/PNG · 상세 그림 자동 받기는 미확정 → 임시저장 시험).
+- `images` 새 주소 = `{ vendorPath: 주소 }` 로 들어감 · 있던 그림은 그 객체 그대로(cdnPath) · 첫 장 REPRESENTATION.
+- `items_add:[{ itemName, price, stock }]`(1~10) = 마지막 옵션을 틀로 복사(그림·상세·속성·고시) · sellerProductItemId·vendorItemId·itemId·offerCondition 빼고 · 이름 겹침·10원 단위·재고 0~99999 · originalPrice 가 가격보다 작으면 가격. 결과 `items_add_note` = 「vendorItemId 는 쿠팡 승인 뒤」.
+- 결과 `items_after[]` = 재조회 옵션마다 { itemName, sellerProductItemId, vendorItemId, contents(꼴), content_images(≤5), images(≤5 · type·cdnPath·vendorPath) } — 외부 주소가 CDN 으로 바뀌었는지 여기로 봄.
+- revert_full: 비교 = 엄격(보관본·보낸 값 지문) 또는 느슨(상품명 + 옵션명 목록 · CDN 변환·새 번호에 흔들리지 않게) · items_add 로 넣은 옵션 = 임시저장이면 보관본대로 빠짐 · **승인된 상품이면 거절**(승인 옵션 삭제 불가 → Wing 에서 그 옵션 판매중지).
+- 승인된 상품 = 전부 승인행(requested true) → 10/26 오픈이면 10/21~22 에 보내야 함(#733-A).
+- (워커3 점검 반영) ⓑ `detail_blocks` 는 **모든 옵션에 같은 상세**를 넣음(옵션마다 다른 상세는 지원 안 함 · 쿠팡 상세는 옵션 단위라 지금 옵션마다 다르던 상품도 하나로 맞춰짐). ⓐ revert_full 느슨 비교 = 상품명 + 옵션마다 (옵션명 · 상세 꼴 cpwContentsShape · 그림 장수) — Wing 에서 상세·그림만 바꾼 것도 force 없이는 안 덮음(그림 주소 값만 CDN 으로 바뀐 건 통과). ⓒ `items_add[].attributes:[{ attributeTypeName, attributeValueName }]`(구매옵션 값 · 중량 등) = 주면 그 이름 칸만 바꿈(없으면 붙임) · 안 주면 틀 그대로 · 값 있는 구매옵션 묶음이 다른 옵션과 똑같으면 거절 「구매옵션 값(중량 등)을 같이 주세요」(값이 하나도 없는 상품은 통과).

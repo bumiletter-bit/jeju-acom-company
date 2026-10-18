@@ -2039,18 +2039,18 @@
     //   설정 = GET /api/price-check/pages { config } · POST(관리자)는 **통째로 갈아 끼움** → 있던 설정 + 바꾼 것을 함께 보낸다 · 키는 naver:번호 · cafe24:번호(보고의 mall: 을 바꿔 보냄)
     //   카드는 처음 열 때 만든다(닫힌 화면의 칸 순서를 안 바꾼다) · 읽기 전용 · 쓰기는 「페이지 등급 설정」 저장뿐
     const PRICE = { data: null, busy: false, kind: null, q: '', view: null, only: false, fold: new Set(), seq: 0, qt: 0, cfg: null, setBusy: false };   // #622: view = selling|all · only = 이상 있는 것만 · fold = 접은 품목('i:이름')·규격('g:키') — 이 화면 동안 기억
-    const PC_BAD = [['tier_mismatch', '페이지끼리 값 다름'], ['mall_vs_naver', '자사몰≠네이버'], ['vip_not_lower', 'VIP가 더 비쌈'], ['stale', '한쪽만 안 바뀜']];
-    const PC_REF = [['missing', '자사몰에 없음'], ['vip_same', 'VIP와 일반 값 같음']];   // 참고(어긋남으로 세지 않는다)
+    const PC_BAD = [['tier_mismatch', '페이지끼리 값 다름'], ['mall_vs_naver', '자사몰≠네이버'], ['coupang_vs_naver', '쿠팡≠네이버'], ['vip_not_lower', 'VIP가 더 비쌈'], ['stale', '한쪽만 안 바뀜']];   // #733-C 쿠팡
+    const PC_REF = [['missing', '자사몰에 없음'], ['vip_same', 'VIP와 일반 값 같음'], ['coupang_unmatched', '쿠팡 짝 없음']];   // 참고(어긋남으로 세지 않는다)
     const PC_KIND_LABEL = Object.fromEntries(PC_BAD.concat(PC_REF));
     const pcIsRef = k => PC_REF.some(x => x[0] === k);
     const PC_TIERS = [['normal', '일반', 'mute'], ['vip', 'VIP', 'work'], ['gift', '선물', 'done'], ['bulk', '대용량', 'wait']];
     const PC_TIER = Object.fromEntries(PC_TIERS.map(t => [t[0], t]));
-    const PC_CH = { naver: '네이버', mall: '자사몰', cafe24: '자사몰' };
+    const PC_CH = { naver: '네이버', mall: '자사몰', cafe24: '자사몰', coupang: '쿠팡' };
     const PC_VIEWS = [['selling', '판매중'], ['all', '전체상품']];   // #622(대표 10/10): 판매 중인 상품만 / 안 파는 것까지 전부
     const pcLive = r => !(r.sold === false || r.ignore);   // 지금 파는 줄
     const PC_HTML = `
             <section class="desk-tool pc-card" id="desk-price" aria-label="전체 가격 확인" hidden>
-                <div class="desk-tool-head"><b>전체 가격 확인</b><span id="pc-sub">네이버·자사몰 옵션 결제가</span><button type="button" class="desk-btn sm pc-re" id="pc-refresh">다시 확인</button><button type="button" class="desk-btn sm desk-tool-x" id="pc-close">닫기</button></div>
+                <div class="desk-tool-head"><b>전체 가격 확인</b><span id="pc-sub">네이버·자사몰·쿠팡 옵션 결제가</span><button type="button" class="desk-btn sm pc-re" id="pc-refresh">다시 확인</button><button type="button" class="desk-btn sm desk-tool-x" id="pc-close">닫기</button></div>
                 <div class="ship-prog" id="pc-prog" role="status" hidden><div class="ship-prog-line"><span>가격을 모으는 중(1분쯤 걸릴 수 있어요)</span></div><div class="ship-track busy"><i></i></div></div>
                 <div class="ship-note" id="pc-note" role="status" hidden></div>
                 <div class="pc-when" id="pc-when" hidden></div>
@@ -2152,18 +2152,26 @@
                 ${lines ? `<ul class="pc-issues">${lines}</ul>` : ''}
             </section>`;
     }
+    // #733-C 쿠팡 한 줄 — 옛 서버(source.coupang 없음 · 'excluded')면 아무것도 안 붙인다
+    function pcCoupangLine(d) {
+        const s = (d && d.source) || {}; if (!s.coupang || s.coupang === 'excluded') return '';
+        const un = ((d.summary || {}).coupang_unmatched || []).length;
+        if (s.coupang === 'none' && !s.coupang_mapped) return '<em class="pc-cp">쿠팡: 연결 안 됨 — 창구에 「쿠팡 가격 연결해줘」</em>';
+        if (s.coupang !== 'live' && s.coupang !== 'given') return '<em class="pc-cp">쿠팡: 조회하지 못했어요(연결 ' + nfmt(s.coupang_mapped || 0) + '개)</em>';
+        return '<span class="pc-cp">쿠팡은 방금 값 · 연결 ' + nfmt(s.coupang_mapped || 0) + '개' + (s.coupang_failed ? ' · 못 읽음 ' + nfmt(s.coupang_failed) : '') + (un ? ' · 연결 안 됨 ' + nfmt(un) + '(네이버 짝 없음)' : '') + '</span>';
+    }
     function pcRender() {
         const d = PRICE.data, out = $('pc-out'); if (!out) return;
         const by = {}; let bad = 0, off = [];
         if (d) (d.groups || []).forEach(g => { if (!g) return; (g.issues || []).forEach(is => { by[is.kind] = (by[is.kind] || 0) + 1; if (!pcIsRef(is.kind)) bad++; }); if (g.offseason_mismatch) off.push(g); });
-        $('pc-sub').textContent = d ? (bad ? '이상 있음 ' + nfmt(bad) + '건' : '이상 없음') : '네이버·자사몰 옵션 결제가';
+        $('pc-sub').textContent = d ? (bad ? '이상 있음 ' + nfmt(bad) + '건' : '이상 없음') : '네이버·자사몰·쿠팡 옵션 결제가';
         $('pc-sub').dataset.k = bad ? 'err' : '';
         const src = d && d.source ? d.source : {}, snap = pcWhen(src.naver_snapshot_at), wh = $('pc-when');
         wh.hidden = !d;
         if (d) {
             const notes = (Array.isArray(d.notes) ? d.notes : []).filter(n => /자사몰/.test(String(n)));
             const mallBad = src.mall === 'error' || src.mall === 'none';
-            wh.innerHTML = `<b>네이버 ${snap ? esc(snap) + ' 값' : '새벽 값'}</b><span>${mallBad ? '' : '자사몰은 방금 값 · '}네이버는 새벽에 찍어 둔 값이에요. 낮에 고친 네이버 가격은 내일 새벽 뒤에 확인돼요.${pcWhen(d.generated_at) ? ' (확인 ' + esc(pcWhen(d.generated_at)) + ')' : ''}</span>${mallBad ? '<em>' + esc(notes.join(' · ') || '자사몰은 조회하지 못해 네이버 페이지끼리만 견줬어요') + '</em>' : ''}`;
+            wh.innerHTML = `<b>네이버 ${snap ? esc(snap) + ' 값' : '새벽 값'}</b><span>${mallBad ? '' : '자사몰은 방금 값 · '}네이버는 새벽에 찍어 둔 값이에요. 낮에 고친 네이버 가격은 내일 새벽 뒤에 확인돼요.${pcWhen(d.generated_at) ? ' (확인 ' + esc(pcWhen(d.generated_at)) + ')' : ''}</span>${mallBad ? '<em>' + esc(notes.join(' · ') || '자사몰은 조회하지 못해 네이버 페이지끼리만 견줬어요') + '</em>' : ''}${pcCoupangLine(d)}`;
         }
         // #622(대표 10/10 「문구 줄 빼고 이상 있고 없고를」): 종류별 숫자 칸 6개 대신 한 줄 요약 — 판매 중인 품목 수 · 그 가운데 이상 있는 품목 수 · 참고 건수(참고는 이상에 안 셈)
         const sum = $('pc-sum'); sum.hidden = !d;

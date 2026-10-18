@@ -13,7 +13,11 @@
 //               옵션 결제가 = discPrice + opts.price (자사몰 가격 도구 mall-price.js · 새벽 05:10 점검과 같은 식)
 //               마지막 변경일 = 보관된 스냅샷(지금 약 30일치)을 날짜순으로 훑어 그 페이지·그 옵션 결제가가 마지막으로 달라진 날. 그 안에 변화가 없으면 null(「○/○ 이전부터 그대로」)
 //     자사몰  = 카페24 상품(기본가) + variants(추가금) — 결제가 = 기본가 + 추가금. 변경 이력은 보관하지 않는다 → 변경일 「확인 불가」
-//     쿠팡    = 🔴 제외(중계서버에 가격 조회 길이 없다 — 발주서 조회 2종뿐)
+//     쿠팡    = #733-C: 연결표 agent_office_config 'coupang_item_map' { "<vendorItemId>": { seller_product_id?, product_name?, item_name, bot_product_id?, label?, separate?, note? } } 에 있는 옵션만
+//               build({ coupangGet }) 로 지금 값(쿠팡 inventories · salePrice = 손님 결제가)을 하나씩 읽는다(사이 0.5초 · 서버가 callCoupang 으로 넘김 · 없으면 「쿠팡 조회 못 함」)
+//               묶음 열쇠 = bot_product_id(판매현황 이름) → label(단가표 이름) → 상품명 + 옵션명을 네이버와 같은 매칭기로(자동 매칭) · separate:true = 표에만 두고 견주지 않음(쿠팡 값을 따로 받는 옵션)
+//               견주기 = 같은 묶음의 네이버 일반(vip 아닌) 페이지 값과 같아야 한다 → 다르면 coupang_vs_naver · 네이버 짝이 없으면 coupang_unmatched(참고 · 연결표 손질 대상)
+//               🔵 쿠팡은 스냅샷이 없어 변경일 「확인 불가」 · 연결표에 없는 쿠팡 옵션은 안 본다(창구 coupang-item.js map 으로 연결)
 //   페이지 등급(tier) = normal | vip | gift | bulk
 //     ①이름 규칙(「VIP」 = vip · 「선물세트」 = gift · 「대용량」 = bulk) ②아래 DEFAULT_PAGES(알려진 사실) ③설정 agent_office_config 'price_check_pages' { "naver:번호"|"cafe24:번호"(또는 "mall:번호"): { tier, name, note, ignore } } 가 마지막에 덮는다
 //     자사몰 상품은 연결표(cafe24_sync_map)로 짝이 된 네이버 페이지의 등급을 물려받는다(설정으로 따로 줄 수 있다).
@@ -26,7 +30,8 @@ const fs = require('fs'); const path = require('path');
 const DEFAULT_PAGES = { 'naver:10801253976': { tier: 'vip', note: 'VIP 선물페이지' } };
 const TIERS = ['normal', 'vip', 'gift', 'bulk'];
 const STALE_DAYS = 7;
-const NOTE_KINDS = ['missing', 'vip_same'];   // 참고(문제로 세지 않는 것)
+const NOTE_KINDS = ['missing', 'vip_same', 'coupang_unmatched'];   // 참고(문제로 세지 않는 것)
+const COUPANG_GAP_MS = 500;   // 쿠팡 vendorId 초당 5회 — 옵션 사이 0.5초
 
 // ── app.js 의 매칭기를 그대로 떼어 쓴다(verify-406-match 와 같은 경계) — 브라우저 파일이라 require 가 안 된다 ──
 let _matcher;   // undefined = 아직 · null = 못 만듦
@@ -106,9 +111,24 @@ async function fetchMall(cafe24Get, wantNos, sleepMs) {
     return out;
 }
 
+// #733-C 쿠팡 연결표 옵션의 지금 값 → [{ vid, ...entry, price, stock, on_sale, error? }]
+async function fetchCoupang(coupangGet, map, gapMs) {
+    const sleep = ms => new Promise(r => setTimeout(r, ms)); const gap = gapMs == null ? COUPANG_GAP_MS : gapMs; const out = [];
+    let first = true;
+    for (const [vid, e] of Object.entries(map || {})) {
+        if (!/^\d{1,15}$/.test(String(vid)) || !e || typeof e !== 'object' || e.ignore) continue;
+        if (!first && gap > 0) await sleep(gap); first = false;
+        const row = Object.assign({ vid: String(vid) }, e);
+        try { const v = await coupangGet(String(vid)); row.price = v && v.price != null ? won(v.price) : null; row.stock = v && v.stock != null ? Number(v.stock) : null; row.on_sale = v ? v.on_sale : null; if (row.price == null) row.error = '값 없음'; }
+        catch (err) { row.price = null; row.error = String((err && (err.status || err.message)) || err).slice(0, 80); }
+        out.push(row);
+    }
+    return out;
+}
+
 async function build(opt) {
     const o = opt || {}; const pool = o.pool; const now = o.now == null ? Date.now() : new Date(o.now).getTime();
-    const notes = ['쿠팡은 제외(가격 조회 길 없음)'];
+    const notes = ['쿠팡은 연결표(coupang_item_map) 옵션만'];
     // ── 자료 모으기 ──
     let snaps = o.snapshots;
     if (!snaps) snaps = (await pool.query(`SELECT id, run_at, items FROM naver_product_snapshot WHERE items IS NOT NULL ORDER BY id`)).rows;
@@ -130,6 +150,22 @@ async function build(opt) {
         catch (e) { mall = null; mallState = 'error'; notes.push('자사몰 조회 실패: ' + String((e && (e.reason || e.message || e.code)) || e).slice(0, 100)); }
     }
     if (!mall) notes.push('자사몰은 조회하지 못해 네이버 페이지끼리만 견줬습니다');
+    // #733-C 쿠팡 — 연결표 옵션만 지금 값
+    const cpMap = o.coupangMap || ((await loadCfg(pool, o.cfg, 'coupang_item_map')) || {});
+    const cpMapN = Object.keys(cpMap).filter(k => /^\d{1,15}$/.test(k) && cpMap[k] && !cpMap[k].ignore).length;
+    let cp = o.coupangItems || null, cpState = cp ? 'given' : 'none';
+    if (!cp && cpMapN && typeof o.coupangGet === 'function') {
+        try { cp = await fetchCoupang(o.coupangGet, cpMap, o.coupangGapMs); cpState = 'live'; }
+        catch (e) { cp = null; cpState = 'error'; notes.push('쿠팡 조회 실패: ' + String((e && (e.message || e.code)) || e).slice(0, 100)); }
+    }
+    if (!cpMapN && !o.coupangItems) notes.push('쿠팡 연결표가 비어 있어 쿠팡은 견주지 않았습니다(창구 coupang-item.js map)');
+    else if (!cp) notes.push('쿠팡은 조회하지 못했습니다');
+    const cpFailed = (cp || []).filter(x => x.error).length;
+    if (cpFailed) notes.push(`쿠팡 옵션 ${cpFailed}개는 값을 못 읽었습니다`);
+    // bot_product_id → 판매현황 이름(묶음 열쇠)
+    const botIds = [...new Set((cp || []).map(x => Number(x.bot_product_id)).filter(n => n > 0))];
+    let botName = {};
+    if (botIds.length) { try { const r = o.botNames ? { rows: Object.entries(o.botNames).map(([id, name]) => ({ id: Number(id), name })) } : await pool.query(`SELECT id, name FROM bot_products WHERE id = ANY($1::int[]) AND deleted_at IS NULL`, [botIds]); for (const x of r.rows) botName[x.id] = x.name; } catch (e) { botName = {}; } }
 
     // ── 네이버: 옵션별 가격 이력 → 마지막 변경일 ──
     const hist = new Map();   // "번호|옵션글자" → [{ at, price }]
@@ -166,9 +202,21 @@ async function build(opt) {
         }
     }
 
+    // #733-C 쿠팡 페이지(상품 하나 = 페이지 하나 · 상품 번호 없으면 연결표 한 칸 = 페이지) · 줄
+    for (const x of (cp || [])) {
+        const key = 'coupang:' + (x.seller_product_id ? String(x.seller_product_id) : 'v' + x.vid); const c = pageCfg[key] || {};
+        let page = pages.find(p => p.key === key);
+        if (!page) { page = { key, channel: 'coupang', id: x.seller_product_id ? String(x.seller_product_id) : x.vid, name: c.name || x.product_name || '쿠팡 상품', tier: tierOf(key, x.product_name || ''), options: 0, sold: true, status: '쿠팡', linked: null, ignore: !!c.ignore, note: c.note || undefined }; pages.push(page); }
+        page.options++;
+        const bn = Number(x.bot_product_id) > 0 ? botName[Number(x.bot_product_id)] : null;
+        const ok = bn ? { key: 'p:' + bn, label: bn, by: 'map' } : x.label ? { key: 'p:' + String(x.label), label: String(x.label), by: 'map' } : optionKey([x.product_name, x.item_name].filter(Boolean), pricingNames);
+        rows.push({ gkey: ok.key, label: ok.label, by: ok.by, page_key: key, channel: 'coupang', option_text: String(x.item_name || x.vid), price: x.price, tier: page.tier, vid: x.vid,
+            changed_at: null, prev_price: null, unchanged_since: null, changed_unknown: true, sold: x.price != null && x.on_sale === true && Number(x.stock) > 0, ignore: page.ignore || !!x.separate, separate: !!x.separate || undefined, read_error: x.error || undefined });
+    }
+
     // ── 묶어서 견주기 ──
     const byKey = new Map(); for (const r of rows) { let g = byKey.get(r.gkey); if (!g) { g = { key: r.gkey, label: r.label, rows: [], issues: [] }; byKey.set(r.gkey, g); } g.rows.push(r); }
-    const pageByKey = new Map(pages.map(p => [p.key, p])); const pname = k => { const p = pageByKey.get(k); return p ? `${p.channel === 'naver' ? '네이버' : '자사몰'} 「${String(p.name).slice(0, 22)}」` : k; };
+    const pageByKey = new Map(pages.map(p => [p.key, p])); const CH_KO = { naver: '네이버', mall: '자사몰', coupang: '쿠팡' }; const pname = k => { const p = pageByKey.get(k); return p ? `${CH_KO[p.channel] || p.channel} 「${String(p.name).slice(0, 22)}」` : k; };
     const fmt = n => Number(n).toLocaleString('ko-KR') + '원';
     const groups = []; const byKind = {};
     const add = (g, kind, detail, extra) => { g.issues.push(Object.assign({ kind, detail }, extra || {})); byKind[kind] = (byKind[kind] || 0) + 1; };
@@ -177,7 +225,7 @@ async function build(opt) {
         const cls = t => t === 'vip' ? 'vip' : 'base';
         for (const c of ['base', 'vip']) {
             // 네이버 짝이 같은 묶음에 있는 자사몰 줄은 여기서 빼고 아래 「자사몰 ↔ 네이버」에서만 짚는다(같은 일을 두 번 세지 않게)
-            const rs = live.filter(r => cls(r.tier) === c && !(r.channel === 'mall' && (pageByKey.get(r.page_key) || {}).linked && live.some(n => n.page_key === pageByKey.get(r.page_key).linked))); const prices = [...new Set(rs.map(r => r.price))];
+            const rs = live.filter(r => cls(r.tier) === c && r.channel !== 'coupang' && !(r.channel === 'mall' && (pageByKey.get(r.page_key) || {}).linked && live.some(n => n.page_key === pageByKey.get(r.page_key).linked))); const prices = [...new Set(rs.map(r => r.price))];
             if (prices.length > 1) {
                 // 가장 많은 값이 「맞는 값」일 가능성이 높다 — 다른 값을 가진 줄을 짚는다(같은 수면 최근에 바뀐 값을 기준으로)
                 const cnt = p => rs.filter(r => r.price === p).length; const recent = p => rs.filter(r => r.price === p && r.changed_at).map(r => r.changed_at).sort().pop() || '';
@@ -193,8 +241,15 @@ async function build(opt) {
             if (mateLive.length) { for (const m of mateLive) if (m.price !== r.price && cls(m.tier) === cls(r.tier)) add(g, 'mall_vs_naver', `${pname(r.page_key)} ${fmt(r.price)} ↔ ${pname(m.page_key)} ${fmt(m.price)}`, { naver: r.page_key, mall: m.page_key, diff: m.price - r.price }); }
             else { const mp = pageByKey.get(pg.linked); if (mp && mp.sold && !mp.ignore && !mp.error && !ignoreKeys.has(cafe24OptKey(r.option_text))) add(g, 'missing', `${pname(r.page_key)}에서는 파는데 ${pname(pg.linked)}에는 ${mate.length ? '미노출·판매중지' : '없어요'}(참고)`, { naver: r.page_key, mall: pg.linked }); }
         }
+        // #733-C 쿠팡 ↔ 네이버(일반 페이지 값과 같아야 · 네이버 값이 여럿이면 가장 많은 값)
+        for (const r of g.rows.filter(x => x.channel === 'coupang' && !x.ignore && x.price != null)) {
+            const nv = live.filter(x => x.channel === 'naver' && x.tier !== 'vip');
+            if (!nv.length) { if (!g.rows.some(x => x.channel === 'naver')) add(g, 'coupang_unmatched', `${pname(r.page_key)} 「${r.option_text}」 와 같은 네이버 옵션을 못 찾았어요 — 연결표에서 판매현황 이름을 지정(참고)`, { coupang: r.page_key, vid: r.vid }); continue; }
+            const cnt = p => nv.filter(x => x.price === p).length; const ref = [...new Set(nv.map(x => x.price))].sort((a, b) => cnt(b) - cnt(a))[0];
+            if (r.price !== ref) add(g, 'coupang_vs_naver', `${pname(r.page_key)} ${fmt(r.price)} ↔ 네이버 ${fmt(ref)}(${nv.filter(x => x.price === ref).map(x => pname(x.page_key)).join(' · ')})${r.sold ? '' : ' · 쿠팡은 지금 안 팖'}`, { coupang: r.page_key, vid: r.vid, naver_price: ref, diff: r.price - ref });
+        }
         // VIP 가 일반보다 비쌈
-        const base = live.filter(r => r.tier !== 'vip'), vip = live.filter(r => r.tier === 'vip');
+        const base = live.filter(r => r.tier !== 'vip' && r.channel !== 'coupang'), vip = live.filter(r => r.tier === 'vip');
         if (base.length && vip.length) {
             const bmin = Math.min(...base.map(r => r.price));
             for (const v of vip) if (v.price > bmin) add(g, 'vip_not_lower', `${pname(v.page_key)} ${fmt(v.price)} 이 일반 ${fmt(bmin)} 보다 비싸요`, { vip: v.page_key, vip_price: v.price, base_price: bmin });
@@ -210,19 +265,20 @@ async function build(opt) {
         }
         { const off = g.rows.filter(r => !r.sold && !r.ignore); const ps = [...new Set(off.filter(r => cls(r.tier) === 'base').map(r => r.price))]; if (!live.length && ps.length > 1) g.offseason_mismatch = ps; }
         g.sold_rows = live.length; g.by = g.rows.some(r => r.by === 'match') ? 'match' : 'text';
-        g.rows = g.rows.map(r => ({ page_key: r.page_key, channel: r.channel, option_text: r.option_text, price: r.price, tier: r.tier, changed_at: r.changed_at, prev_price: r.prev_price, unchanged_since: r.unchanged_since, changed_unknown: r.changed_unknown || undefined, sold: r.sold, ignore: r.ignore || undefined }));
+        g.rows = g.rows.map(r => ({ page_key: r.page_key, channel: r.channel, option_text: r.option_text, price: r.price, tier: r.tier, changed_at: r.changed_at, prev_price: r.prev_price, unchanged_since: r.unchanged_since, changed_unknown: r.changed_unknown || undefined, sold: r.sold, ignore: r.ignore || undefined, ...(r.channel === 'coupang' ? { vid: r.vid, separate: r.separate, read_error: r.read_error } : {}) }));
         groups.push(g);
     }
     // 문제 있는 묶음 먼저 · 그다음 여러 페이지에 걸린 묶음 · 이름순
     groups.sort((a, b) => (b.issues.filter(i => !NOTE_KINDS.includes(i.kind)).length - a.issues.filter(i => !NOTE_KINDS.includes(i.kind)).length) || (b.issues.length - a.issues.length) || (b.sold_rows - a.sold_rows) || a.label.localeCompare(b.label, 'ko'));
     return {
         ok: true, generated_at: new Date(now).toISOString(),
-        source: { naver_snapshot_id: last.id, naver_snapshot_at: new Date(last.at).toISOString(), snapshots: snaps.length, history_from: kstDate(snaps[0].at), mall: mallState, mall_products: mall ? mall.length : 0, coupang: 'excluded' },
+        source: { naver_snapshot_id: last.id, naver_snapshot_at: new Date(last.at).toISOString(), snapshots: snaps.length, history_from: kstDate(snaps[0].at), mall: mallState, mall_products: mall ? mall.length : 0, coupang: cpState, coupang_mapped: cpMapN, coupang_read: (cp || []).filter(x => !x.error).length, coupang_failed: cpFailed },
         pages, groups,
         ...(mallState === 'live' ? { mall_raw: mall.map(p => ({ cno: p.cno, name: p.name, base: p.base, selling: p.selling, display: p.display, vars: p.vars ? p.vars.map(v => ({ code: v.code, name: v.name, add: v.add, selling: v.selling, display: v.display })) : null })) } : {}),   // 서버가 price_check_last.mall 로 적어 두면 창구 도구가 읽는다(지금 조회한 때만)
-        summary: { pages: pages.length, pages_naver: pages.filter(p => p.channel === 'naver').length, pages_mall: pages.filter(p => p.channel === 'mall').length, pages_sold: pages.filter(p => p.sold).length,
+        summary: { pages: pages.length, pages_naver: pages.filter(p => p.channel === 'naver').length, pages_mall: pages.filter(p => p.channel === 'mall').length, pages_coupang: pages.filter(p => p.channel === 'coupang').length, pages_sold: pages.filter(p => p.sold).length,
             groups: groups.length, groups_multi: groups.filter(g => g.sold_rows > 1).length, groups_with_issue: groups.filter(g => g.issues.some(i => !NOTE_KINDS.includes(i.kind))).length, issues_by_kind: byKind,
-            offseason_mismatch: groups.filter(g => g.offseason_mismatch).length, vip_pages: pages.filter(p => p.tier === 'vip').map(p => p.key), text_keyed_groups: groups.filter(g => g.by === 'text').length },
+            offseason_mismatch: groups.filter(g => g.offseason_mismatch).length, vip_pages: pages.filter(p => p.tier === 'vip').map(p => p.key), text_keyed_groups: groups.filter(g => g.by === 'text').length,
+            coupang_unmatched: groups.flatMap(g => g.issues.filter(i => i.kind === 'coupang_unmatched').map(i => i.vid)) },
         notes,
     };
 }
@@ -231,11 +287,11 @@ async function build(opt) {
 function toText(rep, optx) {
     const x = optx || {}; if (!rep || !rep.ok) return '가격 확인을 하지 못했어요: ' + ((rep && rep.error) || '알 수 없음');
     const s = rep.summary; const fmt = n => Number(n).toLocaleString('ko-KR'); const pk = new Map(rep.pages.map(p => [p.key, p]));
-    const nm = k => { const p = pk.get(k); return p ? `${p.channel === 'naver' ? '네이버' : '자사몰'} ${String(p.name).slice(0, 18)}${p.tier !== 'normal' ? `[${p.tier === 'vip' ? 'VIP' : p.tier === 'gift' ? '선물' : '대용량'}]` : ''}` : k; };
+    const nm = k => { const p = pk.get(k); return p ? `${({ naver: '네이버', mall: '자사몰', coupang: '쿠팡' })[p.channel] || p.channel} ${String(p.name).slice(0, 18)}${p.tier !== 'normal' ? `[${p.tier === 'vip' ? 'VIP' : p.tier === 'gift' ? '선물' : '대용량'}]` : ''}` : k; };
     const L = [];
     L.push(`━━━ 전체 가격 확인 (${new Date(new Date(rep.generated_at).getTime() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')}) ━━━`);
-    L.push(`페이지 ${s.pages}곳(네이버 ${s.pages_naver} · 자사몰 ${s.pages_mall} · 파는 중 ${s.pages_sold}) · 옵션 묶음 ${s.groups}개(여러 페이지에 걸린 것 ${s.groups_multi})`);
-    const k = s.issues_by_kind || {}; const KO = { tier_mismatch: '페이지끼리 값 다름', mall_vs_naver: '자사몰 ↔ 네이버 다름', vip_not_lower: 'VIP 가 더 비쌈', stale: '한쪽만 안 바뀜', missing: '자사몰에 없음(참고)', vip_same: 'VIP 와 일반 값 같음(참고)' };
+    L.push(`페이지 ${s.pages}곳(네이버 ${s.pages_naver} · 자사몰 ${s.pages_mall}${s.pages_coupang ? ' · 쿠팡 ' + s.pages_coupang : ''} · 파는 중 ${s.pages_sold}) · 옵션 묶음 ${s.groups}개(여러 페이지에 걸린 것 ${s.groups_multi})`);
+    const k = s.issues_by_kind || {}; const KO = { tier_mismatch: '페이지끼리 값 다름', mall_vs_naver: '자사몰 ↔ 네이버 다름', vip_not_lower: 'VIP 가 더 비쌈', stale: '한쪽만 안 바뀜', coupang_vs_naver: '쿠팡 ↔ 네이버 다름', missing: '자사몰에 없음(참고)', vip_same: 'VIP 와 일반 값 같음(참고)', coupang_unmatched: '쿠팡 짝 없음(참고)' };
     const bad = Object.keys(KO).filter(n => k[n] && !NOTE_KINDS.includes(n)).map(n => `${KO[n]} ${k[n]}`); const ref = NOTE_KINDS.filter(n => k[n]).map(n => `${KO[n]} ${k[n]}`);
     L.push(bad.length ? '👉 ' + bad.join(' · ') : '👉 어긋난 곳 없음'); if (ref.length) L.push('   참고: ' + ref.join(' · '));
     for (const g of rep.groups.filter(g => g.issues.length)) {
@@ -246,9 +302,9 @@ function toText(rep, optx) {
     if (x.all) { L.push(''); L.push('━━━ 여러 페이지에 걸린 옵션(값 같음) ━━━'); for (const g of rep.groups.filter(g => !g.issues.length && g.sold_rows > 1)) L.push(`  ${g.label} — ${fmt(g.rows.find(r => r.sold).price)}원 · ${g.rows.filter(r => r.sold).map(r => nm(r.page_key)).join(' / ')}`); }
     const offs = rep.groups.filter(g => g.offseason_mismatch);
     if (offs.length) { L.push(''); L.push(`━━━ 지금은 안 파는 옵션인데 페이지끼리 값이 다른 것 ${offs.length}개(다시 팔기 전에 확인) ━━━`); for (const g of offs) L.push(`  ${g.label} — ${g.rows.map(r => `${fmt(r.price)}원(${nm(r.page_key)})`).join(' / ')}`); }
-    L.push(''); L.push(`자료: 네이버 스냅샷 ${rep.source.naver_snapshot_at.slice(0, 10)} 새벽(그 뒤에 바꾼 값은 내일 반영) · 변경일은 ${rep.source.history_from} 이후만 · 자사몰 ${rep.source.mall === 'live' ? '지금 조회' : rep.source.mall === 'given' ? '받은 자료' : '조회 못 함'} · 쿠팡 제외`);
+    L.push(''); L.push(`자료: 네이버 스냅샷 ${rep.source.naver_snapshot_at.slice(0, 10)} 새벽(그 뒤에 바꾼 값은 내일 반영) · 변경일은 ${rep.source.history_from} 이후만 · 자사몰 ${rep.source.mall === 'live' ? '지금 조회' : rep.source.mall === 'given' ? '받은 자료' : '조회 못 함'} · 쿠팡 ${rep.source.coupang === 'live' ? '지금 조회(연결 ' + rep.source.coupang_mapped + '개)' : rep.source.coupang === 'given' ? '받은 자료' : rep.source.coupang_mapped ? '조회 못 함' : '연결 안 됨'}`);
     for (const n of (rep.notes || []).slice(1)) L.push('※ ' + n);
     return L.join('\n');
 }
 
-module.exports = { build, toText, optionKey, cafe24OptKey, tierByName, fetchMall, DEFAULT_PAGES, TIERS, STALE_DAYS, NOTE_KINDS };
+module.exports = { build, toText, optionKey, cafe24OptKey, tierByName, fetchMall, fetchCoupang, DEFAULT_PAGES, TIERS, STALE_DAYS, NOTE_KINDS };
