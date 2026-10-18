@@ -592,6 +592,8 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
             await tb({ detail_blocks: [{ type: 'html', html: '<script>x</script>' }] }, /script/, '블록 html script 거절');
             await tb({ detail_blocks: [{ type: 'video', url: 'https://a/b' }] }, /image 또는 html/, '블록 type 거절');
             await tb({ detail_blocks: BL, detail_html: '<p>x</p>' }, /하나만/, 'detail_html + detail_blocks 같이 거절');
+            await tb({ detail_blocks: Array.from({ length: 121 }, () => ({ type: 'html', html: '<p>x</p>' })) }, /1~120개/, '#746 상한 120 — 121블록 거절');
+            ok(!mod.cpwApplyFull(kb.cp.prods[SPC], { detail_blocks: Array.from({ length: 68 }, (_, i) => ({ type: 'html', html: '<p>' + i + '</p>' })) }, { allowExternal: true }).error, '#746 68블록(감귤 상세) = 통과');
             const on = await run({ op: 'update_full', ...base, backup_id: gb.backup_id, patch: { detail_blocks: BL } }, kb.deps);
             const pc = kb.cp.puts[0];
             ok(on.ok && on.requested === false && pc.items.every(it => it.contents.length === 3 && it.contents[0].contentsType === 'TEXT' && it.contents[1].contentsType === 'IMAGE_NO_SPACE' && it.contents[2].contentDetails[0].content === 'https://shop-phinf.pstatic.net/a.jpg'),

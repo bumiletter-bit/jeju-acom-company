@@ -17245,7 +17245,7 @@ function cpwInner(d) {
 // #733-B 그림 주소 — 쿠팡 그림(cdnPath 꼴 · coupangcdn) 은 늘 · 그 밖 공개 https 는 설정 'coupang_item_write'.allow_external_images true 일 때만
 //   쿠팡엔 그림 올리기 API 가 없음(#733-A) → 공개 https 주소를 vendorPath·contents 에 넣으면 쿠팡이 받아 CDN 에 저장(대표·추가 그림 = 정사각 500~5000px · 3MB · JPG/PNG)
 const CPW_COUPANG_IMG_RE = /^(vendor_inventory\/|https:\/\/[\w.-]*coupangcdn\.com\/)/;
-const CPW_MAX_BLOCKS = 60, CPW_MAX_ITEMS_ADD = 10;
+const CPW_MAX_BLOCKS = 120, CPW_MAX_ITEMS_ADD = 10;   // #746 감귤 상세 68블록(쿠팡 문서엔 개수 상한 없음 · 실 PUT 이 거절하면 그 메시지로)
 function cpwImgOk(url, allowExternal) {
     if (typeof url !== 'string' || !url || url.length > 1000) return '그림 주소가 비었거나 너무 길어요';
     if (CPW_COUPANG_IMG_RE.test(url)) return null;

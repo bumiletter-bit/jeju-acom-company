@@ -220,10 +220,9 @@ module.exports = function mountSms(app, deps) {
                 m.bucket || null, m.rule_kind || null, m.ai_json ? JSON.stringify(m.ai_json) : null, m.send_after || null, m.event_at || null, m.envelope_id || null, Number.isInteger(m.priority) ? m.priority : 0]);
         return r.rows[0] || null;
     }
-    async function staffUserIds(c) {
-        if (c.staff_ids.length) return c.staff_ids;
+    async function staffUserIds(c) {   // #748 받는 사람 = 관리자 전원 ∪ 설정 staff_ids(직원 계정 더하기 · 관리자가 빠지지 않게) · 같은 사람 한 번
         const r = await pool.query(`SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL ORDER BY id`);
-        return r.rows.map(x => x.id);
+        return [...new Set(r.rows.map(x => x.id).concat(c.staff_ids))];
     }
     // 직원 알림(화면 알림 + 폰 푸시 · type 'sms' · 손님 번호·이름 없이 끝 4자리만)
     async function notifyStaff(c, thread, title, message, opts = {}) {

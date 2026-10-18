@@ -123,6 +123,7 @@ const isCoupangLink = u => CP_LINK_RE.test(String(u || '').trim());
 // 네이버 상품 주소 → 상품 번호(smartstore.naver.com/<가게>/products/<번호> · brand.naver.com/<가게>/products/<번호>)
 const naverProductNo = u => { const m = /^https?:\/\/(?:m\.)?(?:smartstore|brand)\.naver\.com\/[^/?#]+\/products\/(\d{5,15})/i.exec(String(u || '').trim()); return m ? m[1] : null; };
 //   opts.linkMap = { "<네이버 상품 번호>": "<쿠팡 상품 번호(쿠팡 상품 주소 vp/products 뒤 숫자)>" } → 그 네이버 상품 링크는 짝 쿠팡 주소로(짝 없으면 벗김) · 기본 = 없음
+//   🔵 실측(#746 · 워커1 임시저장 10/18): 쿠팡은 저장 때 TEXT 안 <a> 의 href·rel 을 지움(빈 <a> 만 남음 · 그림은 쿠팡 CDN 으로 옮김) → 쿠팡 상세 링크는 안 살아남음 · linkMap 은 켜지 않음
 function coupangPolicy(blocks, opts) {
     const out = [], removed = [], images = [], relinked = []; let unlinked = 0;
     const linkMap = (opts && opts.linkMap && typeof opts.linkMap === 'object') ? opts.linkMap : {};
