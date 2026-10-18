@@ -15520,6 +15520,7 @@ async function cafe24OptRun(req, deps) {
     if (action === 'variants_get') { try { return { ok: true, action, product_no: no, variants: await getVars(no) }; } catch (e) { return cErr(e, '품목 조회'); } }
 
     const test = await isTest(no);
+    let rgroup = null;   // option_rename 이 고른 묶음 이름(결과 expect·revert)
     let body;
     if (action === 'options_put') {
         if (!test) return fail('options_put 은 시험 상품만(설정 cafe24_test_products 의 번호) — 운영 상품은 option_rename 으로');
@@ -15543,6 +15544,7 @@ async function cafe24OptRun(req, deps) {
         if (gs.length !== 1) return fail(`값 「${from}」 을 한 묶음에서 하나로 찾지 못했어요(${gs.length}묶음)`, { groups: cur.groups });
         if (gs[0].values.includes(to)) return fail(`「${to}」 이 같은 묶음에 이미 있어요`);
         const next = cur.groups.map(g => g === gs[0] ? { ...g, values: g.values.map(v => v === from ? to : v) } : g);
+        rgroup = gs[0].option_name;
         body = { options: cafFromRaw(next, cur.raw, new Map([[to, from]])), original_options: cafFromRaw(cur.groups, cur.raw),
             ...(cur.option_list_type ? { option_list_type: cur.option_list_type } : {}) };
     }
@@ -15556,20 +15558,21 @@ async function cafe24OptRun(req, deps) {
         let after = null; try { after = await getVars(no); } catch (_) {}
         return cErr(e, '옵션 수정', { product_no: no, test, variants_unchanged: after ? cafVarDiff(before, after).kept && after.length === before.length : null });
     }
+    // 실측 10/18(시험 상품 120): rename PUT 은 받지만 읽기에 반영되기까지 약 1~1.5분(그 사이 옛값·새값이 오락가락) → 러너가 기다리지 않는다
+    //   PUT 통과 = ok:true + pending_confirm · 확인(options_get 15초 간격 최대 3분 · 새 이름 2번 연속 = 성공 → variants_get 으로 kept)은 창구 도구(워커3 mall-option.js) 몫
+    if (action === 'option_rename') {
+        const to = String(req.to).trim(), put_at = new Date().toISOString();
+        await auditW('cafe24_option_rename', { product_no: no, test, group: rgroup, from: req.from, to, pending_confirm: true, put_at });
+        return { ok: true, action, product_no: no, test, put: true, pending_confirm: true, put_at, expect: { group: rgroup, from: req.from, to },
+            confirm_note: '카페24 반영 약 1~1.5분 — options_get 을 15초 간격으로 최대 3분 · 새 이름 2번 연속이면 성공 → variants_get 으로 품목(코드·추가금·판매·진열)이 variants_before 와 같은지',
+            options_before: optsBefore, variants_before: before, revert: { action: 'option_rename', product_no: no, group: rgroup, from: to, to: req.from } };
+    }
     let after = null, optsAfter = null;
     try { after = await getVars(no); optsAfter = await getOpts(no); } catch (e) { return { ok: true, action, product_no: no, test, put: true, error_note: '수정은 됐지만 재조회 실패 — 관리자 화면에서 확인' }; }
     const diff = cafVarDiff(before, after);
-    // rename 뒤 옵션 재조회에 새 이름이 보이고 옛 이름이 사라졌는지(같은 묶음)
-    const toV = action === 'option_rename' && optsAfter ? optsAfter.groups.some(g => g.values.includes(String(req.to).trim()) && !g.values.includes(req.from)) : null;
-    if (action === 'option_rename') diff.to_visible = toV;
-    // 실측 10/18(시험 상품 120): PUT 이 오류 없이 끝났는데 이름이 안 바뀐 경우가 있음 → 성공으로 보고하지 않는다
-    if (action === 'option_rename' && toV === false) {
-        await auditW('cafe24_option_rename_failed', { product_no: no, test, not_applied: true, from: req.from, to: String(req.to).trim() });
-        return fail('카페24 가 수정 요청을 받았지만 이름이 안 바뀌었어요(재조회에 새 이름 없음) — 관리자 화면에서 확인', { product_no: no, test, put: true, not_applied: true, ...diff, options_after: optsAfter, variants_after: after });
-    }
-    await auditW(action === 'options_put' ? 'cafe24_options_put' : 'cafe24_option_rename', { product_no: no, test, ...(action === 'option_rename' ? { from: req.from, to: String(req.to).trim() } : {}), variants_kept: diff.kept, removed: diff.removed, added: diff.added.map(x => x.code), changed: diff.changed });
+    await auditW('cafe24_options_put', { product_no: no, test, variants_kept: diff.kept, removed: diff.removed, added: diff.added.map(x => x.code), changed: diff.changed });
     return { ok: true, action, product_no: no, test, put: true, options_before: optsBefore, options_after: optsAfter, variants_before: before, variants_after: after, ...diff,
-        ...(action === 'option_rename' ? { revert: { action: 'option_rename', product_no: no, from: String(req.to).trim(), to: req.from } } : {}) };
+        reread_note: '카페24 읽기 반영이 1~1.5분 늦을 수 있음(바로 재조회 = 옛값일 수 있음)' };
 }
 // #739 끝
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.

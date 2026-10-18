@@ -46,3 +46,4 @@
 ## 실측(#739 · 2026-10-18 · 시험 상품 c120 · 진열·판매 안 함)
 - **옵션값 추가 = 불가 확정**: 옵션 수정 PUT 에 값 하나를 늘려 보내면 카페24 **422 「number of Existing option value and edited option value is wrong」** → 미확정 1 닫힘(새 값은 관리자 화면에서만).
 - **옵션 이름 바꾸기 = 아직 안 됨(원인 미확정)**: 문서 꼴(options + original_options)로 보내면 PUT 은 오류 없이 끝나지만 **재조회에서 이름이 안 바뀜** · 값을 글자 꼴로 보내면 422 **「Existing option value does not exist」**. Api-Version 머리글 등 시험 중 → 확정 전까지 **이름 바꾸기도 카페24 관리자 화면에서**(창구 mall-option.js 는 rename-plan 으로 전/후만 보여 줌 · rename 은 카페24 가 안 바꾸면 그렇게 알림).
+- **2차 실측(워커1) = 이름 바꾸기는 된다**: 카페24 반영이 **약 1~1.5분 늦고** 그 사이 읽기가 옛값/새값을 오락가락했던 것(1차 「안 바뀜」은 바로 다시 읽은 탓) · 품목 코드·추가금 유지 확인 → 서버는 PUT 통과면 바로 ok + pending_confirm · 창구 mall-option.js 가 options_get 15초 간격 최대 3분 · 「새 이름 2번 연속」이면 확정 + variants_get 으로 품목 그대로 확인 · 3분 넘으면 「반영이 늦어요 — 다시 보내지 않기」.

@@ -105,8 +105,14 @@ const G = (name, vals) => ({ option_name: name, option_value: vals.map(t => ({ o
 
     console.log('③ option_rename — 품목 코드·추가금·판매·진열 유지 · 되돌리기');
     const r1 = await run({ action: 'option_rename', product_no: 901, from: '테스트A', to: '테스트A2', created_by: '시험' }, k.deps);
-    ok(r1.ok && r1.test === true && r1.kept === true && r1.renamed.length === 1 && r1.renamed[0].code === 'P000090100000A' && r1.renamed[0].to === '테스트 옵션=테스트A2' && r1.added.length === 0 && r1.removed.length === 0,
-        '값 이름 바꾸기 = 같은 품목 코드 · 글자만 바뀜', r1);
+    ok(r1.ok && r1.test === true && r1.put === true && r1.pending_confirm === true && r1.put_at && JSON.stringify(r1.expect) === JSON.stringify({ group: '테스트 옵션', from: '테스트A', to: '테스트A2' }) && r1.variants_before.length === 2,
+        'rename PUT 통과 = 즉시 ok + pending_confirm · expect{group, from, to} · put_at · variants_before', r1);
+    // 확인 = 창구 도구 몫(options_get 새 이름 · variants_get 품목 대조) — 같은 대조를 여기서 흉내
+    const og1 = await run({ action: 'options_get', product_no: 901 }, k.deps), vg1 = await run({ action: 'variants_get', product_no: 901 }, k.deps);
+    const d1 = mod.cafVarDiff(r1.variants_before, vg1.variants);
+    ok(og1.options.groups[0].values.join() === '테스트A2,테스트B' && d1.kept && d1.renamed.length === 1 && d1.renamed[0].code === 'P000090100000A' && d1.renamed[0].to === '테스트 옵션=테스트A2',
+        '확인(도구 꼴) = 새 이름 보임 · 같은 품목 코드 · 글자만 바뀜 · kept', [og1.options.groups, d1]);
+    ok(!('not_applied' in r1) && !('to_visible' in r1), '러너는 즉시 판정 안 함(not_applied·to_visible 없음 · 반영 지연 1~1.5분)', Object.keys(r1));
     const put = k.cp.writes.filter(w => w.method === 'PUT').pop().body.request;
     const txt = (gs) => JSON.stringify(gs.map(g => [g.option_name, g.option_value.map(v => v.option_text)]));
     ok(txt(put.original_options) === JSON.stringify([['테스트 옵션', ['테스트A', '테스트B']]]) && txt(put.options) === JSON.stringify([['테스트 옵션', ['테스트A2', '테스트B']]]) && put.option_list_type === 'S', 'PUT 바디 = 지금 옵션(original) + 그 값만 바꾼 옵션 · option_list_type', put);
@@ -128,15 +134,15 @@ const G = (name, vals) => ({ option_name: name, option_value: vals.map(t => ({ o
         const nb = kn.cp.writes.filter(w => w.method === 'PUT').pop().body.request.options[0].option_value;
         ok(nb[2].option_text === '테스트C' && nb[2].option_color === '#ff0000' && nb[2].option_image_file === '' && nb[0].option_image_file === 'https://img/a.jpg', '새 값 = 첫 값 꼴 칸 복사 · 그림 칸 비움 · 기존 값 원문 그대로', nb);
     }
-    ok(r1.revert && r1.revert.from === '테스트A2' && r1.revert.to === '테스트A', '결과에 되돌리기 요청(반대 rename)', r1.revert);
-    ok(r1.to_visible === true, 'rename 뒤 옵션 재조회에 새 이름 보임 · 옛 이름 사라짐(to_visible)', r1.to_visible);
+    ok(r1.revert && r1.revert.from === '테스트A2' && r1.revert.to === '테스트A' && r1.revert.group === '테스트 옵션', '결과에 되돌리기 요청(반대 rename · 묶음 이름)', r1.revert);
     const r2 = await run(r1.revert, k.deps);
     // 창구 mall-option.js 꼴(group · order_id · revert) — group = option_name 별칭
     const rg = await run({ action: 'option_rename', product_no: 901, group: '테스트 옵션', from: '테스트B', to: '테스트B2', order_id: 3000 }, k.deps);
     const rgx = await run({ action: 'option_rename', product_no: 901, group: '없는 묶음', from: '테스트A', to: '테스트A9' }, k.deps);
-    ok(rg.ok && rg.kept && rg.to_visible && !rgx.ok && /하나로 찾지 못/.test(rgx.error), 'group 칸 = 그 묶음 안에서만 찾음(다른 묶음 이름 = 거절)', [rg, rgx]);
+    ok(rg.ok && rg.pending_confirm && rg.expect.group === '테스트 옵션' && !rgx.ok && /하나로 찾지 못/.test(rgx.error), 'group 칸 = 그 묶음 안에서만 찾음(다른 묶음 이름 = 거절)', [rg, rgx]);
     await run({ action: 'option_rename', product_no: 901, group: '테스트 옵션', from: '테스트B2', to: '테스트B', revert: true }, k.deps);
-    ok(r2.ok && r2.kept && r2.renamed[0].to === '테스트 옵션=테스트A' && k.cp.products[901].groups[0].values.join() === '테스트A,테스트B', '되돌리기 = 원래 이름 · 품목 유지', r2);
+    const vg2 = await run({ action: 'variants_get', product_no: 901 }, k.deps);
+    ok(r2.ok && r2.pending_confirm && k.cp.products[901].groups[0].values.join() === '테스트A,테스트B' && mod.cafVarDiff(r1.variants_before, vg2.variants).kept && vg2.variants[0].opts === '테스트 옵션=테스트A', '되돌리기 = 원래 이름 · 품목 유지(도구 꼴 확인)', r2);
     const tr = async (req, re, name) => { const x = await run({ action: 'option_rename', product_no: 901, ...req }, k.deps); ok(!x.ok && re.test(x.error), name, x); };
     await tr({ from: '없음', to: 'x' }, /하나로 찾지 못/, '없는 값 = 거절');
     await tr({ from: '테스트A', to: '테스트B' }, /이미 있어요/, '같은 묶음에 있는 이름 = 거절');
@@ -147,17 +153,19 @@ const G = (name, vals) => ({ option_name: name, option_value: vals.map(t => ({ o
     ok(!lr.ok && /cafe24_option_rename.enabled/.test(lr.error), '운영 상품 rename = 설정 꺼짐이면 거절', lr);
     await k.cs.cfgSet('cafe24_option_rename', { enabled: true });
     const lr2 = await run({ action: 'option_rename', product_no: 100, from: '2.5kg', to: '2.5kg(로얄과)' }, k.deps);
-    ok(lr2.ok && lr2.test === false && lr2.kept === true && k.cp.products[100].variants[1].add === '9000.00', '설정 켜면 운영 상품 rename · 다른 품목 추가금 그대로', lr2);
+    ok(lr2.ok && lr2.test === false && lr2.pending_confirm && k.cp.products[100].variants[1].add === '9000.00' && k.cp.products[100].groups[0].values.join() === '2.5kg(로얄과),4kg', '설정 켜면 운영 상품 rename · 다른 품목 추가금 그대로', lr2);
     // 카페24 가 품목을 건드린 척 → kept false 로 드러남
     const kx = mk({ sideEffect: (pr) => { pr.variants[0].add = '500.00'; } });
     const cx = await run({ action: 'test_product_create' }, kx.deps);
     const rx = await run({ action: 'option_rename', product_no: cx.product_no, from: '테스트A', to: '테스트A2' }, kx.deps);
-    ok(rx.ok && rx.kept === false && rx.changed.length === 1 && /add: 0.00 → 500.00/.test(rx.changed[0]), '품목 추가금이 바뀌면 kept false · changed 로 보고', rx);
+    const dx = mod.cafVarDiff(rx.variants_before, (await run({ action: 'variants_get', product_no: cx.product_no }, kx.deps)).variants);
+    ok(rx.ok && rx.pending_confirm && dx.kept === false && dx.changed.length === 1 && /add: 0.00 → 500.00/.test(dx.changed[0]), '품목 추가금이 바뀌면(도구 확인) kept false · changed', [rx.pending_confirm, dx]);
     // PUT 은 오류 없이 끝났는데 이름이 안 바뀜(실측 10/18 시험 상품 120) → ok false · not_applied
     const kn2 = mk({ sideEffect: (pr) => { pr.groups[0].values = ['테스트A', '테스트B']; for (const v of pr.variants) v.vals = [v.code.endsWith('A') ? '테스트A' : '테스트B']; } });
     const cn2 = await run({ action: 'test_product_create' }, kn2.deps);
     const rn2 = await run({ action: 'option_rename', product_no: cn2.product_no, from: '테스트A', to: '테스트A2' }, kn2.deps);
-    ok(!rn2.ok && rn2.not_applied === true && rn2.to_visible === false && /이름이 안 바뀌었어요/.test(rn2.error), 'PUT 통과했지만 이름 그대로 = 실패로 보고(not_applied)', rn2);
+    const on2 = await run({ action: 'options_get', product_no: cn2.product_no }, kn2.deps);
+    ok(rn2.ok && rn2.pending_confirm && on2.options.groups[0].values.join() === '테스트A,테스트B', '반영 전(읽기 옛값) = 러너는 pending_confirm 만 · 확인은 도구가 시간 두고(옛값은 실패 아님)', [rn2.pending_confirm, on2.options.groups]);
     // PUT 실패
     const kf = mk({ putFail: true });
     const cf = await run({ action: 'test_product_create' }, kf.deps);

@@ -1,3 +1,8 @@
+## v5.9.560 (2026-10-18) — #739 카페24 옵션 이름 바꾸기 = 된다(반영 1~1.5분 지연) · 서버는 PUT 통과면 바로 「반영 대기」 · 확인은 창구 도구가 15초 간격 3분
+
+- 실측 2차(워커1 · 시험 상품 120): v5.9.558 rename(원문 깊은 복사 꼴 · 머리글 없이)이 **늦게 반영돼 있었음** · 품목 P00000EQ000B 코드·추가금 0·판매·진열 그대로 = kept · 원복 rename(머리글 2026-09-01) 뒤 10초 간격 읽기 = 옛값/새값 오락가락 약 1.5분 뒤 안정 → 첫 시험의 「안 바뀜」은 판정이 너무 이른 오판. 텍스트만 꼴은 422 · 머리글 필요 여부 미확정(없어도 됨).
+- 고침: 서버 option_rename = PUT 통과면 즉시 ok + pending_confirm · expect · options_before · variants_before · revert(즉시 not_applied 판정 뺌 · 러너를 붙잡지 않음 = 다른 카페24 요청 안 밀림) · 창구 mall-option.js = options_get 15초 간격 최대 3분 · 새 이름 + 옛 이름 없음 2번 연속 = 확정 → variants_get 대조(kept) · 3분 넘으면 「반영이 늦어요 — 다시 보내지 않기」 · audit rename · rename_confirm · 계약 docs/739-cafe24-option-contract.md · verify-739 37. 운영 상품 이름 바꾸기 = 설정 cafe24_option_rename.enabled 꺼짐 유지(대표 결정 뒤 켬) · 업무지식 「시험 중」 문장 유지.
+
 ## v5.9.559 (2026-10-18) — #739 실측 반영: 카페24 옵션값 추가 = 불가 확정(422) · 이름 바꾸기 = 받아도 안 바뀜 → 옵션 요청에만 X-Cafe24-Api-Version 2026-09-01 재시도 · 실패를 실패로 보고
 
 - 실시험(워커1 · 시험 상품 120 「테스트 옵션(시험용 · 구매 금지)」 · 진열·판매 F · 품목 P00000EQ000B/C): 값 「테스트C」 추가 = 카페24 422 「The number of Existing option value and edited option value is wrong」 → **API 로 값 추가 불가 확정** / rename 테스트A→A2 = 원문 꼴 PUT 은 오류 없이 끝나지만 재조회 이름 그대로 · 글자 꼴은 422 「Existing option value does not exist」(같은 값도) → 원인 미확정(추정 = API 버전 머리글 없음 · API 로 만든 옵션 · 짝 열쇠).
