@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-18.2'; // #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-18.3'; // #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -198,7 +198,7 @@ app.post('/naver', async (req, res) => {
 });
 
 // ══════════════ 쿠팡 OPEN API 중계 (2026-07-26 — 지시문_쿠팡_송장변환_연동 v2) ══════════════
-// 원칙: 아래 허용목록 경로만(주문 조회 2 · 발주확인 · #728 상품 조회 3·가격·재고·판매중지/재개 · #729 상품 전체 수정·배송칸·등록·승인 요청·삭제·이력). 쿠팡 키는 이 서버 .env에만.
+// 원칙: 아래 허용목록 경로만(주문 조회 2 · 발주확인 · #728 상품 조회 3·가격·재고·판매중지/재개 · #729 상품 전체 수정·배송칸·등록·승인 요청·삭제·이력 · #732 브랜드 찾기). 쿠팡 키는 이 서버 .env에만.
 // HMAC 서명 (쿠팡 공식 문서 PHP/Java 예제 그대로):
 //   datetime(UTC yyMMdd'T'HHmmss'Z') + METHOD + path + query → HMAC-SHA256(hex, secret)
 //   Authorization: CEA algorithm=HmacSHA256, access-key=…, signed-date=…, signature=…
@@ -237,6 +237,9 @@ const COUPANG_ALLOW = [
     { m: 'PUT', tpl: CP_MKT + '/seller-products/{sellerProductId}/approvals' },         // 승인 요청
     { m: 'DELETE', tpl: CP_MKT + '/seller-products/{sellerProductId}' },                // 삭제(쿠팡이 임시저장·저장중만 받음)
     { m: 'GET', tpl: CP_MKT + '/seller-products/{sellerProductId}/histories' },         // 상태 이력(반려 사유 comment)
+    // #732 브랜드 찾기(대표 10/18 · 윙 「신규 브랜드」 승인됐는데 검색에 안 보임) — 공식 문서 brands/search = POST + 바디 {brandName*, countPerPage(≤10), page} · 읽기만
+    //   바디는 이 세 칸만 넘기고 vendorId 는 넣지 않는다(문서에 없는 칸 · bodyKeys)
+    { m: 'POST', tpl: CP_MKT + '/brands/search', bodyKeys: ['brandName', 'countPerPage', 'page'] },
 ];
 const CP_MAX = { '{price}': 10000000, '{quantity}': 999999 };   // 값 자리 상한(0 하나 더 붙인 실수 막기)
 // 요청 path → 허용 규칙 + 실제 경로(vendorId 치환) · 안 맞으면 null
@@ -281,7 +284,7 @@ app.post('/coupang', async (req, res) => {
         const url = `${COUPANG_API_BASE}${realPath}${qs ? '?' + qs : ''}`;
         // #402: body의 vendorId는 경로와 동일하게 .env 값으로 강제(위조 차단) — GET은 body 없음(종전 동일)
         const safeBody = (method !== 'GET' && reqBody && typeof reqBody === 'object')
-            ? JSON.stringify({ ...reqBody, vendorId: COUPANG_VENDOR_ID }) : undefined;
+            ? JSON.stringify(rule.bodyKeys ? Object.fromEntries(rule.bodyKeys.filter(k => k in reqBody).map(k => [k, reqBody[k]])) : { ...reqBody, vendorId: COUPANG_VENDOR_ID }) : undefined;   // #732 bodyKeys 규칙 = 그 칸만(vendorId 안 넣음)
         const cres = await fetch(url, {
             method,
             headers: { Authorization: auth, 'Content-Type': 'application/json;charset=UTF-8' },
