@@ -642,6 +642,23 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
             const yt = await run({ op: 'update_full', ...base, backup_id: gt.backup_id, patch: { items_add: [{ itemName: '카라향 10kg', price: 69800, stock: 1, attributes: [{ attributeTypeName: '중량', attributeValueName: '10kg' }] }] } }, kt.deps);
             const at3 = kt.cp.puts[0] && kt.cp.puts[0].items[2].attributes;
             ok(yt.ok && at3 && at3.length === 2 && at3[0].attributeValueName === '10kg' && at3[1].attributeTypeName === '등급' && kt.cp.puts[0].items[1].attributes[0].attributeValueName === '5kg', 'attributes 주면 그 칸만 10kg · 틀(5kg 옵션)은 그대로', at3);
+            // #749 images_replace — 그 그림이 있는 옵션에서만 · 자리·종류 그대로 · 없는 그림·외부 꺼짐 거절
+            {
+                const kr = mkp(); kr.db.cfg = { allow_external_images: true };
+                kr.cp.prods[SPC].items[1].images = [{ imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: 'vendor_inventory/r5.jpg' }, { imageOrder: 1, imageType: 'DETAIL', cdnPath: 'vendor_inventory/c.jpg' }];
+                const gr = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kr.deps);
+                const ur = await run({ op: 'update_full', ...base, backup_id: gr.backup_id, patch: { images_replace: { 'vendor_inventory/b.jpg': 'https://shop-phinf.pstatic.net/new-b.jpg', 'vendor_inventory/c.jpg': 'https://shop-phinf.pstatic.net/new-c.jpg' } } }, kr.deps);
+                const pi = kr.cp.puts[0] && kr.cp.puts[0].items.map(it => it.images.map(im => [im.imageType, im.cdnPath || im.vendorPath]));
+                ok(ur.ok && JSON.stringify(pi) === JSON.stringify([[['REPRESENTATION', 'vendor_inventory/a.jpg'], ['DETAIL', 'https://shop-phinf.pstatic.net/new-b.jpg']], [['REPRESENTATION', 'vendor_inventory/r5.jpg'], ['DETAIL', 'https://shop-phinf.pstatic.net/new-c.jpg']]]),
+                    'images_replace = 그 그림 있는 옵션만 제자리 교체(대표·순서·종류 그대로 · 다른 옵션에 안 섞임)', pi);
+                const tr2 = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: gr.backup_id, patch }, kr.deps); ok(!x.ok && re.test(x.error), name, x); };
+                const kr2 = mkp(); const gr2 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kr2.deps);
+                const x1 = await run({ op: 'update_full', ...base, backup_id: gr2.backup_id, patch: { images_replace: { 'vendor_inventory/zz.jpg': 'https://shop-phinf.pstatic.net/x.jpg' } } }, kr2.deps);
+                ok(!x1.ok && /그림이 이 상품에 없어요/.test(x1.error), 'images_replace 없는 그림 = 거절', x1);
+                const x2 = await run({ op: 'update_full', ...base, backup_id: gr2.backup_id, patch: { images_replace: { 'vendor_inventory/a.jpg': 'https://evil.example/x.jpg' } } }, kr2.deps);
+                ok(!x2.ok && /allow_external_images/.test(x2.error) && kr2.cp.puts.length === 0, 'images_replace 외부 주소 = 설정 꺼짐이면 거절 · PUT 0', x2);
+                void tr2;
+            }
             // #745 기존 옵션 구매옵션 값(item_attrs) — 이름 칸만 · 새 칸 거절 · 겹침 거절 · 되돌리기 = 보관본 값
             {
                 const ka = mkp();

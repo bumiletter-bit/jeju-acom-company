@@ -17264,9 +17264,9 @@ function cpwBlocksToContents(blocks, conv) {
 //   opt = { allowExternal, convert }(#733-B)
 function cpwApplyFull(before, patch, opt = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { error: 'patch 가 필요해요' };
-    const OK = ['name', 'item_names', 'item_attrs', 'detail_html', 'detail_blocks', 'images', 'items_add'];
+    const OK = ['name', 'item_names', 'item_attrs', 'detail_html', 'detail_blocks', 'images', 'images_replace', 'items_add'];
     const bad = Object.keys(patch).filter(k => !OK.includes(k));
-    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · item_attrs · detail_html · detail_blocks · images · items_add (가격·재고·판매는 1차 옵션 op)' };
+    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · item_attrs · detail_html · detail_blocks · images · images_replace · items_add (가격·재고·판매는 1차 옵션 op)' };
     if ('detail_html' in patch && 'detail_blocks' in patch) return { error: 'detail_html 과 detail_blocks 는 하나만' };
     if (!Object.keys(patch).length) return { error: '바꿀 칸이 없어요' };
     const b = JSON.parse(JSON.stringify(before));
@@ -17349,6 +17349,21 @@ function cpwApplyFull(before, patch, opt = {}) {
             if (!next.length) return { error: `옵션 「${it.itemName}」 에 남는 그림이 없어요` };
             it.images = next;
         }
+    }
+    // #749 대표·추가 그림 제자리 바꾸기 — { <지금 그림 주소(cdnPath·vendorPath)>: <새 주소> } · 그 그림이 있는 옵션에서만 · 자리·종류(대표/추가) 그대로
+    //   (images 는 한 목록을 모든 옵션에 · 새 주소가 모든 옵션에 들어감 → 옵션마다 그림 줄이 다른 상품엔 이 칸)
+    if ('images_replace' in patch) {
+        if ('images' in patch) return { error: 'images 와 images_replace 는 하나만' };
+        const m = patch.images_replace;
+        if (!m || typeof m !== 'object' || Array.isArray(m) || !Object.keys(m).length) return { error: 'images_replace 는 { 지금 그림 주소: 새 주소 }' };
+        const have = new Set(items.flatMap(it => (it.images || []).map(cpwImgKey)));
+        for (const [from, to] of Object.entries(m)) {
+            if (!have.has(from)) return { error: `images_replace: 「${String(from).slice(0, 60)}」 그림이 이 상품에 없어요` };
+            const e = cpwImgOk(to, opt.allowExternal); if (e) return { error: 'images_replace 새 주소: ' + e };
+        }
+        let n = 0;
+        for (const it of items) it.images = (it.images || []).map(im => { const to = m[cpwImgKey(im)]; if (!to) return im; n++; return { imageOrder: im.imageOrder, imageType: im.imageType, vendorPath: to }; });
+        if (!n) return { error: 'images_replace: 바꿀 그림을 못 찾았어요' };
     }
     if ('items_add' in patch) {
         const add = patch.items_add;
