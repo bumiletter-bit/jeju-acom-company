@@ -449,8 +449,10 @@ async function main(argv, deps) {
             if (!src) throw new Error(`네이버 ${pno} 상세 보관본이 없어요 — 먼저 node scripts/desk/naver-detail.js show ${pno} <지시 id>`);
             const DB = require(path.join(__dirname, '..', '..', 'detail-blocks.js'));
             const r = DB.fromNaverHtml(src.html);
+            const pol = DB.coupangPolicy(r.blocks);   // #746 쿠팡 정책 = 다른 판매처 링크 벗김 · 안내 단락 뺌(원문은 policy.removed) · 그림 목록
+            o.policy = pol; r.blocks = pol.blocks;
             o.blocks = r.blocks; o.blocksSummary = DB.summarize(r.blocks); o.blocksDropped = r.dropped;
-            o.previewHtml = DB.toPreviewHtml(r.blocks);
+            o.previewHtml = `<div style="font:13px sans-serif;background:#FFF4D6;color:#5A4300;padding:8px 10px;margin-bottom:6px">쿠팡 정책 정리 · 링크 벗김 ${pol.unlinked} · 뺀 문장 ${pol.removed.length} · 그림 ${pol.images.length}장(그림 속 글자는 눈으로) — 이 띠는 미리보기에만</div>\n` + DB.toPreviewHtml(r.blocks);
         }
         const P = planFull(row.before_json, o, deps.readFile || (p => fs.readFileSync(p, 'utf8')));
         if (P.errs.length) return out({ ok: false, stopped: true, stops: P.errs, can_apply: false, note: '보낸 것 없음 — 멈춘 문구 그대로 전하고 되묻기' });
@@ -463,6 +465,7 @@ async function main(argv, deps) {
             if (ext && (await R.writeCfg()).allow_external_images !== true) xw.push('🔴 그림이 네이버 주소라 쿠팡 밖 주소예요 — 설정 coupang_item_write.allow_external_images 가 꺼져 있어 서버가 거절해요(총괄에게 · 켜면 쿠팡이 받아 저장)');
             else if (ext) xw.push('그림은 네이버 주소 그대로 보내요 — 쿠팡이 받아 쿠팡 그림 저장소로 옮겨요(결과 카드 items_after 로 확인)');
             if (o.blocksDropped) xw.push(`주소 없는 그림 ${o.blocksDropped}개는 뺐어요`);
+            if (o.policy) xw.push(`쿠팡 정책 정리 — 다른 판매처 링크 ${o.policy.unlinked}개 벗김(그림·글은 남김) · 뺀 문장 ${o.policy.removed.length}${o.policy.removed.length ? '(' + o.policy.removed.map(x => `「${x.text.slice(0, 30)}」`).join(' · ') + ')' : ''} · 그림 ${o.policy.images.length}장 안 글자는 못 고침 — 「네이버·톡톡·알림받기」 같은 글이 그림에 있으면 사람이 그림을 바꿔야`);
         }
         if (P.patch.items_add) xw.push('새 옵션의 쿠팡 옵션 번호(vendorItemId)는 승인 뒤에 생겨요 — 그 뒤 가격·재고는 1차(plan --price/--stock)로');
         const tail = saved ? ['임시저장 상품 — 저장만(승인 요청 안 함 · 손님 노출 0)'] : ['🟡 승인된 상품이라 쿠팡 승인 심사를 거쳐요 — 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(며칠 걸릴 수 있음)'];
@@ -473,6 +476,7 @@ async function main(argv, deps) {
             const blocked = xw.some(w => w.startsWith('🔴'));
             return out({ ok: true, backup_id: row.id, patch: P.patch.detail_blocks ? Object.assign({}, P.patch, { detail_blocks: `(블록 ${P.patch.detail_blocks.length}개)` }) : P.patch, can_apply: !blocked,
                 preview_png: png || undefined, preview_error: pngErr || undefined,
+                policy: o.policy ? { unlinked: o.policy.unlinked, removed: o.policy.removed.map(x => ({ block: x.block, word: x.word, text: x.text, html: x.html })), images: o.policy.images } : undefined,   // #746 뺀 문장 원문 · 그림 목록(눈으로)
                 card: pcard('고치기 계획(아직 안 보냄)', pname, row.seller_product_id, P.rows, xw.map(w => w.startsWith('🔴') ? w : '⚠ ' + w).concat(tail, [png ? '미리보기 그림을 붙였어요 — 쿠팡 손님 화면도 이 순서' : '', '이대로 바꿀까요?'].filter(Boolean))),
                 note: png ? '미리보기 PNG(preview_png)를 respond attachments 로 붙여 카드와 함께 되묻기' : (pngErr ? '미리보기 그림을 못 만들었어요(' + pngErr + ') — 카드로만 되묻기' : '카드 그대로 되묻기'),
                 next: `apply-full ${row.id} <지시 id> ` + argv.slice(2).join(' ') });

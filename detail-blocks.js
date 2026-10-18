@@ -10,6 +10,7 @@
  *     · links(기본 켬) = naver-detail-links.js 로 스마트에디터 그림 링크(걸러진 주석 포함)를 먼저 일반 <a href> 로 살린 뒤 나눔
  *     · images = 그림 수(링크 있는 그림 포함) = 원본 <img> 수와 같아야 한다(빈 src 만 빠짐 → dropped 에 셈)
  * - toPreviewHtml(blocks) → 단순 HTML(블록마다 <div class="db-…"> 한 겹) — fromNaverHtml 에 다시 넣으면 같은 blocks(왕복 멱등)
+ * - coupangPolicy(blocks) → { blocks, removed, unlinked, images } = #746 쿠팡 정책 정리(다른 판매처 링크 벗김 · 안내 단락 뺌 · 그림 목록) · toCoupangContents 가 늘 먼저 거침
  * - toCoupangContents(blocks, { mode }) → 쿠팡 items[].contents 꼴(워커3 #733-A ③ · 근거 docs/728-coupang-write-api.md)
  *     mode 'blocks'(기본) = 그림마다 IMAGE_NO_SPACE 1항목 · 글·링크 그림 = TEXT 1항목 / mode 'html' = HTML 1항목에 미리보기 HTML 통째
  *     🔵 미확정 = TEXT/HTML 안 허용 태그 · 그림 칸의 외부 주소를 쿠팡이 가져가는지 → 실 PUT 뒤 아래 CP 상수만 고친다
@@ -108,8 +109,56 @@ const cleanInner = h => h;
 function toPreviewHtml(blocks) {
     return (blocks || []).map(b => b.type === 'image' ? `<div class="db-img">${imgHtml(b.url, b.alt)}</div>` : `<div class="db-html">${b.html}</div>`).join('\n');
 }
+// #746 쿠팡 정책 정리 — 다른 판매처로 보내는 것을 뺀다(쿠팡 상세 = 쿠팡 안에서만)
+//   ① html 블록 안 <a> 태그는 벗김(그림·글은 남김) · 그림만 남은 블록 = image 블록으로
+//   ② 다른 판매처 안내 글(POLICY_WORDS)이 든 단락(p·li·h·blockquote·td/th · 그 밖은 <br> 줄)을 뺌 → removed 에 원문 그대로
+//   ③ 그림 속 글자는 못 고침 → images 에 그림 주소 목록(사람이 눈으로)
+//   여러 번 돌려도 같은 결과(멱등) · 원본 blocks 는 건드리지 않음
+const POLICY_WORDS = ['네이버', 'naver', '스마트스토어', 'smartstore', 'smart store', '톡톡', '알림받기', '알림 받기', '소식받기', '소식 받기', '스토어찜', '찜하기', '자사몰', 'akkome.com', '카카오톡 채널', '카톡 채널', '플러스친구'];
+const policyHit = h => { const t = decodeEnt(String(h).replace(/<[^>]*>/g, ' ')).toLowerCase(); return POLICY_WORDS.find(w => t.includes(w)) || null; };
+const plainOf = h => decodeEnt(String(h).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+// 쿠팡 안 상품 주소만 링크로 남김 — https://www.coupang.com/vp/products/<숫자>(쿼리 없음 또는 itemId·vendorItemId 숫자만)
+const CP_LINK_RE = /^https:\/\/www\.coupang\.com\/vp\/products\/\d{1,15}(\?(itemId|vendorItemId)=\d{1,15}(&(itemId|vendorItemId)=\d{1,15})?)?$/;
+const isCoupangLink = u => CP_LINK_RE.test(String(u || '').trim());
+// 네이버 상품 주소 → 상품 번호(smartstore.naver.com/<가게>/products/<번호> · brand.naver.com/<가게>/products/<번호>)
+const naverProductNo = u => { const m = /^https?:\/\/(?:m\.)?(?:smartstore|brand)\.naver\.com\/[^/?#]+\/products\/(\d{5,15})/i.exec(String(u || '').trim()); return m ? m[1] : null; };
+//   opts.linkMap = { "<네이버 상품 번호>": "<쿠팡 상품 번호(쿠팡 상품 주소 vp/products 뒤 숫자)>" } → 그 네이버 상품 링크는 짝 쿠팡 주소로(짝 없으면 벗김) · 기본 = 없음
+function coupangPolicy(blocks, opts) {
+    const out = [], removed = [], images = [], relinked = []; let unlinked = 0;
+    const linkMap = (opts && opts.linkMap && typeof opts.linkMap === 'object') ? opts.linkMap : {};
+    (blocks || []).forEach((b, bi) => {
+        if (!b || b.type !== 'html') { if (b && b.type === 'image') { images.push(b.url); out.push(b); } return; }
+        let h = String(b.html || '');
+        const stack = []; let kept = 0;
+        h = h.replace(/<(\/?)a\b[^>]*>/gi, (m, close) => {
+            if (close) return stack.length && stack.pop() ? '</a>' : '';
+            const href = (attr(m, 'href') || '').trim(); let to = isCoupangLink(href) ? href : null;
+            if (!to) { const no = naverProductNo(href), cpNo = no && linkMap[no] != null ? String(linkMap[no]).replace(/\D/g, '') : ''; if (cpNo) { to = 'https://www.coupang.com/vp/products/' + cpNo; relinked.push({ block: bi + 1, from: href, to }); } }
+            stack.push(!!to); if (to) { kept++; return `<a href="${escAttr(to)}" rel="noopener">`; }
+            unlinked++; return '';
+        });
+        const cut = (unit, word) => { removed.push({ block: bi + 1, word, text: plainOf(unit).slice(0, 300), html: unit }); return ''; };
+        const byLine = s => s.split(/(<br\s*\/?>)/i).map(seg => { if (/^<br/i.test(seg)) return seg; const w = policyHit(seg); return w ? cut(seg, w) : seg; }).join('');   // <br> 줄 단위
+        h = h.replace(/<(p|li|h[1-6]|blockquote|td|th)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, m => {
+            const w = policyHit(m); if (!w) return m;
+            if (!/<br\b/i.test(m)) return cut(m, w);
+            const r = byLine(m).replace(/(<br\s*\/?>\s*){2,}/gi, '<br>');   // 줄 여럿인 단락 = 걸린 줄만
+            return visible(r) ? r : '';
+        });
+        if (policyHit(h)) h = h.split(/(<(?:p|li|h[1-6]|blockquote|td|th)\b[^>]*>[\s\S]*?<\/(?:p|li|h[1-6]|blockquote|td|th)\s*>|<br\s*\/?>|<hr\b[^>]*>)/i)
+            .map(seg => /^<(p|li|h[1-6]|blockquote|td|th|br|hr)\b/i.test(seg) ? seg : (policyHit(seg) ? cut(seg, policyHit(seg)) : seg)).join('');   // 단락 밖 글(줄·단락 사이)만 · 남긴 단락은 그대로
+        h = tidy(h.replace(/^(\s*<br\s*\/?>)+|(<br\s*\/?>\s*)+$/gi, ''));
+        const imgs = [...h.matchAll(/<img\b[^>]*>/gi)].map(m => ({ url: (attr(m[0], 'src') || '').trim(), alt: attr(m[0], 'alt') || '' })).filter(x => x.url);
+        const rest = h.replace(/<img\b[^>]*>/gi, '');
+        if (imgs.length && !visible(rest) && !kept) { for (const i of imgs) { images.push(i.url); out.push(i.alt ? { type: 'image', url: i.url, alt: i.alt } : { type: 'image', url: i.url }); } return; }
+        for (const i of imgs) images.push(i.url);
+        if (h && (visible(h) || (kept && imgs.length))) out.push({ type: 'html', html: h });   // 쿠팡 링크 그림(글 없음)도 남김
+    });
+    return { blocks: out, removed, unlinked, images, relinked };
+}
 function toCoupangContents(blocks, opts) {
     const mode = (opts && opts.mode) || 'blocks';
+    if (!(opts && opts.policy === false)) blocks = coupangPolicy(blocks, opts).blocks;   // #746 서버로 가는 길도 늘 정리(창구가 이미 정리했어도 같음)
     if (mode === 'html') return [{ contentsType: CP.htmlType, contentDetails: [{ content: toPreviewHtml(blocks), detailType: CP.detailText }] }];
     return (blocks || []).map(b => b.type === 'image'
         ? { contentsType: CP.imageType, contentDetails: [{ content: b.url, detailType: CP.detailImage }] }
@@ -125,4 +174,4 @@ function summarize(blocks) {
     return { blocks: (blocks || []).length, images: img, linked_images: link, text_blocks: text };
 }
 
-module.exports = { fromNaverHtml, toPreviewHtml, toCoupangContents, summarize, CP };
+module.exports = { fromNaverHtml, toPreviewHtml, toCoupangContents, coupangPolicy, isCoupangLink, naverProductNo, summarize, CP, POLICY_WORDS };

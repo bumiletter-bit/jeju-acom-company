@@ -272,7 +272,7 @@ async function build(opt) {
     groups.sort((a, b) => (b.issues.filter(i => !NOTE_KINDS.includes(i.kind)).length - a.issues.filter(i => !NOTE_KINDS.includes(i.kind)).length) || (b.issues.length - a.issues.length) || (b.sold_rows - a.sold_rows) || a.label.localeCompare(b.label, 'ko'));
     return {
         ok: true, generated_at: new Date(now).toISOString(),
-        source: { naver_snapshot_id: last.id, naver_snapshot_at: new Date(last.at).toISOString(), snapshots: snaps.length, history_from: kstDate(snaps[0].at), mall: mallState, mall_products: mall ? mall.length : 0, coupang: cpState, coupang_mapped: cpMapN, coupang_read: (cp || []).filter(x => !x.error).length, coupang_failed: cpFailed },
+        source: { naver_snapshot_id: last.id, naver_snapshot_at: new Date(last.at).toISOString(), snapshots: snaps.length, history_from: kstDate(snaps[0].at), mall: mallState, mall_products: mall ? mall.length : 0, coupang: cpState, coupang_mapped: cpMapN, coupang_read: (cp || []).filter(x => !x.error).length, coupang_failed: cpFailed, ...(o.coupangFrom ? { coupang_from: String(o.coupangFrom) } : {}) },   // #746 받은 자료의 출처 글
         pages, groups,
         ...(mallState === 'live' ? { mall_raw: mall.map(p => ({ cno: p.cno, name: p.name, base: p.base, selling: p.selling, display: p.display, vars: p.vars ? p.vars.map(v => ({ code: v.code, name: v.name, add: v.add, selling: v.selling, display: v.display })) : null })) } : {}),   // 서버가 price_check_last.mall 로 적어 두면 창구 도구가 읽는다(지금 조회한 때만)
         ...(cpState === 'live' ? { coupang_raw: cp.map(x => ({ vid: x.vid, seller_product_id: x.seller_product_id, product_name: x.product_name, item_name: x.item_name, bot_product_id: x.bot_product_id, label: x.label, separate: x.separate, price: x.price, stock: x.stock, on_sale: x.on_sale, error: x.error })) } : {}),   // #741 같은 꼴 — price_check_last.coupang(coupangItems 로 다시 넣으면 그대로 견줌)
@@ -301,9 +301,18 @@ function toText(rep, optx) {
         for (const i of g.issues) L.push(`   → [${KO[i.kind] || i.kind}] ${i.detail}`);
     }
     if (x.all) { L.push(''); L.push('━━━ 여러 페이지에 걸린 옵션(값 같음) ━━━'); for (const g of rep.groups.filter(g => !g.issues.length && g.sold_rows > 1)) L.push(`  ${g.label} — ${fmt(g.rows.find(r => r.sold).price)}원 · ${g.rows.filter(r => r.sold).map(r => nm(r.page_key)).join(' / ')}`); }
+    if (x.coupang) {   // #746 창구 = 쿠팡 열 늘(어긋남이 없어도 옵션마다 쿠팡 ↔ 네이버)
+        const cr = []; for (const g of rep.groups) for (const r of g.rows.filter(y => y.channel === 'coupang')) {
+            const nv = g.rows.filter(y => y.channel === 'naver' && y.tier !== 'vip' && y.sold && !y.ignore); const cnt = p => nv.filter(y => y.price === p).length;
+            const ref = nv.length ? [...new Set(nv.map(y => y.price))].sort((a, b) => cnt(b) - cnt(a))[0] : null;
+            const st = r.read_error ? `못 읽음(${r.read_error})` : r.separate ? '따로(연결표)' : ref == null ? '네이버 짝 없음' : r.price === ref ? '같음' : `🔴 다름 ${r.price - ref > 0 ? '+' : ''}${fmt(r.price - ref)}`;
+            cr.push(`  ${r.sold ? ' ' : '×'} ${g.label.slice(0, 34)} · 쿠팡 ${r.price != null ? fmt(r.price) : '-'} · 네이버 ${ref != null ? fmt(ref) : '-'} · ${st}`);
+        }
+        L.push(''); L.push(`━━━ 쿠팡 ${cr.length}개(쿠팡 · 네이버 일반 페이지 · × = 쿠팡 지금 안 팖) ━━━`); L.push(...(cr.length ? cr : ['  (쿠팡 값 없음 — 아래 자료 줄 참고)']));
+    }
     const offs = rep.groups.filter(g => g.offseason_mismatch);
     if (offs.length) { L.push(''); L.push(`━━━ 지금은 안 파는 옵션인데 페이지끼리 값이 다른 것 ${offs.length}개(다시 팔기 전에 확인) ━━━`); for (const g of offs) L.push(`  ${g.label} — ${g.rows.map(r => `${fmt(r.price)}원(${nm(r.page_key)})`).join(' / ')}`); }
-    L.push(''); L.push(`자료: 네이버 스냅샷 ${rep.source.naver_snapshot_at.slice(0, 10)} 새벽(그 뒤에 바꾼 값은 내일 반영) · 변경일은 ${rep.source.history_from} 이후만 · 자사몰 ${rep.source.mall === 'live' ? '지금 조회' : rep.source.mall === 'given' ? '받은 자료' : '조회 못 함'} · 쿠팡 ${rep.source.coupang === 'live' ? '지금 조회(연결 ' + rep.source.coupang_mapped + '개)' : rep.source.coupang === 'given' ? '받은 자료' : rep.source.coupang_mapped ? '조회 못 함' : '연결 안 됨'}`);
+    L.push(''); L.push(`자료: 네이버 스냅샷 ${rep.source.naver_snapshot_at.slice(0, 10)} 새벽(그 뒤에 바꾼 값은 내일 반영) · 변경일은 ${rep.source.history_from} 이후만 · 자사몰 ${rep.source.mall === 'live' ? '지금 조회' : rep.source.mall === 'given' ? '받은 자료' : '조회 못 함'} · 쿠팡 ${rep.source.coupang === 'live' ? '지금 조회(연결 ' + rep.source.coupang_mapped + '개)' : rep.source.coupang === 'given' ? (rep.source.coupang_from || '받은 자료') : rep.source.coupang_mapped ? '조회 못 함' : '연결 안 됨'}`);
     for (const n of (rep.notes || []).slice(1)) L.push('※ ' + n);
     return L.join('\n');
 }
