@@ -8,6 +8,7 @@
 //   node scripts/desk/coupang-item.js full <상품 번호> <지시 id>                       상품 통째 보관(get_full) → 이름 · 승인 상태 · 옵션 표 · 상세 꼴(글 한 칸인지)
 //   node scripts/desk/coupang-item.js plan-full <backup_id> --name "<글>" | --item-name <vendorItemId 또는 지금 옵션명>=<새 이름>(여러 번) | --detail <html 파일>   전/후 카드(보내지 않음)
 //                                     | --detail-from-naver <네이버 상품번호>(#733 네이버 상세 → 블록 → 미리보기 PNG · naver-detail show 로 보관한 상세를 씀) | --add-item "<옵션명>=<가격>[=<재고>]"(#733 새 옵션 · 여러 번)
+//                                     | --detail-blocks <파일>(#756 detail-compare.js fix 가 만든 「네이버와 같게 보이게 맞춘」 블록 · --detail-from-naver 대신)
 //   node scripts/desk/coupang-item.js apply-full <backup_id> <지시 id> (plan-full 과 같은 인자)   전체 수정 → 「🟡 쿠팡 승인 대기」 카드
 //   node scripts/desk/coupang-item.js revert-full <backup_id> <지시 id> [--force]      보관본 그대로 다시 저장(이것도 승인행)
 //   node scripts/desk/coupang-item.js approval <상품 번호>                             승인 상태 · 반려 사유(읽기만)
@@ -46,6 +47,7 @@ function parseOpts(args) {
         else if (a === '--item-name') (o.itemName = o.itemName || []).push(args[++i]);
         else if (a === '--item') (o.item = o.item || []).push(args[++i]);
         else if (a === '--detail-from-naver') o.fromNaver = args[++i];
+        else if (a === '--detail-blocks') o.detailBlocks = args[++i];   // #756
         else if (a === '--add-item') (o.addItem = o.addItem || []).push(args[++i]);
         else if (a === '--suggest') o.suggest = true;
         else if (a === '--live') o.live = true;   // #741 map: 지금 파는 옵션(판매중 · 재고 > 0)만
@@ -454,6 +456,21 @@ async function main(argv, deps) {
             o.blocks = r.blocks; o.blocksSummary = DB.summarize(r.blocks); o.blocksDropped = r.dropped;
             o.previewHtml = `<div style="font:13px sans-serif;background:#FFF4D6;color:#5A4300;padding:8px 10px;margin-bottom:6px">쿠팡 정책 정리 · 링크 벗김 ${pol.unlinked} · 뺀 문장 ${pol.removed.length} · 그림 ${pol.images.length}장(그림 속 글자는 눈으로) — 이 띠는 미리보기에만</div>\n` + DB.toPreviewHtml(r.blocks);
         }
+        let cmpNo = o.fromNaver != null ? String(o.fromNaver).replace(/\D/g, '') : null;   // #756 네이버와 보이는 모양 비교에 쓸 네이버 번호
+        if (o.detailBlocks != null) {   // #756 detail-compare.js fix 가 만든 블록(네이버 상세 → 쿠팡 블록 + 정렬·크기·색·굵기 inline)
+            if (o.fromNaver != null) throw new Error('--detail-from-naver 와 --detail-blocks 는 하나만');
+            let F = null; try { F = JSON.parse((deps.readFile || (p => fs.readFileSync(p, 'utf8')))(String(o.detailBlocks))); } catch (e) { throw new Error('--detail-blocks 파일을 못 읽었어요: ' + o.detailBlocks); }
+            if (!F || !Array.isArray(F.blocks) || !/^\d{6,}$/.test(String(F.from_naver || ''))) throw new Error('--detail-blocks 파일 꼴이 아니에요(detail-compare.js fix 결과 파일)');
+            if (F.coupang && String(F.coupang) !== String(row.seller_product_id)) throw new Error(`이 블록 파일은 쿠팡 ${F.coupang} 용이에요 — 보관본 ${row.id} 는 ${row.seller_product_id}`);
+            cmpNo = String(F.from_naver); src = await R.naverDetail(cmpNo);
+            if (!src) throw new Error(`네이버 ${cmpNo} 상세 보관본이 없어요 — 먼저 node scripts/desk/naver-detail.js show ${cmpNo} <지시 id>`);
+            if (F.naver_backup_id && src.id !== F.naver_backup_id) throw new Error(`블록 파일을 만든 뒤 네이버 상세 보관본이 바뀌었어요(#${F.naver_backup_id} → #${src.id}) — detail-compare.js fix 부터 다시`);
+            const DB = require(path.join(__dirname, '..', '..', 'detail-blocks.js'));
+            const pol = DB.coupangPolicy(F.blocks);
+            if (F.policy) { pol.unlinked += F.policy.unlinked || 0; pol.removed = (F.policy.removed || []).concat(pol.removed); }   // fix 때 이미 정리한 몫도 카드에
+            o.policy = pol; o.blocks = pol.blocks; o.blocksSummary = DB.summarize(pol.blocks); o.blocksDropped = 0; o.fromNaver = cmpNo + '(네이버와 같게 맞춘 판)';
+            o.previewHtml = `<div style="font:13px sans-serif;background:#FFF4D6;color:#5A4300;padding:8px 10px;margin-bottom:6px">네이버와 같게 맞춘 판(#756) · 쿠팡 정책 정리 · 링크 벗김 ${pol.unlinked} · 뺀 문장 ${pol.removed.length} · 그림 ${pol.images.length}장 — 이 띠는 미리보기에만</div>\n` + DB.toPreviewHtml(pol.blocks);
+        }
         const P = planFull(row.before_json, o, deps.readFile || (p => fs.readFileSync(p, 'utf8')));
         if (P.errs.length) return out({ ok: false, stopped: true, stops: P.errs, can_apply: false, note: '보낸 것 없음 — 멈춘 문구 그대로 전하고 되묻기' });
         const saved = isSavedJ(row.before_json);
@@ -470,6 +487,15 @@ async function main(argv, deps) {
         if (P.patch.items_add) xw.push('새 옵션의 쿠팡 옵션 번호(vendorItemId)는 승인 뒤에 생겨요 — 그 뒤 가격·재고는 1차(plan --price/--stock)로');
         const tail = saved ? ['임시저장 상품 — 저장만(승인 요청 안 함 · 손님 노출 0)'] : ['🟡 승인된 상품이라 쿠팡 승인 심사를 거쳐요 — 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(며칠 걸릴 수 있음)'];
         const pname = row.before_json.sellerProductName || '';
+        let cmpLines = [], cmpOut;   // #756 대표 「네이버와 같게 · 수정할 때마다」 = 보낼 블록을 쿠팡 꼴로 그려 네이버 상세와 단락마다 견줌(쓰기 0)
+        if (P.patch.detail_blocks && src && cmpNo) {
+            try {
+                const DC = require('./detail-compare.js'), DB = require(path.join(__dirname, '..', '..', 'detail-blocks.js'));
+                const c = await (deps.compare || DC.compare)({ naverHtml: src.html, contents: DB.toCoupangContents(P.patch.detail_blocks), png: false });
+                cmpLines = DC.cardLines(c, `(node scripts/desk/detail-compare.js fix ${row.seller_product_id} ${cmpNo} → plan-full ${row.id} --detail-blocks <파일>)`);
+                cmpOut = { diffs: c.diffs.length, lines: c.diffs.map(d => d.line), summary: c.summary };
+            } catch (e) { cmpLines = ['⚠ 네이버와 보이는 모양 비교를 못 했어요(' + String(e && e.message || e).slice(0, 100) + ') — node scripts/desk/detail-compare.js check 로 따로']; }
+        }
         if (cmd === 'plan-full') {
             let png = null, pngErr = null;
             if (P.patch.detail_blocks && o.previewHtml) { try { png = await (deps.renderPng || renderPng)(o.previewHtml, `coupang-preview-${row.id}`); } catch (e) { pngErr = String(e && e.message || e).slice(0, 120); } }
@@ -477,7 +503,8 @@ async function main(argv, deps) {
             return out({ ok: true, backup_id: row.id, patch: P.patch.detail_blocks ? Object.assign({}, P.patch, { detail_blocks: `(블록 ${P.patch.detail_blocks.length}개)` }) : P.patch, can_apply: !blocked,
                 preview_png: png || undefined, preview_error: pngErr || undefined,
                 policy: o.policy ? { unlinked: o.policy.unlinked, removed: o.policy.removed.map(x => ({ block: x.block, word: x.word, text: x.text, html: x.html })), images: o.policy.images } : undefined,   // #746 뺀 문장 원문 · 그림 목록(눈으로)
-                card: pcard('고치기 계획(아직 안 보냄)', pname, row.seller_product_id, P.rows, xw.map(w => w.startsWith('🔴') ? w : '⚠ ' + w).concat(tail, [png ? '미리보기 그림을 붙였어요 — 쿠팡 손님 화면도 이 순서' : '', '이대로 바꿀까요?'].filter(Boolean))),
+                compare: cmpOut,
+                card: pcard('고치기 계획(아직 안 보냄)', pname, row.seller_product_id, P.rows, xw.map(w => w.startsWith('🔴') ? w : '⚠ ' + w).concat(tail, cmpLines, [png ? '미리보기 그림을 붙였어요 — 쿠팡 손님 화면도 이 순서' : '', '이대로 바꿀까요?'].filter(Boolean))),
                 note: png ? '미리보기 PNG(preview_png)를 respond attachments 로 붙여 카드와 함께 되묻기' : (pngErr ? '미리보기 그림을 못 만들었어요(' + pngErr + ') — 카드로만 되묻기' : '카드 그대로 되묻기'),
                 next: `apply-full ${row.id} <지시 id> ` + argv.slice(2).join(' ') });
         }
@@ -493,8 +520,9 @@ async function main(argv, deps) {
         if (res.items_add_note) L.push(res.items_add_note);
         if (Array.isArray(res.items_after) && P.patch.detail_blocks) { const imgs = res.items_after.flatMap(it => it.content_images || []); const ext = imgs.filter(u => !/coupangcdn|vendor_inventory/.test(String(u))).length; L.push(`다시 읽은 상세 그림(앞 몇 장): 쿠팡 저장소 ${imgs.length - ext} · 아직 바깥 주소 ${ext}${ext ? '(승인 대기 중엔 옛 값일 수 있음 — approval 뒤 full 로 다시 보기)' : ''}`); }
         if (P.patch.item_names || P.patch.items_add) L.push(`옵션 이름·추가는 쿠팡 승인 뒤 반영 — 승인되면 영향 점검: node scripts/desk/option-impact.js check coupang ${row.seller_product_id}(송장 매칭·발송안내·가격 짝 · 🔴 면 되묻기)`);
+        L.push(...cmpLines);   // #756 보낸 블록 ↔ 네이버 보이는 모양(🟠 면 「고칠까요?」 되묻기)
         L.push(`되돌리기: revert-full ${row.id} <지시 id>(이것도 승인행${P.patch.items_add && !res.saved ? ' · 승인된 상품의 새 옵션은 못 지움 → 윙에서 그 옵션 판매중지' : ''})`);
-        return out({ ok: true, backup_id: row.id, saved: !!res.saved, status_after: res.status_after || null,
+        return out({ ok: true, backup_id: row.id, saved: !!res.saved, status_after: res.status_after || null, compare: cmpOut,
             card: pcard(res.saved ? '고치기 결과(임시저장)' : '고치기 결과 — 🟡 쿠팡 승인 대기', pname, row.seller_product_id, P.rows, L),
             note: res.saved ? '카드 그대로' : '「반영 완료」라고 쓰지 않는다 — 「쿠팡 승인 대기(승인되면 반영 · 며칠 걸릴 수 있음)」로 답하고 approval 로 뒤에 확인' });
     }
