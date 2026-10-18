@@ -15399,6 +15399,172 @@ async function collectCafe24Sync(modeOverride, opt) {
     return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.optMismatch && rep.optMismatch.length ? ` · 🔴옵션결제가불일치 ${rep.optMismatch.length}` : ''}${rep.optMissing && rep.optMissing.length ? ` · 🟠옵션명불일치 ${rep.optMissing.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
 }
 
+// #739 시작 — 카페24 옵션 시험·이름 바꾸기(cafe24_product_request action 추가 · 기존 action 무변경 · 근거 = docs/737-cafe24-option-api.md)
+//   test_product_create = 시험 상품 1개(진열·판매 안 함 · 옵션 1묶음 2값) · 같은 이름이 있으면 재사용 · 하루 1개 · 번호는 설정 'cafe24_test_products' 에
+//   options_get · variants_get = 읽기 · options_put = 옵션 수정 PUT 그대로(🔴 시험 상품만 · 운영 상품 거절) → 전·후 품목(variant) 대조
+//   option_rename = 값 글자 하나만 바꾸기(품목 코드·추가금·판매·진열 유지 확인 · 되돌리기 = 반대 rename) · 운영 상품은 설정 'cafe24_option_rename'.enabled === true 일 때만
+//   이 블록은 verify-739-cafe24-option.js 가 표식 사이를 떼어 가짜 deps 로 돌린다(deps = { apiGet, apiReq, cfgGet, cfgSet, audit }) — 바깥 이름을 직접 쓰지 말 것.
+const CAF_OPT_ACTIONS = ['test_product_create', 'options_get', 'variants_get', 'options_put', 'option_rename'];
+const CAF_TEST_NAME = '테스트 옵션(시험용 · 구매 금지)';
+const CAF_TEST_KEY = 'cafe24_test_products', CAF_RENAME_KEY = 'cafe24_option_rename';
+const CAF_TEST_OPTION = { option_name: '테스트 옵션', values: ['테스트A', '테스트B'] };
+const CAF_MAX_TEXT = 100, CAF_MAX_GROUPS = 10, CAF_MAX_VALUES = 100;
+const cafP = (no) => `/api/v2/admin/products/${no}`;
+// 옵션 GET 응답 → 우리 꼴 [{ option_name, values:[글자] }] + 원문 칸(option_type 등)
+function cafOptsOf(r) {
+    const o = (r && (r.option || r.options)) || {};
+    const list = Array.isArray(o) ? o : (Array.isArray(o.options) ? o.options : []);
+    return { has_option: o.has_option ?? null, option_type: o.option_type ?? null, option_list_type: o.option_list_type ?? null,
+        groups: list.map(g => ({ option_name: g.option_name, values: (g.option_value || []).map(v => v.option_text) })),
+        raw: JSON.parse(JSON.stringify(list)) };   // PUT 은 원문 객체를 깊은 복사해 글자만 바꿈(그림·색·표시 꼴 칸이 비워지지 않게 · 워커3 점검)
+}
+// 원문 옵션(raw) 위에 바꾼 글자만 — groups[{ option_name, values }] 의 값마다 같은 묶음·같은 글자 원문 객체 → 없으면(새 값) 그 묶음 첫 값의 꼴 칸 복사 + 그림 칸 비움
+const CAF_IMG_KEYS = ['option_image_file', 'option_link_image'];
+function cafFromRaw(groups, raw, renames) {
+    return groups.map((g, gi) => {
+        const rg = (raw || []).find(x => x.option_name === g.option_name) || (raw || [])[gi] || null;
+        const base = rg ? JSON.parse(JSON.stringify(rg)) : { option_name: g.option_name };
+        const rv = (rg && rg.option_value) || [];
+        base.option_name = g.option_name;
+        base.option_value = g.values.map(t => {
+            const src = (renames && renames.get(t)) || t;   // 이름 바꾸기 = 옛 글자의 원문 객체를 가져와 글자만
+            const hit = rv.find(v => v.option_text === src);
+            if (hit) return { ...JSON.parse(JSON.stringify(hit)), option_text: t };
+            const tpl = rv[0] ? JSON.parse(JSON.stringify(rv[0])) : {};
+            for (const k of CAF_IMG_KEYS) if (k in tpl) tpl[k] = '';
+            return { ...tpl, option_text: t };
+        });
+        return base;
+    });
+}
+// 품목 GET → [{ code, opts(글자 묶음), add, selling, display }]
+function cafVarsOf(r) {
+    return ((r && r.variants) || []).map(v => ({ code: v.variant_code, opts: (v.options || []).map(x => `${x.name}=${x.value}`).join(' / '),
+        add: v.additional_amount != null ? String(v.additional_amount) : null, selling: v.selling ?? null, display: v.display ?? null }));
+}
+// 전·후 품목 대조 — 같은 코드의 추가금·판매·진열이 그대로인지 · 사라진 코드 · 새 코드 · 글자가 바뀐 코드
+function cafVarDiff(a, b) {
+    const bm = new Map(b.map(v => [v.code, v])), am = new Map(a.map(v => [v.code, v]));
+    const removed = a.filter(v => !bm.has(v.code)).map(v => v.code), added = b.filter(v => !am.has(v.code)).map(v => ({ code: v.code, opts: v.opts, add: v.add }));
+    const changed = [], renamed = [];
+    for (const v of a) { const w = bm.get(v.code); if (!w) continue;
+        for (const k of ['add', 'selling', 'display']) if (v[k] !== w[k]) changed.push(`${v.code}.${k}: ${v[k]} → ${w[k]}`);
+        if (v.opts !== w.opts) renamed.push({ code: v.code, from: v.opts, to: w.opts }); }
+    return { kept: removed.length === 0 && changed.length === 0, removed, added, changed, renamed };
+}
+// 옵션 묶음 꼴 검사(options_put 의 options·original_options)
+function cafCheckGroups(gs, name) {
+    if (!Array.isArray(gs) || !gs.length || gs.length > CAF_MAX_GROUPS) return `${name} 는 1~${CAF_MAX_GROUPS}묶음 배열`;
+    for (const [i, g] of gs.entries()) {
+        if (!g || typeof g.option_name !== 'string' || !g.option_name.trim() || g.option_name.length > CAF_MAX_TEXT) return `${name} ${i + 1}: option_name 은 1~${CAF_MAX_TEXT}자`;
+        const vs = g.option_value;
+        if (!Array.isArray(vs) || !vs.length || vs.length > CAF_MAX_VALUES) return `${name} ${i + 1}: option_value 는 1~${CAF_MAX_VALUES}개`;
+        for (const v of vs) if (!v || typeof v.option_text !== 'string' || !v.option_text.trim() || v.option_text.length > CAF_MAX_TEXT) return `${name} ${i + 1}: option_text 는 1~${CAF_MAX_TEXT}자`;
+        const t = vs.map(v => v.option_text);
+        if (new Set(t).size !== t.length) return `${name} ${i + 1}: 같은 값이 두 번`;
+    }
+    return null;
+}
+async function cafe24OptRun(req, deps) {
+    const { apiGet, apiReq, cfgGet, cfgSet, audit } = deps;
+    const action = req && req.action;
+    const fail = (error, extra) => ({ ok: false, action, error, ...(extra || {}) });
+    const by = req.created_by ? String(req.created_by).slice(0, 80) : null;
+    const auditW = (act, changes) => audit({ action: act, targetType: 'cafe24_product', targetId: null, changes, source: 'cafe24-option', actor: { id: null, name: by || '창구(#739)' } }).catch(() => {});
+    const cErr = (e, where, extra) => fail(`카페24 ${where} 실패`, { code: e && e.status || null, reason: e && e.reason ? String(e.reason).slice(0, 200) : null,
+        detail: e && e.detail ? JSON.stringify(e.detail).slice(0, 300) : null, ...(extra || {}) });
+    const testList = async () => { const v = await cfgGet(CAF_TEST_KEY); return v && Array.isArray(v.products) ? v : { products: [] }; };
+    const isTest = async (no) => (await testList()).products.some(p => String(p.product_no) === String(no));
+    const getOpts = async (no) => cafOptsOf(await apiGet(cafP(no) + '/options', { shop_no: 1 }));
+    const getVars = async (no) => cafVarsOf(await apiGet(cafP(no) + '/variants', { shop_no: 1 }));
+    if (!CAF_OPT_ACTIONS.includes(action)) return fail('action 이 아니에요');
+
+    if (action === 'test_product_create') {
+        const lst = await testList();
+        // 재사용: 목록의 번호 중 지금도 그 이름으로 있는 것 → 없으면 이름으로 검색
+        for (const p of lst.products) {
+            try { const r = await apiGet(cafP(p.product_no), { shop_no: 1, fields: 'product_no,product_name,display,selling' });
+                if (r && r.product && r.product.product_name === CAF_TEST_NAME) return { ok: true, action, reused: true, product_no: Number(p.product_no), display: r.product.display, selling: r.product.selling, options: await getOpts(p.product_no), variants: await getVars(p.product_no) }; } catch (_) { /* 지워진 번호 */ }
+        }
+        try {
+            const s = await apiGet('/api/v2/admin/products', { shop_no: 1, product_name: CAF_TEST_NAME, fields: 'product_no,product_name,display,selling', limit: 10 });
+            const hit = ((s && s.products) || []).find(p => p.product_name === CAF_TEST_NAME);
+            if (hit) {
+                lst.products.push({ product_no: Number(hit.product_no), found_at: new Date().toISOString() }); await cfgSet(CAF_TEST_KEY, lst);
+                return { ok: true, action, reused: true, product_no: Number(hit.product_no), display: hit.display, selling: hit.selling, options: await getOpts(hit.product_no), variants: await getVars(hit.product_no) };
+            }
+        } catch (e) { return cErr(e, '시험 상품 찾기'); }
+        if (lst.last_created_at && Date.now() - Date.parse(lst.last_created_at) < 24 * 3600 * 1000) return fail('시험 상품 만들기는 24시간에 1개까지');
+        let no;
+        try {
+            const cr = await apiReq('POST', '/api/v2/admin/products', { shop_no: 1, request: { product_name: CAF_TEST_NAME, price: '1000', supply_price: '1000', display: 'F', selling: 'F',
+                summary_description: '옵션 API 시험용(#739) — 진열·판매 안 함 · 구매 금지' } });
+            no = cr && cr.product && cr.product.product_no;
+            if (!no) return fail('카페24 응답에 상품 번호가 없어요');
+        } catch (e) { return cErr(e, '시험 상품 등록'); }
+        lst.products.push({ product_no: Number(no), created_at: new Date().toISOString() }); lst.last_created_at = new Date().toISOString(); await cfgSet(CAF_TEST_KEY, lst);
+        try {
+            await apiReq('POST', cafP(no) + '/options', { shop_no: 1, request: { has_option: 'T', option_type: 'T', option_list_type: 'S',
+                options: [{ option_name: CAF_TEST_OPTION.option_name, option_value: CAF_TEST_OPTION.values.map(t => ({ option_text: t })) }] } });
+        } catch (e) { await auditW('cafe24_test_product_create', { product_no: Number(no), options_failed: true }); return cErr(e, '시험 상품 옵션 등록', { product_no: Number(no) }); }
+        const options = await getOpts(no), variants = await getVars(no);
+        await auditW('cafe24_test_product_create', { product_no: Number(no), variants: variants.map(v => v.code) });
+        return { ok: true, action, reused: false, product_no: Number(no), display: 'F', selling: 'F', options, variants };
+    }
+
+    const no = Number(String(req.product_no || '').replace(/\D/g, ''));
+    if (!(no > 0)) return fail('product_no 가 필요해요');
+    if (action === 'options_get') { try { return { ok: true, action, product_no: no, options: await getOpts(no) }; } catch (e) { return cErr(e, '옵션 조회'); } }
+    if (action === 'variants_get') { try { return { ok: true, action, product_no: no, variants: await getVars(no) }; } catch (e) { return cErr(e, '품목 조회'); } }
+
+    const test = await isTest(no);
+    let body;
+    if (action === 'options_put') {
+        if (!test) return fail('options_put 은 시험 상품만(설정 cafe24_test_products 의 번호) — 운영 상품은 option_rename 으로');
+        const e1 = cafCheckGroups(req.options, 'options') || cafCheckGroups(req.original_options, 'original_options');
+        if (e1) return fail(e1);
+        // 지금 원문 옵션 객체 위에 글자만(그림·색·표시 꼴 보존) — 시험 상품이라도 같은 꼴로 보내야 운영 rename 과 같은 시험이 됨
+        let curP;
+        try { curP = await getOpts(no); } catch (e) { return cErr(e, '옵션 조회'); }
+        const toGroups = (gs) => gs.map(g => ({ option_name: g.option_name, values: g.option_value.map(v => v.option_text) }));
+        body = { options: cafFromRaw(toGroups(req.options), curP.raw), original_options: cafFromRaw(toGroups(req.original_options), curP.raw),
+            ...(curP.option_list_type ? { option_list_type: curP.option_list_type } : {}) };
+    } else {   // option_rename
+        if (!test) { const c = await cfgGet(CAF_RENAME_KEY); if (!(c && c.enabled === true)) return fail('운영 상품 옵션 이름 바꾸기는 설정 cafe24_option_rename.enabled 가 켜져 있을 때만(시험 결과 뒤)'); }
+        const from = typeof req.from === 'string' ? req.from : '', to = typeof req.to === 'string' ? req.to.trim() : '';
+        if (!from || !to || to.length > CAF_MAX_TEXT) return fail(`from·to 가 필요해요(to 1~${CAF_MAX_TEXT}자)`);
+        if (from === to) return fail('from 과 to 가 같아요');
+        let cur;
+        try { cur = await getOpts(no); } catch (e) { return cErr(e, '옵션 조회'); }
+        const grp = req.option_name || req.group || null;   // 창구 mall-option.js 는 group 으로 보냄(워커3)
+        const gs = cur.groups.filter(g => (!grp || g.option_name === grp) && g.values.includes(from));
+        if (gs.length !== 1) return fail(`값 「${from}」 을 한 묶음에서 하나로 찾지 못했어요(${gs.length}묶음)`, { groups: cur.groups });
+        if (gs[0].values.includes(to)) return fail(`「${to}」 이 같은 묶음에 이미 있어요`);
+        const next = cur.groups.map(g => g === gs[0] ? { ...g, values: g.values.map(v => v === from ? to : v) } : g);
+        body = { options: cafFromRaw(next, cur.raw, new Map([[to, from]])), original_options: cafFromRaw(cur.groups, cur.raw),
+            ...(cur.option_list_type ? { option_list_type: cur.option_list_type } : {}) };
+    }
+    let before;
+    try { before = await getVars(no); } catch (e) { return cErr(e, '품목 조회'); }
+    let optsBefore = null;
+    try { optsBefore = await getOpts(no); } catch (_) { /* 비교용 */ }
+    try { await apiReq('PUT', cafP(no) + '/options', { shop_no: 1, request: body }); }
+    catch (e) {
+        await auditW(action === 'options_put' ? 'cafe24_options_put_failed' : 'cafe24_option_rename_failed', { product_no: no, test, code: e && e.status || null, reason: e && e.reason ? String(e.reason).slice(0, 200) : null });
+        let after = null; try { after = await getVars(no); } catch (_) {}
+        return cErr(e, '옵션 수정', { product_no: no, test, variants_unchanged: after ? cafVarDiff(before, after).kept && after.length === before.length : null });
+    }
+    let after = null, optsAfter = null;
+    try { after = await getVars(no); optsAfter = await getOpts(no); } catch (e) { return { ok: true, action, product_no: no, test, put: true, error_note: '수정은 됐지만 재조회 실패 — 관리자 화면에서 확인' }; }
+    const diff = cafVarDiff(before, after);
+    // rename 뒤 옵션 재조회에 새 이름이 보이고 옛 이름이 사라졌는지(같은 묶음)
+    const toV = action === 'option_rename' && optsAfter ? optsAfter.groups.some(g => g.values.includes(String(req.to).trim()) && !g.values.includes(req.from)) : null;
+    if (action === 'option_rename') diff.to_visible = toV;
+    await auditW(action === 'options_put' ? 'cafe24_options_put' : 'cafe24_option_rename', { product_no: no, test, ...(action === 'option_rename' ? { from: req.from, to: String(req.to).trim() } : {}), variants_kept: diff.kept, removed: diff.removed, added: diff.added.map(x => x.code), changed: diff.changed });
+    return { ok: true, action, product_no: no, test, put: true, options_before: optsBefore, options_after: optsAfter, variants_before: before, variants_after: after, ...diff,
+        ...(action === 'option_rename' ? { revert: { action: 'option_rename', product_no: no, from: String(req.to).trim(), to: req.from } } : {}) };
+}
+// #739 끝
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
 //   verify = read_product 1콜 + write_product 확증(테스트 상품 1건 — display:F·selling:F 진열·판매 안함, 실서비스 노출 0).
 setInterval(async () => {
@@ -15572,6 +15738,10 @@ setInterval(async () => {
                 await cafe24.apiReq('DELETE', `/api/v2/admin/products/${Number(req.product_no)}`);
                 out.deleted = { ok: true, product_no: Number(req.product_no), name: nm.slice(0, 40) };
             } catch (e) { out.deleted = { ok: false, reason: String(e.reason || e.message).slice(0, 150) }; }
+        } else if (CAF_OPT_ACTIONS.includes(req.action)) {
+            // #739 옵션 시험·이름 바꾸기(블록 위 · 결과 = out.opt)
+            try { out.opt = await cafe24OptRun(req, { apiGet: cafe24.apiGet, apiReq: cafe24.apiReq, cfgGet: naverCfgGet, cfgSet: naverCfgSet, audit: writeAudit }); }
+            catch (e) { out.opt = { ok: false, action: req.action, error: '러너 오류', reason: String(e.reason || e.message).slice(0, 150) }; }
         } else out.error = '지원하지 않는 action';
         await naverCfgSet('cafe24_product_result', out);
     } catch (e) {

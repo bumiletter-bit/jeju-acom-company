@@ -82,20 +82,32 @@ let _lastUserAct = Date.now();
 //   #637 로 범위 축소: 끝난 요청(성공·실패 모두)은 바로 지운다 — 사람이 [다시 확인]을 눌러 다시 부르면 반드시 서버에 간다(종전 「끝난 뒤 1.2초 안 재사용」이 옛 답을 돌려줘 실패 안내가 안 떴음).
 //   쓰기(GET 아님)가 나가면 걸려 있던 것도 비운다 → 저장 직후 다시 읽을 때 저장 전에 떠난 요청의 답을 나눠 쓰지 않는다.
 const _apiInflight = new Map();   // url → 아직 안 끝난 요청
-async function api(url, method = 'GET', body = null) {
+// #738(대표 10/18 「답이 6분 안 보이다 새로고침하니 되어 있었음」): 배포로 서버가 갈아타는 순간 GET 하나가 응답도 실패도 없이 걸리면
+//   폴링이 그 약속을 계속 물고 멈췄다 → 4번째 인자 { timeoutMs } 를 주면 그 시간 뒤 끊고 AKM_NET_ERR 로 실패(걸려 있던 약속도 위 합침에서 빠짐).
+//   옵션을 안 주는 호출은 종전과 같다(송장변환 등 오래 걸리는 GET 무변경).
+async function api(url, method = 'GET', body = null, opt = null) {
     if (method === 'GET' && !body) {
         const hit = _apiInflight.get(url);
         if (hit) return hit;
-        const p = _apiRaw(url, method, body); _apiInflight.set(url, p);
+        const p = _apiRaw(url, method, body, opt); _apiInflight.set(url, p);
         const done = () => { if (_apiInflight.get(url) === p) _apiInflight.delete(url); };
         p.then(done, done);
         return p;
     }
     _apiInflight.clear();
-    return _apiRaw(url, method, body);
+    return _apiRaw(url, method, body, opt);
 }
-async function _apiRaw(url, method = 'GET', body = null) {
+async function _apiRaw(url, method = 'GET', body = null, opt = null) {
+    const ms = opt && opt.timeoutMs > 0 ? opt.timeoutMs : 0;
+    if (!ms) return _apiFetch(url, method, body, null);
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+    try { return await _apiFetch(url, method, body, ac.signal); }
+    catch (e) { if (ac.signal.aborted) throw new Error(AKM_NET_ERR); throw e; }   // 시간 초과 = 통신 끊김과 같은 글
+    finally { clearTimeout(timer); }
+}
+async function _apiFetch(url, method, body, signal) {
     const options = { method, headers: {} };
+    if (signal) options.signal = signal;
     const token = localStorage.getItem('jwt_token');
     if (token) options.headers['Authorization'] = `Bearer ${token}`;
     if (Date.now() - _lastUserAct < 30000) options.headers['X-User-Active'] = '1';

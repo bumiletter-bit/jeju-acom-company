@@ -146,6 +146,7 @@
         '질문종결': ['done', '종결'], '취소': ['done', '취소'], '대체됨': ['done', '대체됨'], '피드백': ['done', '피드백'],
     };
     const ACTIVE = ['대기', '처리중', '판독완료', '확인표작성', '승인됨'];
+    const POLL_T = { timeoutMs: 20000 };   // #738 폴링 GET 시간 제한(배포로 서버가 갈아탈 때 걸린 요청이 목록을 멈추지 않게 · app.js api 4번째 인자)
 
     function mount() {
         if (S.mounted) return;
@@ -2417,7 +2418,7 @@
 
     async function loadStatus() {
         try {
-            const d = await api('/api/agent-office/desk-status');
+            const d = await api('/api/agent-office/desk-status', 'GET', null, POLL_T);
             const s = d.state || 'offline';
             $('desk-state').dataset.s = s;
             $('desk-stage').dataset.s = s;
@@ -2473,7 +2474,7 @@
         try {
             const hq = S.hist.q;
             const q = S.tab === 'mine' ? '?mine=1&limit=' + S.mineLimit : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
-            const d = await api('/api/agent-office/desk/orders' + q);
+            const d = await api('/api/agent-office/desk/orders' + q, 'GET', null, POLL_T);   // #738 걸린 요청은 20초 뒤 실패로 끝내고 다음 tick 에 다시
             if (tab !== S.tab || (tab === 'all' && hq !== S.hist.q)) { S.again = true; return; }
             let orders = d.orders || [];
             if (tab === 'all') {   // #538 [더 보기]로 받아 둔 옛 줄은 새로고침해도 남긴다
@@ -3220,7 +3221,7 @@
 
     function boardSoon() { if (S.board && Date.now() - (S.boardAt || 0) > 1500) loadBoard(); }   // #676 손님 연락 창에서 처리한 것이 「봇 실패」 줄에 바로(잇단 호출은 1.5초에 한 번)
     async function loadBoard() {
-        try { S.board = await api('/api/agent-office/desk/board'); S.boardAt = Date.now(); renderBoard(); } catch (e) { /* 다음 주기에 다시 */ }
+        try { S.board = await api('/api/agent-office/desk/board', 'GET', null, POLL_T); S.boardAt = Date.now(); renderBoard(); } catch (e) { /* 다음 주기에 다시 */ }
     }
     // #633(대표 10/11): 봇이 답을 못 낸 건 한 줄
     // #676(대표 10/12 폴드 실물 「문의 관리로 가는데 어떤 건인지 모르겠고 · 없애는 법도 모르겠고 · 뒤로가기로 못 돌아옴」): 알약은 다른 메뉴로 보내지 않고 손님 연락 창의 그 대화로
