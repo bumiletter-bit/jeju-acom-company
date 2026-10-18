@@ -98,6 +98,8 @@ const CASES = process.argv[2] ? process.argv[2].split(',').map(i => ALL[Number(i
       await pg.locator('#pdOrder').tap(); await pg.waitForTimeout(1400);
       const row = has ? pg.locator('.pd-dim .opt-row[data-opt-sel]', { hasText: has }).first() : pg.locator('.pd-dim .opt-row[data-opt-sel]').first();
       const rowInfo = await row.evaluate(el => ({ t: (el.getAttribute('data-opt-text') || '').slice(-40), price: parseInt(el.getAttribute('data-opt-price'), 10) }));
+      const ogi = await row.evaluate(el => { const g = el.closest('[data-og-grp]'); return g && g.hidden ? g.getAttribute('data-og-grp') : null; });   // #755 두 단계 = 품목 단추 먼저
+      if (ogi != null) { await pg.locator(`.pd-dim [data-og="${ogi}"]`).tap(); await pg.waitForTimeout(700); }
       await row.tap(); await pg.waitForTimeout(700);
       await pg.locator('#pdOrder').tap();
       await pg.waitForTimeout(5000);
