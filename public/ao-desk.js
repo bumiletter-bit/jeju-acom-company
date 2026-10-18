@@ -2047,6 +2047,8 @@
     const PC_TIERS = [['normal', '일반', 'mute'], ['vip', 'VIP', 'work'], ['gift', '선물', 'done'], ['bulk', '대용량', 'wait']];
     const PC_TIER = Object.fromEntries(PC_TIERS.map(t => [t[0], t]));
     const PC_CH = { naver: '네이버', mall: '자사몰', cafe24: '자사몰', coupang: '쿠팡' };
+    const PC_PF = { naver: 'naver', mall: 'mall', cafe24: 'mall', coupang: 'coupang' };   // #758 플랫폼 색(토큰 --d-pf-*) · 모르는 채널은 색 없음
+    const pcChTag = ch => `<i class="pc-ch"${PC_PF[ch] ? ` data-pf="${PC_PF[ch]}"` : ''}>${esc(PC_CH[ch] || ch || '')}</i>`;
     const PC_VIEWS = [['selling', '판매중'], ['all', '전체상품']];   // #622(대표 10/10): 판매 중인 상품만 / 안 파는 것까지 전부
     const pcLive = r => !(r.sold === false || r.ignore);   // 지금 파는 줄
     const PC_HTML = `
@@ -2140,7 +2142,7 @@
             const why = f.bad.concat(f.stale).map(is => PC_KIND_LABEL[is.kind] || is.kind).join(' · ');
             const state = r.ignore ? '제외한 페이지' : r.sold === false ? '판매 안 함' : '';
             return `<tr class="${cls.join(' ')}" data-page="${esc(r.page_key)}">
-                <th scope="row" class="pc-pg"><span class="pc-pname">${esc(p.name || r.page_key)}</span><span class="pc-pmeta"><i class="desk-badge" data-k="${t[2]}">${esc(t[1])}</i><i class="pc-ch">${esc(PC_CH[r.channel || p.channel] || r.channel || '')}</i></span><span class="pc-otxt" title="${esc(r.option_text || '')}">${esc(r.option_text || '')}</span></th>
+                <th scope="row" class="pc-pg"><span class="pc-pname">${esc(p.name || r.page_key)}</span><span class="pc-pmeta"><i class="desk-badge" data-k="${t[2]}">${esc(t[1])}</i>${pcChTag(r.channel || p.channel)}</span><span class="pc-otxt" title="${esc(r.option_text || '')}">${esc(r.option_text || '')}</span></th>
                 <td class="pc-price"><b>${esc(pcWon(r.price))}<i>원</i></b>${state ? '<small>' + state + '</small>' : why ? '<small>' + esc(why) + '</small>' : ''}${pcChanged(r) ? '<small class="pc-chg2">' + esc(pcChanged(r)) + '</small>' : ''}</td>
                 <td class="pc-chg">${esc(pcChanged(r))}</td>
             </tr>`;
@@ -2269,7 +2271,7 @@
             const cfg = {}; Object.entries(r.config && typeof r.config === 'object' ? r.config : {}).forEach(([k, v]) => { if (v && typeof v === 'object') cfg[pcCfgKey(k)] = v; });
             PRICE.cfg = cfg;
             box.innerHTML = pages.map((p, i) => `<div class="pc-set-row" data-key="${esc(p.key)}" data-tier="${esc(p.tier || 'normal')}" data-ignore="${p.ignore ? '1' : ''}">
-                <div class="pc-set-name"><b>${esc(p.name || p.key)}</b><small>${esc(PC_CH[p.channel] || p.channel || '')} · ${esc(pcCfgKey(p.key))}${p.options != null ? ' · 옵션 ' + nfmt(p.options) + '개' : ''}${p.sold === false ? ' · 판매 안 함' : ''}</small></div>
+                <div class="pc-set-name"><b>${esc(p.name || p.key)}</b><small>${pcChTag(p.channel)} · ${esc(pcCfgKey(p.key))}${p.options != null ? ' · 옵션 ' + nfmt(p.options) + '개' : ''}${p.sold === false ? ' · 판매 안 함' : ''}</small></div>
                 <label class="desk-sr" for="pc-tier-${i}">${esc(p.name || p.key)} 등급</label><select class="pc-sel" id="pc-tier-${i}" data-f="tier">${PC_TIERS.map(t => `<option value="${t[0]}"${t[0] === (p.tier || 'normal') ? ' selected' : ''}>${t[1]}</option>`).join('')}</select>
                 <label class="pc-ign"><input type="checkbox" data-f="ignore"${p.ignore ? ' checked' : ''}><span>제외</span></label>
             </div>`).join('');

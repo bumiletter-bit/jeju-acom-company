@@ -29,6 +29,9 @@ html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
     --d-ch-talk-bg: #054F31; --d-ch-talk-fg: #A6F4C5;
     --d-ch-qna-bg: #7A2E0E; --d-ch-qna-fg: #FEDF89;
     --d-ch-inquiry-bg: #851651; --d-ch-inquiry-fg: #FCCEEE;
+    --d-pf-naver: #5EE08F; --d-pf-naver-dot: #03C75A;         /* #758 판매처 색 */
+    --d-pf-coupang: #FF8A99; --d-pf-coupang-dot: #FF4D63;
+    --d-pf-mall: #FFB066; --d-pf-mall-dot: #F08A24;
     --d-lime: #C5EE4F;              /* 답변 강조(대표 「라임」) */
     --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
 }

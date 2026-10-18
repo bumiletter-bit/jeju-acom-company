@@ -22,6 +22,9 @@
     --d-ch-talk-bg: #D1FADF; --d-ch-talk-fg: #05603A;
     --d-ch-qna-bg: #FEF0C7; --d-ch-qna-fg: #93370D;
     --d-ch-inquiry-bg: #FCE7F6; --d-ch-inquiry-fg: #9E165F;
+    --d-pf-naver: #067A3A; --d-pf-naver-dot: #03C75A;         /* #758 판매처 색(네이버 = 초록 · 쿠팡 = 빨강 · 자사몰 = 아꼼이 귤색) — 글자는 줄 바탕 4종 위 4.5 이상 · 점은 판매처 본색 */
+    --d-pf-coupang: #C4001F; --d-pf-coupang-dot: #E4002B;
+    --d-pf-mall: #A64B06; --d-pf-mall-dot: #F08A24;
     --d-ease: cubic-bezier(0.23, 1, 0.32, 1);
     --d-shadow: var(--shadow-card, 0 1px 3px rgba(16, 24, 40, .06));   /* #487: 진해진 바탕 위에서 카드가 뜨게 — 토큰은 theme.css */
     --d-card-line: var(--card-border, #ECEDF1);                         /* #487: 카드 바깥 테두리만(안쪽 선은 --d-line 그대로) */
@@ -1071,7 +1074,16 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .pc-pname { display: block; color: var(--d-ink); font-size: 13px; font-weight: 600; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
 .pc-pmeta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .pc-pmeta i { font-style: normal; }
-.pc-ch { color: var(--d-sub); font-size: 12px; }
+.pc-ch { color: var(--d-sub); font-size: 12px; font-style: normal; }
+/* #758 판매처 = 점 + 판매처 색 글자(「일반/VIP」 알약과 모양이 다르게 · 줄 상태 색보다 먼저) */
+.desk .pc-ch[data-pf] { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; white-space: nowrap; }
+.desk .pc-ch[data-pf]::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.desk .pc-ch[data-pf="naver"], .desk .pc-r .pc-ch[data-pf="naver"] { color: var(--d-pf-naver); }
+.desk .pc-ch[data-pf="coupang"], .desk .pc-r .pc-ch[data-pf="coupang"] { color: var(--d-pf-coupang); }
+.desk .pc-ch[data-pf="mall"], .desk .pc-r .pc-ch[data-pf="mall"] { color: var(--d-pf-mall); }
+.desk .pc-ch[data-pf="naver"]::before { background: var(--d-pf-naver-dot); }
+.desk .pc-ch[data-pf="coupang"]::before { background: var(--d-pf-coupang-dot); }
+.desk .pc-ch[data-pf="mall"]::before { background: var(--d-pf-mall-dot); }
 .pc-otxt { display: block; margin-top: 3px; color: var(--d-sub); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-t .pc-price { width: 124px; text-align: right; font-variant-numeric: tabular-nums; }
 .pc-price b { display: block; font-size: 15px; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; }
@@ -1524,6 +1536,9 @@ html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
     --d-ch-talk-bg: #054F31; --d-ch-talk-fg: #A6F4C5;
     --d-ch-qna-bg: #7A2E0E; --d-ch-qna-fg: #FEDF89;
     --d-ch-inquiry-bg: #851651; --d-ch-inquiry-fg: #FCCEEE;
+    --d-pf-naver: #5EE08F; --d-pf-naver-dot: #03C75A;         /* #758 판매처 색 */
+    --d-pf-coupang: #FF8A99; --d-pf-coupang-dot: #FF4D63;
+    --d-pf-mall: #FFB066; --d-pf-mall-dot: #F08A24;
     --d-lime: #C5EE4F;              /* 답변 강조(대표 「라임」) */
     --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
 }
