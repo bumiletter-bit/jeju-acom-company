@@ -161,7 +161,7 @@ function planFull(before, o, readFile) {
     if (o.blocks) {   // #733 네이버 상세 → 블록(detail-blocks.js) — 모든 옵션 상세를 통째로 바꿈(그림 구성 상품도 됨)
         const S = o.blocksSummary || {};
         if (!o.blocks.length) errs.push('네이버 상세에서 블록을 못 만들었어요(빈 상세)');
-        else if (o.blocks.length > 60) errs.push(`블록이 ${o.blocks.length}개라 쿠팡 한도(60)를 넘어요 — 상세를 줄이거나 윙에서`);
+        else if (o.blocks.length > 80) errs.push(`블록이 ${o.blocks.length}개라 쿠팡 한도(80)를 넘어요 — 상세를 줄이거나 윙에서`);   // #762 · 실제 승인 69블록 근거(하우스·유라 · 종전 60 은 추정값)
         else if (o.blocks.some(b => b.type === 'html' && /<\s*\/?\s*script\b/i.test(b.html))) errs.push('블록에 script 가 있어요');
         else { patch.detail_blocks = o.blocks; rows.push({ field: '상세(모든 옵션 · 통째 교체)', before: `지금 ${items.map(shapeOf).filter((x, i, a) => a.indexOf(x) === i).join(' / ').slice(0, 60)}`, after: `네이버 ${o.fromNaver} 상세 → 블록 ${o.blocks.length}개(그림 ${S.images}장 · 링크 그림 ${S.linked_images} · 글 ${S.text_blocks})` }); }
     }
