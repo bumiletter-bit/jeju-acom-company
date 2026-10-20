@@ -110,6 +110,21 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
     const m = T.parsePlaceMail('[네이버 예약] 홍길동님 예약이 확정되었습니다', '예약번호: 1234567\n예약자: 홍길동\n연락처: 010-1234-5678\n이용일시: 2026.11.03.(화) 오후 2:00\n성인 2명\n유아 1명\n결제금액: 36,000원');
     ok(m.known && m.no === '1234567' && m.date === '2026-11-03' && m.time === '14:00' && m.exp === 2 && m.infant === 1 && m.phone === '01012345678' && m.amount === 36000 && m.status === 'confirmed', '플레이스 메일(추정 꼴) 판독', m);
     ok(T.parsePlaceMail('[네이버 예약] 예약이 취소되었습니다', '예약번호: 1234567').status === 'canceled', '제목 「취소」 = 취소');
+    // 실메일 꼴(10/20 대표 시험 예약·취소 메일 · 이름은 바꿈) — text 에 HTML 주석이 섞여 옴 · 「예약신청 일시」는 방문일이 아님
+    const REAL = '<!-- 아웃룩용 max-width 핵 --> <!--[if (gte mso 9)|(IE)]> <table border="0"> <tr> <td width="595"> <![endif]-->\n\n제주아꼼이네\n고객님이 예약을 취소 하셨습니다.\n\n<!-- 고객 -->\n예약자명 홍*동님\n예약신청 일시 2026.10.20. 12:54:01\n예약취소 일시 2026.10.20. 12:54:33\n\n<!--// 고객 --> <!-- 예약 상품 정보 -->\n예약취소내역\n\n예약번호 1384521818\n예약상품 제주아꼼이네 귤따기 체험 예약\n이용일시 2026.11.01.(일) 오전 10:00, 1명\n결제상태 환불완료\n결제수단 신용카드 간편결제\n환불금액 18,000원\n환불수수료 0원(결제금액의 0%)\n결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(1)18,000원 = 18,000원\n<!-- 일반형, 뷰티형 현장결제 추가 --> 매장방문결제\n';
+    const rc = T.parsePlaceMail('[네이버 예약] 제주아꼼이네 고객님이 예약을 취소하셨습니다.', REAL);
+    ok(rc.known && rc.no === '1384521818' && rc.status === 'canceled' && rc.date === '2026-11-01' && rc.time === '10:00' && rc.exp === 1 && rc.entry === 0 && rc.amount === 18000 && rc.name === '홍*동' && rc.date_ok, '실메일(취소) = 번호 · 취소 · 11/1 10:00(신청 일시 아님) · 체험 1 · 18,000원 · 이름(님 뗌)', rc);
+    const rn = T.parsePlaceMail('[네이버 예약] 제주아꼼이네 고객님이 예약을 신청하셨습니다.', REAL.replace('예약취소 일시 2026.10.20. 12:54:33\n', '').replace('결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(1)18,000원 = 18,000원', '결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(2)36,000원 + 체험 없이 입장만(시식 무제한)(1)10,000원 = 46,000원'));
+    ok(rn.status === 'confirmed' && rn.exp === 2 && rn.entry === 1 && rn.amount === 46000 && rn.date === '2026-11-01', '실메일 꼴(신청 · 상품 둘) = 확정 · 체험 2 · 입장 1 · 46,000원', rn);
+    // 총괄 10/20 손질: 유아 항목(「36개월 미만 …」 · 0원) = 유아 · 「(36개월까지무료)」 체험 상품은 체험 그대로 · 인원 못 읽음 = 확인 필요
+    const r3 = T.parsePlaceMail('[네이버 예약] 제주아꼼이네 고객님이 예약을 신청하셨습니다.', REAL.replace('결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(1)18,000원 = 18,000원', '결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(1)18,000원 + 체험 없이 입장만(시식 무제한)(1)10,000원 + 36개월 미만 무료(증빙서류 지참)(1)0원 = 28,000원'));
+    ok(r3.exp === 1 && r3.entry === 1 && r3.infant === 1 && r3.amount === 28000 && r3.date_ok, '노지귤 1 + 입장 1 + 36개월 미만 1 → 체험 1 · 입장 1 · 유아 1', { e: r3.exp, n: r3.entry, i: r3.infant, a: r3.amount });
+    const r4 = T.parsePlaceMail('[네이버 예약] 제주아꼼이네 고객님이 예약을 신청하셨습니다.', '예약번호 1384521999\n이용일시 2026.11.02.(월) 오후 2:00\n결제상태 결제완료\n');
+    ok(r4.known && r4.exp == null && r4.entry == null && !r4.date_ok && r4.why === '인원 못 읽음' && r4.date === '2026-11-02', '인원 없는 메일 = 0명 아님 · 확인 필요(인원 못 읽음 · 날짜는 남김)', r4);
+    const t9 = mk({ imapOpen: async () => ({ login: async () => { }, examine: async () => { }, close: async () => { }, search: async () => [31], fetch: async (u, w) => /MESSAGE-ID/.test(w) ? Buffer.from('Message-ID: <m31@x>\r\n\r\n') : Buffer.from('Message-ID: <m31@x>\r\nSubject: [네이버 예약] 제주아꼼이네 고객님이 예약을 신청하셨습니다.\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n예약번호 1384521999\r\n이용일시 2026.11.02.(월) 오후 2:00\r\n', 'utf8') }), env: { NAVER_MAIL_USER: 'u', NAVER_MAIL_APP_PW: 'p' } });
+    await t9.M.collectPlace();
+    const p9 = t9.db.S.rows.find(r => r.ext_key === 'place:1384521999');
+    ok(p9 && p9.date_ok === false && p9.date_why === '인원 못 읽음' && p9.status === 'confirmed', '저장 = 「확인 필요」 묶음(date_ok false · 인원 못 읽음)', p9 && { ok: p9.date_ok, why: p9.date_why });
     ok(!T.parsePlaceMail('안녕하세요', '광고 메일').known, '예약번호·상태 없는 메일 = 꼴 모름');
     const b64 = Buffer.from('예약번호: 99887766\n이용일시: 2026년 11월 2일 오전 10시', 'utf8').toString('base64');
     const raw = `Message-ID: <abc@naver>\r\nFrom: =?UTF-8?B?${Buffer.from('네이버 예약').toString('base64')}?= <booking@naver.com>\r\nSubject: =?UTF-8?B?${Buffer.from('[네이버 예약] 예약 확정').toString('base64')}?=\r\nContent-Type: multipart/alternative; boundary="BB"\r\n\r\n--BB\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64}\r\n--BB\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>html</p>\r\n--BB--\r\n`;

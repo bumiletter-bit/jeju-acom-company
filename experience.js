@@ -94,30 +94,47 @@ function parseStoreOption(text, orderMs) {
 const optKind = (name) => /입장/.test(String(name || '')) ? 'entry' : 'exp';
 
 // ── 플레이스 메일 판독(꼴은 첫 실메일로 확정 · 그 전엔 최선 · 못 읽으면 「꼴 모름」 = 원문만) ──
+// 실메일 꼴(10/20 대표 시험 예약·취소 · naverbooking_noreply@navercorp.com · text 꼴에 HTML 주석이 섞여 옴):
+//   제목 「[네이버 예약] 제주아꼼이네 고객님이 예약을 신청/취소하셨습니다.」 · 줄 = 「예약자명 전*범님」「예약신청 일시 2026.10.20. 12:54:01」「예약번호 1384521818」
+//   「예약상품 …」「이용일시 2026.11.01.(일) 오전 10:00, 1명」「결제금액 내가 직접 딴 노지귤 2kg(36개월까지무료)(1)18,000원 = 18,000원」 · 연락처 줄 없음(가린 이름만)
 function parsePlaceMail(subject, text) {
-    const s = String(text || ''), sub = String(subject || '');
+    const s = String(text || '').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<!\[endif\]-->|<!--\[if[^\]]*\]>/g, ' ').replace(/<[^>\n]{1,200}>/g, ' ').replace(/\r/g, ''), sub = String(subject || '');
     const pick = (re) => { const m = re.exec(s); return m ? m[1].trim() : null; };
     const no = pick(/예약\s*번호\s*[:：]?\s*([0-9A-Za-z\-]{5,30})/);
-    const name = pick(/(?:예약자(?:\s*명)?|이용자|성함|이름)\s*[:：]?\s*([^\n\r|]{1,30})/);
+    const name = (pick(/(?:예약자\s*명|예약자|이용자|성함|이름)\s*[:：]?\s*([^\n|]{1,30})/) || '').replace(/\s*님\s*$/, '').trim() || null;
     const phone = pick(/(?:연락처|전화\s*번호|휴대\s*폰(?:\s*번호)?|핸드폰)\s*[:：]?\s*([0-9*\-\s]{9,20})/);
-    const when = pick(/(?:이용\s*일시|예약\s*일시|방문\s*일시|이용\s*일자|예약\s*일자|일시)\s*[:：]?\s*([^\n\r]{6,60})/);
+    // 방문 일시 = 「이용일시」 먼저(예약신청·예약취소 「일시」 는 방문일이 아님) → 방문일시 → 이용일자
+    const when = pick(/이용\s*일시\s*[:：]?\s*([^\n]{6,80})/) || pick(/방문\s*일시\s*[:：]?\s*([^\n]{6,80})/) || pick(/이용\s*일자\s*[:：]?\s*([^\n]{6,80})/);
+    // 결제금액 줄 「상품명(수량)금액원 + … = 합계원」 → 상품마다 수량(입장 낱말 = 입장 · 그 밖 = 체험) · 합계
+    const payLine = pick(/(?:^|\n)[ \t]*결제\s*금액\s*[:：]?\s*([^\n]{3,400})/);   // 줄 맨 앞만(「환불수수료 0원(결제금액의 0%)」 안의 낱말은 아님)
+    const items = []; if (payLine) { const re = /([^+=\n]*?)\((\d{1,3})\)\s*([\d,]+)\s*원/g; let m; while ((m = re.exec(payLine))) items.push({ name: m[1].trim(), qty: +m[2], won: +m[3].replace(/,/g, '') }); }
+    // 상품 갈래: 유아 = 「36개월 미만 …」으로 시작하거나 0원 항목(「36개월 미만 무료(증빙서류 지참)」) · 입장 = 「입장」 낱말 · 그 밖 = 체험(이름 속 「(36개월까지무료)」는 체험 그대로 · 총괄 10/20)
+    const kindOf = (x) => /^36\s*개월\s*미만/.test(x.name) || x.won === 0 ? 'infant' : /입장/.test(x.name) ? 'entry' : 'exp';
+    const payTotal = payLine ? (/=\s*([\d,]{3,12})\s*원/.exec(payLine) || /([\d,]{3,12})\s*원\s*$/.exec(payLine.trim()) || [])[1] : null;
+    const whenPeople = when ? (/(\d{1,3})\s*명/.exec(when) || [])[1] : null;
     const status = /취소/.test(sub) ? 'canceled' : /변경/.test(sub) ? 'changed' : /(확정|신청|접수|완료|예약)/.test(sub) ? 'confirmed' : null;
     let date = null, time = null;
     if (when) {
         let m = /(20\d{2})\s*[.\-년/]\s*(\d{1,2})\s*[.\-월/]\s*(\d{1,2})\s*일?/.exec(when), end = m ? m.index + m[0].length : 0;
         if (!m) { const m2 = /(\d{1,2})\s*월\s*(\d{1,2})\s*일/.exec(when); if (m2) { m = [null, String(kstNow().getUTCFullYear()), m2[1], m2[2]]; end = m2.index + m2[0].length; } }
         if (m && validYmd(+m[1], +m[2], +m[3])) date = `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}`;
-        const rest = m ? when.slice(end) : when;   // 날짜 뒤 글자에서만 시각을 찾는다(「2026」 의 숫자를 시각으로 읽지 않게)
+        const rest = (m ? when.slice(end) : when).replace(/,.*$/, '');   // 날짜 뒤 · 「, 1명」 앞 글자에서만 시각을 찾는다(「2026」·인원 숫자를 시각으로 읽지 않게)
         time = parseTime(rest.replace(/^[^0-9오]*?(?=(오전|오후|\d))/, '').replace(/\(.\)/, ''));
     }
     const cnt = (re) => { const v = pick(re); return v == null ? null : +v; };
-    const adult = cnt(/(?:성인|어른|대인|체험)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)?/);
-    const entry = cnt(/(?:입장)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)?/);
-    const infant = cnt(/(?:유아|영유아|아동|소인|어린이)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)?/);
-    const total = cnt(/(?:인원|총\s*인원)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)/);
-    const amount = (() => { const v = pick(/(?:결제\s*금액|총\s*금액|금액)\s*[:：]?\s*([\d,]{3,12})\s*원/); return v ? +v.replace(/,/g, '') : null; })();
+    // 인원: ① 결제금액 줄의 상품별 수량(입장 = 입장 · 그 밖 = 체험) ② 꼴이 다르면 낱말(성인·체험·입장·유아·인원) ③ 이용일시 끝 「, n명」
+    let exp = null, entry = null;
+    let itemInfant = null;
+    if (items.length) { const sumK = k => items.filter(x => kindOf(x) === k).reduce((a, x) => a + x.qty, 0); exp = sumK('exp'); entry = sumK('entry'); itemInfant = sumK('infant'); }
+    else { const adult = cnt(/(?:성인|어른|대인|체험)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)/), en = cnt(/입장\s*[:：]?\s*(\d{1,3})\s*(?:명|인)/), total = cnt(/(?:인원|총\s*인원)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)/);
+        exp = adult != null ? adult : (total != null ? total : (whenPeople != null ? +whenPeople : null)); entry = en; }
+    const infant = itemInfant != null ? itemInfant : cnt(/(?:유아|영유아|아동|소인|어린이)\s*[:：]?\s*(\d{1,3})\s*(?:명|인)/);
+    const amount = payTotal ? +String(payTotal).replace(/,/g, '') : (() => { const v = pick(/(?:총\s*금액|결제\s*금액)\s*[:：]?\s*([\d,]{3,12})\s*원/); return v ? +v.replace(/,/g, '') : null; })();
     const known = !!(no && status);
-    return { known, no, name, phone: phone ? digits(phone) : null, date, time, status, exp: adult != null ? adult : (total != null ? total : null), entry, infant, amount, date_ok: !!(date && time) };
+    // 확인 필요: 날짜·시각 못 읽음 / 인원 못 읽음(체험·입장 둘 다 모름 = 0명으로 두지 않음 · 총괄 10/20)
+    const peopleOk = exp != null || entry != null;
+    const why = !(date && time) ? '메일 날짜 못 읽음' : !peopleOk ? '인원 못 읽음' : null;
+    return { known, no, name, phone: phone ? digits(phone) : null, date, time, status, exp, entry, infant, amount, date_ok: !why, why };
 }
 
 // ── IMAP 읽기 전용 클라이언트 · MIME = naver-mail.js(#776 메일 찾기와 같이 씀 · 옮기기만 · 동작 그대로)
@@ -306,13 +323,13 @@ module.exports = function mountExperience(app, deps) {
             const status = p.status === 'canceled' ? 'canceled' : (old.status === 'visited' ? 'visited' : 'confirmed');
             await pool.query(`UPDATE experience_bookings SET status=$2, name=COALESCE($3,name), phone=COALESCE($4,phone), visit_date=$5, visit_time=$6, date_ok=$7, date_why=$8,
                 exp_count=COALESCE($9,exp_count), entry_count=COALESCE($10,entry_count), infant_count=COALESCE($11,infant_count), amount=COALESCE($12,amount), raw=$13, updated_at=NOW() WHERE id=$1`,
-                [old.id, status, p.name, p.phone, fixed ? old.visit_date : (p.date || old.visit_date), fixed ? old.visit_time : (p.time || old.visit_time), fixed ? true : p.date_ok, fixed ? null : (p.date_ok ? null : '메일 날짜 못 읽음'),
+                [old.id, status, p.name, p.phone, fixed ? old.visit_date : (p.date || old.visit_date), fixed ? old.visit_time : (p.time || old.visit_time), fixed ? true : p.date_ok, fixed ? null : (p.date_ok ? null : (p.why || '메일 날짜 못 읽음')),
                     p.exp, p.entry, p.infant, p.amount, raw]);
             return { state: p.status === 'canceled' ? 'canceled' : 'updated', id: old.id };
         }
         const r = await pool.query(`INSERT INTO experience_bookings (source, ext_key, order_no, name, phone, visit_date, visit_time, date_ok, date_why, exp_count, entry_count, infant_count, amount, status, raw)
             VALUES ('place',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (ext_key) DO NOTHING RETURNING id`,
-            [key, p.no, p.name, p.phone, p.date, p.time, p.date_ok, p.date_ok ? null : '메일 날짜 못 읽음', p.exp || 0, p.entry || 0, p.infant || 0, p.amount, p.status === 'canceled' ? 'canceled' : 'confirmed', raw]);
+            [key, p.no, p.name, p.phone, p.date, p.time, p.date_ok, p.date_ok ? null : (p.why || '메일 날짜 못 읽음'), p.exp || 0, p.entry || 0, p.infant || 0, p.amount, p.status === 'canceled' ? 'canceled' : 'confirmed', raw]);
         return { state: 'new', id: r.rows[0] && r.rows[0].id };
     }
     async function collectPlace() {

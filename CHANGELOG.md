@@ -1,3 +1,7 @@
+## v5.9.575 (2026-10-20) — #775 플레이스 예약 메일 판독을 실메일 꼴로(대표 시험 예약·취소 2통)
+- parsePlaceMail: HTML 주석·태그 걷기 · 방문 = 「이용일시」→방문일시→이용일자 순만(예약신청/취소 일시 안 집음 · 시각은 「, n명」 앞) · 인원 = 「결제금액」 줄 상품별 (수량)(입장 = 입장 · 「36개월 미만…」·0원 = 유아 · 그 밖 = 체험) · 금액 = 합계 · 이름 끝 「님」 뗌 · 인원 못 읽음 = date_ok false 「인원 못 읽음」(확인 필요).
+- 검증 verify-775-booking 73/73 · verify-776-mail 45/45 · 워커3 읽기 점검 막을 것 0.
+
 ## v5.9.574 (2026-10-20) — #776 네이버 메일 찾기(창구 · 읽기 전용) · #775 예약확인 알림톡 UM_6808
 - 새 naver-mail.js(experience.js IMAP·MIME 이동 + LIST·리터럴·BODYSTRUCTURE) · 러너 mail_search/read/attach_request(DELETE…RETURNING 집기 · 결과 줄 10분 정리 · 10초 간격 · 한 번에 하나) · 명령 = LOGIN·LIST·EXAMINE·UID SEARCH·UID FETCH(BODY.PEEK)·LOGOUT 만 · 스팸·휴지통·보낸·임시 제외 · 첨부 10MB · audit 검색 조건·건수만 · 렌더에서만 틱(!RENDER = 꺼짐).
 - 창구 scripts/desk/mail-find.js find/read/attach · 주민번호 꼴 가림 · 업무지식 「네이버 메일 찾기」 절.
