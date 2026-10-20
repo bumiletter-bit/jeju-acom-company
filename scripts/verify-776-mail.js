@@ -61,10 +61,14 @@ function fakeImap(opts) {
             if ((m = /^EXAMINE "((?:[^"\\]|\\.)*)"$/.exec(line))) { cur = m[1]; return say(BOX_[cur] ? `* ${BOX_[cur].length} EXISTS\r\n${tag} OK [READ-ONLY] EXAMINE\r\n` : `${tag} NO no such box\r\n`); }
             if ((m = /^UID SEARCH (.*)$/.exec(line))) {
                 const crit = m[1]; let li = 0; const want = {};
-                for (const k of ['TEXT', 'FROM', 'SUBJECT']) if (new RegExp('\\b' + k + ' \\{').test(crit)) want[k] = lits[li++];
+                for (const k of ['TEXT', 'FROM', 'SUBJECT']) {
+                    if (new RegExp('\\b' + k + ' \\{').test(crit)) { want[k] = lits[li++]; if (opts.literalZero) want.__lit = true; continue; }
+                    const mq = new RegExp('\\b' + k + ' "((?:[^"\\\\]|\\\\.)*)"').exec(crit); if (mq) want[k] = Buffer.from(mq[1].replace(/\\(.)/g, '$1'), 'utf8');
+                }
+                const litZero = !!want.__lit; delete want.__lit;
                 const since = /SINCE (\S+)/.exec(crit), before = /BEFORE (\S+)/.exec(crit);
                 const koLit = Object.values(want).some(b => /[^\x00-\x7f]/.test(b.toString('utf8')));
-                const hit = (opts.noKorean && koLit) ? [] : (BOX_[cur] || []).filter(x => {
+                const hit = (litZero || (opts.noKorean && koLit)) ? [] : (BOX_[cur] || []).filter(x => {
                     const fromTxt = NM.decodeWords(x.from), subj = NM.decodeWords(x.subject);
                     if (want.TEXT && !(fromTxt + subj + x.text).includes(want.TEXT.toString('utf8'))) return false;
                     if (want.FROM && !fromTxt.includes(want.FROM.toString('utf8'))) return false;
@@ -80,8 +84,15 @@ function fakeImap(opts) {
                 const parts = [];
                 for (const uid of uids) {
                     const x = box.find(y => y.uid === uid); if (!x) continue;
-                    if (what === 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') { const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* 1 FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
-                    else if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* 1 FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
+                    const sq = box.indexOf(x) + 1;
+                    if (what === 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') {
+                        const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8');
+                        if (opts.noHeaderBatch) parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] NIL)\r\n`));
+                        else if (opts.splitFetch) parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n* ${sq} FETCH (BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n'));
+                        else parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n'));
+                    }
+                    else if (what === 'BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') { const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
+                    else if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
                     else if (what === 'UID BODYSTRUCTURE') {
                         if (x.bsLit) {
                             const head = `* 1 FETCH (UID ${uid} BODYSTRUCTURE (((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"EUC-KR\") NIL NIL \"8BIT\" 9 1 NIL NIL NIL)(\"TEXT\" \"HTML\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 11 1 NIL NIL NIL) \"ALTERNATIVE\" (\"BOUNDARY\" \"a\") NIL NIL)(\"APPLICATION\" \"VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET\" (\"NAME\" {${nameLit.length}}\r\n`;
@@ -130,9 +141,9 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
     console.log('① 검색 조건 · 폴더 이름 · BODYSTRUCTURE');
     {
         const p = T.searchPieces({ q: '정산', since: '2026-10-01', until: '2026-10-16' });
-        ok(p[0] === 'CHARSET UTF-8 ' && p[1] === 'TEXT ' && Buffer.isBuffer(p[2]) && p[2].toString('utf8') === '정산' && p.join('').includes('SINCE 1-Oct-2026') && p.join('').includes('BEFORE 17-Oct-2026'), '한글 = CHARSET UTF-8 + 리터럴 · 끝날 포함(BEFORE 다음 날)', p.map(String));
+        ok(p[0] === 'CHARSET UTF-8 ' && p[1] === 'TEXT "정산" ' && !p.some(Buffer.isBuffer) && p.join('').includes('SINCE 1-Oct-2026') && p.join('').includes('BEFORE 17-Oct-2026'), '한글 = CHARSET UTF-8 + 따옴표 글(리터럴 X · 네이버 실측) · 끝날 포함(BEFORE 다음 날)', p.map(String));
         const pa = T.searchPieces({ from: 'naver.com' });
-        ok(pa[0] === 'FROM ' && !pa.includes('CHARSET UTF-8 '), '영문만 = CHARSET 없음', pa.map(String));
+        ok(pa[0] === 'FROM "naver.com"' && !pa.includes('CHARSET UTF-8 ') && JSON.stringify(T.searchPieces({ q: 'a"b\\c' })) === JSON.stringify(['TEXT "a\\"b\\\\c"']), '영문만 = CHARSET 없음 · 따옴표·역슬래시 이스케이프', pa.map(String));
         ok(T.mutf7(FOLDER_MINE) === '거래처' && T.mutf7('A&-B') === 'A&B', '수정 UTF-7 폴더 이름 풀기');
         const fs0 = T.pickFolders(LIST.map(([f, n]) => ({ raw: n, name: T.mutf7(n), flags: f.toLowerCase().split(' ') })));
         ok(JSON.stringify(fs0.map(f => f.name)) === '["받은메일함","거래처"]', '메일함 = 받은메일함 + 내 메일함(스팸·휴지통·보낸·선택 불가 뺌)', fs0);
@@ -154,7 +165,7 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         ok(s.mails[1].subject === '10월 정산 안내' && s.mails[1].preview.startsWith('10월 정산 금액') && s.mails[1].preview.length <= 300 && s.mails[1].attachments[0].name === '정산서.pdf', '받은메일함 메일: 제목·본문 앞부분·첨부', s.mails[1]);
         ok(F.cmds.every(READONLY), '보낸 명령 = LOGIN·LIST·EXAMINE·UID SEARCH·UID FETCH(PEEK·BODYSTRUCTURE·INTERNALDATE)·LOGOUT 만(쓰기 0 · SELECT 0)', F.cmds.filter(c => !READONLY(c)));
         ok(!F.cmds.some(c => /EXAMINE "(Junk|Deleted Messages|Sent Messages|Archive)"/.test(c.line)), '스팸·휴지통·보낸·선택 불가 메일함은 열지도 않음');
-        ok(F.cmds.some(c => /^UID SEARCH CHARSET UTF-8 TEXT \{6\}$/.test(c.line) && c.lits[0] === '정산'), '한글 검색어 = 리터럴로 이어 보냄(「+」 받은 뒤)', F.cmds.map(c => c.line));
+        ok(F.cmds.some(c => /^UID SEARCH CHARSET UTF-8 TEXT "정산"$/.test(c.line) && !c.lits.length), '한글 검색어 = 따옴표 글 한 줄(리터럴·「+」 없음)', F.cmds.map(c => c.line));
         const F2 = fakeImap();
         const ops2 = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F2.imapOpenF });
         const s2 = await ops2.search({ from: '네이버', limit: 5 });
@@ -185,10 +196,11 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
 
     console.log('②-b 한글 대비 길(네이버 실측: 한글 검색 = 늘 0통)');
     {
-        const F = fakeImap({ noKorean: true });
-        const ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF });
+        const F = fakeImap({ noKorean: true }), NOW = Date.parse('2026-10-20T12:00:00+09:00');
+        const ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF, now: () => NOW });
         const s1 = await ops.search({ q: '정산', limit: 10 });
         ok(s1.korean_scan && s1.found === 2 && s1.mails.map(m => m.uid).join() === '7,101' && s1.korean_scan.scanned === 3 && !s1.korean_scan.limited, '「정산」 0통 → 최근 메일 제목·보낸 사람 대조로 7·101(스팸·휴지통·보낸 0 · 대조 3통)', s1);
+        ok(s1.korean_scan.days === 90 && F.cmds.some(c => /^UID SEARCH SINCE 22-Jul-2026$/.test(c.line)), '기간 없는 한글 = 대비 길을 최근 90일로(SINCE 22-Jul-2026)', F.cmds.map(c => c.line).filter(l => /SEARCH/.test(l)).slice(0, 4));
         const s2 = await ops.search({ from: '효돈' });
         ok(s2.korean_scan && s2.found === 1 && s2.mails[0].uid === 7, '보낸 사람 「효돈」 = 7(인코딩된 보낸 사람 풀어 대조)', s2);
         const s3 = await ops.search({ q: '합계' });
@@ -198,6 +210,22 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         ok(F.cmds.every(READONLY), '대비 길도 읽기 전용 명령만', F.cmds.filter(c => !READONLY(c)));
         const s5 = await ops.search({ q: 'nonghyup' });
         ok(!s5.korean_scan && s5.found === 1, '영문 낱말 = 대비 길 안 탐(서버 검색 그대로)', s5);
+    }
+
+    console.log('②-d 네이버 꼴(10/20 실메일): 리터럴 검색 0통 · FETCH 두 줄 나눔 · 여러 통 머리말 없음');
+    {
+        const NOW = Date.parse('2026-10-20T12:00:00+09:00');
+        for (const [nm, o] of [['두 줄 나눔', { noKorean: true, splitFetch: true, literalZero: true }], ['여러 통 머리말 NIL → 한 통씩', { noKorean: true, noHeaderBatch: true, literalZero: true }]]) {
+            const F = fakeImap(o), ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF, now: () => NOW });
+            const a = await ops.search({ q: '정산' });
+            ok(a.korean_scan && a.found === 2 && a.mails.map(m => m.uid).join() === '7,101', nm + ': 「정산」 = 7·101', a);
+            const b = await ops.search({ q: '예약', since: '2026-10-17' });
+            ok(b.found === 1 && b.mails[0].uid === 102, nm + ': 「예약」(기간) = 102', b);
+            const c = await ops.search({ from: 'booking@naver.com' });
+            ok(c.found === 1 && c.mails[0].uid === 102 && !c.korean_scan, nm + ': 영문 보낸 사람 = 따옴표 검색으로 바로(리터럴 0통 꼴에도)', c);
+            ok(F.cmds.every(READONLY) && !F.cmds.some(x => x.lits.length), nm + ': 읽기 전용 · 리터럴 0', F.cmds.filter(x => !READONLY(x) || x.lits.length));
+        }
+        ok(JSON.stringify(T.mergeFetch([{ text: '* 3 FETCH (UID 9 INTERNALDATE "20-Oct-2026 09:00:00 +0900")' }, { text: '* 3 FETCH (BODY[HEADER.FIELDS (FROM SUBJECT)] {4}', literals: [Buffer.from('a: b')] }]).map(x => [x.uid, x.head])) === '[[9,"a: b"]]', 'mergeFetch = 같은 메일 번호 줄을 합쳐 UID·머리말 짝');
     }
 
     console.log('②-c 더보기(커서 · 메일함 합친 최근순)');
@@ -222,7 +250,7 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         ok(P.length === 2 && P[0].shown === 20 && P[0].has_more && P[0].next && P[1].shown === 11 && !P[1].has_more && !P[1].next && P[0].found === 31, '31통 = 20 + 11 · 첫 쪽 has_more·next · 끝 쪽 next 없음', P.map(p => [p.shown, p.has_more, p.page_from]));
         ok(new Set(all.map(key)).size === 31 && JSON.stringify(all.map(key)) === JSON.stringify(want), '두 쪽을 이으면 31통 빠짐·겹침 0 · 메일함 합친 최근순(옮긴 메일·같은 시각 포함) 그대로', { got: all.map(key).slice(0, 8), want: want.slice(0, 8) });
         ok(P[1].page_from === 21, '둘째 쪽 번호는 21번부터');
-        const FK = fakeImap({ box: big, noKorean: true });
+        const FK = fakeImap({ box: big, noKorean: true });   // 날짜 10월 = 90일 안
         const PK = await pages(FK, { q: '알림' });
         ok(PK[0].korean_scan && PK.length === 2 && PK[0].shown === 20 && PK[1].shown === 11 && JSON.stringify(PK.flatMap(p => p.mails).map(key)) === JSON.stringify(want), '한글 대비 길도 같은 커서로 20 + 11 · 같은 순서', PK.map(p => [p.shown, p.has_more]));
         ok(FK.cmds.every(READONLY) && F.cmds.every(READONLY), '더보기도 읽기 전용 명령만');

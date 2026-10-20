@@ -87,7 +87,7 @@ async function main(argv, deps) {
             more_line: res.has_more ? `더 있어요 — 「더 보여줘」라고 하면 다음 ${limit}건` : (res.limited ? '여기까지 — 더 오래된 메일은 기간(--since/--until)을 좁혀 다시 찾아 주세요' : undefined),
             next: mails.length ? `한 통 자세히: read <uid> --folder "<folder>" · 첨부 받기: attach <uid> <part> --folder "<folder>"` : '검색어를 줄이거나(낱말 하나) 날짜를 넓혀 다시',
             korean_scan: res.korean_scan || undefined,
-            scan_note: res.korean_scan ? `한글 낱말은 네이버 메일이 직접 못 찾아서 최근 메일 ${res.korean_scan.scanned}통의 제목·보낸 사람에서 찾았어요(본문 속 낱말은 못 찾음)${res.korean_scan.limited ? ' · 더 오래된 메일은 --since/--until 로 기간을 좁혀 다시' : ''}` : undefined,
+            scan_note: res.korean_scan ? `한글 낱말은 네이버 메일이 직접 못 찾아서 ${res.korean_scan.days ? '최근 ' + res.korean_scan.days + '일 ' : ''}메일 ${res.korean_scan.scanned}통의 제목·보낸 사람에서 찾았어요(본문 속 낱말은 못 찾음 · 더 오래된 건 --since)${res.korean_scan.limited ? ' · 더 오래된 메일은 --since/--until 로 기간을 좁혀 다시' : ''}` : undefined,
             note: res.has_more ? `「더 보여줘」면 next_cmd 그대로 실행(같은 검색 + --more)` : undefined });
     }
     if (cmd === 'read') {

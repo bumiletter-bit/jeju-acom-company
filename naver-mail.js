@@ -241,9 +241,11 @@ function partBytes(latin, p) {
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const ymdImap = (ymd, plusDays) => { const d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(5, 7) - 1, +ymd.slice(8, 10) + (plusDays || 0))); return d.getUTCDate() + '-' + MON[d.getUTCMonth()] + '-' + d.getUTCFullYear(); };
 // 검색 조건(조각) — 글자 칸은 리터럴(한글 그대로 · CHARSET UTF-8) · 날짜 = SINCE / BEFORE(그날 포함 = 다음 날 전)
+// 🔴 10/20 실메일 실측: 네이버 IMAP 은 SEARCH 리터럴({n} 이어 보내기)을 OK 로 받고 늘 0통(영문 「naverbooking」도) → 검색어는 따옴표 글로(한글 = CHARSET UTF-8 + UTF-8 그대로)
+const imapQuote = (v) => '"' + String(v).replace(/[\r\n]+/g, ' ').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 function searchPieces(o) {
     const ps = [], txt = [];
-    const lit = (key, v) => { txt.push(key + ' ', Buffer.from(String(v), 'utf8'), ' '); };
+    const lit = (key, v) => { txt.push(key + ' ' + imapQuote(v) + ' '); };
     if (o.q) lit('TEXT', o.q);
     if (o.from) lit('FROM', o.from);
     if (o.subject) lit('SUBJECT', o.subject);
@@ -256,6 +258,19 @@ function searchPieces(o) {
     const last = ps.length - 1; if (typeof ps[last] === 'string') ps[last] = ps[last].replace(/\s+$/, ''); else ps.push('');
     return ps;
 }
+// FETCH 답을 메일 번호(* n FETCH)별로 합침 — 네이버가 한 메일 답을 UID 줄 / 머리말 줄로 나눠 줘도 짝이 맞게 → [{ uid, at, head(라틴1) }]
+function mergeFetch(items) {
+    const by = new Map();
+    for (const it of items || []) {
+        const m = /^\* (\d+) FETCH/i.exec(it.text || ''); if (!m) continue;
+        const x = by.get(m[1]) || { uid: null, at: 0, head: '' }; by.set(m[1], x);
+        const um = /\bUID (\d+)/i.exec(it.text), dm = /INTERNALDATE "([^"]+)"/i.exec(it.text);
+        if (um) x.uid = Number(um[1]); if (dm) x.at = Date.parse(dm[1]) || 0;
+        if (/BODY\[HEADER/i.test(it.text) && it.literals && it.literals.length) x.head += it.literals.map(b => b.toString('latin1')).join('');
+    }
+    return [...by.values()].filter(x => x.uid);
+}
+const MAIL_SCAN_DAYS = 90;   // 기간 없는 한글 찾기 = 최근 90일
 const MAIL_SCAN_PER_FOLDER = 500, MAIL_SCAN_TOTAL = 2000;   // 한글 대비 길: 메일함마다 최근 500통 · 합 2천 통까지 제목·보낸 사람 대조
 const MAIL_DATE_PER_FOLDER = 1000, MAIL_DATE_TOTAL = 3000;   // #778 최근순 줄 세우기: 메일함마다 맞는 메일 최근 1천 통 · 합 3천 통의 받은 시각까지(넘으면 limited = 기간을 좁혀 달라는 안내)
 // #778 메일함을 합친 최근순 = 받은 시각 내림 → 메일함 이름 → uid 내림(같은 시각도 순서가 하나로 정해짐) · byRecent(x, y) > 0 = x 가 y 보다 뒤(오래됨)
@@ -329,7 +344,9 @@ function makeMailOps(creds, deps) {
             // 메일함마다 맞는 uid 전부 → 최근 MAIL_DATE_PER_FOLDER 통(합 MAIL_DATE_TOTAL)의 받은 시각 → 메일함을 합친 최근순 · 더보기 = 같은 순서에서 커서 다음
             for (const f of folders) {
                 await im.examine(f.raw);
-                const uids = await im.searchParts(pieces); found += uids.length;
+                let uids;
+                try { uids = await im.searchParts(pieces); } catch (e) { if (![r.q, r.from, r.subject].some(v => v && /[^\x20-\x7e]/.test(String(v)))) throw e; uids = []; }   // 한글 따옴표 검색을 네이버가 거절하면 = 0통 → 대비 길
+                found += uids.length;
                 const room = Math.min(MAIL_DATE_PER_FOLDER, MAIL_DATE_TOTAL - dated); if (room <= 0) { if (uids.length) limited = true; continue; }
                 const tail = uids.slice(-room); if (tail.length < uids.length) limited = true; dated += tail.length;
                 for (let i = 0; i < tail.length; i += 500) for (const it of await im.fetchItems(tail.slice(i, i + 500).join(','), 'UID INTERNALDATE')) { const o = fetchFields(it); if (o.UID) cands.push({ f, uid: Number(o.UID), at: Date.parse(String(o.INTERNALDATE || '')) || 0 }); }
@@ -339,10 +356,11 @@ function makeMailOps(creds, deps) {
             let scan = null;
             const ko = (v) => v && /[^\x20-\x7e]/.test(String(v));
             if (!found && [r.q, r.from, r.subject].some(ko)) {
-                const asc = (v) => (v && !ko(v) ? v : null), base = searchPieces({ q: asc(r.q), from: asc(r.from), subject: asc(r.subject), since: r.since, until: r.until });
+                const days = r.since ? null : MAIL_SCAN_DAYS, since = r.since || new Date((deps.now ? deps.now() : Date.now()) + 9 * 3600e3 - MAIL_SCAN_DAYS * 86400e3).toISOString().slice(0, 10);   // 기간 없으면 최근 90일(120초 안에 끝나게 · 10/20 실측 기간 없음 = 130초 시간 초과)
+                const asc = (v) => (v && !ko(v) ? v : null), base = searchPieces({ q: asc(r.q), from: asc(r.from), subject: asc(r.subject), since, until: r.until });
                 const nf = (x) => String(x || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ');
                 const want = { q: ko(r.q) ? nf(r.q) : null, from: ko(r.from) ? nf(r.from) : null, subject: ko(r.subject) ? nf(r.subject) : null };
-                scan = { scanned: 0, limited: false };
+                scan = { scanned: 0, limited: false, ...(days ? { days } : {}) };
                 for (const f of folders) {
                     if (scan.scanned >= MAIL_SCAN_TOTAL) { scan.limited = true; break; }
                     await im.examine(f.raw);
@@ -351,13 +369,15 @@ function makeMailOps(creds, deps) {
                     if (tail.length < uids.length) scan.limited = true;
                     scan.scanned += tail.length;
                     for (let i = 0; i < tail.length; i += 100) {
-                        for (const it of await im.fetchItems(tail.slice(i, i + 100).join(','), 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]')) {
-                            const um = /UID (\d+)/i.exec(it.text), dm = /INTERNALDATE "([^"]+)"/i.exec(it.text); if (!um) continue;
-                            const hh = headers(it.literals && it.literals[0] ? it.literals[0].toString('latin1') : ''), subj = nf(decodeWords(hh.subject || '')), frm = nf(decodeWords(hh.from || ''));
+                        const rows = mergeFetch(await im.fetchItems(tail.slice(i, i + 100).join(','), 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]'));
+                        // 머리말이 다 비면(네이버가 여러 통 FETCH 에 머리말을 안 주는 꼴) = 한 통씩(read 와 같은 길 · 100통까지)
+                        if (rows.length && rows.every(x => !x.head)) for (const x of rows.slice(0, 100)) { const hb = await im.fetch(x.uid, 'BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]'); x.head = hb ? hb.toString('latin1') : ''; }
+                        for (const x of rows) {
+                            const hh = headers(x.head || ''), subj = nf(decodeWords(hh.subject || '')), frm = nf(decodeWords(hh.from || ''));
                             if (want.q && !(subj + ' ' + frm).includes(want.q)) continue;
                             if (want.from && !frm.includes(want.from)) continue;
                             if (want.subject && !subj.includes(want.subject)) continue;
-                            found++; cands.push({ f, uid: Number(um[1]), at: dm ? (Date.parse(dm[1]) || 0) : 0 });
+                            found++; cands.push({ f, uid: x.uid, at: x.at });
                         }
                     }
                 }
@@ -660,4 +680,4 @@ function mountMailRunner(deps) {
 }
 
 module.exports = { imapOpen, imapDate, imapFromCrit, decodeCharset, decodeWords, splitHead, headers, param, decodeBody, htmlText, mimeText, parseMail, fromAddr,
-    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { isTrashFolder, encWord, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };
+    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { isTrashFolder, encWord, mergeFetch, imapQuote, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };
