@@ -51,7 +51,8 @@ function imapOpen({ host, port, user, pass, timeoutMs, connect }) {   // connect
             chunks.push(Buffer.concat([cur, Buffer.from('\r\n')]));
             pending.push({ tag, items: [], resolve: res, reject: rej, conts: chunks.slice(1) }); sock.write(chunks[0]);
         });
-        const searchOut = (items) => { const ln = items.map(x => x.text).find(t => /^\* SEARCH/i.test(t)) || ''; return ln.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter(Boolean).map(Number); };
+        // 「* SEARCH」 줄이 여러 개여도(큰 결과를 나눠 줌) 전부 합치고 · 순서 없이 와도 숫자 순으로 · 겹치면 하나로(10/20 실메일: 받은메일함 90일 = 최신 예약 메일을 놓침)
+        const searchOut = (items) => [...new Set(items.map(x => x.text).filter(t => /^\* SEARCH/i.test(t)).flatMap(ln => ln.replace(/^\* SEARCH/i, '').trim().split(/\s+/)).filter(x => /^\d+$/.test(x)).map(Number))].sort((a, b) => a - b);
         const api = {
             login: () => cmd('LOGIN ' + q(user) + ' ' + q(pass)),
             examine: (box) => cmd('EXAMINE ' + q(box || 'INBOX')),   // 읽기 전용 열기(\Seen 등 깃발이 안 바뀜)

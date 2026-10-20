@@ -77,6 +77,7 @@ function fakeImap(opts) {
                     if (before && dayOf(x.date) >= dayOf(before[1])) return false;
                     return true;
                 }).map(x => x.uid);
+                if (opts.searchSplit) { const half = Math.floor(hit.length / 2); const sh = hit.slice(0, half).concat(hit.slice(half).reverse()); return say(`* SEARCH ${sh.slice(0, half).join(' ')}\r\n* SEARCH ${sh.slice(half).join(' ')}\r\n${tag} OK SEARCH\r\n`); }   // 네이버 꼴: 여러 줄 · 거꾸로
                 return say(`* SEARCH ${hit.join(' ')}\r\n${tag} OK SEARCH\r\n`);
             }
             if ((m = /^UID FETCH ([\d,]+) \((.*)\)$/.exec(line))) {
@@ -224,6 +225,14 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
             const c = await ops.search({ from: 'booking@naver.com' });
             ok(c.found === 1 && c.mails[0].uid === 102 && !c.korean_scan, nm + ': 영문 보낸 사람 = 따옴표 검색으로 바로(리터럴 0통 꼴에도)', c);
             ok(F.cmds.every(READONLY) && !F.cmds.some(x => x.lits.length), nm + ': 읽기 전용 · 리터럴 0', F.cmds.filter(x => !READONLY(x) || x.lits.length));
+        }
+        {   // 「* SEARCH」 여러 줄 · 거꾸로 = 합치고 정렬(최신 uid 를 놓치지 않음)
+            const F = fakeImap({ box: (() => { const b = { INBOX: [] }; for (let i = 1; i <= 30; i++) b.INBOX.push({ uid: 1000 + i, date: String(i).padStart(2, '0') + '-Sep-2026 09:00:00 +0900', from: '알림 <n@x.com>', subject: i === 30 ? '[네이버 예약] 확정' : '알림 ' + i, text: 'x', parts: { '1': b64('x') }, bs: () => '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "BASE64" 4 1 NIL NIL NIL)' }); return b; })(), list: [['\\HasNoChildren', 'INBOX']], searchSplit: true, noKorean: true });
+            const ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF, now: () => Date.parse('2026-10-20T12:00:00+09:00') });
+            const a = await ops.search({ q: '네이버 예약' });
+            ok(a.found === 1 && a.mails[0].uid === 1030 && a.korean_scan.scanned === 30, '「* SEARCH」 여러 줄·거꾸로 와도 합쳐 정렬 → 최신 「[네이버 예약]」 찾음', a);
+            const b = await ops.search({ q: 'n@x.com', limit: 20 });
+            ok(b.found === 30 && b.mails[0].uid === 1030 && b.has_more, '영문 찾기도 30통 전부 · 최신이 맨 위', { f: b.found, u: b.mails[0] && b.mails[0].uid });
         }
         ok(JSON.stringify(T.mergeFetch([{ text: '* 3 FETCH (UID 9 INTERNALDATE "20-Oct-2026 09:00:00 +0900")' }, { text: '* 3 FETCH (BODY[HEADER.FIELDS (FROM SUBJECT)] {4}', literals: [Buffer.from('a: b')] }]).map(x => [x.uid, x.head])) === '[[9,"a: b"]]', 'mergeFetch = 같은 메일 번호 줄을 합쳐 UID·머리말 짝');
     }
