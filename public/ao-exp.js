@@ -37,7 +37,6 @@
                 <div class="xp-nav"><button type="button" class="xp-btn" data-nav="-1" aria-label="지난달">‹</button><b class="xp-range" id="xp-range"></b><button type="button" class="xp-btn" data-nav="1" aria-label="다음 달">›</button><button type="button" class="xp-btn" data-nav="0">오늘</button></div>
                 <div class="xp-tools"><label class="xp-chk"><input type="checkbox" id="xp-off"> 취소 포함</label><button type="button" class="xp-btn" id="xp-xlsx">엑셀</button><button type="button" class="xp-btn" id="xp-set-btn" hidden>문자 설정</button></div>
             </div>
-            <div class="xp-sum" id="xp-sum"></div>
             <div class="xp-set" id="xp-set" hidden></div>
             <div class="xp-body" id="xp-body"><div class="xp-empty">불러오는 중…</div></div>
             <div class="xp-panel" id="xp-panel" role="dialog" aria-modal="false" aria-label="그 날 명단" hidden></div>
@@ -98,17 +97,17 @@
         const byDay = new Map();
         for (const b of shown) { if (need.includes(b) || !b.visit_date) continue; if (!byDay.has(b.visit_date)) byDay.set(b.visit_date, []); byDay.get(b.visit_date).push(b); }
         for (const l of byDay.values()) l.sort((a, b) => String(a.visit_time || '99').localeCompare(String(b.visit_time || '99')) || a.id - b.id);
-        return { need, byDay };
+        const offNoDate = shown.filter(b => OFF.includes(b.status) && !b.visit_date);   // #785 날짜 없는 취소·반품(취소 포함일 때만 shown 에 있음) — 달력 칸이 없어 띠로
+        return { need, byDay, offNoDate };
     }
     function render() {
         const d = X.data; if (!d || !X.layer) return;
-        const s = d.summary || {}, mr = monthRange(X.ym);
+        const mr = monthRange(X.ym);   // #785 요약 4칸(오늘·내일·날짜 확인 필요·손님 문자) 뺌 — 대표 「달력으로 보여서 필요 없다」
         $('xp-range').textContent = `${mr.y}년 ${mr.m}월`;
-        $('xp-sum').innerHTML = `<div class="xp-card"><b>${s.today || 0}팀</b><span>오늘 · ${s.today_people || 0}명</span></div><div class="xp-card"><b>${s.tomorrow || 0}팀</b><span>내일 · ${s.tomorrow_people || 0}명</span></div>
-            <div class="xp-card${s.need_check ? ' warn' : ''}"><b>${s.need_check || 0}</b><span>날짜 확인 필요</span></div><div class="xp-card sms"><b>${d.settings_view && d.settings_view.sms_enabled ? '켜짐' : '꺼짐'}</b><span>손님 문자</span></div>`;
-        const { need, byDay } = sets(), t = today();
+        const { need, byDay, offNoDate } = sets(), t = today();
         let html = '';
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
+        if (offNoDate.length) html += `<button type="button" class="xp-needbar off" data-day="offnodate"><b>날짜 없는 취소·반품 ${offNoDate.length}건</b><span>${esc(offNoDate.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${offNoDate.length > 3 ? ' 외' : ''} — 눌러서 보기</span></button>`;
         html += '<div class="xp-cal" role="grid" aria-label="체험 예약 달력"><div class="xp-cal-h" role="row">' + [...DOW].map((w, i) => `<span role="columnheader" class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + '</div><div class="xp-cal-g">';
         const lead = new Date(Date.UTC(mr.y, mr.m - 1, 1)).getUTCDay();
         for (let i = 0; i < lead; i++) html += '<span class="xp-cell out" aria-hidden="true"></span>';
@@ -125,7 +124,7 @@
         const tail = (7 - (lead + mr.last) % 7) % 7;
         for (let i = 0; i < tail; i++) html += '<span class="xp-cell out" aria-hidden="true"></span>';
         html += '</div></div>';
-        if (!byDay.size && !need.length) html += '<p class="xp-hint xp-cal-empty">이 달엔 체험 예약이 없어요. ‹ › 로 다른 달을 볼 수 있어요.</p>';
+        if (!byDay.size && !need.length && !offNoDate.length) html += '<p class="xp-hint xp-cal-empty">이 달엔 체험 예약이 없어요. ‹ › 로 다른 달을 볼 수 있어요.</p>';
         $('xp-body').innerHTML = html;
         if (X.day) renderPanel();
     }
@@ -133,12 +132,12 @@
     function renderPanel() {
         const p = $('xp-panel'); if (!p) return;
         if (!X.day) { p.hidden = true; p.innerHTML = ''; return; }
-        const { need, byDay } = sets();
-        const list = X.day === 'need' ? need : (byDay.get(X.day) || []);
+        const { need, byDay, offNoDate } = sets();
+        const list = X.day === 'need' ? need : X.day === 'offnodate' ? offNoDate : (byDay.get(X.day) || []);
         const live = list.filter(b => !OFF.includes(b.status));
         const tot = k => live.reduce((a, b) => a + (Number(b[k]) || 0), 0);
-        const title = X.day === 'need' ? '날짜 확인 필요' : dLabel(X.day);
-        const sub = X.day === 'need' ? `${list.length}건 · 손님께 확인한 뒤 [고치기]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
+        const title = X.day === 'need' ? '날짜 확인 필요' : X.day === 'offnodate' ? '날짜 없는 취소·반품' : dLabel(X.day);
+        const sub = X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [고치기]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
         p.hidden = false;
         p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div><button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
             <div class="xp-panel-b">${list.length ? `<ul>${list.map(rowHtml).join('')}</ul>` : '<div class="xp-empty">이 날은 예약이 없어요.</div>'}</div>`;

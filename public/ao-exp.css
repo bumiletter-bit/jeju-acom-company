@@ -22,11 +22,6 @@ body.xp-open { overflow: hidden; }
 .xp-btn.warn { color: var(--x-err); }
 .xp-btn:disabled { opacity: .5; cursor: default; }
 .xp-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--x-sub); min-height: 36px; cursor: pointer; }
-.xp-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--x-line); }
-.xp-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-soft); }
-.xp-card b { font-size: 20px; font-weight: 700; }
-.xp-card span { font-size: 12px; color: var(--x-sub); }
-.xp-card.warn b { color: var(--x-warn); }
 .xp-body { flex: 1; overflow-y: auto; padding: 8px 20px 40px; -webkit-overflow-scrolling: touch; }
 .xp-empty { padding: 40px 0; text-align: center; color: var(--x-sub); }
 .xp-day { margin-top: 14px; }
@@ -81,8 +76,7 @@ body.xp-open { overflow: hidden; }
 @media (max-width: 720px) {
     .xp-win { max-width: none; }
     .xp-head { padding-left: 16px; }
-    .xp-bar, .xp-sum, .xp-body, .xp-set { padding-left: 16px; padding-right: 16px; }
-    .xp-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .xp-bar, .xp-body, .xp-set { padding-left: 16px; padding-right: 16px; }
     .xp-row { grid-template-columns: 50px minmax(0, 1fr); }
     .xp-acts { grid-column: 2; }
     .xp-sub { display: none; }
@@ -100,6 +94,8 @@ html[data-ao-theme="dark"] .xp-layer { --x-sun: #F6948D; --x-sat: #84ADFF; }
 .xp-needbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; margin: 10px 0 0; padding: 10px 14px; border: 1px solid var(--x-warn); border-radius: 12px; background: var(--x-soft); color: var(--x-ink); font: inherit; text-align: left; cursor: pointer; }
 .xp-needbar b { color: var(--x-warn); font-size: 14px; }
 .xp-needbar span { font-size: 13px; color: var(--x-sub); }
+.xp-needbar.off { border-color: var(--x-line); }   /* #785 날짜 없는 취소·반품 = 할 일 아님(회색) */
+.xp-needbar.off b { color: var(--x-dim); }
 .xp-cal { margin-top: 12px; border: 1px solid var(--x-line); border-radius: 12px; overflow: hidden; }
 .xp-cal-h { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); background: var(--x-soft); border-bottom: 1px solid var(--x-line); }
 .xp-cal-h span { padding: 8px 0; text-align: center; font-size: 12px; font-weight: 700; color: var(--x-sub); }
