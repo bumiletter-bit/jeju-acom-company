@@ -66,6 +66,7 @@ function imapOpen({ host, port, user, pass, timeoutMs, connect }) {   // connect
             searchParts: async (pieces) => searchOut(await cmdParts(['UID SEARCH '].concat(pieces))),   // #776 한글 검색어 = 리터럴
             fetchItems: async (uidset, what) => (await cmd('UID FETCH ' + uidset + ' (' + what + ')')).filter(x => /^\* \d+ FETCH/i.test(x.text)),   // #776 여러 통(INTERNALDATE·BODYSTRUCTURE)
             close: async () => { try { await cmd('LOGOUT'); } catch (_) { } closed = true; clearTimeout(timer); try { sock.end(); } catch (_) { } },
+            destroy: () => fail(new Error('IMAP 시간 초과(강제 종료)')),   // #792 요청 시간 제한이 넘으면 러너가 소켓을 닫는다(기다리던 명령은 실패로 풀림)
         };
     });
 }
@@ -321,6 +322,8 @@ async function describeMail(im, uid, textMax) {
 // 러너 본체(가짜 IMAP 으로 검증 · deps = { imapOpen?, now? })
 function makeMailOps(creds, deps) {
     deps = deps || {};
+    const open = new Set();   // #792 지금 열린 IMAP 접속 — 시간 초과 때 abortAll 로 닫는다
+    const abortAll = () => { for (const im of open) { try { if (im.destroy) im.destroy(); } catch (_) { } } open.clear(); };
     async function withImap(fn) {
         const { user, pass } = creds();
         if (!user || !pass) { const e = new Error('메일 설정 없음(NAVER_MAIL_USER/NAVER_MAIL_APP_PW)'); e.noCreds = true; throw e; }
@@ -328,7 +331,8 @@ function makeMailOps(creds, deps) {
         let im;
         // timeoutMs = 한 번 접속의 전체 상한(한글 대비 길 2천 통 머리말 포함)
         try { im = await (deps.imapOpen || imapOpen)({ host: 'imap.naver.com', port: 993, user, pass, timeoutMs: 120000 }); } catch (e) { throw hide(e); }
-        try { await im.login(); return await fn(im); } catch (e) { throw hide(e); } finally { await im.close(); }
+        open.add(im);
+        try { await im.login(); return await fn(im); } catch (e) { throw hide(e); } finally { open.delete(im); await im.close(); }
     }
     async function folderOf(im, want) {
         const fs0 = pickFolders(await im.list());
@@ -426,7 +430,7 @@ function makeMailOps(creds, deps) {
             return { buf, name: (p.name || (p.type === 'message/rfc822' ? '첨부 메일.eml' : 'attachment.bin')).replace(/[\\/:*?"<>|\r\n]+/g, '_').slice(0, 190), type: p.type };
         });
     }
-    return { search, read, attach, withImap, folderOf };
+    return { search, read, attach, withImap, folderOf, abortAll };
 }
 
 // ════════ #779 메일 보내기 · 폴더 이동 · 휴지통(대표 10/20 「메일 쓰는 것은 다 되도록 · 삭제만 관리자만 · 문구 시안 → 고」) ════════
@@ -558,7 +562,7 @@ function makeWriteOps(creds, deps, ops) {
         const t = (list || []).find(f => isTrashFolder(f) && !f.flags.includes('\\noselect'));
         return t ? { raw: t.raw, name: '휴지통' } : { error: '휴지통 메일함을 못 찾았어요 — 옮기지 않았어요' };
     });
-    async function send(d, attachments) {
+    async function send(d, attachments, alive) {   // #792 alive() = false 면(러너 시간 초과 뒤) SMTP 를 시작하지 않는다
         const { user, pass } = creds();
         if (!user || !pass) { const e = new Error('메일 설정 없음(NAVER_MAIL_USER/NAVER_MAIL_APP_PW)'); e.noCreds = true; throw e; }
         let inReplyTo = null, references = null, subject = d.subject;
@@ -574,6 +578,7 @@ function makeWriteOps(creds, deps, ops) {
         }
         const msgId = 'akkome-' + Date.now().toString(36) + '-' + crypto.randomBytes(6).toString('hex') + '@' + (String(user).split('@')[1] || 'naver.com');
         const data = buildMessage({ fromName: d.from_name || '제주아꼼이네', from: user, to: d.to, cc: d.cc || [], subject, text: d.text, inReplyTo, references, attachments, msgId });
+        if (alive && !alive()) { const e = new Error('시간 초과로 보내지 않았어요'); e.user = true; throw e; }
         try { await (deps.smtpSend || smtpSend)({ host: 'smtp.naver.com', port: 465, user, pass, from: user, rcpts: d.to.concat(d.cc || []), data, timeoutMs: 60000 }); }
         catch (e) { const x = new Error(String(e && e.message || e).split(pass).join('(비밀값)').split(user).join('(메일 계정)').slice(0, 200)); if (e && e.user) x.user = true; x.smtpStep = e && e.smtpStep; if (e && e.maybeSent) x.maybeSent = true; throw x; }
         return { subject, msgId, bytes: Buffer.byteLength(data), reply: !!inReplyTo };
@@ -598,11 +603,21 @@ function mountMailRunner(deps) {
     }
 
     const cfgSet = (k, v) => pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [k, JSON.stringify(v)]);
-    let busy = false, lastSearch = 0, lastClean = 0;
+    let busy = false, busyAt = 0, gen = 0, lastSearch = 0, lastClean = 0;
+    // #792 요청 하나의 전체 시간 상한(IMAP 접속 상한 120초 이하 · 보내기 120초 = 답장 원문 찾기(IMAP) + SMTP 자체 60초 · 창구 대기 150초보다 짧게) · busy 가 이보다 오래면 스스로 푼다
+    const OP_LIMIT = Object.assign({ search: 90000, read: 60000, attach: 60000, move: 60000, trash: 60000, send: 120000 }, deps.opLimits || {});
+    const BUSY_MAX_MS = deps.busyMaxMs || 180000;
+    const SLOW = '메일 서버 응답이 늦어요(시간 초과)';
+    const SLOW_MSG = { send: SLOW + ' — 🔴 보냈는지 모름 · 보낸메일함을 먼저 확인(다시 보내지 말기)', move: SLOW + ' — 🔴 옮겨졌는지 모름 · 메일함에서 확인한 뒤 다시', trash: SLOW + ' — 🔴 휴지통으로 갔는지 모름 · 메일함에서 확인한 뒤 다시' };
     const RESULT_TTL_MIN = 10;   // 결과 줄(본문·첨부 목록이 듦)은 10분 넘으면 지움 — 설정 표에 메일 내용이 남지 않게
     const audit = (action, changes, by) => { try { return writeAudit && writeAudit({ action, targetType: 'naver_mail', targetId: null, changes, source: 'naver-mail', actor: { id: null, name: String(by || '창구(#776)').slice(0, 80) } }); } catch (_) { return null; } };
     async function tick() {
-        if (busy) return; busy = true;
+        if (busy) {
+            if (Date.now() - busyAt < BUSY_MAX_MS) return;
+            console.error('[#792 메일] 앞 작업이 ' + Math.round((Date.now() - busyAt) / 1000) + '초째 안 끝나 강제로 풀어요');
+            try { ops.abortAll(); } catch (_) { }
+        }
+        busy = true; busyAt = Date.now(); const my = ++gen;
         try {
             if (now() - lastClean >= 60000) {   // 1분에 한 번
                 lastClean = now();
@@ -610,6 +625,7 @@ function mountMailRunner(deps) {
                 await pool.query(`DELETE FROM agent_office_config WHERE key LIKE 'mail\\_draft\\_%' AND updated_at < NOW() - make_interval(mins => $1::int)`, [MAIL_DRAFT_MIN]);   // #779 초안 30분
             }
             for (const [op, [reqK, resK]] of Object.entries(KEYS)) {
+                if (gen !== my) return;   // #792 안전장치가 이 작업을 버렸으면 다음 요청은 새 작업이 집는다
                 // 요청 줄 집기 = 지우면서 값 받기 한 번(교체 중 두 인스턴스가 같은 줄을 두 번 실행하지 않게 · 지운 쪽만 실행)
                 const got = await pool.query(`DELETE FROM agent_office_config WHERE key = $1 RETURNING value`, [reqK]);
                 if (!got.rows.length) continue;
@@ -617,64 +633,78 @@ function mountMailRunner(deps) {
                 const fail = (error) => cfgSet(resK, { ok: false, id, op, error: String(error).slice(0, 200) });
                 const bad = checkReq(op, q); if (bad) { await fail(bad); continue; }
                 if (op === 'search' && now() - lastSearch < MAIL_COOLDOWN_MS) { await fail(`메일 찾기는 10초 간격이에요 — ${Math.ceil((MAIL_COOLDOWN_MS - (now() - lastSearch)) / 1000)}초 뒤 다시`); continue; }
-                try {
-                    if (op === 'search') {
-                        lastSearch = now();
-                        const out = await ops.search({ q: q.q || null, from: q.from || null, subject: q.subject || null, since: q.since || null, until: q.until || null, folder: q.folder || null, limit: q.limit || 10, more: q.more || null });
-                        await cfgSet(resK, { ok: true, id, op, at: new Date().toISOString(), ...out });
-                        await audit('mail_search', { q: q.q || null, from: q.from || null, subject: q.subject || null, since: q.since || null, until: q.until || null, folder: q.folder || null, more: !!q.more, found: out.found, shown: out.shown, order_id: q.order_id || null }, q.by);
-                    } else if (op === 'read') {
-                        const out = await ops.read({ uid: q.uid, folder: q.folder || null });
-                        await cfgSet(resK, { ok: true, id, op, at: new Date().toISOString(), mail: out });
-                        await audit('mail_read', { uid: q.uid, folder: q.folder || null, order_id: q.order_id || null }, q.by);
-                    } else if (op === 'move' || op === 'trash' || op === 'send') {   // #779 쓰기 — 지시자 확인 먼저
-                        const who = await whoOrdered(q.order_id);
-                        if (!who) { await fail('쓰기는 지금 처리 중인 지시 번호가 있어야 해요(24시간 안 · 누가 시켰는지 기록) — --order <지시 id>'); continue; }
-                        if (op === 'trash' && !who.admin) { await fail('휴지통으로 보내기는 관리자만 할 수 있어요'); continue; }
-                        if (op === 'send') {
-                            const got = await pool.query(`DELETE FROM agent_office_config WHERE key = $1 RETURNING value, updated_at`, ['mail_draft_' + q.draft_id]);   // 초안은 지우면서 가져감 = 한 번만 보냄
-                            const d = got.rows[0] && got.rows[0].value;
-                            if (!d) { await fail('초안이 없어요(30분 지났거나 이미 보냄) — draft 부터 다시'); continue; }
-                            if (Number(d.order_id) !== Number(q.order_id)) { await fail('다른 지시의 초안이에요 — 같은 지시에서 만든 초안만 보내요'); continue; }
-                            if (!(now() - Number(d.at) <= MAIL_DRAFT_MIN * 60000)) { await fail('초안이 30분 지났어요 — draft 부터 다시'); continue; }
-                            const bad = checkDraft(d); if (bad) { await fail(bad); continue; }
-                            const files = [];
-                            if ((d.attach_file_ids || []).length) {
-                                const fr = (await pool.query(`SELECT id, filename, data, size_bytes FROM report_files WHERE id = ANY($1) AND is_deleted = false AND purged_at IS NULL`, [d.attach_file_ids])).rows;
-                                if (fr.length !== d.attach_file_ids.length) { await fail('첨부 파일을 못 찾았어요(지워졌거나 보관 기간 지남) — draft 부터 다시'); continue; }
-                                const total = fr.reduce((t, x) => t + (x.data ? x.data.length : 0), 0);
-                                if (total > MAIL_SEND_BYTES) { await fail('첨부가 합쳐서 10MB 를 넘어요'); continue; }
-                                for (const id of d.attach_file_ids) { const x = fr.find(y => Number(y.id) === Number(id)); files.push({ name: x.filename, type: typeOfName(x.filename), data: x.data }); }
+                const ctx = { dead: false, wrote: false };   // #792 시간 초과가 나면 dead — 늦게 끝난 본문은 결과 줄을 덮지 않는다 · wrote = 본문이 결과 줄을 이미 쓰기 시작함
+                const put = (k, v) => { if (ctx.dead) return null; ctx.wrote = true; return cfgSet(k, v); };
+                const failP = (error) => { if (ctx.dead) return null; ctx.wrote = true; return fail(error); };
+                const body = async () => {
+                    try {
+                        if (op === 'search') {
+                            lastSearch = now();
+                            const out = await ops.search({ q: q.q || null, from: q.from || null, subject: q.subject || null, since: q.since || null, until: q.until || null, folder: q.folder || null, limit: q.limit || 10, more: q.more || null });
+                            await put(resK, { ok: true, id, op, at: new Date().toISOString(), ...out });
+                            await audit('mail_search', { q: q.q || null, from: q.from || null, subject: q.subject || null, since: q.since || null, until: q.until || null, folder: q.folder || null, more: !!q.more, found: out.found, shown: out.shown, order_id: q.order_id || null }, q.by);
+                        } else if (op === 'read') {
+                            const out = await ops.read({ uid: q.uid, folder: q.folder || null });
+                            await put(resK, { ok: true, id, op, at: new Date().toISOString(), mail: out });
+                            await audit('mail_read', { uid: q.uid, folder: q.folder || null, order_id: q.order_id || null }, q.by);
+                        } else if (op === 'move' || op === 'trash' || op === 'send') {   // #779 쓰기 — 지시자 확인 먼저
+                            const who = await whoOrdered(q.order_id);
+                            if (!who) { await failP('쓰기는 지금 처리 중인 지시 번호가 있어야 해요(24시간 안 · 누가 시켰는지 기록) — --order <지시 id>'); return; }
+                            if (op === 'trash' && !who.admin) { await failP('휴지통으로 보내기는 관리자만 할 수 있어요'); return; }
+                            if (op === 'send') {
+                                const got = await pool.query(`DELETE FROM agent_office_config WHERE key = $1 RETURNING value, updated_at`, ['mail_draft_' + q.draft_id]);   // 초안은 지우면서 가져감 = 한 번만 보냄
+                                const d = got.rows[0] && got.rows[0].value;
+                                if (!d) { await failP('초안이 없어요(30분 지났거나 이미 보냄) — draft 부터 다시'); return; }
+                                if (Number(d.order_id) !== Number(q.order_id)) { await failP('다른 지시의 초안이에요 — 같은 지시에서 만든 초안만 보내요'); return; }
+                                if (!(now() - Number(d.at) <= MAIL_DRAFT_MIN * 60000)) { await failP('초안이 30분 지났어요 — draft 부터 다시'); return; }
+                                const bad = checkDraft(d); if (bad) { await failP(bad); return; }
+                                const files = [];
+                                if ((d.attach_file_ids || []).length) {
+                                    const fr = (await pool.query(`SELECT id, filename, data, size_bytes FROM report_files WHERE id = ANY($1) AND is_deleted = false AND purged_at IS NULL`, [d.attach_file_ids])).rows;
+                                    if (fr.length !== d.attach_file_ids.length) { await failP('첨부 파일을 못 찾았어요(지워졌거나 보관 기간 지남) — draft 부터 다시'); return; }
+                                    const total = fr.reduce((t, x) => t + (x.data ? x.data.length : 0), 0);
+                                    if (total > MAIL_SEND_BYTES) { await failP('첨부가 합쳐서 10MB 를 넘어요'); return; }
+                                    for (const id of d.attach_file_ids) { const x = fr.find(y => Number(y.id) === Number(id)); files.push({ name: x.filename, type: typeOfName(x.filename), data: x.data }); }
+                                }
+                                const day = new Date(now() + 9 * 3600e3).toISOString().slice(0, 10);   // KST 날짜
+                                const slot = (await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('mail_send_count', jsonb_build_object('day', $1::text, 'n', 1))
+                                    ON CONFLICT (key) DO UPDATE SET value = CASE WHEN agent_office_config.value->>'day' = $1::text THEN jsonb_build_object('day', $1::text, 'n', COALESCE((agent_office_config.value->>'n')::int, 0) + 1) ELSE jsonb_build_object('day', $1::text, 'n', 1) END, updated_at = NOW()
+                                    RETURNING value`, [day])).rows[0].value;
+                                const unreserve = () => pool.query(`UPDATE agent_office_config SET value = jsonb_build_object('day', $1::text, 'n', GREATEST(COALESCE((value->>'n')::int, 1) - 1, 0)), updated_at = NOW() WHERE key = 'mail_send_count' AND value->>'day' = $1::text`, [day]);
+                                if (Number(slot.n) > MAIL_SEND_DAILY) { await unreserve(); await failP(`오늘 보낸 메일이 ${MAIL_SEND_DAILY}통이라 더 못 보내요(내일 다시)`); return; }
+                                let sent;
+                                try { sent = await W.send(d, files, () => !ctx.dead); } catch (e) { if (!e.maybeSent) e.unreserve = unreserve; throw e; }   // DATA 뒤 실패 = 나갔을 수 있어 수는 그대로
+                                await put(resK, { ok: true, id, op, at: new Date().toISOString(), sent: true, to: d.to, cc: d.cc || [], subject: sent.subject, reply: sent.reply, attachments: files.map(x => ({ name: x.name, size: x.data.length })), by: who.name });
+                                await audit('mail_send', { to: d.to, cc: d.cc || [], subject: sent.subject, text_head: String(d.text).slice(0, 100), bytes: sent.bytes, attachments: files.map(x => ({ name: x.name, size: x.data.length })), reply_to_uid: d.reply_to_uid || null, message_id: sent.msgId, draft_id: q.draft_id, order_id: q.order_id, ordered_by: who.name, today_n: Number(slot.n) }, who.name);
+                            } else {
+                                const out = op === 'move' ? await W.move({ uids: q.uids, folder: q.folder || 'INBOX', to_folder: q.to_folder, dry: q.dry === true }) : await W.trash({ uids: q.uids, folder: q.folder || 'INBOX', dry: q.dry === true });
+                                await put(resK, { ok: true, id, op, at: new Date().toISOString(), ...out, by: who.name });
+                                if (!out.dry) await audit(op === 'move' ? 'mail_move' : 'mail_trash', { uids: q.uids, moved: out.moved, from_folder: out.from_folder, to_folder: out.to_folder, subjects: out.mails.map(m => String(m.subject).slice(0, 60)), missing: out.missing, not_moved: out.not_moved, order_id: q.order_id, ordered_by: who.name }, who.name);
                             }
-                            const day = new Date(now() + 9 * 3600e3).toISOString().slice(0, 10);   // KST 날짜
-                            const slot = (await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('mail_send_count', jsonb_build_object('day', $1::text, 'n', 1))
-                                ON CONFLICT (key) DO UPDATE SET value = CASE WHEN agent_office_config.value->>'day' = $1::text THEN jsonb_build_object('day', $1::text, 'n', COALESCE((agent_office_config.value->>'n')::int, 0) + 1) ELSE jsonb_build_object('day', $1::text, 'n', 1) END, updated_at = NOW()
-                                RETURNING value`, [day])).rows[0].value;
-                            const unreserve = () => pool.query(`UPDATE agent_office_config SET value = jsonb_build_object('day', $1::text, 'n', GREATEST(COALESCE((value->>'n')::int, 1) - 1, 0)), updated_at = NOW() WHERE key = 'mail_send_count' AND value->>'day' = $1::text`, [day]);
-                            if (Number(slot.n) > MAIL_SEND_DAILY) { await unreserve(); await fail(`오늘 보낸 메일이 ${MAIL_SEND_DAILY}통이라 더 못 보내요(내일 다시)`); continue; }
-                            let sent;
-                            try { sent = await W.send(d, files); } catch (e) { if (!e.maybeSent) e.unreserve = unreserve; throw e; }   // DATA 뒤 실패 = 나갔을 수 있어 수는 그대로
-                            await cfgSet(resK, { ok: true, id, op, at: new Date().toISOString(), sent: true, to: d.to, cc: d.cc || [], subject: sent.subject, reply: sent.reply, attachments: files.map(x => ({ name: x.name, size: x.data.length })), by: who.name });
-                            await audit('mail_send', { to: d.to, cc: d.cc || [], subject: sent.subject, text_head: String(d.text).slice(0, 100), bytes: sent.bytes, attachments: files.map(x => ({ name: x.name, size: x.data.length })), reply_to_uid: d.reply_to_uid || null, message_id: sent.msgId, draft_id: q.draft_id, order_id: q.order_id, ordered_by: who.name, today_n: Number(slot.n) }, who.name);
                         } else {
-                            const out = op === 'move' ? await W.move({ uids: q.uids, folder: q.folder || 'INBOX', to_folder: q.to_folder, dry: q.dry === true }) : await W.trash({ uids: q.uids, folder: q.folder || 'INBOX', dry: q.dry === true });
-                            await cfgSet(resK, { ok: true, id, op, at: new Date().toISOString(), ...out, by: who.name });
-                            if (!out.dry) await audit(op === 'move' ? 'mail_move' : 'mail_trash', { uids: q.uids, moved: out.moved, from_folder: out.from_folder, to_folder: out.to_folder, subjects: out.mails.map(m => String(m.subject).slice(0, 60)), missing: out.missing, not_moved: out.not_moved, order_id: q.order_id, ordered_by: who.name }, who.name);
+                            const a = await ops.attach({ uid: q.uid, folder: q.folder || null, part: String(q.part) });
+                            if (ctx.dead) return;   // #792 시간 초과 뒤 늦게 온 첨부는 저장하지 않음
+                            const ins = await pool.query(`INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, NULL, $2, $3) RETURNING id`, [a.name, a.buf, a.buf.length]);
+                            await put(resK, { ok: true, id, op, at: new Date().toISOString(), file_id: ins.rows[0].id, filename: a.name, size: a.buf.length, type: a.type });
+                            await audit('mail_attach', { uid: q.uid, folder: q.folder || null, part: String(q.part), file_id: ins.rows[0].id, size: a.buf.length, order_id: q.order_id || null }, q.by);
                         }
-                    } else {
-                        const a = await ops.attach({ uid: q.uid, folder: q.folder || null, part: String(q.part) });
-                        const ins = await pool.query(`INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, NULL, $2, $3) RETURNING id`, [a.name, a.buf, a.buf.length]);
-                        await cfgSet(resK, { ok: true, id, op, at: new Date().toISOString(), file_id: ins.rows[0].id, filename: a.name, size: a.buf.length, type: a.type });
-                        await audit('mail_attach', { uid: q.uid, folder: q.folder || null, part: String(q.part), file_id: ins.rows[0].id, size: a.buf.length, order_id: q.order_id || null }, q.by);
+                    } catch (e) {
+                        if (op === 'send' && e.unreserve) await e.unreserve().catch(() => { });   // 확실히 안 나간 보내기 = 오늘 수 되돌림
+                        const msg = e.noCreds ? '메일 설정이 없어요(총괄에게 · Render env)' : e.user ? e.message : (op === 'search' && /시간 초과/.test(String(e.message))) ? '메일 서버가 오래 걸려 멈췄어요 — 기간(--since)을 붙여 다시 찾아 주세요' : '메일 서버 오류 — ' + e.message;
+                        await failP(op === 'send' && e.maybeSent ? msg + ' — 🔴 보냈을 수 있어요 · 보낸메일함을 먼저 확인(다시 보내지 말기)' : msg);
                     }
-                } catch (e) {
-                    if (op === 'send' && e.unreserve) await e.unreserve().catch(() => { });   // 확실히 안 나간 보내기 = 오늘 수 되돌림
-                    const msg = e.noCreds ? '메일 설정이 없어요(총괄에게 · Render env)' : e.user ? e.message : (op === 'search' && /시간 초과/.test(String(e.message))) ? '메일 서버가 오래 걸려 멈췄어요 — 기간(--since)을 붙여 다시 찾아 주세요' : '메일 서버 오류 — ' + e.message;
-                    await fail(op === 'send' && e.maybeSent ? msg + ' — 🔴 보냈을 수 있어요 · 보낸메일함을 먼저 확인(다시 보내지 말기)' : msg);
+                };
+                let tm; const late = new Promise(res => { tm = setTimeout(() => res('late'), OP_LIMIT[op]); });
+                const how = await Promise.race([body().then(() => 'done', () => 'done'), late]); clearTimeout(tm);
+                if (how === 'late') {
+                    ctx.dead = true;
+                    try { ops.abortAll(); } catch (_) { }   // 소켓을 닫아 기다리던 명령을 풀어 줌(보내기는 자동으로 다시 보내지 않음)
+                    if (!ctx.wrote) await fail(SLOW_MSG[op] || SLOW + ' — 잠시 뒤 다시 시도해 주세요');   // 경계 경합: 본문 결과(성공·실패)가 이미 쓰이는 중이면 덮지 않음
+                    await audit('mail_timeout', { op, id, limit_ms: OP_LIMIT[op], result_written: ctx.wrote, order_id: q.order_id || null }, q.by);
                 }
             }
         } catch (e) { console.error('[#776 메일 찾기]', String(e && e.message || e).slice(0, 200)); }
-        finally { busy = false; }
+        finally { if (gen === my) busy = false; }
     }
     if (!deps.noTimers) setInterval(tick, 5000);
     return { tick, ops };
