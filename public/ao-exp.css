@@ -92,3 +92,59 @@ body.xp-open { overflow: hidden; }
 .desk-todo li.exp-go { margin: -6px -8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
 .desk-todo li.exp-go:hover { background: var(--d-soft); }
 .desk-todo li.exp-go:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+/* #783 월 달력(일정 메뉴 달력과 같은 느낌 · 오늘 = 강조색 동그라미 · 일 빨강 · 토 파랑) + 그 날 명단 판 */
+.xp-layer { --x-sun: var(--danger, #D92D20); --x-sat: var(--info, #1570EF); }
+html[data-ao-theme="dark"] .xp-layer { --x-sun: #F6948D; --x-sat: #84ADFF; }
+.xp-win { position: relative; }
+.xp-range { margin: 0 4px; min-width: 96px; text-align: center; font-size: 16px; font-weight: 700; }
+.xp-needbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; margin: 10px 0 0; padding: 10px 14px; border: 1px solid var(--x-warn); border-radius: 12px; background: var(--x-soft); color: var(--x-ink); font: inherit; text-align: left; cursor: pointer; }
+.xp-needbar b { color: var(--x-warn); font-size: 14px; }
+.xp-needbar span { font-size: 13px; color: var(--x-sub); }
+.xp-cal { margin-top: 12px; border: 1px solid var(--x-line); border-radius: 12px; overflow: hidden; }
+.xp-cal-h { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); background: var(--x-soft); border-bottom: 1px solid var(--x-line); }
+.xp-cal-h span { padding: 8px 0; text-align: center; font-size: 12px; font-weight: 700; color: var(--x-sub); }
+.xp-cal-h .sun { color: var(--x-sun); } .xp-cal-h .sat { color: var(--x-sat); }
+.xp-cal-g { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.xp-cell { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; min-height: 104px; padding: 6px 6px 8px; border: 0; border-right: 1px solid var(--x-line); border-bottom: 1px solid var(--x-line); background: var(--x-card); color: var(--x-ink); font: inherit; text-align: left; cursor: pointer; }
+.xp-cal-g > :nth-child(7n) { border-right: 0; }
+.xp-cell.out { background: var(--x-soft); cursor: default; }
+.xp-cell:not(.out):hover { background: var(--x-acc-soft); }
+.xp-cell:focus-visible { outline: 2px solid var(--x-acc); outline-offset: -2px; }
+.xp-cell.past:not(.today) .xp-dn { opacity: .55; }
+.xp-dn { align-self: flex-start; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; font-size: 13px; font-weight: 700; line-height: 24px; text-align: center; }
+.xp-cell.sun .xp-dn { color: var(--x-sun); } .xp-cell.sat .xp-dn { color: var(--x-sat); }
+.xp-cell.today { box-shadow: inset 0 0 0 1.5px var(--x-acc); }
+.xp-cell.today .xp-dn { background: var(--x-acc-fill); color: #fff; }
+.xp-cnt { font-size: 12px; color: var(--x-acc); }
+.xp-cnt b { font-weight: 700; } .xp-cnt em { font-style: normal; color: var(--x-sub); }
+.xp-cnt.off { color: var(--x-dim); }
+.xp-nms { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.xp-nm { overflow: hidden; padding: 1px 5px; border-left: 3px solid var(--d-ch-talk-fg, #05603A); border-radius: 3px; background: var(--x-soft); font-size: 12px; line-height: 1.5; white-space: nowrap; text-overflow: ellipsis; }
+.xp-nm.off { border-left-color: var(--x-dim); color: var(--x-dim); text-decoration: line-through; }
+.xp-more { font-size: 11px; font-weight: 600; color: var(--x-acc); }
+.xp-cal-empty { padding: 14px 2px 0; }
+/* 그 날 명단 판 — PC = 오른쪽 판 · 폰 = 아래에서 올라오는 판(창 안 겹) */
+.xp-panel { box-sizing: border-box; position: absolute; top: 0; right: 0; bottom: 0; z-index: 3; display: flex; flex-direction: column; width: min(560px, 100%); background: var(--x-card); border-left: 1px solid var(--x-line); box-shadow: -8px 0 32px rgba(0, 0, 0, .18); animation: xp-pin 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes xp-pin { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.xp-panel[hidden] { display: none; }
+.xp-panel-h { display: flex; align-items: flex-start; gap: 10px; padding: 12px 12px 10px 20px; border-bottom: 1px solid var(--x-line); }
+.xp-panel-h > div { flex: 1; min-width: 0; }
+.xp-panel-h h3 { margin: 4px 0 2px; font-size: 17px; font-weight: 700; }
+.xp-panel-h small { font-size: 12px; color: var(--x-sub); }
+.xp-panel-b { flex: 1; overflow-y: auto; padding: 0 20px 32px; -webkit-overflow-scrolling: touch; }
+.xp-panel-b ul { list-style: none; margin: 0; padding: 0; }
+/* 폰·폴드7(접힘 390 · 펼침 900) = 칸 안엔 숫자만 · 명단은 판에서 */
+@media (max-width: 960px) {
+    .xp-cell { min-height: 64px; padding: 4px 3px 6px; gap: 2px; align-items: center; text-align: center; }
+    .xp-dn { align-self: center; }
+    .xp-nms { display: none; }
+    .xp-cnt em { display: none; }
+    .xp-cnt { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--x-acc-soft); font-size: 11px; }
+    .xp-cnt.off { background: transparent; }
+}
+@media (max-width: 720px) {
+    .xp-panel { top: auto; left: 0; width: 100%; max-height: 88%; border-left: 0; border-top: 1px solid var(--x-line); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 32px rgba(0, 0, 0, .22); animation-name: xp-pup; }
+    @keyframes xp-pup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .xp-panel-h { padding-left: 16px; } .xp-panel-b { padding: 0 16px 28px; }
+    .xp-cell { min-height: 54px; }
+}

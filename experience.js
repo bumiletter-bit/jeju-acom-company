@@ -14,8 +14,8 @@
 'use strict';
 
 const KEY_NOTIFY = 'experience_notify', KEY_MAIL = 'experience_mail';
-const DEFAULT_TPL_RECV = '[제주아꼼이네 감귤체험장] {이름}님, 예약이 확정되었습니다.\n방문: {월}월 {일}일 {시간} / {인원}\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네")\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요. 주황색 컨테이너 옆 주차장에 후진주차 부탁드려요.\n체험 손님께는 오션라운지 아메리카노 또는 하겐다즈 교환권을 드려요(체험 당일 사용).\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요.\n방문 전날까지 취소하시면 전액 환불됩니다. 날짜 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.\n예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.';
-const DEFAULT_TPL_EVE = '[제주아꼼이네 감귤체험장] {이름}님, 내일 {월}월 {일}일 {시간} 방문 예약 안내드려요.\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네") · 주황색 컨테이너 옆 주차장\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요. 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.';
+const DEFAULT_TPL_RECV = '[제주아꼼이네 감귤체험장] {이름}님, 예약이 확정되었습니다.\n방문: {월}월 {일}일 {시간} / {인원}\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네")\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요. 주황색 컨테이너 옆 주차장에 후진주차 부탁드려요. 주차장이 좁아 자리가 없으면 직원이 안내해 드려요.\n도착하시면 아꼼이 벽화가 있는 창고 건물에서 예약 확인 후 입장해 주세요. (주황 컨테이너는 안내·소품 공간이에요)\n체험 손님께는 오션라운지 아메리카노 또는 하겐다즈 교환권을 드려요(체험 당일 사용).\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요.\n방문 전날까지 취소하시면 전액 환불됩니다. 날짜 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.\n예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.';
+const DEFAULT_TPL_EVE = '[제주아꼼이네 감귤체험장] {이름}님, 내일 {월}월 {일}일 {시간} 방문 예약 안내드려요.\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네") (주황색 컨테이너 옆 주차장 · 자리가 없으면 직원이 안내 · 접수는 아꼼이 벽화 창고 건물)\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요. 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.';
 //   sender = 알리고 발신번호(비우면 ALIGO_SENDER) — 알리고에 미리 등록된 번호만 나감 · 체험장 번호 010-6259-8420 은 등록 확인 뒤 넣는다(대표 10/20 · 문자 API 에 등록 목록 조회가 없음)
 const NOTIFY_DEFAULT = { enabled: false, daily_cap: 40, recv_from: '09:00', recv_to: '21:00', eve_from: '10:00', eve_to: '18:00', sender: '', tpl_recv: DEFAULT_TPL_RECV, tpl_eve: DEFAULT_TPL_EVE,
     alimtalk: { enabled: false, confirm_tpl: 'UM_6808', remind_tpl: 'UM_6789' }, auto_confirm: true, auto_dispatch: true };   // #780 auto_confirm = 체험 주문 자동 발주확인
@@ -217,7 +217,8 @@ module.exports = function mountExperience(app, deps) {
         else if (status === 'canceled' || status === 'returned') status = 'confirmed';
         // 날짜 = 살아 있는 줄들의 판독 · 서로 다르면 확인 필요
         let pd = null, why = '';
-        const parsed = live.map(x => x.parsed).filter(Boolean);
+        // 날짜 = 살아 있는 줄 · 전부 취소·반품이면 모든 줄에서(방문일을 비우면 「취소 포함」 달력에서 사라짐 · #783 대표 시험 반품 실측)
+        const parsed = (live.length ? live : Object.values(items)).map(x => x.parsed).filter(Boolean);
         if (parsed.length) {
             const sig = new Set(parsed.map(p => (p.date || '?') + ' ' + (p.time || '?')));
             pd = parsed.find(p => p.ok) || parsed[0];

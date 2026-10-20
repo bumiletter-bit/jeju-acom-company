@@ -204,6 +204,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         d.detail = d.detail.map(x => x.productOrder.productOrderId === 'P1' ? po('P1', 'O1', '7673020911', OPT('내가 직접 딴 노지귤 2kg(36개월까지무료)', '11', '1', '13:30'), 2, { claimType: 'RETURN', claimStatus: 'RETURN_DONE' }) : x);
         await t.M.collectStore();
         ok(o1.status === 'returned' && o1.exp_count === 0, '전부 반품 = 상태 반품(= 취소로 봄)', o1.status);
+        ok(o1.visit_date === '2026-11-01' && o1.visit_time === '13:30', '전부 반품돼도 방문일·시간은 남김(「취소 포함」 달력에 그 날로 보이게 · #783 실측)', { d: o1.visit_date, t: o1.visit_time });
         d.changes = [{ productOrderId: 'P3', claimType: 'CANCEL', claimStatus: 'CANCEL_DONE' }];
         d.detail = d.detail.map(x => x.productOrder.productOrderId === 'P3' ? po('P3', 'O2', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '십오', '11:00'), 3, { productOrderStatus: 'CANCELED', claimType: 'CANCEL', claimStatus: 'CANCEL_DONE' }) : x);
         await t.M.collectStore();
