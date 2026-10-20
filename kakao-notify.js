@@ -262,15 +262,17 @@ async function sendShippingGuideAlimtalk({ receiver, vars, fallback }) {
 
 // LMS(알리고 문자) 발송 뼈대 (지시 #74) — 품목별 발송 안내문용: 자유 문안·템플릿 심사 불필요.
 // 🔴 알림톡과 동일 이중 차단(KAKAO_NOTIFY=on + 키 필요). 문자 API는 senderkey 불필요 — key·user_id·sender만.
-async function sendLms({ receiver, subject, message }) {
+// #775: sender(선택) = 알리고에 미리 등록된 다른 발신번호(숫자 9~12자리) — 없거나 꼴이 틀리면 종전 ALIGO_SENDER(기존 호출 무변경)
+async function sendLms({ receiver, subject, message, sender }) {
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', message };
     if (!process.env.ALIGO_API_KEY || !process.env.ALIGO_USER_ID || !process.env.ALIGO_SENDER) {
         return { mode: 'dry-run', status: 'keys-missing', message };
     }
+    const altSender = String(sender || '').replace(/[^0-9]/g, '');
     const form = {
         key: process.env.ALIGO_API_KEY,
         user_id: process.env.ALIGO_USER_ID,     // 공식 표기 user_id (언더스코어 — 알림톡의 userid와 다름)
-        sender: process.env.ALIGO_SENDER,
+        sender: /^0\d{8,11}$/.test(altSender) ? altSender : process.env.ALIGO_SENDER,
         receiver: String(receiver || '').replace(/[^0-9]/g, ''),
         msg: smsSafe(message),   // #549
         msg_type: 'LMS',

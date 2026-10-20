@@ -1,0 +1,94 @@
+/* #775 감귤체험 예약 창(ao-exp.js) — 색은 에이전트 오피스 토큰(--d-*)을 받는다: 밝은 화면 = 아래 기본값 · 야간 = html[data-ao-theme="dark"] 의 --d-* */
+.xp-layer {
+    --x-card: var(--d-card, #fff); --x-soft: var(--d-soft, #F8F9FC); --x-line: var(--d-line, #ECEDF1); --x-ink: var(--d-ink, #101828); --x-sub: var(--d-sub, #667085); --x-dim: var(--d-dim, #646D7F);
+    --x-acc: var(--d-accent, #4F46E5); --x-acc-fill: var(--d-accent-fill, #4F46E5); --x-acc-soft: var(--d-accent-soft, #EEF0FF); --x-ok: var(--d-ok, #067647); --x-warn: var(--d-warn, #B54708); --x-err: var(--d-err, #D92D20);
+    position: fixed; inset: 0; z-index: 1150; display: flex; justify-content: center; background: rgba(16, 24, 40, .45); color: var(--x-ink);
+    font-family: inherit;
+}
+body.xp-open { overflow: hidden; }
+.xp-win { display: flex; flex-direction: column; width: 100%; max-width: 980px; height: 100%; background: var(--x-card); box-shadow: 0 8px 32px rgba(0, 0, 0, .25); animation: xp-in 200ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes xp-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.xp-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--x-line); }
+.xp-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.xp-sub { color: var(--x-sub); font-size: 13px; }
+.xp-x { margin-left: auto; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--x-sub); font-size: 26px; line-height: 1; cursor: pointer; }
+.xp-x:hover { background: var(--x-soft); color: var(--x-ink); }
+.xp-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 20px; border-bottom: 1px solid var(--x-line); }
+.xp-nav, .xp-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.xp-range { margin-left: 6px; font-weight: 600; font-size: 14px; }
+.xp-btn { min-height: 36px; padding: 0 12px; border: 1px solid var(--x-line); border-radius: 9px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.xp-btn:hover { border-color: var(--x-acc); color: var(--x-acc); }
+.xp-btn.pri { background: var(--x-acc-fill); border-color: var(--x-acc-fill); color: #fff; }
+.xp-btn.warn { color: var(--x-err); }
+.xp-btn:disabled { opacity: .5; cursor: default; }
+.xp-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--x-sub); min-height: 36px; cursor: pointer; }
+.xp-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--x-line); }
+.xp-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-soft); }
+.xp-card b { font-size: 20px; font-weight: 700; }
+.xp-card span { font-size: 12px; color: var(--x-sub); }
+.xp-card.warn b { color: var(--x-warn); }
+.xp-body { flex: 1; overflow-y: auto; padding: 8px 20px 40px; -webkit-overflow-scrolling: touch; }
+.xp-empty { padding: 40px 0; text-align: center; color: var(--x-sub); }
+.xp-day { margin-top: 14px; }
+.xp-day h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 8px 0; background: var(--x-card); font-size: 15px; font-weight: 700; border-bottom: 1px solid var(--x-line); }
+.xp-day h3 small { margin-left: 6px; font-weight: 500; font-size: 12px; color: var(--x-sub); }
+.xp-day.today h3 { color: var(--x-acc); }
+.xp-day.need h3 { color: var(--x-warn); }
+.xp-day ul { list-style: none; margin: 0; padding: 0; }
+.xp-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--x-line); }
+.xp-row.off { opacity: .55; }
+.xp-row.off .xp-name { text-decoration: line-through; }
+.xp-time { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.xp-main { min-width: 0; }
+.xp-l1, .xp-l2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.xp-l2 { margin-top: 2px; font-size: 13px; color: var(--x-sub); }
+.xp-name { font-size: 15px; }
+.xp-tel { color: var(--x-acc); font-size: 13px; text-decoration: none; }
+.xp-tel:hover { text-decoration: underline; }
+.xp-dim { color: var(--x-dim); font-size: 13px; }
+.xp-src { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+.xp-src.st { background: var(--d-ch-talk-bg, #D1FADF); color: var(--d-ch-talk-fg, #05603A); }
+.xp-src.pl { background: var(--d-ch-qna-bg, #FEF0C7); color: var(--d-ch-qna-fg, #93370D); }
+.xp-need { font-style: normal; font-size: 12px; font-weight: 600; color: var(--x-warn); }
+.xp-st { font-weight: 600; }
+.xp-st.s-visited { color: var(--x-ok); }
+.xp-st.s-canceled, .xp-st.s-returned { color: var(--x-err); }
+.xp-st.s-unknown { color: var(--x-warn); }
+.xp-sms { font-style: normal; font-size: 12px; }
+.xp-sms.ok { color: var(--x-ok); }
+.xp-sms.err { color: var(--x-err); }
+.xp-memo { color: var(--x-ink); }
+.xp-acts { display: flex; gap: 6px; }
+.xp-visit.on { background: var(--x-acc-soft); border-color: var(--x-acc); color: var(--x-acc); }
+.xp-edit { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; padding: 12px; border-radius: 12px; background: var(--x-soft); border: 1px solid var(--x-line); }
+.xp-edit label, .xp-set-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--x-sub); }
+.xp-edit label.w, .xp-set-grid label.w { flex-basis: 100%; }
+.xp-edit input, .xp-set-grid input[type="text"], .xp-set-grid input[type="number"], .xp-set-grid textarea {
+    min-height: 40px; padding: 6px 10px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 14px; }
+.xp-edit input[type="number"] { width: 76px; }
+.xp-edit input#xp-e-date { width: 130px; } .xp-edit input#xp-e-time { width: 90px; }
+.xp-set-grid textarea { width: 100%; resize: vertical; line-height: 1.5; }
+.xp-raw { flex-basis: 100%; font-size: 12px; color: var(--x-sub); white-space: pre-wrap; word-break: break-all; }
+.xp-raw b { display: block; color: var(--x-ink); margin-bottom: 2px; }
+.xp-edit-acts { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.xp-pre { flex-basis: 100%; margin: 0; padding: 10px; border-radius: 8px; background: var(--x-card); border: 1px dashed var(--x-line); white-space: pre-wrap; font-size: 13px; max-height: 320px; overflow: auto; }
+.xp-set { padding: 12px 20px; border-bottom: 1px solid var(--x-line); background: var(--x-soft); max-height: 55vh; overflow-y: auto; }
+.xp-set-grid { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.xp-set-grid label:not(.w):not(.xp-chk) { flex-direction: row; align-items: center; gap: 6px; }
+.xp-set-grid .xp-chk { flex-basis: 100%; color: var(--x-ink); font-weight: 600; }
+.xp-hint { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--x-sub); }
+/* 폰(폴드7 접음 포함) — 꽉 찬 화면 · 요약 2칸 · 단추 닿는 영역 44px */
+@media (max-width: 720px) {
+    .xp-win { max-width: none; }
+    .xp-head { padding-left: 16px; }
+    .xp-bar, .xp-sum, .xp-body, .xp-set { padding-left: 16px; padding-right: 16px; }
+    .xp-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .xp-row { grid-template-columns: 50px minmax(0, 1fr); }
+    .xp-acts { grid-column: 2; }
+    .xp-sub { display: none; }
+}
+@media (max-width: 960px), (pointer: coarse) { .xp-btn { min-height: 44px; } .xp-chk { min-height: 44px; } }
+/* 「지금 챙길 일」의 체험 줄(ao-desk.js 가 그림 · 누르면 이 창) — 문자 줄(.sms-todo)과 같은 누름 모양 */
+.desk-todo li.exp-go { margin: -6px -8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.desk-todo li.exp-go:hover { background: var(--d-soft); }
+.desk-todo li.exp-go:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }

@@ -1057,6 +1057,8 @@ async function initDB() {
         await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS ${c}`);
     }
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min, run_at_time) VALUES ('coupon_expire_notify', true, 1440, '10:00') ON CONFLICT (key) DO NOTHING`);
+    // #775 감귤체험 예약 관리(experience.js) — 스토어 수집 · 예약 메일 수집 · 손님 문자 = 전부 꺼진 채 시드(켜기는 총괄 · 문자는 설정 experience_notify.enabled 도 따로)
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('experience_store', false, 5), ('experience_place', false, 5), ('experience_sms', false, 10) ON CONFLICT (key) DO NOTHING`);
     // #468(대표 GO 9/24): 네이버 정산 대조 — 회차(정산 예정일)별 「정산현황 넣은 값 ↔ 실입금」 분해 결과. settlement_status는 무접촉(읽기만).
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_settle_recon (
@@ -7414,7 +7416,8 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
 const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)',
     cafe24_notify: '자사몰 주문안내(#401)', cafe24_guide: '자사몰 발송안내(#401)', coupang_notify: '쿠팡 주문안내(#401·LMS)', coupang_guide: '쿠팡 발송안내(#401·LMS)', welcome_notify: '자사몰 가입환영(#401)',
-    coupon_expire_notify: '룰렛 쿠폰 만료 7일 전 안내(#467)' };
+    coupon_expire_notify: '룰렛 쿠폰 만료 7일 전 안내(#467)',
+    experience_store: '체험 예약 · 스토어 주문(#775)', experience_place: '체험 예약 · 플레이스 메일(#775)', experience_sms: '체험 예약 · 손님 문자(#775)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -10075,7 +10078,9 @@ async function naverAutoCollectTick() {
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
         const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync,
             cafe24_notify: collectCafe24Notify, cafe24_guide: collectCafe24Guide, coupang_notify: collectCoupangNotify, coupang_guide: collectCoupangGuide, welcome_notify: collectWelcomeNotify,
-            coupon_expire_notify: collectCouponExpireNotify }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내
+            coupon_expire_notify: collectCouponExpireNotify,
+            experience_store: () => EXPERIENCE.collectStore(), experience_place: () => EXPERIENCE.collectPlace(), experience_sms: () => EXPERIENCE.collectSms() }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내 · #775 체험 예약
+        if (typeof fn !== 'function') return;   // #775 모르는 키(새 키를 옛 코드가 만났을 때 · #467 함정)는 건너뜀
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
@@ -14558,6 +14563,8 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                         if (r && r.count > 0) out.push({ key: 'botfail', label: '봇 실패', count: r.count, talk: r.talk, sms: r.sms, where: `톡톡 ${r.talk} · 문자 ${r.sms}`, items: r.items, more: r.more, talk_ids: r.items.filter(x => x.ch === 'talk').map(x => x.id), sms_ids: r.items.filter(x => x.ch === 'sms').map(x => x.id) });
                     }
                 } catch (e) { console.error('desk/board botfail:', e.message); }
+                // #775 체험 예약 — 「오늘 체험 n팀 · 내일 n팀 · 날짜 확인 필요 n」(셋 다 0 이면 줄 없음 · 누르면 체험 예약 창)
+                try { const t = await EXPERIENCE.todoLine(); if (t) out.push(t); } catch (e) { console.error('desk/board experience:', e.message); }
                 // #469-b: 오늘 할 일 알림 — 일정표의 발송·이벤트 일정(오늘·내일). /today-reminders와 같은 조건
                 const today = kstTodayStr();
                 const tomorrow = new Date(new Date(today + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
@@ -18588,6 +18595,9 @@ require('./payslip.js')(app, { pool, authMiddleware, adminOnly, ownerOnly, write
 // #687 회사 규정(내 정보 > 회사 규정 · 표 company_rules · 급여규정·인사규정 PDF 를 전 직원이 봄 · 올리기·지우기 = 관리자 · 올리면 전 직원 알림 type 'rules')
 require('./rules.js')(app, { pool, authMiddleware, adminOnly, writeAudit, createNotification });
 // #658 문의 대화 창(톡톡 · 상품문의 · 주문문의 — 문자 전용 창과 같은 꼴) — 등록은 위 naverPost* 함수 그대로 · 톡톡은 talk_outbox → 배달부 · 초안은 버튼을 눌렀을 때만
+// #775 감귤체험 예약 관리(표 experience_bookings · 스토어 주문 + 플레이스 예약 메일 · 손님 문자 = 설정 꺼짐 · 화면 = public/ao-exp.js) — 타이머 키 experience_store/place/sms
+const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, adminOnly, writeAudit, naverCfgGet, naverCfgSet, naverFetchChanges, naverKstIso, naverCall: naverCallWithRetry,
+    experienceProductIds, isExperienceOrder, resolveReceiver, isMaskedTel, kakaoNotify, notifyTelegram });
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답

@@ -1,3 +1,10 @@
+## v5.9.573 (2026-10-20) — #775 감귤체험 예약 관리(스토어 주문 + 플레이스 예약 메일 · 체험 예약 창 · 손님 안내 문자/알림톡) — 전부 꺼진 채 배포
+- 새 experience.js: 표 experience_bookings·experience_mail_seen · 타이머 experience_store(5분)·experience_place(5분 · IMAP 읽기 전용 EXAMINE·BODY.PEEK · NAVER_MAIL_USER/APP_PW · 보낸 사람 낱말 조건)·experience_sms(10분) = 꺼진 채 시드 · 모르는 키 건너뜀(#467) · 옵션 글자 월·일·시간 판독(못 읽으면 날짜 확인 필요) · 반품·취소 반영 · 직원 고친 날짜 유지.
+- 손님 문자 = 설정 experience_notify(enabled false) · 접수 09~21시 + 전날 10~18시 · 하루 상한 40 · 보내기 전 줄 잡기(30분·3회 · 실패 표시) · 수신거부 건너뜀(상한 미포함) · 체험장 010-6259-8420 · 알림톡 UM_6788/UM_6789(검수중 · alimtalk.enabled false · 실패 시 LMS).
+- 화면 ao-exp.js·css(v=1) · [+] 체험 예약 · 챙길 일 「오늘·내일 체험 n팀 · 날짜 확인 필요 n」 · 방문 체크 · 고치기 · 엑셀 · 문자 설정(관리자) · ao-desk.js v=91 · kakao-notify sendLms sender 선택 인자.
+- 메일 확인 러너 experience_mail_probe_request(건수·가린 제목만).
+- 검증 verify-775-booking 68/68 · verify-775-exp 18/18 · verify-529 21/21 · 화면 30/30 · 워커3 읽기 점검 막을 것 0.
+
 ## v5.9.572 (2026-10-20) — #775-A 체험 상품을 택배 흐름에서 뺌 · #773 카드 판정 한 줄 고침
 - 체험(설정 experience_products 기본 ["7673020911"] · 상품 번호만 · 배송없음 판정은 실값 미확인이라 뺌) = _naverFetchInvoiceOrdersCore rows 에서 빼기(송장변환·중간발주·최종발주·문자 봇 발송 전 주문 · experienceSkipped · 로그 [#775-A]) · collectKakaoNotify 주문안내 알림톡·#92 자동 발주확인 제외(이력 status experience 한 줄) · collectClaim 반품 알림 끝 「(체험 n건)」 · 알림 이력 화면 체험 배지(app.js v=417) · 발주확인은 사람이.
 - #773 실시험(테스트 한라봉 묶음 이름·할인 왕복 통과) 중 발견: 이미 깨진 카드도 <a> 안 진짜 div·p 가 남으면 PUT 때 더 깨짐(코드 글자 24→34 · 시험 상품) → 서버 npwCards·창구 cardRisk 「깨진 카드라도 남은 div·p 면 멈춤」.
