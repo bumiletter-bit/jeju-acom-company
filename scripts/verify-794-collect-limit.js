@@ -1,4 +1,4 @@
-// #794 검증 — 1분 틱 수집기 시간 상한 · 같은 키 겹침 0 · DB pool 오류 수신·상한 · 텔레그램 무응답 상한
+// #794·#796 검증 — 1분 틱 수집기 「풀어 주는 시간」 · 실패 대신 오래 걸리는 중 · 60분 경고 · 같은 키·알리고 묶음 겹침 0 · DB pool 오류 수신·상한 · 텔레그램 무응답 상한
 //   server.js 의 실제 코드 구간을 떼어 가짜 pool·가짜 수집기로 돌린다(실DB·실발송·외부 호출 0 · server.js 를 띄우지 않음)
 const fs = require('fs'), path = require('path');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -9,68 +9,103 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const keep = setInterval(() => { }, 1000);   // 상한 타이머가 unref 라 시험 중 Node 가 먼저 끝나지 않게
 (async () => {
-    // ── ① 스케줄러 ──
+    // ── ① 스케줄러(#794 → #796 「실패 대신 오래 걸리는 중」) ──
     console.log('① 1분 틱 스케줄러');
     const limitBlock = cut('// ── #794 수집기 시간 상한 시작', '// ── #794 수집기 시간 상한 끝');
-    const tickBlock = cut('let _naverTickBusy = false;', 'setInterval(naverAutoCollectTick, 60 * 1000);');
-    ok(/if \(_collectRunning\.has\(r\.key\)\) continue;/.test(tickBlock), '틱이 「뒤에서 도는 키」를 건너뜀');
-    ok(!/summary = await fn\(\)/.test(tickBlock), '옛 「await fn()」(상한 없음) 제거');
-    // 가짜 세상
-    const rows = [];   // naver_auto_collect 가짜 행
-    const mk = (key, interval) => rows.push({ key, enabled: true, interval_min: interval, run_at_time: null, last_run_at: null, last_status: 'ok' });
-    ['kakao_notify', 'lms_guide', 'qna'].forEach(k => mk(k, 3));
-    const updates = [], tg = [], calls = {};
+    const tickBlock = cut('// 한 회차가 끝났을 때 기록', 'setInterval(naverAutoCollectTick, 60 * 1000);');
+    ok(/if \(collectBlocked\(r\.key\)\) continue;/.test(tickBlock), '틱이 「뒤에서 도는 키·같은 알리고 묶음」을 건너뜀');
+    ok(!/summary = await fn\(\)/.test(tickBlock) && !/시간 초과\(/.test(tickBlock), '옛 「await fn()」·「시간 초과 = fail」 없음');
+    const realTbl = new Function(limitBlock + '\nreturn { COLLECT_LIMIT_MIN, COLLECT_WARN_MIN, COLLECT_GROUP, collectLimitMs };')();
+    ok(['kakao_notify', 'lms_guide', 'product_snapshot', 'qna', 'experience_sms', 'cafe24_sync'].every(k => realTbl.collectLimitMs(k) === 5 * 60000) && realTbl.COLLECT_WARN_MIN === 60, '실제 값 = 모든 키 5분에 풀어 줌 · 60분 경고');
+    ok(['kakao_notify', 'lms_guide', 'cafe24_notify', 'cafe24_guide', 'coupang_notify', 'coupang_guide', 'welcome_notify', 'coupon_expire_notify', 'experience_sms'].every(k => realTbl.COLLECT_GROUP[k] === 'aligo') && !realTbl.COLLECT_GROUP.qna && !realTbl.COLLECT_GROUP.product_snapshot, '알리고 묶음 9키 · 문의·스냅샷은 묶음 밖');
+    const names = ['collectSettlement', 'collectOrderNew', 'collectClaim', 'collectInquiry', 'collectQna', 'collectKakaoNotify', 'collectLmsGuide', 'collectProductSnapshot', 'collectCafe24Sync', 'collectCafe24Notify', 'collectCafe24Guide', 'collectCoupangNotify', 'collectCoupangGuide', 'collectWelcomeNotify', 'collectCouponExpireNotify'];
+    const keyOf = { collectKakaoNotify: 'kakao_notify', collectLmsGuide: 'lms_guide', collectQna: 'qna', collectProductSnapshot: 'product_snapshot' };
+    const logs = []; const con = { log: (...a) => logs.push(a.join(' ')), error: (...a) => logs.push(a.join(' ')) };
+    // 가짜 세상 하나 만들기 — rows·updates·tg·calls 와 「멈출 키」 조절
+    function world(keys, prior) {
+        const W = { rows: [], updates: [], memos: [], tg: [], calls: {}, sent: new Map(), hold: {} };
+        keys.forEach(k => W.rows.push({ key: k, enabled: true, interval_min: 3, run_at_time: null, last_run_at: null, last_status: (prior && prior[k]) || 'ok' }));
+        const pool = { query: async (sql, p) => {
+            if (/SELECT \* FROM naver_auto_collect/.test(sql)) return { rows: W.rows.map(r => Object.assign({}, r)) };
+            if (/UPDATE naver_auto_collect SET last_run_at=NOW\(\)/.test(sql)) { if (W.updDelay) await sleep(W.updDelay); const r = W.rows.find(x => x.key === p[0]); r.last_run_at = new Date(); r.last_status = p[1]; W.updates.push({ key: p[0], status: p[1], err: p[2] }); return { rows: [] }; }
+            if (/UPDATE naver_auto_collect SET last_error=\$2, updated_at=NOW\(\) WHERE key=\$1/.test(sql)) { W.memos.push({ key: p[0], err: p[1] }); return { rows: [] }; }
+            throw new Error('예상 밖 쿼리 ' + sql.slice(0, 60));
+        } };
+        const fake = (key) => async () => {
+            W.calls[key] = (W.calls[key] || 0) + 1;
+            const h = W.hold[key];
+            if (h && W.calls[key] === 1) { const r = await new Promise(res => { h.release = res; }); if (r === 'throw') throw new Error('늦은 실패'); }
+            if (key === 'kakao_notify' || key === 'lms_guide') W.sent.set(key, (W.sent.get(key) || 0) + 1);
+            return key + ' 끝';
+        };
+        const fns = names.map(n => keyOf[n] ? fake(keyOf[n]) : (async () => { throw new Error('부르면 안 됨 ' + n); }));
+        const make = new Function('pool', 'naverRelay', 'notifyTelegram', 'NAVER_TIMER_LABELS', 'EXPERIENCE', 'console', ...names,
+            limitBlock.replace(/const COLLECT_LIMIT_MIN = \{[\s\S]*?\};/, 'const COLLECT_LIMIT_MIN = { default: 0.004 };').replace(/const COLLECT_WARN_MIN = \d+;/, 'const COLLECT_WARN_MIN = 0.006;') + tickBlock +
+            '\nreturn { tick: naverAutoCollectTick, running: _collectRunning };');
+        Object.assign(W, make(pool, { configured: () => true }, async (t) => { W.tg.push(t); return 'sent'; }, {}, {}, con, ...fns));
+        W.due = (k) => { W.rows.forEach(r => { r.last_run_at = new Date(); }); W.rows.find(r => r.key === k).last_run_at = new Date(Date.now() - 3600e3); };
+        return W;
+    }
+    // A. 알리고 키(kakao_notify)가 오래 걸림 → 0.24초에 풀림 · 실패 아님 · 알림 0 · 같은 묶음(lms_guide) 기다림 · 묶음 밖(qna) 돎 · 60분(가짜 0.36초) 경고 1번 · 정상 끝 = ok + 늦게 끝남 · 복구 알림 0
+    const A = world(['kakao_notify', 'lms_guide', 'qna']); A.hold.kakao_notify = {};
+    A.due('kakao_notify'); const t1 = Date.now(); await A.tick(); const el = Date.now() - t1;
+    ok(el < 2000, `오래 걸리는 수집이 있어도 풀어 주는 시간(0.24초) 뒤 틱이 풀림 (${el}ms)`);
+    ok(A.updates.length === 0 && A.memos.length === 1 && /오래 걸리는 중\(\d+분째/.test(A.memos[0].err), '넘은 순간 = last_status 안 바꿈 · 메모 「오래 걸리는 중(n분째)」만');
+    ok(A.rows.find(r => r.key === 'kakao_notify').last_status === 'ok' && A.tg.length === 0, '실패 표시 0 · 텔레그램 0');
+    ok(A.running.has('kakao_notify'), '뒤에서 도는 키 = 실행 중 표시');
+    A.due('lms_guide'); await A.tick();
+    ok(!A.calls.lms_guide, '같은 알리고 묶음(lms_guide)은 앞 것이 끝날 때까지 기다림(발송 동시 0)');
+    A.due('qna'); await A.tick();
+    ok(A.calls.qna === 1, '묶음 밖 키(qna)는 다음 틱에 정상 실행');
+    A.due('kakao_notify'); await A.tick();
+    ok(A.calls.kakao_notify === 1 && !A.sent.get('kakao_notify'), '같은 키 재실행 0 · 멈춘 동안 발송 0');
+    await sleep(450);
+    ok(A.tg.length === 1 && /분째 안 끝남 — 확인 필요/.test(A.tg[0]), '경고 시간(가짜 0.36초) 넘으면 텔레그램 경고 1번');
+    await sleep(400);
+    ok(A.tg.length === 1, '경고는 그 회차에 한 번만');
+    A.hold.kakao_notify.release('ok'); await sleep(30);
+    const ua = A.updates.find(u => u.key === 'kakao_notify');
+    ok(ua && ua.status === 'ok' && /^늦게 끝남\(\d+분\)$/.test(ua.err), '정상으로 끝남 = ok + 「늦게 끝남(n분)」');
+    ok(A.tg.length === 1 && !A.running.has('kakao_notify'), '직전이 정상 = 복구 알림 0 · 실행 중 표시 풀림');
+    A.due('lms_guide'); await A.tick();
+    ok(A.calls.lms_guide === 1 && A.sent.get('lms_guide') === 1, '풀린 뒤 같은 묶음(lms_guide) 실행');
+    A.due('kakao_notify'); await A.tick();
+    ok(A.calls.kakao_notify === 2 && A.sent.get('kakao_notify') === 2, '다음 회차 kakao_notify 다시 돎 · 회차마다 한 번씩(동시 2개 0)');
+    ok(/알리고 발송 묶음\(주문안내·발송안내 등\)도 같이 기다리는 중/.test(A.tg[0]), '알리고 묶음 키 경고 = 「알리고 발송 묶음도 같이 기다리는 중」 한 줄');
+    // E. #796-a 경합: 늦게 끝난 회차의 기록(UPDATE last_run_at)이 느린 사이에 틱이 돌아도 같은 키를 곧바로 한 번 더 돌리지 않음
+    const E = world(['kakao_notify', 'qna']); E.hold.kakao_notify = {};
+    E.due('kakao_notify'); await E.tick();
+    E.updDelay = 300; E.hold.kakao_notify.release('ok'); await sleep(30);   // 끝났지만 기록은 아직(0.3초 걸림)
+    E.rows.find(r => r.key === 'kakao_notify').last_run_at = new Date(Date.now() - 3600e3);   // 옛 last_run_at(오래 기다림)처럼 보이게
+    E.rows.find(r => r.key === 'qna').last_run_at = new Date();
+    ok(E.running.has('kakao_notify'), '기록 전에는 실행 중 표시 유지');
+    await E.tick();
+    ok(E.calls.kakao_notify === 1, '기록 전 틱 = 같은 키 다시 안 돎(곧바로 두 번 0)');
+    await sleep(400);
+    ok(!E.running.has('kakao_notify') && E.updates.some(u => u.key === 'kakao_notify' && u.status === 'ok'), '기록 뒤 실행 중 표시 풀림');
+    E.updDelay = 0;
+    // B. 오래 걸리다 실패로 끝남 = 종전 실패 길(fail + 정상→실패 알림 1번)
+    const B = world(['product_snapshot']); B.hold.product_snapshot = {};
+    B.rows[0].last_run_at = null; await B.tick();   // 하루 1회 키 = 오늘 아직 안 돈 것으로
+    ok(B.updates.length === 0 && B.tg.length === 0, '스냅샷 오래 걸림 = 실패 표시·알림 0');
+    await sleep(450);
+    ok(B.tg.length === 1 && /분째 안 끝남/.test(B.tg[0]) && !/알리고/.test(B.tg[0]), '묶음 밖 키(스냅샷) 경고엔 알리고 줄 없음');
+    B.tg.length = 0;
+    B.hold.product_snapshot.release('throw'); await sleep(30);
+    ok(B.updates[0] && B.updates[0].status === 'fail' && B.updates[0].err === '늦은 실패' && B.tg.length === 1 && /자동수집 실패 — 늦은 실패/.test(B.tg[0]), '늦게 실패 = fail + 실패 알림 1번(종전 꼴)');
+    // C. 직전이 실패였는데 늦게 정상 = 복구 알림(종전 규칙)
+    const C = world(['qna'], { qna: 'fail' }); C.hold.qna = {};
+    C.due('qna'); await C.tick();
+    C.hold.qna.release('ok'); await sleep(30);
+    ok(C.updates[0] && C.updates[0].status === 'ok' && C.tg.length === 1 && /복구/.test(C.tg[0]), '직전 실패 → 늦게 정상 = 복구 알림 1번');
+    // D. 보통 실패·동기 실패·정상 = 종전과 같음
+    const T2 = new Function('pool', 'naverRelay', 'notifyTelegram', 'NAVER_TIMER_LABELS', 'EXPERIENCE', 'console', ...names, limitBlock + tickBlock + '\nreturn { tick: naverAutoCollectTick, running: _collectRunning };');
+    const rows = [{ key: 'qna', enabled: true, interval_min: 3, run_at_time: null, last_run_at: null, last_status: 'ok' }], updates = [];
     const pool = { query: async (sql, p) => {
         if (/SELECT \* FROM naver_auto_collect/.test(sql)) return { rows: rows.map(r => Object.assign({}, r)) };
-        if (/UPDATE naver_auto_collect SET last_run_at=NOW\(\)/.test(sql)) { const r = rows.find(x => x.key === p[0]); r.last_run_at = new Date(); r.last_status = p[1]; updates.push({ key: p[0], status: p[1], err: p[2] }); return { rows: [] }; }
+        if (/UPDATE naver_auto_collect SET last_run_at=NOW\(\)/.test(sql)) { rows[0].last_run_at = new Date(); rows[0].last_status = p[1]; updates.push({ key: p[0], status: p[1], err: p[2] }); return { rows: [] }; }
         throw new Error('예상 밖 쿼리 ' + sql.slice(0, 60));
     } };
-    let hang = null;   // kakao_notify 가 멈추게
-    const sent = new Map();   // 가짜 발송 — 같은 주문이 두 번 나가면 잡힘
-    const fake = (key) => async () => {
-        calls[key] = (calls[key] || 0) + 1;
-        if (key === 'kakao_notify' && calls[key] === 1) { hang = new Promise(r => { fake.release = r; }); await hang; sent.set('A', (sent.get('A') || 0) + 1); return '늦게 끝남'; }
-        if (key === 'kakao_notify') { sent.set('A', (sent.get('A') || 0) + 1); return '다시 돎'; }
-        return key + ' ok';
-    };
-    const names = ['collectSettlement', 'collectOrderNew', 'collectClaim', 'collectInquiry', 'collectQna', 'collectKakaoNotify', 'collectLmsGuide', 'collectProductSnapshot', 'collectCafe24Sync', 'collectCafe24Notify', 'collectCafe24Guide', 'collectCoupangNotify', 'collectCoupangGuide', 'collectWelcomeNotify', 'collectCouponExpireNotify'];
-    const keyOf = { collectKakaoNotify: 'kakao_notify', collectLmsGuide: 'lms_guide', collectQna: 'qna' };
-    const fns = names.map(n => keyOf[n] ? fake(keyOf[n]) : (async () => { throw new Error('부르면 안 됨 ' + n); }));
-    const logs = []; const con = { log: (...a) => logs.push(a.join(' ')), error: (...a) => logs.push(a.join(' ')) };
-    const make = new Function('pool', 'naverRelay', 'notifyTelegram', 'NAVER_TIMER_LABELS', 'EXPERIENCE', 'console', ...names,
-        limitBlock.replace(/const COLLECT_LIMIT_MIN = \{[\s\S]*?\};/, 'const COLLECT_LIMIT_MIN = { default: 5, kakao_notify: 0.004, lms_guide: 0.004, qna: 0.004 };') + tickBlock +
-        '\nreturn { tick: naverAutoCollectTick, running: _collectRunning, limitMs: collectLimitMs, real: COLLECT_LIMIT_MIN };');
-    // 실제 상한 표도 따로 읽어 확인
-    const realTbl = new Function(limitBlock + '\nreturn { COLLECT_LIMIT_MIN, collectLimitMs };')();
-    ok(realTbl.collectLimitMs('kakao_notify') === 20 * 60000 && realTbl.collectLimitMs('experience_sms') === 5 * 60000 && realTbl.collectLimitMs('product_snapshot') === 20 * 60000, '실제 상한 표 = 발송 20분 · 체험 5분(기본) · 스냅샷 20분');
-    const T = make(pool, { configured: () => true }, async (t) => { tg.push(t); return 'sent'; }, {}, {}, con, ...fns);
-    ok(Math.round(T.limitMs('kakao_notify')) === 240, '시험 상한 = 0.24초(가짜)');
-    // 틱 1: 셋 다 처음이라 due · 기다린 시간 같으면 첫 키(kakao_notify) — 멈춤
-    const t1 = Date.now(); await T.tick(); const el = Date.now() - t1;
-    ok(el < 2000, `멈춘 수집기가 있어도 틱이 상한(0.24초) 뒤 풀림 (${el}ms)`);
-    const u1 = updates[updates.length - 1];
-    ok(u1 && u1.key === 'kakao_notify' && u1.status === 'fail' && /시간 초과/.test(u1.err), '시간 초과 = last_status fail · 메모 「시간 초과」');
-    ok(tg.some(t => /시간 초과/.test(t)), '정상→실패 전환 텔레그램 1회(종전 규칙)');
-    ok(T.running.has('kakao_notify'), '뒤에서 도는 키 = 실행 중 표시');
-    // 틱 2·3: 다른 키가 돈다 · kakao_notify 는 건너뜀(due 여도)
-    rows.find(r => r.key === 'kakao_notify').last_run_at = new Date(Date.now() - 3600e3);   // 일부러 「오래 기다림」으로 만들어도
-    await T.tick(); await T.tick();
-    ok(calls.lms_guide === 1 && calls.qna === 1, '다른 키(lms_guide·qna)는 다음 틱에 정상 실행');
-    ok(calls.kakao_notify === 1, '같은 키(kakao_notify)는 앞 것이 끝날 때까지 다시 안 돎(겹침 0)');
-    ok(sent.get('A') === undefined, '멈춘 동안 같은 발송 0회');
-    // 멈춘 것 풀림 → 늦게 끝남 로그 · 실행 중 해제 · 다음 틱에 다시 돎 · 발송 합계 = 회차마다 1
-    fake.release(); await sleep(20);
-    ok(!T.running.has('kakao_notify'), '늦게 끝나면 실행 중 표시 풀림');
-    ok(logs.some(l => /kakao_notify: 시간 초과 뒤 늦게 끝남 — 정상/.test(l)), '서버 로그 「시간 초과 뒤 늦게 끝남」');
-    rows.forEach(r => { if (r.key !== 'kakao_notify') r.last_run_at = new Date(); });
-    rows.find(r => r.key === 'kakao_notify').last_run_at = new Date(Date.now() - 3600e3);
-    await T.tick();
-    ok(calls.kakao_notify === 2 && sent.get('A') === 2, '풀린 뒤 다음 틱에 다시 돎 · 회차마다 한 번씩(동시 2개 0)');
-    ok(updates[updates.length - 1].status === 'ok', '다시 돈 회차 = ok');
-    ok(tg.some(t => /복구/.test(t)), '실패→정상 복구 텔레그램(종전 규칙)');
-    // 실패하는 수집기 = 종전처럼 fail + 메시지
-    const T2 = new Function('pool', 'naverRelay', 'notifyTelegram', 'NAVER_TIMER_LABELS', 'EXPERIENCE', 'console', ...names, limitBlock + tickBlock + '\nreturn { tick: naverAutoCollectTick, running: _collectRunning };');
-    rows.length = 0; updates.length = 0; mk('qna', 3);
     const fns2 = names.map(n => n === 'collectQna' ? (async () => { throw new Error('네이버 500'); }) : (async () => 'x'));
     const W2 = T2(pool, { configured: () => true }, async () => 'sent', {}, {}, con, ...fns2);
     await W2.tick();
@@ -84,7 +119,7 @@ const keep = setInterval(() => { }, 1000);   // 상한 타이머가 unref 라 �
     rows[0].last_run_at = null; updates.length = 0; logs.length = 0;
     const W4 = T2(pool, { configured: () => true }, async () => 'sent', {}, {}, con, ...fns4);
     await W4.tick();
-    ok(updates[0].status === 'ok' && logs.some(l => /qna: ok — 요약 3건/.test(l)), '정상 수집기 = 종전 로그·기록 그대로');
+    ok(updates[0].status === 'ok' && updates[0].err === null && logs.some(l => /qna: ok — 요약 3건/.test(l)), '정상 수집기 = 종전 로그·기록 그대로(메모 칸 비움)');
 
     // ── ② DB pool ──
     console.log('② DB pool');

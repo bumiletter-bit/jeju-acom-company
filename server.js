@@ -10058,30 +10058,59 @@ app.get('/api/public/store-snapshot', async (req, res) => {
 
 // ── #794 수집기 시간 상한 시작 (verify-794-collect-limit.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
 // 대표 10/20 「이런 문제 안 생기도록」: 수집기 하나가 외부 응답을 끝없이 기다리면 1분 틱 전체(18개)가 멈췄다.
-//   → 키마다 시간 상한(분). 넘으면 그 회차는 「시간 초과」로 기록하고 틱을 풀어 다른 키가 돈다.
-//   뒤에서 마저 도는 수집기는 끊지 않는다(손님 발송 중간에 끊으면 「보냈는데 기록 없음」이 생길 수 있음) — 대신 같은 키는 앞 것이 끝날 때까지 건너뜀(겹침 0 = 같은 발송 두 번 0).
-//   상한 근거(10/20 실측): 대부분 수 초 · 발송안내 최대 1,102건 305초(10/11) · 상품 스냅샷 2~4분(429 백오프 때 더) · 카페24 동기화 약 3분 · 0 = 상한 없음(겹침만 막음)
-const COLLECT_LIMIT_MIN = { default: 5, settlement: 10, order: 10, product_snapshot: 20, cafe24_sync: 15,
-    kakao_notify: 20, lms_guide: 20, cafe24_notify: 15, cafe24_guide: 20, coupang_notify: 15, coupang_guide: 20, welcome_notify: 15, coupon_expire_notify: 15,
-    inquiry: 20, qna: 20 };   // 문의·상품문의 = AI 답(한 건 최대 수 분) · 체험 3종·claim = 기본 5분
-const _collectRunning = new Map();   // key → 시작 시각(ms) — 뒤에서 도는 동안 같은 키 건너뜀
+// #796(대표 「고」): 틱을 붙잡는 시간 = 키마다 「풀어 주는 시간」(기본 5분). 넘으면 그 키만 뒤에서 계속 돌고 틱은 다른 키로 넘어간다.
+//   · 넘은 순간 = 실패가 아니다 — last_status 는 그대로 두고 last_error 칸에 「오래 걸리는 중(n분째)」 메모만(화면 카드는 fail 일 때만 그 칸을 보여 줘 오경보 0) · 텔레그램 0
+//   · 끝나면 = 정상 → ok + 「늦게 끝남(n분)」 메모(직전이 정상이면 알림 0) · 실패 → 종전 실패 길(fail + 정상→실패 전환 때 알림 1번)
+//   · 60분 넘게 안 끝나면 텔레그램 경고 1번(그 회차마다 · 강제 해제 없음)
+//   뒤에서 도는 수집기는 끊지 않는다(손님 발송 중간에 끊으면 「보냈는데 기록 없음」이 생길 수 있음) — 같은 키는 앞 것이 끝날 때까지 건너뜀(겹침 0 = 같은 발송 두 번 0).
+//   알리고로 보내는 키(COLLECT_GROUP 'aligo')는 서로도 동시에 돌지 않는다 = 발송 순서·속도는 종전과 같음(알리고 초당 제한 실측 없음 · 한 번에 하나였던 지금 꼴 유지).
+const COLLECT_LIMIT_MIN = { default: 5 };   // 키별로 다르게 두려면 { lms_guide: 10 } 처럼 · 0 = 풀어 주지 않음(종전 꼴 · 끝날 때까지 틱을 붙잡음)
+const COLLECT_WARN_MIN = 60;   // 이만큼 지나도 안 끝나면 텔레그램 경고 1번
+const COLLECT_GROUP = { kakao_notify: 'aligo', lms_guide: 'aligo', cafe24_notify: 'aligo', cafe24_guide: 'aligo', coupang_notify: 'aligo', coupang_guide: 'aligo',
+    welcome_notify: 'aligo', coupon_expire_notify: 'aligo', experience_sms: 'aligo' };   // 같은 묶음 = 하나가 뒤에서 도는 동안 나머지도 기다림
+const _collectRunning = new Map();   // key → 시작 시각(ms) — 뒤에서 도는 동안 같은 키(와 같은 묶음) 건너뜀
 function collectLimitMs(key) { const m = Object.prototype.hasOwnProperty.call(COLLECT_LIMIT_MIN, key) ? COLLECT_LIMIT_MIN[key] : COLLECT_LIMIT_MIN.default; return m > 0 ? m * 60000 : 0; }
-// fn 을 상한 안에서 기다린다 → { v } 정상 · { e } 실패 · { timeout: true } 상한 넘김(fn 은 뒤에서 계속 · 끝나면 _collectRunning 에서 빠지고 로그 한 줄)
-async function runCollectorLimited(key, fn, limitMs) {
-    _collectRunning.set(key, Date.now());
-    let timer = null, timedOut = false;
+function collectBlocked(key) {
+    if (_collectRunning.has(key)) return true;
+    const g = COLLECT_GROUP[key];
+    if (!g) return false;
+    for (const k of _collectRunning.keys()) if (COLLECT_GROUP[k] === g) return true;
+    return false;
+}
+// fn 을 풀어 주는 시간 안에서 기다린다 → { v } 정상 · { e } 실패 · { slow: true, done } 넘김(fn 은 뒤에서 계속 · done = 끝날 때의 { v } | { e })
+async function runCollectorLimited(key, fn, limitMs, onWarn) {
+    const t0 = Date.now();
+    _collectRunning.set(key, t0);
+    let timer = null, warn = null, slow = false;
+    const release = () => { _collectRunning.delete(key); clearTimeout(warn); };
     const done = Promise.resolve().then(() => fn()).then(v => ({ v }), e => ({ e }));
-    done.then(r => {
-        _collectRunning.delete(key);
-        if (timedOut) console.log(`[자동수집] ${key}: 시간 초과 뒤 늦게 끝남 — ${r.e ? '실패 ' + String(r.e && r.e.message || r.e).slice(0, 120) : '정상' + (r.v ? ' (' + String(r.v).slice(0, 80) + ')' : '')}`);
-    });
+    if (onWarn && COLLECT_WARN_MIN > 0) { warn = setTimeout(() => { try { onWarn(Math.round((Date.now() - t0) / 60000)); } catch (_) { } }, COLLECT_WARN_MIN * 60000); if (warn.unref) warn.unref(); }
+    done.then(() => { if (!slow) release(); });   // #796-a 넘긴 회차는 부르는 쪽이 기록(finishCollect)을 마친 뒤 out.release() — 옛 last_run_at 으로 곧바로 다시 도는 틈 막기
     if (!(limitMs > 0)) return done;
-    const out = await Promise.race([done, new Promise(res => { timer = setTimeout(() => res({ timeout: true }), limitMs); if (timer.unref) timer.unref(); })]);
+    const out = await Promise.race([done, new Promise(res => { timer = setTimeout(() => { slow = true; res({ slow: true }); }, limitMs); if (timer.unref) timer.unref(); })]);
     clearTimeout(timer);
-    if (out.timeout) timedOut = true;
+    if (out.slow) { out.done = done; out.release = release; }
     return out;
 }
 // ── #794 수집기 시간 상한 끝 ──
+
+// 한 회차가 끝났을 때 기록 + 알림(종전 틱 끝 부분 그대로 · lateMin = 「늦게 끝남」 분)
+async function finishCollect(r, res, lateMin) {
+    let status = 'ok', errMsg = null, summary = '';
+    if (res.e) { status = 'fail'; errMsg = String(res.e && res.e.message || res.e).slice(0, 300); }
+    else { summary = res.v; if (lateMin) errMsg = `늦게 끝남(${lateMin}분)`; }   // #796 정상이어도 메모 칸에 남김(화면은 fail 일 때만 보여 줌)
+    await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
+        [r.key, status, errMsg]);
+    if (status === 'fail' && r.last_status !== 'fail') {
+        // 연속 실패 스팸 방지 — 정상→실패 전환 시에만 1회 알림
+        notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패 — ${errMsg}`);
+    } else if (status === 'ok' && r.last_status === 'fail') {
+        // #599(대표 10/9 텔레그램 「쿠팡 자동수집 실패 coupang_relay_error_500」): 실패 알림만 오고 저절로 복구돼도 알 길이 없었다 → 실패→정상 전환 때 1회 복구 알림
+        //   (실패분은 다음 회차가 같은 기간을 다시 읽어 따라잡는다 — 주문안내 2일 · 발송안내 7일 · 처리 이력(order_key)으로 중복 없음)
+        notifyTelegram(`✅ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 복구 — 다시 정상${summary ? ' (' + String(summary).slice(0, 80) + ')' : ''}`);
+    }
+    console.log(`[자동수집] ${r.key}: ${status}${summary ? ' — ' + summary : ''}${errMsg ? ' — ' + errMsg : ''}`);
+}
 
 let _naverTickBusy = false;
 async function naverAutoCollectTick() {
@@ -10095,7 +10124,7 @@ async function naverAutoCollectTick() {
         const kstNow = new Date(now + 9 * 3600 * 1000);
         const due = [];
         for (const r of rows) {
-            if (_collectRunning.has(r.key)) continue;   // #794 앞 회차가 시간 초과 뒤 아직 뒤에서 도는 중 — 끝날 때까지 이 키만 건너뜀
+            if (collectBlocked(r.key)) continue;   // #794·#796 앞 회차가 아직 뒤에서 도는 중(같은 키 · 같은 알리고 묶음) — 끝날 때까지 건너뜀
             const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
             if (r.key === 'settlement' || r.key === 'product_snapshot' || r.key === 'cafe24_sync' || r.key === 'coupon_expire_notify') {   /* #467: 쿠폰 만료 안내 = 하루 1회 10:00 */
                 // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30 · cafe24_sync 05:10)
@@ -10115,23 +10144,18 @@ async function naverAutoCollectTick() {
             coupon_expire_notify: collectCouponExpireNotify,
             experience_store: () => EXPERIENCE.collectStore(), experience_place: () => EXPERIENCE.collectPlace(), experience_sms: () => EXPERIENCE.collectSms() }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내 · #775 체험 예약
         if (typeof fn !== 'function') return;   // #775 모르는 키(새 키를 옛 코드가 만났을 때 · #467 함정)는 건너뜀
-        let status = 'ok', errMsg = null, summary = '';
-        const limitMs = collectLimitMs(r.key);   // #794
-        const out = await runCollectorLimited(r.key, fn, limitMs);
-        if (out.timeout) { status = 'fail'; errMsg = `시간 초과(${Math.round(limitMs / 60000)}분) — 뒤에서 마저 도는 중 · 끝날 때까지 이 수집만 건너뜀`; }
-        else if (out.e) { status = 'fail'; errMsg = String(out.e && out.e.message || out.e).slice(0, 300); }
-        else summary = out.v;
-        await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
-            [r.key, status, errMsg]);
-        if (status === 'fail' && r.last_status !== 'fail') {
-            // 연속 실패 스팸 방지 — 정상→실패 전환 시에만 1회 알림
-            notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패 — ${errMsg}`);
-        } else if (status === 'ok' && r.last_status === 'fail') {
-            // #599(대표 10/9 텔레그램 「쿠팡 자동수집 실패 coupang_relay_error_500」): 실패 알림만 오고 저절로 복구돼도 알 길이 없었다 → 실패→정상 전환 때 1회 복구 알림
-            //   (실패분은 다음 회차가 같은 기간을 다시 읽어 따라잡는다 — 주문안내 2일 · 발송안내 7일 · 처리 이력(order_key)으로 중복 없음)
-            notifyTelegram(`✅ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 복구 — 다시 정상${summary ? ' (' + String(summary).slice(0, 80) + ')' : ''}`);
+        const label = NAVER_TIMER_LABELS[r.key] || r.key;
+        const limitMs = collectLimitMs(r.key), t0 = Date.now();   // #796
+        const out = await runCollectorLimited(r.key, fn, limitMs, (min) => notifyTelegram(`⏳ [${label}] 수집이 ${min}분째 안 끝남 — 확인 필요(끊지 않고 계속 기다려요 · 이 수집만 멈춰 있고 다른 수집은 돌아요)${COLLECT_GROUP[r.key] === 'aligo' ? ' · 알리고 발송 묶음(주문안내·발송안내 등)도 같이 기다리는 중' : ''}`));
+        if (out.slow) {
+            // #796 실패 아님 — 상태는 그대로 · 메모만 · 알림 0 · 끝나면 그때 기록
+            const min = Math.max(1, Math.round((Date.now() - t0) / 60000));
+            await pool.query(`UPDATE naver_auto_collect SET last_error=$2, updated_at=NOW() WHERE key=$1`, [r.key, `오래 걸리는 중(${min}분째 · 끝나면 기록)`]).catch(() => { });
+            console.log(`[자동수집] ${r.key}: 오래 걸리는 중(${min}분째) — 뒤에서 계속 · 다른 수집으로 넘어감`);
+            out.done.then(res => finishCollect(r, res, Math.max(1, Math.round((Date.now() - t0) / 60000)))).catch(e => console.error('[자동수집] 늦게 끝난 기록 실패:', e.message)).finally(() => out.release());   // #796-a 기록 뒤에 키 해제
+            return;
         }
-        console.log(`[자동수집] ${r.key}: ${status}${summary ? ' — ' + summary : ''}${errMsg ? ' — ' + errMsg : ''}`);
+        await finishCollect(r, out, 0);
     } catch (e) {
         console.error('[자동수집] 틱 오류:', e.message);
     } finally { _naverTickBusy = false; }
