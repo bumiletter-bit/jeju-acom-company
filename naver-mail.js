@@ -250,6 +250,7 @@ function searchPieces(o) {
     const last = ps.length - 1; if (typeof ps[last] === 'string') ps[last] = ps[last].replace(/\s+$/, ''); else ps.push('');
     return ps;
 }
+const MAIL_SCAN_PER_FOLDER = 500, MAIL_SCAN_TOTAL = 2000;   // 한글 대비 길: 메일함마다 최근 500통 · 합 2천 통까지 제목·보낸 사람 대조
 const MAIL_LIMIT_MAX = 20, MAIL_COOLDOWN_MS = 10000, MAIL_TEXT_MAX = 5000, MAIL_PREVIEW = 300, MAIL_ATTACH_MAX = 10 * 1024 * 1024;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 function checkReq(op, r) {
@@ -287,7 +288,8 @@ function makeMailOps(creds, deps) {
         if (!user || !pass) { const e = new Error('메일 설정 없음(NAVER_MAIL_USER/NAVER_MAIL_APP_PW)'); e.noCreds = true; throw e; }
         const hide = (e) => { const x = new Error(String(e && e.message || e).split(pass).join('(비밀값)').split(user).join('(메일 계정)').slice(0, 200)); if (e && e.user) x.user = true; return x; };   // 사람 몫 안내(e.user)는 그대로 전함
         let im;
-        try { im = await (deps.imapOpen || imapOpen)({ host: 'imap.naver.com', port: 993, user, pass, timeoutMs: 60000 }); } catch (e) { throw hide(e); }
+        // timeoutMs = 한 번 접속의 전체 상한(한글 대비 길 2천 통 머리말 포함)
+        try { im = await (deps.imapOpen || imapOpen)({ host: 'imap.naver.com', port: 993, user, pass, timeoutMs: 120000 }); } catch (e) { throw hide(e); }
         try { await im.login(); return await fn(im); } catch (e) { throw hide(e); } finally { await im.close(); }
     }
     async function folderOf(im, want) {
@@ -307,6 +309,34 @@ function makeMailOps(creds, deps) {
                 const last = uids.slice(-limit); if (!last.length) continue;
                 for (const it of await im.fetchItems(last.join(','), 'UID INTERNALDATE')) { const o = fetchFields(it); if (o.UID) cands.push({ f, uid: Number(o.UID), at: Date.parse(String(o.INTERNALDATE || '')) || 0 }); }
             }
+            // 한글 낱말 대비 길(10/20 실메일 실측: 네이버 IMAP 은 CHARSET UTF-8 한글 검색을 OK 로 받고 늘 0통 → 「예약」으로 [네이버 예약] 제목도 못 찾음)
+            //   한글 낱말이 있고 0통이면 = 날짜·영문 조건으로만 서버 검색 → 메일함마다 최근 MAIL_SCAN_PER_FOLDER 통의 제목·보낸 사람을 여기서 대조(본문 안 낱말은 못 찾음)
+            let scan = null;
+            const ko = (v) => v && /[^\x20-\x7e]/.test(String(v));
+            if (!found && [r.q, r.from, r.subject].some(ko)) {
+                const asc = (v) => (v && !ko(v) ? v : null), base = searchPieces({ q: asc(r.q), from: asc(r.from), subject: asc(r.subject), since: r.since, until: r.until });
+                const nf = (s) => String(s || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ');
+                const want = { q: ko(r.q) ? nf(r.q) : null, from: ko(r.from) ? nf(r.from) : null, subject: ko(r.subject) ? nf(r.subject) : null };
+                scan = { scanned: 0, limited: false };
+                for (const f of folders) {
+                    if (scan.scanned >= MAIL_SCAN_TOTAL) { scan.limited = true; break; }
+                    await im.examine(f.raw);
+                    const uids = await im.searchParts(base);
+                    const tail = uids.slice(-Math.min(MAIL_SCAN_PER_FOLDER, MAIL_SCAN_TOTAL - scan.scanned));
+                    if (tail.length < uids.length) scan.limited = true;
+                    scan.scanned += tail.length;
+                    for (let i = 0; i < tail.length; i += 100) {
+                        for (const it of await im.fetchItems(tail.slice(i, i + 100).join(','), 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]')) {
+                            const um = /UID (\d+)/i.exec(it.text), dm = /INTERNALDATE "([^"]+)"/i.exec(it.text); if (!um) continue;
+                            const hh = headers(it.literals && it.literals[0] ? it.literals[0].toString('latin1') : ''), subj = nf(decodeWords(hh.subject || '')), frm = nf(decodeWords(hh.from || ''));
+                            if (want.q && !(subj + ' ' + frm).includes(want.q)) continue;
+                            if (want.from && !frm.includes(want.from)) continue;
+                            if (want.subject && !subj.includes(want.subject)) continue;
+                            found++; cands.push({ f, uid: Number(um[1]), at: dm ? (Date.parse(dm[1]) || 0) : 0 });
+                        }
+                    }
+                }
+            }
             cands.sort((x, y) => y.at - x.at);
             const pick = cands.slice(0, limit), mails = [];
             for (const f of folders) {
@@ -315,7 +345,7 @@ function makeMailOps(creds, deps) {
                 for (const c of mine) { const d = await describeMail(im, c.uid, MAIL_PREVIEW); if (d) mails.push({ ...d, folder: f.raw, folder_name: f.name, at: c.at ? new Date(c.at).toISOString() : null }); }
             }
             mails.sort((x, y) => Date.parse(y.at || 0) - Date.parse(x.at || 0));
-            return { found, shown: mails.length, folders: folders.map(f => f.name), mails: mails.map(m => ({ uid: m.uid, folder: m.folder, folder_name: m.folder_name, date: m.date, from: m.from, subject: m.subject, preview: m.text, attachments: m.attachments })) };
+            return { found, shown: mails.length, folders: folders.map(f => f.name), ...(scan ? { korean_scan: scan } : {}), mails: mails.map(m => ({ uid: m.uid, folder: m.folder, folder_name: m.folder_name, date: m.date, from: m.from, subject: m.subject, preview: m.text, attachments: m.attachments })) };
         });
     }
     async function read(r) {

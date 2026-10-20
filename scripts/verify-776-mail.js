@@ -62,7 +62,8 @@ function fakeImap(opts) {
                 const crit = m[1]; let li = 0; const want = {};
                 for (const k of ['TEXT', 'FROM', 'SUBJECT']) if (new RegExp('\\b' + k + ' \\{').test(crit)) want[k] = lits[li++];
                 const since = /SINCE (\S+)/.exec(crit), before = /BEFORE (\S+)/.exec(crit);
-                const hit = (BOX[cur] || []).filter(x => {
+                const koLit = Object.values(want).some(b => /[^\x00-\x7f]/.test(b.toString('utf8')));
+                const hit = (opts.noKorean && koLit) ? [] : (BOX[cur] || []).filter(x => {
                     const fromTxt = NM.decodeWords(x.from), subj = NM.decodeWords(x.subject);
                     if (want.TEXT && !(fromTxt + subj + x.text).includes(want.TEXT.toString('utf8'))) return false;
                     if (want.FROM && !fromTxt.includes(want.FROM.toString('utf8'))) return false;
@@ -78,7 +79,8 @@ function fakeImap(opts) {
                 const parts = [];
                 for (const uid of uids) {
                     const x = box.find(y => y.uid === uid); if (!x) continue;
-                    if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* 1 FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
+                    if (what === 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') { const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* 1 FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
+                    else if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* 1 FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
                     else if (what === 'UID BODYSTRUCTURE') {
                         if (x.bsLit) {
                             const head = `* 1 FETCH (UID ${uid} BODYSTRUCTURE (((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"EUC-KR\") NIL NIL \"8BIT\" 9 1 NIL NIL NIL)(\"TEXT\" \"HTML\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 11 1 NIL NIL NIL) \"ALTERNATIVE\" (\"BOUNDARY\" \"a\") NIL NIL)(\"APPLICATION\" \"VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET\" (\"NAME\" {${nameLit.length}}\r\n`;
@@ -120,7 +122,7 @@ function fakeImap(opts) {
     const imapOpenF = (o) => NM.imapOpen({ ...o, connect, timeoutMs: 5000 });
     return { cmds, imapOpenF };
 }
-const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID FETCH [\d,]+ \((UID INTERNALDATE|UID BODYSTRUCTURE|BODY\.PEEK\[[^\]]*\](<0\.\d+>)?)\)$|LOGOUT$)/.test(c.line)
+const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID FETCH [\d,]+ \((UID INTERNALDATE BODY\.PEEK\[HEADER\.FIELDS \(FROM SUBJECT\)\]|UID INTERNALDATE|UID BODYSTRUCTURE|BODY\.PEEK\[[^\]]*\](<0\.\d+>)?)\)$|LOGOUT$)/.test(c.line)
     && !/\b(STORE|COPY|MOVE|EXPUNGE|APPEND|SELECT|CREATE|DELETE|RENAME|SUBSCRIBE|RFC822)\b/.test(c.line);
 
 (async () => {
@@ -178,6 +180,23 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         const ops4 = NM.makeMailOps(() => ({ user: '', pass: '' }), { imapOpen: F3.imapOpenF });
         let e4 = null; try { await ops4.search({ q: 'x' }); } catch (e) { e4 = e; }
         ok(e4 && e4.noCreds, '메일 설정 없음 = noCreds');
+    }
+
+    console.log('②-b 한글 대비 길(네이버 실측: 한글 검색 = 늘 0통)');
+    {
+        const F = fakeImap({ noKorean: true });
+        const ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF });
+        const s1 = await ops.search({ q: '정산', limit: 10 });
+        ok(s1.korean_scan && s1.found === 2 && s1.mails.map(m => m.uid).join() === '7,101' && s1.korean_scan.scanned === 3 && !s1.korean_scan.limited, '「정산」 0통 → 최근 메일 제목·보낸 사람 대조로 7·101(스팸·휴지통·보낸 0 · 대조 3통)', s1);
+        const s2 = await ops.search({ from: '효돈' });
+        ok(s2.korean_scan && s2.found === 1 && s2.mails[0].uid === 7, '보낸 사람 「효돈」 = 7(인코딩된 보낸 사람 풀어 대조)', s2);
+        const s3 = await ops.search({ q: '합계' });
+        ok(s3.korean_scan && s3.found === 0, '본문에만 있는 낱말 = 대비 길에선 못 찾음(제목·보낸 사람만 · 안내 글로 알림)', s3);
+        const s4 = await ops.search({ q: '예약', since: '2026-10-17' });
+        ok(s4.found === 1 && s4.mails[0].uid === 102 && F.cmds.some(c => /^UID SEARCH SINCE 17-Oct-2026$/.test(c.line)), '날짜는 서버 검색에 그대로(SINCE) · 「예약」 = 102', F.cmds.map(c => c.line).filter(l => /SEARCH/.test(l)));
+        ok(F.cmds.every(READONLY), '대비 길도 읽기 전용 명령만', F.cmds.filter(c => !READONLY(c)));
+        const s5 = await ops.search({ q: 'nonghyup' });
+        ok(!s5.korean_scan && s5.found === 1, '영문 낱말 = 대비 길 안 탐(서버 검색 그대로)', s5);
     }
 
     console.log('③ 서버 러너 — 요청 줄 → 결과 줄');

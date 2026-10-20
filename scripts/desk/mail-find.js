@@ -61,13 +61,15 @@ async function main(argv, deps) {
         if (!(limit >= 1 && limit <= 20)) throw new Error('--limit 은 1~20');
         if (!q && !o.from && !o.subject && !o.since && !o.until) throw new Error('검색어·--from·--subject·--since·--until 중 하나는 주세요');
         for (const [k, v] of [['검색어', q], ['--from', o.from], ['--subject', o.subject]]) if (v && String(v).length > 100) throw new Error(k + ' 는 100자까지');
-        const res = await R.send('find', { q: q || null, from: o.from || null, subject: o.subject || null, since: o.since || null, until: o.until || null, folder: o.folder || null, limit, order_id: orderId, by });
+        const res = await R.send('find', { q: q || null, from: o.from || null, subject: o.subject || null, since: o.since || null, until: o.until || null, folder: o.folder || null, limit, order_id: orderId, by }, 180000);   // 한글 낱말 = 서버가 최근 메일 제목·보낸 사람을 대조해 오래 걸릴 수 있음
         if (!res.ok) return out({ ok: false, error: res.error, note: '찾지 못했어요 — 위 error 그대로 전하기 · 읽기만 하는 도구라 바뀐 것 없음' });
         const mails = (res.mails || []).map(m => ({ ...m, from: maskPii(m.from), subject: maskPii(m.subject), preview: maskPii(m.preview) }));
         const lines = mails.map((m, i) => `${i + 1}. [${m.folder_name}] ${m.date || ''} · ${m.from} · 「${m.subject}」${m.attachments.length ? ' · 첨부 ' + m.attachments.map(a => `${a.name}(${kb(a.size)} · part ${a.part})`).join(', ') : ''} · uid ${m.uid}\n   ${m.preview.replace(/\s+/g, ' ').slice(0, 300)}`);
         return out({ ok: true, found: res.found, shown: res.shown, folders: res.folders, mails,
             text: (res.found ? `메일 ${res.found}통 중 최근 ${res.shown}통(메일함 ${res.folders.join(' · ')})` : `찾은 메일 없음(메일함 ${res.folders.join(' · ')})`) + (lines.length ? '\n' + lines.join('\n') : ''),
             next: mails.length ? `한 통 자세히: read <uid> --folder "<folder>" · 첨부 받기: attach <uid> <part> --folder "<folder>"` : '검색어를 줄이거나(낱말 하나) 날짜를 넓혀 다시',
+            korean_scan: res.korean_scan || undefined,
+            scan_note: res.korean_scan ? `한글 낱말은 네이버 메일이 직접 못 찾아서 최근 메일 ${res.korean_scan.scanned}통의 제목·보낸 사람에서 찾았어요(본문 속 낱말은 못 찾음)${res.korean_scan.limited ? ' · 더 오래된 메일은 --since/--until 로 기간을 좁혀 다시' : ''}` : undefined,
             note: res.found > res.shown ? `더 오래된 ${res.found - res.shown}통은 안 보였어요 — 날짜(--since/--until)나 보낸 사람(--from)으로 좁히기` : undefined });
     }
     if (cmd === 'read') {
