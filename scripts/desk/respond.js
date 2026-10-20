@@ -52,12 +52,12 @@ async function uploadAttachments(list, runId) {
     const o = (await pool.query(`SELECT id, status, run_id, created_by_id, content FROM pending_orders WHERE id = $1 AND is_deleted = false`, [id])).rows[0];
     if (!o) throw new Error('없는 지시');
     if (!['처리중', '대기'].includes(o.status)) throw new Error(`'${o.status}' 상태라 결과를 올릴 수 없습니다(처리중만 가능)`); // '대기' = 처리 도중 서버 재시작으로 되돌려진 건
-    let status, result, stepText, runStatus = 'done';
+    let status, result, stepText, runStatus = 'done', uploadedIds = [];   // #799 올린 첨부 id(결과를 못 올리면 숨김)
     if (j.kind === 'answer') {
         if (!j.answer) throw new Error('answer가 비었습니다');
         status = '완료';
         if (/^(\[검증469\]\s*)?\[최종발주 메모 읽기\]/.test(o.content || '')) j = memoReuse(id, j);
-        const uploaded = await uploadAttachments(j.attachments, o.run_id);
+        const uploaded = await uploadAttachments(j.attachments, o.run_id); uploadedIds = uploaded.map(x => x.file_id);
         result = {
             type: 'desk_answer', title: clean(j.title || '', 80), answer: clean(j.answer, 20000),
             files: (Array.isArray(j.files) ? j.files.slice(0, 10).map(f => ({ label: clean(f.label, 60), url: clean(f.url, 500) })) : []).concat(uploaded),
@@ -99,7 +99,12 @@ async function uploadAttachments(list, runId) {
         stepText = '⚠️ 오류'; runStatus = 'error';
     } else throw new Error('kind를 알 수 없습니다: ' + j.kind);
 
-    await pool.query(`UPDATE pending_orders SET status = $2, result = $3, processed_at = NOW() WHERE id = $1`, [id, status, JSON.stringify(result)]);
+    // #799 위에서 읽은 뒤 사람이 「채팅 종료」했으면(질문종결) 덮지 않는다 — 상태를 다시 조건으로
+    const up = await pool.query(`UPDATE pending_orders SET status = $2, result = $3, processed_at = NOW() WHERE id = $1 AND status IN ('처리중', '대기')`, [id, status, JSON.stringify(result)]);
+    if (!up.rowCount) {
+        if (uploadedIds.length) await pool.query(`UPDATE report_files SET is_deleted = true WHERE id = ANY($1::int[])`, [uploadedIds]).catch(() => { });   // 고아 첨부 숨김(물리 삭제 X)
+        throw new Error('그 사이 상태가 바뀌어(사람이 채팅 종료 등) 결과를 올리지 않았습니다');
+    }
     await appendStep(o.run_id, runStatus === 'error' ? 'error' : 'report', stepText);
     if (o.run_id && runStatus !== 'running') {
         await pool.query(`UPDATE agent_runs SET status = $2, finished_at = NOW(), result = $3 WHERE id = $1`,

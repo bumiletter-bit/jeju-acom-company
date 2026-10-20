@@ -135,6 +135,39 @@ const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledR
 // #798 대표 요금제(이 PC 의 Claude 로그인)가 만료되면 대표 지시가 「Failed to authenticate: OAuth session expired」로 3번 실패 → 오류(10/20 밤 실사고 #2980~#2982).
 //   로그인은 PC 터미널에서 /login 을 쳐야만 풀리므로, 그동안은 대표 지시도 콘솔 API 키로 대신 돌린다(요금 분리 #474 의 예외 · 창구가 멈추는 것보다 낫다 — 대표 지시 10/21).
 //   한 번 만료를 보면 SUB_RETRY_MS 동안 대표 요금제를 건너뛰고(헛시도 방지), 그 뒤 다시 대표 요금제를 먼저 써 본다(/login 하면 저절로 돌아옴).
+// #799(대표 10/21) 「채팅 종료」 = 사람이 끝낸 지시는 돌던 claude 를 끄고 다음 지시로 — 지시 id → 지금 돌고 있는 자식 프로세스
+const kids = new Map();
+const END_POLL_MS = parseInt(process.env.DESK_END_POLL_MS, 10) || 3000;
+// 자식과 그 아래(claude 가 띄운 node·셸) 전부 끈다 — Windows 는 taskkill /T /F(트리) · 그 밖은 SIGKILL
+function killTree(child, dep) {
+    const d = dep || {};
+    if (!child || child.exitCode != null) return false;
+    try {
+        if ((d.platform || process.platform) === 'win32' && child.pid) (d.spawn || spawn)('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => { try { child.kill(); } catch (_) { } });
+        else child.kill('SIGKILL');
+        return true;
+    } catch (e) { try { child.kill(); } catch (_) { } return false; }
+}
+// 3초마다 그 지시가 「사람이 종료」(질문종결 + result.type closed_by_user)가 됐는지 보고, 됐으면 그 자식을 끈다 → run 이 끝나 handle 이 다음으로 넘어간다
+function endWatcher(orderId, dep) {
+    const d = dep || {}; const P = d.pool || pool; let fired = false; const killed = new Set();
+    const t = setInterval(async () => {
+        const child = (d.kids || kids).get(orderId);
+        if (fired && (!child || killed.has(child))) return;   // 한 번 끈 뒤에도 계속 본다 — 로그인 만료로 콘솔 키에서 다시 켠 창구도 끄게
+        try {
+            if (!fired) {
+                const cur = (await P.query(`SELECT status, result->>'type' AS t FROM pending_orders WHERE id = $1`, [orderId])).rows[0];
+                if (!cur || cur.status !== '질문종결' || cur.t !== 'closed_by_user') return;
+                fired = true;
+            }
+            if (child) killed.add(child);
+            const did = (d.killTree || killTree)(child);
+            (d.log || log)(`#${orderId} 사람이 채팅 종료 — ${did ? '돌던 창구를 끔(트리)' : '끌 창구 없음(이미 끝남 · AI 없는 길)'}`);
+        } catch (e) { (d.log || log)('종료 확인 실패(무시): ' + e.message); }
+    }, d.ms || END_POLL_MS);
+    if (t.unref) t.unref();
+    return { stop: () => clearInterval(t), get fired() { return fired; } };
+}
 const SUB_RETRY_MS = 30 * 60 * 1000;
 const SUB_LOGIN_NOTE = '대표 요금제 로그인이 만료됐습니다 — 대표 지시는 당분간 콘솔 키로 처리합니다. PC 의 Claude Code 터미널에서 /login 을 해 주세요';
 const subAuthDown = () => st.subAuthFailAt && Date.now() - st.subAuthFailAt < SUB_RETRY_MS;
@@ -159,6 +192,7 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
         if (!exe) { try { fs.closeSync(out); } catch (_) { } return resolve({ code: -1, err: 'claude 실행 파일을 찾지 못했습니다', outPath, info: {} });
         }
         const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['ignore', opt.stream ? 'pipe' : out, out], windowsHide: true });
+        kids.set(order.id, child);   // #799
         let done = false;
         const info = {};
         if (opt.stream) {
@@ -184,7 +218,7 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
                 while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { watcher.line(line); } catch (e) { /* 한 줄 해석 실패는 무시 */ } }
             });
         }
-        const finish = r => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ } resolve(r); };
+        const finish = r => { if (done) return; done = true; clearTimeout(timer); if (kids.get(order.id) === child) kids.delete(order.id); try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ } resolve(r); };
         const timer = setTimeout(() => {
             log(`#${order.id} 25분을 넘겨 중단`);
             try { child.kill(); } catch (e) { /* 이미 끝남 */ }
@@ -254,6 +288,7 @@ function runWarm(order, key, opt) {
         let done = false;
         const finish = code => {
             if (done) return; done = true; clearTimeout(timer);
+            if (kids.get(order.id) === w.child) kids.delete(order.id);   // #799
             try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ }
             w.onExit = null;
             if (w.dead) { w.onLine = null; return resolve({ code, outPath, info }); }
@@ -274,6 +309,7 @@ function runWarm(order, key, opt) {
         });
         const timer = setTimeout(() => { log(`#${order.id} 25분을 넘겨 중단`); try { w.child.kill(); } catch (e) { /* 이미 끝남 */ } }, RUN_TIMEOUT_MS);
         w.busy = true;
+        kids.set(order.id, w.child);   // #799
         w.onLine = line => { try { fs.writeSync(out, line + '\n'); } catch (_) { /* 무시 */ } watcher.line(line); };
         w.onExit = () => finish(-1);
         try { warmSend(w, opt.prompt); } catch (e) { finish(-1); }
@@ -471,6 +507,7 @@ async function handle(order, key) {
             await writeState();
         } catch (e) { log('처리 중 신호 실패(무시): ' + e.message); }
     }, BEAT_MS);
+    const ender = endWatcher(order.id);   // #799 사람이 채팅 종료하면 돌던 창구를 끔
     const f = st.fast;
     const rt = f.off ? { lane: 'ai', model: MODEL, why: '종전 방식' }
         : fast.route(order, f.route ? FORCED_MODEL : (FORCED_MODEL || 'opus'));
@@ -511,7 +548,7 @@ async function handle(order, key) {
                 const ropt = { model: rt.model, prompt: promptPrefetched(order, got, inl), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' };
                 r = await run(order, key, ropt);
                 // #798 대표 요금제 로그인 만료 → 같은 지시를 콘솔 키로 바로 다시(횟수 안 씀)
-                if (!key && st.key && isAuthFail(r)) {
+                if (!key && st.key && isAuthFail(r) && !ender.fired) {   /* #799 사람이 종료했으면 다시 돌리지 않음 */
                     st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
                     log(`#${order.id} 대표 요금제 로그인 만료(${(r.info.result_text || r.info.error || '').slice(0, 80)}) → 콘솔 키로 다시 돌림`);
                     if (got.run_id) await appendStep(got.run_id, 'lane', '🔑 대표 요금제 만료 → 콘솔 키').catch(() => { });
@@ -527,14 +564,14 @@ async function handle(order, key) {
             }
             const ropt = { model: rt.model, stream: f.stream, lean: f.lean, effort: f.effort, get runId() { return runId; }, live: f.stream && order.status !== '승인됨' };
             r = await runDesk(order, key, ropt);
-            if (!key && st.key && isAuthFail(r)) {   // #798
+            if (!key && st.key && isAuthFail(r) && !ender.fired) {   /* #799 사람이 종료했으면 다시 돌리지 않음 */   // #798
                 st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
                 log(`#${order.id} 대표 요금제 로그인 만료 → 콘솔 키로 다시 돌림`);
                 r = await runDesk(order, st.key, ropt);
             }
         }
     } catch (e) { log(`#${order.id} 처리 중 오류: ${e.message}`); }
-    finally { clearInterval(keep); try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* respond.js 가 이미 치웠거나 없음(#598 A) */ } }
+    finally { clearInterval(keep); ender.stop(); try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* respond.js 가 이미 치웠거나 없음(#598 A) */ } }
     const sec = Math.round((Date.now() - t0) / 1000);
     const after = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
     const stillOpen = !after || ['대기', '처리중', '승인됨'].includes(after.status);
@@ -550,7 +587,7 @@ async function handle(order, key) {
         log(`#${order.id} 결과가 안 올라옴 (${n}/${MAX_TRY} · exit=${r.code} · ${sec}초 · 기록 ${r.outPath})`);
         if (n >= MAX_TRY) {
             await pool.query(
-                `UPDATE pending_orders SET status = '오류', result = $2, processed_at = NOW() WHERE id = $1 AND status <> '완료'`,
+                `UPDATE pending_orders SET status = '오류', result = $2, processed_at = NOW() WHERE id = $1 AND status IN ('대기', '처리중', '승인됨')`,
                 [order.id, JSON.stringify({ type: 'error', error: `창구가 ${MAX_TRY}번 시도했지만 결과를 올리지 못했습니다. 대표 창에서 확인해 주세요.` })]);
             st.tries.delete(order.id);
             log(`#${order.id} 오류로 돌림`);
@@ -693,4 +730,4 @@ async function main() {
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t799: { killTree, endWatcher, kids, nextOrder } };   // #701 시험용(직접 실행일 때만 main 이 돈다)

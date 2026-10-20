@@ -6267,7 +6267,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             `SELECT
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status NOT IN ('hold-0809','canceled-excluded','experience')) AS order_notice,   /* #775-A 체험 skip 은 주문안내 건수에서 뺌 */
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status = 'hold-0809') AS hold,
-               (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status <> 'skip-no-guide') AS ship_notice,
+               (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status NOT IN ('skip-no-guide','experience')) AS ship_notice,   /* #800 체험 제외 */
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status IN ('failed','token-failed','build-failed'))
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
@@ -7706,7 +7706,7 @@ async function settleReconRun(daily) {
     }
     const cls = settleReconClassify(caseRows, basisStart, basisEnd, shipMap);
     // 집화 대기 = 기준 기간에 우리가 발송 감지했는데 이번 회차 건별에 없는 주문(취소 제외 상태만)
-    const po = await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key !~ '^(c24|cp|join):' AND status <> 'canceled-excluded'
+    const po = await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key !~ '^(c24|cp|join):' AND status NOT IN ('canceled-excluded','experience')   /* #800 체험 = 택배 집화 대기 아님 */
         AND (created_at + interval '9 hours')::date >= $1::date AND (created_at + interval '9 hours')::date <= $2::date AND NOT (order_key = ANY($3::text[]))`, [basisStart, basisEnd, cls.ids.length ? cls.ids : ['-']]);
     const pendingIds = po.rows.map(r => r.order_key);
     const inp = await settleReconInputs(basisStart, basisEnd);
@@ -8288,6 +8288,7 @@ async function collectLmsGuide() {
     const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     let done = 0, failed = 0, skipped = 0;
+    const expIds = await experienceProductIds(); let experienceSkipped = 0;   // #800 체험(배송 없음) 주문 = 발송안내 없음(#775-A) — 주문안내(#8069)와 같은 판정
     for (let i = 0; i < targets.length; i += 100) {
         if (i > 0) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
@@ -8302,6 +8303,14 @@ async function collectLmsGuide() {
             const od = c.order || it.order || po.order || {};
             const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
             if (!orderKey) continue;
+            // #800 체험은 「배송 없음」으로 발송처리돼 DISPATCHED 로 올라올 수 있다 — 택배 「출발했습니다」 알림톡·안내 버튼을 보내지 않고 이력 한 줄(중복 방지 · 이력 화면)
+            if (isExperienceOrder(po, expIds)) {
+                experienceSkipped++;
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, mode, status, error)
+                    VALUES ($1,$2,'skip','experience',$3) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, ('체험(발송안내 없음) ' + (po.productName || '')).slice(0, 200), '체험(배송 없음) 상품 — 발송안내 제외(#800)']).catch(() => {});
+                continue;
+            }
             let gMatched;   // #642: 발송에 쓴 연결 결과(undefined = 발송 전에 실패)
             try {
                 // 송장번호(지시 #99): 상세조회 응답 배송 정보에서 방어적 추출 — 발송처리(DISPATCHED) 주문은 송장 보유
@@ -8338,7 +8347,8 @@ async function collectLmsGuide() {
         }
     }
     const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
-    return `발송 안내 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·안내문 없음 ${skipped}·발송처리 ${shippedIds.length}건)`;
+    if (experienceSkipped) console.log(`[#800] 발송안내에서 체험 주문 ${experienceSkipped}건 뺌`);
+    return `발송 안내 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·안내문 없음 ${skipped}·발송처리 ${shippedIds.length}건${experienceSkipped ? `·체험 제외 ${experienceSkipped}` : ''})`;
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
@@ -14678,9 +14688,9 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                 const kst = `(NOW() + interval '9 hours')::date`;
                 const one = async (sql) => (await pool.query(sql)).rows[0];
                 const a = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE status='sent')::int AS d
-                    FROM kakao_notify_log WHERE deleted_at IS NULL AND (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);
+                    FROM kakao_notify_log WHERE deleted_at IS NULL AND status NOT IN ('experience','canceled-excluded') AND (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);   /* #800 체험·취소 제외 = 분모에서도 */
                 const b = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE status='sent')::int AS d
-                    FROM lms_guide_log WHERE (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);
+                    FROM lms_guide_log WHERE status NOT IN ('experience','canceled-excluded') AND (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);   /* #800 */
                 const c = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE answered)::int AS d
                     FROM naver_inquiries WHERE (collected_at + interval '9 hours')::date = ${kst}`);
                 const e = await one(`SELECT (SELECT COUNT(DISTINCT partner)::int FROM pricing
@@ -14853,6 +14863,32 @@ app.post('/api/agent-office/orders/:id/close', authMiddleware, /* 직원 가능 
             source: 'agent_office', actor: adminActor(req),
         });
         res.json({ message: '질문을 종결했습니다 (전체 보기에서 계속 조회 가능)' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #799(대표 10/21 「한 건이 안 되면 뒷 건도 자동 대기 — 채팅 종료를 누르면 AI 작업도 끝나고 다음 지시가 되도록」)
+//   처리 중·순서 대기·질문인 지시를 사람이 끝낸다 → status '질문종결'(화면 「종결」) · result = 사람이 종료 한 줄 · run 은 끝남으로
+//   창구 대기 프로그램(launcher)이 3초마다 자기가 돌리는 지시의 이 표시를 보고 자식 claude 를 끈 뒤 다음 지시를 집는다. 순서 대기였던 지시는 집히지 않는다(대기·승인됨만 집음).
+//   늦게 올라오는 결과는 respond.js 가 상태(처리중·대기)를 보고 거절한다 = 종결을 덮지 않음. 승인 대기·승인됨·확인표 작성 같은 서버 흐름은 이 길로 끝내지 않는다(무변경).
+const DESK_END_FROM = ['대기', '처리중', '질문'];
+app.post('/api/agent-office/orders/:id/end', authMiddleware, async (req, res) => {
+    try {
+        const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
+        const isAdmin = req.user.role === 'admin';
+        const r = await pool.query(
+            `UPDATE pending_orders SET status = '질문종결', processed_at = NOW(),
+                    result = jsonb_build_object('type', 'closed_by_user', 'text', '사람이 종료했어요(' || $3::text || ')', 'by', $3::text, 'by_id', $4::int, 'from', status, 'at', NOW())
+             WHERE id = $1 AND is_deleted = false AND status = ANY($2::text[]) AND ($5::boolean OR created_by_id = $4::int)
+             RETURNING id, run_id, status, result->>'from' AS was`, [req.params.id, DESK_END_FROM, who, req.user.id, isAdmin]);
+        if (!r.rows.length) throw { status: 400, message: '처리 중·순서 대기·질문인 내 지시만 종료할 수 있어요(이미 끝났을 수 있어요)' };
+        const o = r.rows[0];
+        if (o.run_id) {
+            await agentRunAppendStep(o.run_id, agentStep('work', who, '⏹ 사람이 채팅 종료 — 창구 작업을 멈춥니다')).catch(() => { });
+            await pool.query(`UPDATE agent_runs SET status = 'done', finished_at = COALESCE(finished_at, NOW()) WHERE id = $1 AND status = 'running'`, [o.run_id]).catch(() => { });
+        }
+        await writeAudit({ action: 'desk_order_close', targetType: 'pending_order', targetId: o.id,
+            changes: { before: { status: o.was }, after: { status: '질문종결', by: who, by_id: req.user.id } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: o.was === '처리중' ? '종료했어요 — 창구가 하던 일을 멈추고 다음 지시로 넘어가요' : '종료했어요', was: o.was });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -16026,14 +16062,17 @@ setInterval(async () => {
 // 지시 #153-4: 단건 테스트 실발송 러너 — 🔴 대표 GO 후에만 플래그(aligo_test_send_request {go:'yes', to, key}) 투입.
 //    수신번호는 kakao-notify 화이트리스트(대표 번호)로 하드 제한 — 스위치 전체 ON 없이 이모지 실물 확정용 1건.
 setInterval(async () => {
+    // #803 요청 줄 읽기는 try 밖 — 요청이 없는 평소 1분 폴링이 DB 연결 지연으로 실패해도 결과 줄(aligo_test_send_result)에 오류를 남기지 않는다(10/21 06:13 실측 = 요청 0 인데 「connection timeout」 줄)
+    let req;
+    try { req = await naverCfgGet('aligo_test_send_request'); } catch (e) { console.error('[aligo-test] 요청 읽기 실패(다음 주기):', String(e.message || e).slice(0, 200)); return; }
+    if (req == null) return;
     try {
-        const req = await naverCfgGet('aligo_test_send_request');
-        if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_test_send_request'`);
         if (!req || req.go !== 'yes') return;
         const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key, vars: req.vars });   // #161: 변수 오버라이드
         await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: req.key || 'welcome', ...r });
     } catch (e) {
+        console.error('[aligo-test] 시험 발송 실패:', String(e.message || e).slice(0, 200));   // #803 렌더 로그에도
         try { await naverCfgSet('aligo_test_send_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);

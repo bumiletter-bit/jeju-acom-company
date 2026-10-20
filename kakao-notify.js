@@ -313,7 +313,7 @@ async function selftest(opts) {
             out.checks.senderkey_template_list = ok
                 ? { ok: true, template_count: Array.isArray(list.list) ? list.list.length : null,
                     // 지시 #98: 심사 상태 추적 — 템플릿별 상태(응답 필드명 방어적 수집, 문안 원문은 미수집)
-                    templates: (Array.isArray(list.list) ? list.list : []).slice(0, 12).map(x => ({
+                    templates: (Array.isArray(list.list) ? list.list : []).slice(0, 40).map(x => ({   // #801 템플릿 13개 넘어 UM_6988 이 잘리던 것(읽기 전용 진단)
                         code: x.templtCode || x.tpl_code || null, name: x.templtName || x.tpl_name || null,
                         status: x.status != null ? x.status : null, inspStatus: x.inspStatus != null ? x.inspStatus : null,
                         ...(full ? { content: x.templtContent || x.tpl_content || null,

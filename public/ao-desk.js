@@ -2779,7 +2779,7 @@
                     <span>${o.id}번</span>${o.reply_to ? `<span class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</span>` : ''}<span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
                     ${o.file_name ? `<span>📎 ${esc(o.file_name)}</span>` : o.has_image ? '<span>이미지 첨부</span>' : ''}
-                    ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 채팅 종료" title="채팅 종료">×</button>` : ''}</div>
+                    ${S.tab === 'mine' && ((!ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status)) || ENDABLE.includes(o.status)) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 채팅 종료" title="채팅 종료">×</button>` : ''}</div>
                 <p class="desk-q">${esc(o.content)}</p>
                 ${resultHtml(o)}
                 ${showSteps ? `<ul class="desk-steps">${steps.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : ''}
@@ -2790,6 +2790,9 @@
     // #499(대표 GO 10/2) 내 지시 = 대화 보기. 이어서 지시·되묻기 답(reply_to)을 한 대화로 묶어, 내 글은 오른쪽·클코 답은 왼쪽에 시간순으로 쌓는다.
     //   새 대화가 맨 위(입력칸 바로 아래). 답 내용은 표·카드와 같은 resultBody 를 그대로 쓴다(버튼·답 칸·쓰는 중인 답변 동작 동일).
     const CLOSED_FOR_HIDE = o => !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기', '질문'].includes(o.status);
+    // #799(대표 10/21): 처리 중·순서 대기인 지시도 [채팅 종료] — 서버가 종결하고 창구가 돌던 일을 멈춘 뒤 다음 지시로(승인 대기·승인됨·확인표 작성은 그대로)
+    const ENDABLE = ['대기', '처리중'];
+    const endOrder = async (o) => { const j = await api('/api/agent-office/orders/' + o.id + '/end', 'POST'); o.status = '질문종결'; return j; };
     function threadsOf(all) {
         const byId = new Map(all.map(o => [o.id, o]));
         const rootOf = o => { let c = o, n = 0; while (c.reply_to && byId.has(c.reply_to) && n++ < 60) c = byId.get(c.reply_to); return c.id; };
@@ -2811,14 +2814,15 @@
             const first = t.items[0];
             // #653-다 ②: 답 칸은 맨 위(가장 최근) 대화만 펼친다 — 나머지는 「이어서 지시」 한 줄(누르거나 대화를 누르면 펼쳐짐 · 쓰던 글·붙인 그림·종료 확인 중이면 펼친 채)
             const boxOpen = ti === 0 || S.boxOpen.has(t.id) || S.endAsk === t.id || S.replyImg.has(t.last);
-            const canHide = t.items.every(o => CLOSED_FOR_HIDE(o) || o.status === '질문');   // #605(대표 10/9): 되묻기에 답하지 않고도 끝낼 수 있게 — 종료 때 「질문」은 먼저 닫는다(질문종결)
+            const canHide = t.items.every(o => CLOSED_FOR_HIDE(o) || o.status === '질문' || ENDABLE.includes(o.status));   // #799 처리 중·순서 대기도   // #605(대표 10/9): 되묻기에 답하지 않고도 끝낼 수 있게 — 종료 때 「질문」은 먼저 닫는다(질문종결)
             const busyEnd = !canHide && t.items.some(o => ['판독완료', '확인표작성', '승인대기'].includes(o.status));
             // #538: 대화 머리 = 시작 시각 + 첫 글 한 줄 → 어디서부터 다른 대화인지 바로 보인다
             const head = `<div class="desk-th-head"><span class="desk-th-when">${esc(kst(first.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))} 시작</span><span class="desk-th-sum">${esc(cutText(first.content, 60))}</span>${first.reply_to ? `<span class="desk-thread">↳ ${Number(first.reply_to)}번에 이어서</span>` : ''}${t.items.length > 1 ? `<span>${t.items.length}번 주고받음</span>` : ''}</div>`;
             // #538 [채팅 종료] — 끝난 대화에만 · 카드 안에서 한 번 확인 · 이전 채팅 이력에서 다시 볼 수 있다
             // #541(대표 10/5): [채팅 종료]는 답 상자 안 「+」 옆에 담는다(상자가 틀 너비를 다 쓴다). 답 상자가 없는 대화(최종발주 기록 등)만 상자 밖
             // #559(대표 폰 실물 10/6): 종료 확인도 답 상자 안 같은 자리에서 — [채팅 종료]를 누른 그 자리에 [종료하기]가 나와 손이 안 움직인다
-            const endIn = `<span class="desk-end-ask in" role="group" aria-label="채팅 종료 확인 — 이전 채팅 이력에서 다시 볼 수 있어요"><button type="button" class="desk-endbtn yes" data-act="hidethread" data-id="${t.id}">종료하기</button><button type="button" class="desk-endbtn no" data-act="endno" data-id="${t.id}">취소</button></span>`;
+            const stopNote = t.items.some(o => ENDABLE.includes(o.status)) ? `<span class="desk-h-note desk-end-stop">창구가 하던 일을 멈추고 다음 지시로 넘어가요</span>` : '';   // #799 처리 중·순서 대기를 끝낼 때 확인 자리에 한 줄
+            const endIn = `<span class="desk-end-ask in" role="group" aria-label="채팅 종료 확인 — 이전 채팅 이력에서 다시 볼 수 있어요">${stopNote}<button type="button" class="desk-endbtn yes" data-act="hidethread" data-id="${t.id}">종료하기</button><button type="button" class="desk-endbtn no" data-act="endno" data-id="${t.id}">취소</button></span>`;
             // #571(대표 10/7 「PC 에서도 모바일처럼」): 답 상자가 없는 대화(최종발주 기록)도 같은 자리에서 — 종전 넓은 확인 칸은 PC 에서 [종료]가 오른쪽 끝(600px 넘게)으로 떨어졌다. 이제 [채팅 종료]가 있던 그 자리에 [종료하기]·[취소](.solo)
             const endBtn = canHide ? `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>` : '';
             const lastHtml = o => { const rb = resultBody(o, true), f0 = followHtml(o), f = !boxOpen && f0.indexOf('data-cbox="') >= 0 ? `<div class="desk-follow-line"><button type="button" class="desk-follow-open" data-act="openbox" data-id="${t.id}" aria-expanded="false">이어서 지시</button><!--endslot--></div>` : f0, asking = S.endAsk === t.id; const wrap = (a, b) => a + `<div class="desk-chatbar">${b}</div>`;
@@ -3013,7 +3017,7 @@
         const rows = list.map((o, i) => {
             const b = BADGE[o.status] || ['wait', o.status];
             const open = S.detail.has(o.id) || S.follow.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
-            const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
+            const canHide = S.tab === 'mine' && ((!ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status)) || ENDABLE.includes(o.status));   // #799
             const oc = ov[i] ? ' ov' : '';
             return `<tr class="row clickable${oc}${open ? ' opened' : ''}" data-oid="${o.id}" title="${open ? '접기' : '눌러서 답변 보기'}">
                 <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
@@ -3088,18 +3092,25 @@
             if (!t) return;
             b.disabled = true;
             try {
-                let asked = 0;
-                for (const it of t.items) { if (it.status === '질문') { await api('/api/agent-office/orders/' + it.id + '/close', 'POST'); it.status = '질문종결'; asked++; } await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true }); }
+                let asked = 0, stopped = 0;
+                for (const it of t.items) {
+                    if (it.status === '질문') { await api('/api/agent-office/orders/' + it.id + '/close', 'POST'); it.status = '질문종결'; asked++; }
+                    else if (ENDABLE.includes(it.status)) { await endOrder(it); stopped++; }   // #799
+                    await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true });
+                }
                 const gone = new Set(t.items.map(x => x.id));
                 S.orders = S.orders.filter(x => !gone.has(x.id)); S.sig = ''; S.endAsk = 0; renderList();
-                showToast(asked ? '채팅을 종료했어요(전체 지시에는 남아 있어요)' : '채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
+                showToast(stopped ? '채팅을 종료했어요 — 창구가 하던 일을 멈추고 다음 지시로 넘어가요' : asked ? '채팅을 종료했어요(전체 지시에는 남아 있어요)' : '채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
             } catch (err) { showToast(err && err.message ? err.message : '종료하지 못했어요'); S.sig = ''; S.endAsk = 0; loadOrders(true); }
             return;
         }
         if (act === 'hide') {
+            // #799 처리 중·순서 대기는 한 번 더 눌러 확인(그 자리에서 글이 바뀜) — 대화 보기의 [종료하기] 확인과 같은 뜻
+            if (ENDABLE.includes(o.status) && b.dataset.ask !== '1') { b.dataset.ask = '1'; b.title = '창구가 하던 일을 멈추고 다음 지시로 넘어가요 — 한 번 더 누르면 종료'; b.setAttribute('aria-label', b.title); if (!b.classList.contains('desk-x')) b.textContent = '멈추고 종료(한 번 더)'; showToast('창구가 하던 일을 멈추고 다음 지시로 넘어가요 — 한 번 더 누르면 종료'); return; }
             b.disabled = true;
             try {
                 if (o.status === '질문') { await api('/api/agent-office/orders/' + id + '/close', 'POST'); o.status = '질문종결'; }   // #605
+                else if (ENDABLE.includes(o.status)) await endOrder(o);   // #799
                 await api('/api/agent-office/orders/' + id + '/hide-mine', 'POST', { hide: true });
                 S.orders = S.orders.filter(x => x.id !== id); S.sig = ''; renderList();
                 showToast('채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
