@@ -1,3 +1,8 @@
+## v5.9.572 (2026-10-20) — #775-A 체험 상품을 택배 흐름에서 뺌 · #773 카드 판정 한 줄 고침
+- 체험(설정 experience_products 기본 ["7673020911"] · 상품 번호만 · 배송없음 판정은 실값 미확인이라 뺌) = _naverFetchInvoiceOrdersCore rows 에서 빼기(송장변환·중간발주·최종발주·문자 봇 발송 전 주문 · experienceSkipped · 로그 [#775-A]) · collectKakaoNotify 주문안내 알림톡·#92 자동 발주확인 제외(이력 status experience 한 줄) · collectClaim 반품 알림 끝 「(체험 n건)」 · 알림 이력 화면 체험 배지(app.js v=417) · 발주확인은 사람이.
+- #773 실시험(테스트 한라봉 묶음 이름·할인 왕복 통과) 중 발견: 이미 깨진 카드도 <a> 안 진짜 div·p 가 남으면 PUT 때 더 깨짐(코드 글자 24→34 · 시험 상품) → 서버 npwCards·창구 cardRisk 「깨진 카드라도 남은 div·p 면 멈춤」.
+- 검증 verify-775-exp 18/18 · verify-529 21/21 · verify-773 71/71 · verify-720 214/214 · 워커3 읽기 점검 막을 것 0.
+
 ## v5.9.571 (2026-10-20) — #773 네이버 상품 쓰기 확장(옵션 묶음 이름 · 즉시할인 · 입력형 옵션 이름 · 링크 카드 깨짐 막기)
 - patch group_names{name1~3} → optionCombinationGroupNames(있는 묶음만 · 1~50자) · 창구 --group-name1|2|3 · plan 때 바꾼 뒤 이름으로 송장 매칭·발송안내 전→후 · 🔴 면 멈춤(--accept-impact) · 택배 아닌 상품 = 해당 없음.
 - patch discount{unitType WON|PERCENT,value} → immediateDiscountPolicy.discountMethod · 창구 --discount 5000|20% · 결제가 전/후 · 판매가 대비 50% 초과 거절(판매가만 내려 넘는 경우도) · 첫 할인 걸기 = 센터.

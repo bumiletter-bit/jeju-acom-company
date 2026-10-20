@@ -13409,6 +13409,7 @@ async function renderNotifyLogs(opts) {
         if (st === 'gift-masked') return badge('#F1F2F5', '#767A83', '🎁 선물하기 (번호 비공개)');   // #199
         if (st === 'bad-tel') return badge('#F1F2F5', '#767A83', '📵 번호 오류 (유선 — 재안내 없음)');   // #219: 중립 회색 — 조치 불요
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
+        if (st === 'experience') return badge('#F1F2F5', '#767A83', '🍊 체험 상품 (택배 안내·자동 발주확인 제외)');   // #775-A
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
         if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : (String(row.order_key || '').startsWith('cp:') ? '✅ 문자(LMS)' : '✅ 알림톡'));   /* #401: 쿠팡=안심번호라 LMS 직행 — 알림톡 오표기 방지 */
         if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join|coupon|coupon-exp):/.test(String(row.order_key || '')) ? '🧪 검수중 (미발송 — 문면만 기록)' : DRY[st]);   /* #467 룰렛 */

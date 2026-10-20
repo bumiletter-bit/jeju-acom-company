@@ -6202,7 +6202,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                       OR ((k.receiver_masked = '***' OR l.receiver_masked = '***')
                           AND COALESCE(k.status,'') <> 'gift-masked' AND COALESCE(l.status,'') <> 'gift-masked'))   /* #199: 선물하기(번호 비공개)는 조치 불요라 제외 */`);   /* #193 C: 수신번호 미확보(수동 연락 필요)도 '실패·보류만' 필터에 포함 */
         } else if (filter === 'pending') {
-            conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status <> 'canceled-excluded'))`);   // 발송안내 미도래
+            conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status NOT IN ('canceled-excluded','experience')))`);   // 발송안내 미도래(#775-A 체험 = 발송안내 없음)
         }
         const whereSql = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
         // 지시 #180-A1: 표시 상한(300) 하드컷 폐지 → 100건씩 offset/limit 페이징. 무제한 전량 로드는 금지(한 번에 최대 100).
@@ -6257,7 +6257,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         // 당일(KST) 요약 — 원본 기준 집계
         const sum = (await pool.query(
             `SELECT
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status NOT IN ('hold-0809','canceled-excluded')) AS order_notice,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status NOT IN ('hold-0809','canceled-excluded','experience')) AS order_notice,   /* #775-A 체험 skip 은 주문안내 건수에서 뺌 */
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status = 'hold-0809') AS hold,
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status <> 'skip-no-guide') AS ship_notice,
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
@@ -7292,6 +7292,7 @@ async function _naverFetchInvoiceOrdersCore(days, opts) {
       }
     }
     const seen = new Set(); const rows = []; let rawKeys = null; let partialAdjusted = 0;
+    const expIds = await experienceProductIds(); let experienceSkipped = 0;   // #775-A 체험 주문은 배송준비 주입·문자 봇 발송 전 주문에서 뺀다
     for (const raw of raws) {
         const it = placeTag ? raw.it : raw, askedPlace = placeTag ? raw.__place : '';
         // 대표 7/24: 네이버 응답 중첩 방어 — 항목이 content 래퍼 안에 있을 수 있음(data[].content.{order,productOrder})
@@ -7302,6 +7303,7 @@ async function _naverFetchInvoiceOrdersCore(days, opts) {
         const pid = String(po.productOrderId || c.productOrderId || it.productOrderId || '');
         if (!pid || seen.has(pid)) continue;   // 같은 조회창 내 중복만 제거(24h 경계 겹침 방지)
         seen.add(pid);
+        if (isExperienceOrder(po, expIds)) { experienceSkipped++; continue; }   // #775-A 체험(배송 없음) — 송장·발주에 섞이면 미매칭
         if (!rawKeys) rawKeys = Object.keys(it);
         // 대표 7/25: 부분취소 반영 — quantity는 '최초 주문 수량'이라 4박스 주문→2박스 취소여도 4로 나옴(김혜경 사례).
         //   공식 구조체의 remainQuantity(남은 수량)가 있으면 그걸 사용, 없으면 quantity. 남은 수량 0이면 주문 제외.
@@ -7333,7 +7335,8 @@ async function _naverFetchInvoiceOrdersCore(days, opts) {
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
     const sample = raws.length ? naverMaskPII(placeTag ? raws[0].it : raws[0]) : null;
-    return { fetched: seen.size, rows, rawKeys, sample, pageInfo, partialAdjusted };
+    if (experienceSkipped) console.log(`[#775-A] 주문 수집에서 체험(배송 없음) 주문 ${experienceSkipped}건 뺌`);
+    return { fetched: seen.size, rows, rawKeys, sample, pageInfo, partialAdjusted, ...(experienceSkipped ? { experienceSkipped } : {}) };
 }
 
 // 진단 샘플용 개인정보 마스킹 (품목명·옵션·수량 등은 유지, 이름·연락처·주소·메모는 *** )
@@ -7505,6 +7508,29 @@ function notifyNameWithTail(optText, cleaned, max, nowMs) {
 async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
+}
+// #775-A 체험(배송 없는) 상품 — 택배 흐름(주문안내 알림톡·자동 발주확인·문자 봇 발송 전 주문·송장변환/발주 수집)에서 뺀다 · 발주확인은 사람이(작년과 같게)
+//   판정 = 상품 번호가 설정 agent_office_config 'experience_products'(배열 또는 {ids:[…]} · 없으면 기본 ["7673020911"]) 안
+//   🔵 주문의 expectedDeliveryMethod('NOTHING' = 배송 없음)로도 볼 수 있으나 택배 주문의 실제 값을 아직 못 봐서(10/20 · 읽기 러너가 그 칸을 안 줌) 안 쓴다
+//      — 택배 주문이 잘못 빠지면 송장·발주에서 사라짐 · 첫 체험 실주문 때 값 확인 뒤 더할지 결정
+//   설정은 1분 기억 · 읽기 실패면 기본값
+const EXPERIENCE_PRODUCTS_DEFAULT = ['7673020911'];
+let _expProductsCache = { at: 0, ids: EXPERIENCE_PRODUCTS_DEFAULT };
+async function experienceProductIds() {
+    if (Date.now() - _expProductsCache.at < 60 * 1000) return _expProductsCache.ids;
+    let ids = EXPERIENCE_PRODUCTS_DEFAULT;
+    try {
+        const v = await naverCfgGet('experience_products');
+        const arr = Array.isArray(v) ? v : (v && Array.isArray(v.ids) ? v.ids : null);
+        if (arr) ids = arr.map(x => String(x).trim()).filter(x => /^\d{5,15}$/.test(x));
+    } catch (_) { /* 기본값 */ }
+    _expProductsCache = { at: Date.now(), ids };
+    return ids;
+}
+function isExperienceOrder(po, ids) {
+    if (!po) return false;
+    const pid = String(po.productId || po.channelProductNo || '');
+    return !!pid && (ids || EXPERIENCE_PRODUCTS_DEFAULT).includes(pid);
 }
 // #587: 알림톡 발송안내4 「#{발송일} 출발했습니다!」 변수 — KST 「10/6(화)」 꼴(발송안내는 발송처리 당일 나가므로 = 오늘)
 function kstMdDow(ms) {
@@ -7922,7 +7948,22 @@ async function collectClaim() {
     await pool.query(`DELETE FROM naver_claim_alerted WHERE alerted_at < NOW() - INTERVAL '180 days'`);
     if (fresh.length > 0 && await alertEnabled('claim')) {
         if (await alertQuietNow()) await alertNightAcc('claim', fresh.length);  // 야간엔 아침 브리핑으로
-        else notifyTelegram(await alertText('claim', { '건수': fresh.length }));
+        else {
+            // #775-A 체험(배송 없는) 상품의 반품 = 방문 날짜 변경·취소 문의일 가능성 → 알림 끝에 「(체험 n건)」 표시만(알림은 그대로) · 상품 번호는 변경 목록에 없어 상세조회 1회 · 실패하면 표시 없이
+            let expTag = '';
+            try {
+                const ids = fresh.map(x => String(x.productOrderId || '')).filter(Boolean).slice(0, 100);
+                if (ids.length) {
+                    const expIds = await experienceProductIds();
+                    const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: ids } });
+                    const body = (r && r.data) ? r.data : r;
+                    const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+                    const n = (Array.isArray(items) ? items : []).filter(it => { const c = it.content || it; return isExperienceOrder(c.productOrder || it.productOrder || c, expIds); }).length;
+                    if (n) expTag = ` (체험 ${n}건)`;
+                }
+            } catch (_) { /* 표시 보조 — 실패해도 알림은 그대로 */ }
+            notifyTelegram(await alertText('claim', { '건수': fresh.length }) + expTag);
+        }
     }
     return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
 }
@@ -7986,6 +8027,7 @@ async function collectKakaoNotify() {
     // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69·#73: 휴무일·안내 문구는 DB — 화면 관리)
     const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
+    const expIds = await experienceProductIds(); let experienceSkipped = 0;   // #775-A
     let done = 0, failed = 0;
     const sentReal = [], manualKeys = [], simulated = [];   // 지시 #92: 발주확인 대상 분류
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
@@ -8012,6 +8054,15 @@ async function collectKakaoNotify() {
                     [orderKey, (po.productName || '').slice(0, 200),
                      `취소·클레임으로 제외 (상태 ${poStatus || '-'}${claimMark ? ' · 클레임 ' + claimMark : ''})`]).catch(() => {});
                 continue;   // 발송·발주확인 분류 전부 미포함 (취소 건은 수기 영역)
+            }
+            // #775-A 체험(배송 없는) 상품 — 택배 주문안내(발송일 문구)를 보내지 않고 자동 발주확인도 하지 않는다(발주확인 = 배송완료 → 취소가 반품 길이 됨 · 사람이 누름)
+            //   이력엔 skip 한 줄(중복 방지 · 이력 화면) · 체험 접수 문자는 #775 본 설계에서
+            if (isExperienceOrder(po, expIds)) {
+                experienceSkipped++;
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, error, confirm_status)
+                    VALUES ($1,$2,'skip','experience',$3,'none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (po.productName || '').slice(0, 200), '체험(배송 없음) 상품 — 주문안내·자동 발주확인 제외(#775-A)']).catch(() => {});
+                continue;
             }
             try {
                 // 지시 #171(대표 확정): 주문(결제) 시각이 KST 08:00~08:59면 자동 발송 보류 — 발주 작업 시간(당일 발송 편입 여부 대표 판단).
@@ -8161,7 +8212,8 @@ async function collectKakaoNotify() {
         else notifyTelegram(await alertText('confirmneed', { '건수': manualTotal }));
     }
     const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
-    return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·발주확인 ${confirmed}·확인실패 ${confirmFailed}·신규결제 ${paidIds.length}건)`;
+    if (experienceSkipped) console.log(`[#775-A] 주문안내 알림톡·자동 발주확인에서 체험 주문 ${experienceSkipped}건 뺌`);
+    return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·발주확인 ${confirmed}·확인실패 ${confirmFailed}·신규결제 ${paidIds.length}건${experienceSkipped ? `·체험 제외 ${experienceSkipped}` : ''})`;
 }
 
 // ── 지시 #76: 발송 안내(LMS) 자동 감지기 — DISPATCHED(발송처리) 감지 → shipping_guide LMS (기본 OFF·dry-run)
@@ -16151,7 +16203,7 @@ function npwCards(html) {
         if (end < 0) { out.push({ kind: m[1].slice(3), start: m.index, end: -1, risky: true, broken: false, link: null, title: null }); break; }
         const chunk = s.slice(m.index, end), live = chunk.replace(/<!--[\s\S]*?-->/g, '');
         const broken = /&lt;(div|p)\b/i.test(live);
-        const risky = !broken && /<a\b[^>]*>(?:(?!<\/a\s*>)[\s\S])*?<(div|p)\b/i.test(live);   // 이미 깨진 카드는 PUT 해도 더 나빠지지 않음(10/20 7673020911 보관본 99→100 실측)
+        const risky = /<a\b[^>]*>(?:(?!<\/a\s*>)[\s\S])*?<(div|p)\b/i.test(live);   // 이미 깨진 카드도 안에 진짜 div·p 가 남았으면 또 깨짐(10/20 테스트 한라봉 실측 · 보이는 코드 글자 24 → 34)
         let link = null, title = null;
         const ld = chunk.match(/data-linkdata="([^"]*)"/);
         if (ld) { try { const j = JSON.parse(ld[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')); link = j.link || null; title = j.title || null; } catch (_) { const x = ld[1].replace(/&quot;/g, '"').match(/"link"\s*:\s*"(https?:[^"]+)"/); if (x) link = x[1]; } }

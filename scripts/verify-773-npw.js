@@ -24,6 +24,7 @@ const quiet = async (fn) => { const o = console.error; console.error = () => {};
 // 링크 카드 3꼴 — 멀쩡한 블로그 카드(<a> 안에 div·p = PUT 하면 깨짐) · 이미 깨진 상품 카드(&lt;div 글자) · 썸네일만 남은 카드(안전)
 const CARD_LIVE = `<div class="se-component se-oglink se-l-large_image" id="SE-og1"><div class="se-component-content"><div class="se-section se-section-oglink se-l-large_image se-section-align-center"><div class="se-module se-module-oglink"><a href="https://blog.naver.com/bumiletter/222317001633" class="se-oglink-thumbnail" target="_blank" data-linktype="oglink" data-linkdata="{&quot;id&quot;: &quot;SE-og1&quot;, &quot;link&quot;: &quot;https://blog.naver.com/bumiletter/222317001633&quot;}"><img src="https://dthumb-phinf.pstatic.net/x.jpg" class="se-oglink-thumbnail-resource" alt=""></a><a href="https://blog.naver.com/bumiletter/222317001633" class="se-oglink-info" target="_blank"><div class="se-oglink-info-container"><strong class="se-oglink-title">제주아꼼이네 레몬 청 만들기</strong><p class="se-oglink-summary">요약</p><p class="se-oglink-url">blog.naver.com</p></div></a></div></div></div><script type="text/data" class="__se_module_data" data-module='{"x":1}'></script></div>`;
 const CARD_BROKEN = `<div class="se-component se-material se-l-material_basic" id="SE-mt1"><div class="se-component-content"><div class="se-section se-section-material se-section-align-center se-l-material_basic"><!-- Not Allowed Attribute Filtered ( target="_blank" data-linktype="material" data-linkdata="{&quot;id&quot; : &quot;SE-mt1&quot;, &quot;type&quot; : &quot;shopping&quot;, &quot;title&quot; : &quot;제주 노지 감귤 3kg&quot;, &quot;link&quot; : &quot;https://smartstore.naver.com/main/products/6400134206&quot;}" ) --><a><!-- Not Allowed Tag Filtered -->&lt;div class=&quot;se-material-content&quot;&gt;<div class="se-material-title">제주 노지 감귤 3kg</div>&lt;/div&gt;</a></div></div></div>`;
+const CARD_BROKEN_DONE = `<div class="se-component se-material se-l-material_basic" id="SE-mt2"><div class="se-component-content"><div class="se-section se-section-material"><!-- Not Allowed Attribute Filtered ( data-linkdata="{&quot;link&quot; : &quot;https://smartstore.naver.com/main/products/6400134206&quot;}" ) --><a><!-- Not Allowed Tag Filtered -->&lt;div class=&quot;se-material-title&quot;&gt;제주 노지 감귤&lt;/div&gt;</a></div></div></div>`;
 const CARD_SAFE = `<div class="se-component se-oglink se-l-large_image" id="SE-og2"><div class="se-component-content"><div class="se-section se-section-oglink"><div class="se-module se-module-oglink"><!-- Not Allowed Attribute Filtered ( data-linkdata="{&quot;link&quot;: &quot;https://blog.naver.com/bumiletter/223766181846&quot;}" ) --><a><img src="https://dthumb-phinf.pstatic.net/y.jpg" alt=""></a></div></div></div></div>`;
 const wrapSe = (inner) => `<div class="se-viewer se-theme-default"><div class="se-main-container"><div class="se-component se-text" id="SE-t0"><div class="se-component-content"><p>첫 줄</p></div></div>${inner}<div class="se-component se-text" id="SE-t9"><div class="se-component-content"><p>끝 줄</p></div></div></div></div>`;
 
@@ -120,7 +121,9 @@ const get = (o, p) => p.reduce((c, k) => c == null ? c : c[k], o);
     {
         const live = mod.npwCards(wrapSe(CARD_LIVE)), broken = mod.npwCards(wrapSe(CARD_BROKEN)), safe = mod.npwCards(wrapSe(CARD_SAFE));
         ok(live.length === 1 && live[0].risky && !live[0].broken && live[0].link === 'https://blog.naver.com/bumiletter/222317001633' && live[0].title === '제주아꼼이네 레몬 청 만들기', '멀쩡한 블로그 카드 = 깨질 카드 · 링크·제목 읽음', live);
-        ok(broken.length === 1 && broken[0].broken && !broken[0].risky && broken[0].link === 'https://smartstore.naver.com/main/products/6400134206' && broken[0].title === '제주 노지 감귤 3kg', '이미 깨진 상품 카드 = broken · 주석 속 링크·제목 읽음', broken);
+        ok(broken.length === 1 && broken[0].broken && broken[0].risky && broken[0].link === 'https://smartstore.naver.com/main/products/6400134206' && broken[0].title === '제주 노지 감귤 3kg', '이미 깨진 상품 카드(진짜 div 남음) = broken + 또 깨질 카드 · 주석 속 링크·제목 읽음', broken);
+        const done = mod.npwCards(wrapSe(CARD_BROKEN_DONE));
+        ok(done.length === 1 && done[0].broken && !done[0].risky, '진짜 div 가 다 글자가 된 깨진 카드 = broken 만(또 깨질 것 없음)', done);
         ok(safe.length === 1 && !safe[0].risky && !safe[0].broken && safe[0].link === 'https://blog.naver.com/bumiletter/223766181846', '썸네일만 남은 카드 = 안전', safe);
         const fx = mod.npwFixCards(wrapSe(CARD_LIVE + CARD_BROKEN + CARD_SAFE));
         ok(fx.ok && fx.n === 2 && !/se-oglink-info-container|se-material-content/.test(fx.html) && fx.html.includes('<a href="https://blog.naver.com/bumiletter/222317001633">👉 제주아꼼이네 레몬 청 만들기</a>') && fx.html.includes('👉 제주 노지 감귤 3kg</a>'), '고치기 = 깨질·깨진 카드 2개 → 글 링크 · 안전 카드는 그대로', fx.html.slice(0, 300));
@@ -128,7 +131,7 @@ const get = (o, p) => p.reduce((c, k) => c == null ? c : c[k], o);
         const noLink = CARD_LIVE.replace(/https:\/\/blog\.naver\.com\/bumiletter\/222317001633/g, 'javascript:void(0)');
         ok(!mod.npwFixCards(wrapSe(noLink)).ok, '링크를 못 찾은 카드 = 고치지 않고 멈춤');
         // 창구 판정 = 서버 판정
-        for (const [nm, h] of [['live', CARD_LIVE], ['broken', CARD_BROKEN], ['safe', CARD_SAFE], ['셋 다', CARD_LIVE + CARD_BROKEN + CARD_SAFE], ['카드 없음', '<p>x</p>']]) {
+        for (const [nm, h] of [['live', CARD_LIVE], ['broken', CARD_BROKEN], ['broken_done', CARD_BROKEN_DONE], ['safe', CARD_SAFE], ['셋 다', CARD_LIVE + CARD_BROKEN + CARD_SAFE], ['카드 없음', '<p>x</p>']]) {
             const c = ND.cardRisk(wrapSe(h)), sv = mod.npwCards(wrapSe(h));
             ok(c.risky.length === sv.filter(x => x.risky).length && c.broken.length === sv.filter(x => x.broken).length, `창구 cardRisk = 서버 npwCards(${nm})`, { c, sv: sv.map(x => [x.risky, x.broken]) });
         }
@@ -158,11 +161,15 @@ const get = (o, p) => p.reduce((c, k) => c == null ? c : c[k], o);
         ok(!rv2.ok && /되돌리기/.test(rv2.error) && t2.nv.puts.length === 1, '보관본 상세(카드 있음)로 되돌리기 = 멈춤 · PUT 안 나감', rv2);
         const rv3 = await run({ op: 'revert', order_id: 101, backup_id: bk2.backup_id, card_fix: true }, t2.deps);
         ok(rv3.ok && rv3.cards_fixed === 1 && rv3.residual_paths.length === 0 && rv3.sale_ok.ok && t2.nv.product.originProduct.detailContent.includes('👉 제주아꼼이네 레몬 청 만들기'), 'card_fix 되돌리기 = 보관본 상세 + 카드는 글 링크 · 잔여 0', rv3);
-        // 이미 깨진 카드만 = 멈추지 않음(더 나빠지지 않음)
-        const t3 = mk(withDetail(wrapSe(CARD_BROKEN + CARD_SAFE)));
+        // 깨진 카드라도 진짜 div 가 남았으면 멈춤(10/20 실측) · 다 글자가 된 깨진 카드·안전 카드만이면 그대로 보냄
+        const t3b = mk(withDetail(wrapSe(CARD_BROKEN)));
+        const bk3b = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, t3b.deps);
+        const ap4b = await run({ op: 'apply', order_id: 101, backup_id: bk3b.backup_id, patch: { sale_price: 63000 } }, t3b.deps);
+        ok(!ap4b.ok && /링크 카드/.test(ap4b.error) && t3b.nv.puts.length === 0, '진짜 div 가 남은 깨진 카드 = 멈춤 · PUT 0', ap4b);
+        const t3 = mk(withDetail(wrapSe(CARD_BROKEN_DONE + CARD_SAFE)));
         const bk3 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, t3.deps);
         const ap4 = await run({ op: 'apply', order_id: 101, backup_id: bk3.backup_id, patch: { sale_price: 63000 } }, t3.deps);
-        ok(ap4.ok && !ap4.cards_fixed && t3.nv.puts[0].originProduct.detailContent === wrapSe(CARD_BROKEN + CARD_SAFE), '깨진·안전 카드만 = 멈춤 없이 그대로 보냄');
+        ok(ap4.ok && !ap4.cards_fixed && t3.nv.puts[0].originProduct.detailContent === wrapSe(CARD_BROKEN_DONE + CARD_SAFE), '다 글자가 된 깨진 카드·안전 카드만 = 멈춤 없이 그대로 보냄');
         // 판매중지·재개(change-status 길)는 상세가 안 가서 카드가 있어도 통과
         const t4 = mk(P);
         const bk4 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, t4.deps);

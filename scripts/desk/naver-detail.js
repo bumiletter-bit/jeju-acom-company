@@ -481,9 +481,8 @@ function cardRisk(html) {
         while ((t = tk.exec(s))) { if (t[0].startsWith('<!--')) continue; depth += t[0].startsWith('</') ? -1 : 1; if (depth === 0) { end = tk.lastIndex; break; } }
         const live = s.slice(m.index, end).replace(/<!--[\s\S]*?-->/g, '');
         const tt = live.match(/class="se-(?:oglink|material)-title"[^>]*>([\s\S]*?)<\//), title = tt ? tt[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : (m[1] === 'se-material' ? '상품 카드' : '링크 카드');
-        const isBroken = /&lt;(div|p)\b/i.test(live);
-        if (isBroken) broken.push(title);
-        else if (/<a\b[^>]*>(?:(?!<\/a\s*>)[\s\S])*?<(div|p)\b/i.test(live)) risky.push(title);   // 이미 깨진 카드는 더 나빠지지 않음(서버와 같게)
+        if (/&lt;(div|p)\b/i.test(live)) broken.push(title);
+        if (/<a\b[^>]*>(?:(?!<\/a\s*>)[\s\S])*?<(div|p)\b/i.test(live)) risky.push(title);   // 이미 깨진 카드도 진짜 div·p 가 남았으면 또 깨짐(서버와 같게 · 10/20 실측)
         re.lastIndex = end;
     }
     return { risky, broken };
