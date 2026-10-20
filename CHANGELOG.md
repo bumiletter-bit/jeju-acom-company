@@ -1,3 +1,9 @@
+## v5.9.578 (2026-10-20) — #778 메일 더보기 · #779 메일 보내기·옮기기·휴지통 · #780 체험 주문 자동 발주확인
+- #778: 커서(받은 시각·메일함·uid) base64url · has_more/next · 메일함별 1천·합 3천 줄 세우기 · 한글 대비 길 같은 커서 · 창구 find --more.
+- #779: 보내기(누구나 · 초안 → 「고」 → send · DELETE…RETURNING 한 번 · 하루 30통 카운터 mail_send_count · 받는 사람 10명 · 첨부 10MB · SMTP smtp.naver.com 465 · 보낸 이름 제주아꼼이네 · 답장 In-Reply-To · DATA 뒤 실패는 「보냈을 수 있어요」) · 옮기기(누구나 · UID MOVE 만 · MOVE 미지원이면 멈춤) · 휴지통(관리자만 · 서버 role 확인) · 영구 삭제 명령 0(EXPUNGE·STORE·COPY 없음) · 쓰기 지시 = 처리중 + 24시간 안 · 지시자 이름 결과·audit.
+- #780: 스토어 체험 주문 = 명단 저장 뒤 #92 와 같은 naverConfirmOrders 로 자동 발주확인(배송 없음 → 배송완료) · 클레임 이력 = skipped_claim 표시 · 실패 30분 간격 3회 → failed + 텔레그램 · 설정 experience_notify.auto_confirm(기본 true) · ao-exp.js v=3.
+- 검증 verify-779 47/47 · verify-776 60/60 · verify-775-booking 86/86 · 워커3 읽기 점검 막을 것 0(두 건 모두).
+
 ## v5.9.577 (2026-10-20) — #775 폰에서 체험 예약 창이 열리자마자 닫히던 것
 - 원인: 폰 [+] 시트 닫기 history.go(-1)(비동기)가 창의 pushState 뒤에 도착해 popstate → 창 닫힘(PC 는 시트 칸 없음 · 대표 폴드7 실물) → ao-exp.js 열기를 AkmAoDesk.histIdle 로(최종발주 창과 같은 길) · 창 기록 칸 = aoDesk 깊이 위에 xpExp · ao-exp.js v=2.
 - 재현 시험 옛 길 열림 false → 고친 길 true · 뒤로가기 닫힘 · ui775 30/30.

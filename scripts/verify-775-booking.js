@@ -20,6 +20,12 @@ function fakeDb() {
         if (/^SELECT value FROM agent_office_config WHERE key=\$1/.test(s)) return { rows: a[0] in S.cfg ? [{ value: S.cfg[a[0]] }] : [] };
         if (/^INSERT INTO agent_office_config/.test(s)) { S.cfg[a[0]] = JSON.parse(a[1]); return { rows: [] }; }
         if (/^DELETE FROM agent_office_config/.test(s)) { delete S.cfg.experience_mail_probe_request; return { rows: [] }; }
+        const due30 = r => !r.confirm_at || Date.now() - r.confirm_at > 30 * 60000;   // 마지막 시도 30분 지남
+        if (/jsonb_object_keys\(items\).*confirm_state='pending'/.test(s)) return { rows: S.rows.filter(r => r.source === 'store' && r.confirm_state === 'pending' && (r.confirm_tries || 0) < 3 && due30(r)).flatMap(r => Object.keys(r.items || {})).map(k => ({ k })) };
+        if (/^SELECT confirm_state, confirm_tries, \(confirm_at IS NULL/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ confirm_state: r.confirm_state || null, confirm_tries: r.confirm_tries || 0, due: due30(r) }] : [] }; }
+        if (/^UPDATE experience_bookings SET confirm_state='done'/.test(s)) { const r = byId(a[0]); r.confirm_state = 'done'; r.confirm_error = null; r.confirm_at = r.confirm_at || Date.now(); return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET confirm_state='skipped_claim'/.test(s)) { const r = byId(a[0]); r.confirm_state = 'skipped_claim'; r.confirm_error = a[1]; return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET confirm_state=\$2, confirm_tries=\$3, confirm_error=\$4, confirm_at=NOW\(\)/.test(s)) { const r = byId(a[0]); r.confirm_state = a[1]; r.confirm_tries = a[2]; r.confirm_error = a[3]; r.confirm_at = Date.now(); return { rows: [] }; }
         if (/jsonb_object_keys\(items\)/.test(s)) return { rows: S.rows.filter(r => r.source === 'store').flatMap(r => Object.keys(r.items || {})).filter(k => a[0].includes(k)).map(k => ({ k })) };
         if (/FROM kakao_notify_log k WHERE k.status='experience'/.test(s)) return { rows: S.kakaoExp.filter(k => !S.rows.some(r => r.source === 'store' && r.items && k in r.items)).map(order_key => ({ order_key })) };
         if (/^SELECT \* FROM experience_bookings WHERE ext_key=\$1/.test(s)) { const r = byKey(a[0]); return { rows: r ? [JSON.parse(JSON.stringify(r))] : [] }; }
@@ -200,6 +206,61 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         ok(o2.status === 'canceled', '발주확인 전 취소 = 상태 취소', o2.status);
         const t2 = mk(); t2.db.S.changes = [];
         ok(await t2.M.collectStore() === '체험 주문 변경 0', '변경 없으면 상세조회 0');
+    }
+
+    console.log('\n③-2 #780 체험 주문 자동 발주확인(#92 와 같은 함수 · 가짜 네이버)');
+    {
+        const calls = []; let reply = ids => ({ success: ids, fail: [] });
+        const isAlready = f => f.code === '105306';
+        const t = mk({ naverConfirmOrders: async ids => { calls.push(ids.slice()); return reply(ids); }, naverConfirmIsAlready: isAlready });
+        const d = t.db.S;
+        d.changes = ['P1', 'P2', 'P3', 'P4', 'P6', 'Q1'].map(id => ({ productOrderId: id, lastChangedType: 'PAYED' }));
+        d.detail = [po('P1', 'O1', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '1', '13:30'), 2), po('P2', 'O1', '7673020911', OPT('체험 없이 입장만', '11', '1', '13:30'), 1),
+            po('P3', 'O2', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '십오', '11:00'), 1),
+            po('P4', 'O3', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '2', '10:00'), 1, { claimType: 'CANCEL', claimStatus: 'CANCEL_REQUEST' }),
+            po('P6', 'O4', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '3', '10:00'), 1, { placeOrderStatus: 'OK' }),
+            po('Q1', 'O9', '5531798664', '레몬', 1)];
+        const out = await t.M.collectStore();
+        const by = k => d.rows.find(r => r.ext_key === 'store:' + k);
+        ok(calls.length === 1 && JSON.stringify(calls[0].slice().sort()) === '["P1","P2","P3"]', '발주확인 1번 · 대상 = 결제완료·발주확인 전 체험 줄만(취소 요청 P4 · 이미 발주확인 P6 · 택배 Q1 제외 · 날짜 확인 필요 P3 은 함)', calls);
+        ok(by('O1').confirm_state === 'done' && by('O2').confirm_state === 'done' && !by('O3').confirm_state && !by('O4').confirm_state, '명단 = 발주확인 끝(done) · 대상 아닌 예약은 표시 없음', d.rows.map(r => r.ext_key + ':' + (r.confirm_state || '-')));
+        ok(/발주확인 2/.test(out) && t.audits.some(a => a.action === 'experience_auto_confirm' && a.changes.after.asked === 3), '결과 글 「발주확인 2」 · audit experience_auto_confirm', out);
+        // 다음 틱: 이미 done = 다시 안 함(한 주문 1회)
+        d.changes = [{ productOrderId: 'P1', lastChangedType: 'DELIVERED' }]; calls.length = 0;
+        d.detail = d.detail.map(x => x.productOrder.productOrderId === 'P1' ? po('P1', 'O1', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '1', '13:30'), 2, { productOrderStatus: 'DELIVERED', placeOrderStatus: 'OK' }) : x);
+        await t.M.collectStore();
+        ok(calls.length === 0, '발주확인 끝난 주문 = 다시 안 함', calls);
+        // 실패 → 다음 틱 재시도(변경 목록에 없어도) → 3번 실패 = failed + 텔레그램 1회 · 4번째 없음
+        const f = mk({ naverConfirmOrders: async ids => { calls.push(ids.slice()); return { success: [], fail: ids.map(id => ({ id, code: '104000', message: '일시 오류' })) }; }, naverConfirmIsAlready: isAlready });
+        f.db.S.changes = [{ productOrderId: 'P5', lastChangedType: 'PAYED' }]; f.db.S.detail = [po('P5', 'O5', '7673020911', OPT('내가 직접 딴 노지귤 2kg', '11', '4', '10:00'), 1)];
+        calls.length = 0;
+        await f.M.collectStore(); const o5 = f.db.S.rows.find(r => r.ext_key === 'store:O5');
+        ok(o5.confirm_state === 'pending' && o5.confirm_tries === 1 && /104000 일시 오류/.test(o5.confirm_error), '1번 실패 = pending · 사유', { st: o5.confirm_state, n: o5.confirm_tries, e: o5.confirm_error });
+        f.db.S.changes = []; await f.M.collectStore();
+        ok(calls.length === 1 && o5.confirm_tries === 1, '실패 뒤 30분 안 = 다시 안 함(통째 실패로 몇 분 안에 3번이 다 차지 않게)', calls.length);
+        for (let i = 0; i < 2; i++) { o5.confirm_at = Date.now() - 31 * 60000; await f.M.collectStore(); }
+        ok(o5.confirm_state === 'failed' && o5.confirm_tries === 3 && calls.length === 3 && f.tg.length === 1 && /3번 실패/.test(f.tg[0]), '변경 없어도 다음 틱 재시도 · 3번 실패 = failed + 텔레그램 1회', { st: o5.confirm_state, calls: calls.length, tg: f.tg.length });
+        o5.confirm_at = Date.now() - 31 * 60000; await f.M.collectStore();
+        ok(calls.length === 3 && f.tg.length === 1, '3번 실패 뒤 = 더 안 함 · 알림 1회 그대로', calls.length);
+        // 클레임 이력(반품 거부 등 · 아직 결제완료·발주확인 전)이 남은 주문 = 자동 안 함 · skipped_claim · 화면 문구
+        const sc = mk({ naverConfirmOrders: async ids => { calls.push(ids.slice()); return { success: ids, fail: [] }; }, naverConfirmIsAlready: isAlready });
+        sc.db.S.changes = [{ productOrderId: 'P9', lastChangedType: 'PAYED' }]; sc.db.S.detail = [po('P9', 'O9x', '7673020911', OPT('x', '11', '7', '10:00'), 1, { claimType: 'RETURN', claimStatus: 'RETURN_REJECT' })];
+        calls.length = 0; await sc.M.collectStore();
+        const o9 = sc.db.S.rows[0];
+        ok(calls.length === 0 && o9.status === 'confirmed' && o9.confirm_state === 'skipped_claim' && /RETURN_REJECT/.test(o9.confirm_error), '클레임 이력 주문 = 발주확인 0 · skipped_claim(사유 · 예약은 확정 그대로)', { st: o9.confirm_state, e: o9.confirm_error });
+        const uiS = require('fs').readFileSync(path.join(__dirname, '..', 'public', 'ao-exp.js'), 'utf8');
+        ok(/skipped_claim/.test(uiS) && /자동 안 함 · 클레임 이력 — 센터에서 발주확인/.test(uiS), '화면 = 「자동 안 함 · 클레임 이력 — 센터에서 발주확인」');
+        // 「이미 발주확인」 응답 = 됨 · 설정 auto_confirm false = 안 함
+        const a = mk({ naverConfirmOrders: async ids => ({ success: [], fail: ids.map(id => ({ id, code: '105306', message: '이미 발주확인된 주문' })) }), naverConfirmIsAlready: isAlready });
+        a.db.S.changes = [{ productOrderId: 'P7', lastChangedType: 'PAYED' }]; a.db.S.detail = [po('P7', 'O7', '7673020911', OPT('x', '11', '5', '10:00'), 1)];
+        await a.M.collectStore();
+        ok(a.db.S.rows[0].confirm_state === 'done', '「이미 발주확인」 응답 = 됨(done)', a.db.S.rows[0].confirm_state);
+        const off = []; const n = mk({ naverConfirmOrders: async ids => { off.push(ids); return { success: ids, fail: [] }; } });
+        n.db.S.cfg.experience_notify = { auto_confirm: false }; n.db.S.changes = [{ productOrderId: 'P8', lastChangedType: 'PAYED' }]; n.db.S.detail = [po('P8', 'O8', '7673020911', OPT('x', '11', '6', '10:00'), 1)];
+        await n.M.collectStore();
+        ok(off.length === 0 && n.db.S.rows.length === 1 && !n.db.S.rows[0].confirm_state, '설정 auto_confirm false = 명단만 · 발주확인 0');
+        const uiSrc2 = require('fs').readFileSync(path.join(__dirname, '..', 'public', 'ao-exp.js'), 'utf8');
+        ok(/confirm_state === 'failed'/.test(uiSrc2) && /발주확인 실패/.test(uiSrc2) && /xp-s-ac/.test(uiSrc2), '화면 = 「발주확인 실패」 표시 · 문자 설정에 자동 발주확인 켜기·끄기');
     }
 
     console.log('\n④ 플레이스 메일 수집');

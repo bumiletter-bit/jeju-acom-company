@@ -46,6 +46,7 @@ const dayOf = (s) => { const m = /(\d+)-(\w{3})-(\d{4})/.exec(s); return Date.UT
 // ── 가짜 IMAP 서버(명령 줄 + 리터럴 이어 받기) ─────────────
 function fakeImap(opts) {
     opts = opts || {};
+    const BOX_ = opts.box || BOX, LIST_ = opts.list || LIST;
     const cmds = [];
     const connect = () => {
         const toClient = new PassThrough(), sock = new PassThrough();
@@ -55,15 +56,15 @@ function fakeImap(opts) {
             cmds.push({ line: line.replace(/^LOGIN .*/, 'LOGIN ***'), lits: lits.map(x => x.toString('utf8')) });
             if (opts.failLogin && /^LOGIN /.test(line)) return say(`${tag} NO login failed for u@naver.com pass s3cret\r\n`);
             if (/^LOGIN /.test(line)) return say(`${tag} OK LOGIN\r\n`);
-            if (/^LIST "" "\*"$/.test(line)) return say(LIST.map(([f, n]) => `* LIST (${f}) "/" "${n}"\r\n`).join('') + `${tag} OK LIST\r\n`);
+            if (/^LIST "" "\*"$/.test(line)) return say(LIST_.map(([f, n]) => `* LIST (${f}) "/" "${n}"\r\n`).join('') + `${tag} OK LIST\r\n`);
             let m;
-            if ((m = /^EXAMINE "((?:[^"\\]|\\.)*)"$/.exec(line))) { cur = m[1]; return say(BOX[cur] ? `* ${BOX[cur].length} EXISTS\r\n${tag} OK [READ-ONLY] EXAMINE\r\n` : `${tag} NO no such box\r\n`); }
+            if ((m = /^EXAMINE "((?:[^"\\]|\\.)*)"$/.exec(line))) { cur = m[1]; return say(BOX_[cur] ? `* ${BOX_[cur].length} EXISTS\r\n${tag} OK [READ-ONLY] EXAMINE\r\n` : `${tag} NO no such box\r\n`); }
             if ((m = /^UID SEARCH (.*)$/.exec(line))) {
                 const crit = m[1]; let li = 0; const want = {};
                 for (const k of ['TEXT', 'FROM', 'SUBJECT']) if (new RegExp('\\b' + k + ' \\{').test(crit)) want[k] = lits[li++];
                 const since = /SINCE (\S+)/.exec(crit), before = /BEFORE (\S+)/.exec(crit);
                 const koLit = Object.values(want).some(b => /[^\x00-\x7f]/.test(b.toString('utf8')));
-                const hit = (opts.noKorean && koLit) ? [] : (BOX[cur] || []).filter(x => {
+                const hit = (opts.noKorean && koLit) ? [] : (BOX_[cur] || []).filter(x => {
                     const fromTxt = NM.decodeWords(x.from), subj = NM.decodeWords(x.subject);
                     if (want.TEXT && !(fromTxt + subj + x.text).includes(want.TEXT.toString('utf8'))) return false;
                     if (want.FROM && !fromTxt.includes(want.FROM.toString('utf8'))) return false;
@@ -75,7 +76,7 @@ function fakeImap(opts) {
                 return say(`* SEARCH ${hit.join(' ')}\r\n${tag} OK SEARCH\r\n`);
             }
             if ((m = /^UID FETCH ([\d,]+) \((.*)\)$/.exec(line))) {
-                const uids = m[1].split(',').map(Number), what = m[2], box = BOX[cur] || [];
+                const uids = m[1].split(',').map(Number), what = m[2], box = BOX_[cur] || [];
                 const parts = [];
                 for (const uid of uids) {
                     const x = box.find(y => y.uid === uid); if (!x) continue;
@@ -199,6 +200,37 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         ok(!s5.korean_scan && s5.found === 1, '영문 낱말 = 대비 길 안 탐(서버 검색 그대로)', s5);
     }
 
+    console.log('②-c 더보기(커서 · 메일함 합친 최근순)');
+    {
+        const mk = (uid, day, hh, subj) => ({ uid, date: String(day).padStart(2, '0') + '-Oct-2026 ' + String(hh).padStart(2, '0') + ':00:00 +0900', from: '알림 <noti@x.com>', subject: subj, text: subj,
+            parts: { '1': b64(subj) }, bs: () => '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "BASE64" 8 1 NIL NIL NIL)' });
+        // 받은메일함 25통(uid 순 = 시각 순) + 내 메일함 6통(옮긴 메일 = uid 는 크고 시각은 옛날 · 같은 시각 둘)
+        const big = { INBOX: Array.from({ length: 25 }, (_, i) => mk(i + 1, 1 + i, 9, '알림 ' + (i + 1))), [FOLDER_MINE]: [mk(900, 3, 9, '알림 m1'), mk(901, 12, 9, '알림 m2'), mk(902, 12, 9, '알림 m3'), mk(903, 26, 9, '알림 m4'), mk(904, 1, 8, '알림 m5'), mk(905, 20, 9, '알림 m6')] };
+        const key = (m) => m.folder + '#' + m.uid;
+        const pages = async (F, q) => {
+            const ops = NM.makeMailOps(() => ({ user: 'u@naver.com', pass: 's3cret' }), { imapOpen: F.imapOpenF });
+            const out = []; let more = null, n = 0, res;
+            do { res = await ops.search({ ...q, limit: 20, more }); out.push(res); more = res.next; n++; } while (res.has_more && n < 5);
+            return out;
+        };
+        const F = fakeImap({ box: big });
+        const P = await pages(F, { q: 'noti@x.com' });
+        const all = P.flatMap(p => p.mails);
+        const want = [...big.INBOX.map(x => ({ ...x, folder: 'INBOX' })), ...big[FOLDER_MINE].map(x => ({ ...x, folder: FOLDER_MINE }))]
+            .map(x => ({ k: x.folder + '#' + x.uid, at: Date.parse(x.date.replace(/^(\d+)-(\w+)-(\d+) /, '$2 $1 $3 ')), folder: x.folder, uid: x.uid }))
+            .sort((x, y) => (y.at - x.at) || (x.folder < y.folder ? -1 : x.folder > y.folder ? 1 : 0) || (y.uid - x.uid)).map(x => x.k);
+        ok(P.length === 2 && P[0].shown === 20 && P[0].has_more && P[0].next && P[1].shown === 11 && !P[1].has_more && !P[1].next && P[0].found === 31, '31통 = 20 + 11 · 첫 쪽 has_more·next · 끝 쪽 next 없음', P.map(p => [p.shown, p.has_more, p.page_from]));
+        ok(new Set(all.map(key)).size === 31 && JSON.stringify(all.map(key)) === JSON.stringify(want), '두 쪽을 이으면 31통 빠짐·겹침 0 · 메일함 합친 최근순(옮긴 메일·같은 시각 포함) 그대로', { got: all.map(key).slice(0, 8), want: want.slice(0, 8) });
+        ok(P[1].page_from === 21, '둘째 쪽 번호는 21번부터');
+        const FK = fakeImap({ box: big, noKorean: true });
+        const PK = await pages(FK, { q: '알림' });
+        ok(PK[0].korean_scan && PK.length === 2 && PK[0].shown === 20 && PK[1].shown === 11 && JSON.stringify(PK.flatMap(p => p.mails).map(key)) === JSON.stringify(want), '한글 대비 길도 같은 커서로 20 + 11 · 같은 순서', PK.map(p => [p.shown, p.has_more]));
+        ok(FK.cmds.every(READONLY) && F.cmds.every(READONLY), '더보기도 읽기 전용 명령만');
+        ok(T.checkReq('search', { q: 'x', more: 'zz' }) && T.checkReq('search', { q: 'x', more: 'a'.repeat(401) }) && !T.checkReq('search', { q: 'x', more: P[0].next }), '이상한 커서 = 요청 검사에서 거절 · 받은 next 는 통과');
+        const c = T.decodeCursor(P[0].next);
+        ok(c && c.n === 20 && typeof c.folder === 'string' && c.uid > 0 && c.at > 0, '커서 = 받은 시각·메일함·uid·지금까지 수', c);
+    }
+
     console.log('③ 서버 러너 — 요청 줄 → 결과 줄');
     {
         const cfg = new Map(), files = [], audits = [], age = new Map(), sqls = [];   // age = 행마다 몇 분 묵었는지(가짜 updated_at)
@@ -206,6 +238,7 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
             sqls.push(sql);
             if (/SELECT key, value FROM agent_office_config/.test(sql)) throw new Error('집기는 DELETE … RETURNING 한 번이어야 함(SELECT 뒤 DELETE 금지)');
             if (/DELETE FROM agent_office_config WHERE key = ANY\(\$1\) AND updated_at < NOW\(\) - make_interval\(mins => \$2::int\)/.test(sql)) { for (const k of p[0]) if (cfg.has(k) && (age.get(k) || 0) > p[1]) { cfg.delete(k); age.delete(k); } return { rows: [] }; }
+            if (/key LIKE 'mail\\_draft\\_%'/.test(sql)) return { rows: [] };   // #779 초안 정리(여기선 초안 없음)
             if (/DELETE FROM agent_office_config WHERE key = \$1 RETURNING value/.test(sql)) { const v = cfg.get(p[0]); const had = cfg.has(p[0]); cfg.delete(p[0]); return { rows: had ? [{ value: v }] : [] }; }
             if (/INSERT INTO agent_office_config/.test(sql)) { cfg.set(p[0], JSON.parse(p[1])); age.set(p[0], 0); return { rows: [] }; }
             if (/INSERT INTO report_files/.test(sql)) { files.push({ id: files.length + 1, filename: p[0], data: p[1], size: p[2] }); return { rows: [{ id: files.length }] }; }
@@ -257,20 +290,26 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
             if (/DELETE FROM agent_office_config WHERE key = \$1/.test(sql)) { cfg.delete(p[0]); return { rows: [] }; }
             if (/INSERT INTO agent_office_config/.test(sql)) {   // 서버인 척: 요청이 들어오면 결과를 같은 id 로
                 const v = JSON.parse(p[1]); cfg.set(p[0], v);
-                if (p[0] === 'mail_search_request') cfg.set('mail_search_result', { ok: true, id: v.id, found: 3, shown: 1, folders: ['받은메일함'], mails: [{ uid: 101, folder: 'INBOX', folder_name: '받은메일함', date: 'Wed', from: '농협 <nh@x>', subject: '정산 900101-1234567', preview: '주민번호 900101-1234567 · 전화 010-1234-5678', attachments: [{ part: '2', name: '정산서.pdf', size: 2048 }] }] });
+                if (p[0] === 'mail_search_request') cfg.set('mail_search_result', { ok: true, id: v.id, found: 3, shown: 1, page_from: 1, has_more: true, next: 'eyJhIjoxfQAbCdEf', folders: ['받은메일함'], mails: [{ uid: 101, folder: 'INBOX', folder_name: '받은메일함', date: 'Wed', from: '농협 <nh@x>', subject: '정산 900101-1234567', preview: '주민번호 900101-1234567 · 전화 010-1234-5678', attachments: [{ part: '2', name: '정산서.pdf', size: 2048 }] }] });
                 return { rows: [] };
             }
             if (/FROM pending_orders WHERE id = \$1/.test(sql)) return { rows: [{ id: p[0], created_by: '조가영' }] };
             throw new Error('모르는 SQL ' + sql.slice(0, 80));
         } };
-        let outv; const now = (() => { let x = 0; return () => (x += 1000); })();
+        let outv, err = null; const now = (() => { let x = 0; return () => (x += 1000); })();
         await MF.main(['find', '정산', '--since', '2026-10-01', '--order', '5'], { pool, sleep: async () => { }, now, out: o => { outv = o; } });
         const sent = cfg.get('mail_search_request');
-        ok(outv.ok && outv.found === 3 && /최근 1통/.test(outv.text) && /part 2/.test(outv.text) && /uid 101/.test(outv.text), '찾기 결과 글(건수 · 첨부 part · uid)', outv);
+        ok(outv.ok && outv.found === 3 && /1~1번째/.test(outv.text) && /더 있어요 — 「더 보여줘」라고 하면 다음 10건/.test(outv.text) && /part 2/.test(outv.text) && /uid 101/.test(outv.text), '찾기 결과 글(건수 · 첨부 part · uid)', outv);
         ok(!JSON.stringify(outv).includes('1234567') && JSON.stringify(outv).includes('900101-1******') && JSON.stringify(outv).includes('010-1234-5678'), '주민번호 꼴만 가림(전화번호는 그대로)', outv.mails[0]);
         ok(sent && sent.q === '정산' && sent.since === '2026-10-01' && sent.order_id === 5 && /조가영/.test(sent.by), '요청 줄 = 검색어·날짜·지시·요청자', sent);
-        ok(/오래된 2통/.test(outv.note || ''), '더 있으면 좁히라는 안내');
-        let err = null; try { await MF.main(['find'], { pool, sleep: async () => { }, now, out: () => { } }); } catch (e) { err = e; }
+        ok(outv.has_more && outv.more === 'eyJhIjoxfQAbCdEf' && /--since "2026-10-01"/.test(outv.next_cmd) && /--more eyJhIjoxfQAbCdEf$/.test(outv.next_cmd) && /^더 있어요/.test(outv.more_line), '더보기: has_more · next_cmd(같은 인자 + --more) · 안내 줄', { c: outv.next_cmd, l: outv.more_line });
+        cfg.delete('mail_search_request');
+        await MF.main(['find', '정산', '--more', 'eyJhIjoxfQAbCdEf'], { pool, sleep: async () => { }, now, out: () => { } });
+        ok(cfg.get('mail_search_request').more === 'eyJhIjoxfQAbCdEf', '--more = 요청 줄 more 칸');
+        cfg.delete('mail_search_request');
+        err = null; try { await MF.main(['find', 'x', '--more', 'a b'], { pool, sleep: async () => { }, now, out: () => { } }); } catch (e) { err = e; } ok(err && /--more/.test(err.message), '--more 이상한 글 = 거절');
+        cfg.delete('mail_search_request');
+        err = null; try { await MF.main(['find'], { pool, sleep: async () => { }, now, out: () => { } }); } catch (e) { err = e; }
         ok(err && /하나는 주세요/.test(err.message), '조건 없이 찾기 = 거절');
         err = null; try { await MF.main(['find', 'x', '--limit', '30'], { pool, sleep: async () => { }, now, out: () => { } }); } catch (e) { err = e; }
         ok(err && /1~20/.test(err.message), '--limit 30 = 거절');

@@ -18,7 +18,7 @@ const DEFAULT_TPL_RECV = '[제주아꼼이네 감귤체험장] {이름}님, 예�
 const DEFAULT_TPL_EVE = '[제주아꼼이네 감귤체험장] {이름}님, 내일 {월}월 {일}일 {시간} 방문 예약 안내드려요.\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네") · 주황색 컨테이너 옆 주차장\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요. 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.';
 //   sender = 알리고 발신번호(비우면 ALIGO_SENDER) — 알리고에 미리 등록된 번호만 나감 · 체험장 번호 010-6259-8420 은 등록 확인 뒤 넣는다(대표 10/20 · 문자 API 에 등록 목록 조회가 없음)
 const NOTIFY_DEFAULT = { enabled: false, daily_cap: 40, recv_from: '09:00', recv_to: '21:00', eve_from: '10:00', eve_to: '18:00', sender: '', tpl_recv: DEFAULT_TPL_RECV, tpl_eve: DEFAULT_TPL_EVE,
-    alimtalk: { enabled: false, confirm_tpl: 'UM_6808', remind_tpl: 'UM_6789' } };
+    alimtalk: { enabled: false, confirm_tpl: 'UM_6808', remind_tpl: 'UM_6789' }, auto_confirm: true };   // #780 auto_confirm = 체험 주문 자동 발주확인
 // 알림톡 템플릿 원문(알리고 등록본과 글자 하나까지 같아야 나감 · 변수 #{고객명} #{방문일시} #{인원}) — 🔴 원문이 비어 있으면(null) 알림톡을 시도하지 않고 LMS 만
 //   UM_6808 「제주아꼼이네_감귤체험_예약확인」(10/20 UM_6788 을 지우고 다시 신청 — 「음료」 → 「아메리카노 또는 하겐다즈」) · UM_6789 「제주아꼼이네_감귤체험_방문안내」(10/20 등록 · 검수중) — 원문은 알리고 template/list 에서 그대로 옮긴다
 //   원문 = 총괄이 알리고 화면에 넣은 글자 그대로(10/20 · 줄바꿈 \n · 빈 줄 \n\n · 「·」「■」「"」 그대로) — 승인 뒤 template/list 로 한 번 더 대조
@@ -171,7 +171,7 @@ module.exports = function mountExperience(app, deps) {
     const cfgSet = async (k, v) => pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [k, JSON.stringify(v)]);
     const notifyCfg = async () => {
         const v = (await cfgGet(KEY_NOTIFY)) || {}, va = (v && typeof v.alimtalk === 'object' && v.alimtalk) || {};
-        return { ...NOTIFY_DEFAULT, ...(typeof v === 'object' ? v : {}), enabled: v && v.enabled === true, alimtalk: { ...NOTIFY_DEFAULT.alimtalk, ...va, enabled: va.enabled === true } };
+        return { ...NOTIFY_DEFAULT, ...(typeof v === 'object' ? v : {}), enabled: v && v.enabled === true, auto_confirm: !(v && v.auto_confirm === false), alimtalk: { ...NOTIFY_DEFAULT.alimtalk, ...va, enabled: va.enabled === true } };
     };
     const mailCfg = async () => { const v = (await cfgGet(KEY_MAIL)) || {}; const terms = Array.isArray(v.from_terms) ? v.from_terms.map(x => String(x).trim()).filter(x => /^[\x21-\x7e]{3,60}$/.test(x)).slice(0, 8) : MAIL_DEFAULT.from_terms; return { ...MAIL_DEFAULT, ...v, from_terms: terms.length ? terms : MAIL_DEFAULT.from_terms }; };
 
@@ -195,7 +195,7 @@ module.exports = function mountExperience(app, deps) {
         )`);
         await pool.query(`CREATE INDEX IF NOT EXISTS experience_bookings_visit ON experience_bookings (visit_date)`);
         // 문자 잡기·시도 횟수(중복 발송 방지 · 3번 실패면 멈춤) · 건너뜀 사유(refused = 문자봇 수신거부 기억 · 하루 상한에 안 셈)
-        for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)'])
+        for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)', 'confirm_state VARCHAR(12)', 'confirm_tries INTEGER NOT NULL DEFAULT 0', 'confirm_at TIMESTAMPTZ', 'confirm_error TEXT'])
             await pool.query(`ALTER TABLE experience_bookings ADD COLUMN IF NOT EXISTS ${c}`);
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_mail_seen (message_id VARCHAR(200) PRIMARY KEY, uid BIGINT, booking_id INTEGER, state VARCHAR(16), seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     })().catch(e => console.error('[#775] 표 준비 실패:', e.message)));
@@ -241,6 +241,49 @@ module.exports = function mountExperience(app, deps) {
             [key, group.orderId, vals.name, vals.phone, vals.visit_date, vals.visit_time, vals.date_ok, vals.date_why, vals.exp_count, vals.entry_count, vals.amount, vals.status, vals.option_text, JSON.stringify(items), group.orderedAt ? new Date(group.orderedAt) : null]);
         return { id: r.rows[0] && r.rows[0].id, created: true, status: vals.status };
     }
+    // #780(대표 10/20 「체험 주문 발주확인도 택배처럼 자동으로」) — 배송 없는 상품이라 발주확인 = 바로 배송완료
+    //   대상 = 결제완료(PAYED) · 발주확인 전(placeOrderStatus ≠ OK) · 취소·반품 요청 없음 · 인원 남음(날짜 확인 필요여도 함 — 확인은 명단에서 사람이)
+    //   길 = #92 와 같은 naverConfirmOrders(같은 중계 · 30건씩) · 「이미 발주확인」 응답 = 됨 · 예약마다 confirm_state(pending → done | 3번 실패 = failed + 텔레그램 1회)
+    //   설정 experience_notify.auto_confirm(기본 true · false 면 안 함) · audit experience_auto_confirm
+    async function autoConfirm(pairs) {
+        if (typeof deps.naverConfirmOrders !== 'function' || !pairs.length) return '';
+        const c = await notifyCfg(); if (c.auto_confirm === false) return '';
+        const plan = [];
+        for (const [g, r] of pairs) {
+            if (!r || !r.id) continue;
+            const live = Object.entries(g.items).filter(([, x]) => !x.gone && x.status === 'PAYED' && x.place !== 'OK' && Number(x.qty) > 0);
+            const need = live.filter(([, x]) => !x.claim).map(([k]) => k);
+            const claimed = live.filter(([, x]) => x.claim).map(([, x]) => x.claim);   // 클레임 이력(거부·철회 등)이 남은 줄 = 자동 안 함(총괄 10/20)
+            const row = (await pool.query(`SELECT confirm_state, confirm_tries, (confirm_at IS NULL OR confirm_at < NOW() - interval '30 min') AS due FROM experience_bookings WHERE id=$1`, [r.id])).rows[0] || {};
+            if (!need.length) {
+                if (claimed.length && row.confirm_state !== 'done' && row.confirm_state !== 'skipped_claim') await pool.query(`UPDATE experience_bookings SET confirm_state='skipped_claim', confirm_error=$2 WHERE id=$1`, [r.id, ('클레임 이력 ' + claimed.join(' / ')).slice(0, 300)]);
+                else if (row.confirm_state === 'pending') await pool.query(`UPDATE experience_bookings SET confirm_state='done', confirm_at=COALESCE(confirm_at, NOW()), confirm_error=NULL WHERE id=$1`, [r.id]);
+                continue;
+            }
+            if (row.confirm_state === 'failed' || (Number(row.confirm_tries) || 0) >= 3) continue;
+            if (row.confirm_state === 'pending' && row.due === false) continue;   // 실패 뒤 30분 간격(confirm_at = 마지막 시도 · 통째 실패로 몇 분 안에 3번이 다 차지 않게)
+            plan.push({ id: r.id, need, tries: Number(row.confirm_tries) || 0 });
+        }
+        if (!plan.length) return '';
+        const all = plan.flatMap(p => p.need);
+        let cr; try { cr = await deps.naverConfirmOrders(all); } catch (e) { cr = { success: [], fail: all.map(id => ({ id, code: '', message: String(e.message || e).slice(0, 200) })) }; }
+        const isAlready = typeof deps.naverConfirmIsAlready === 'function' ? deps.naverConfirmIsAlready : () => false;
+        const already = (cr.fail || []).filter(isAlready).map(f => String(f.id));
+        const okSet = new Set([...(cr.success || []).map(String), ...already]);
+        const failMap = new Map((cr.fail || []).filter(f => !okSet.has(String(f.id))).map(f => [String(f.id), f]));
+        let ok = 0, bad = 0, dead = 0;
+        for (const p of plan) {
+            const miss = p.need.filter(id => !okSet.has(id));
+            if (!miss.length) { await pool.query(`UPDATE experience_bookings SET confirm_state='done', confirm_at=NOW(), confirm_error=NULL WHERE id=$1`, [p.id]); ok++; continue; }
+            const tries = p.tries + 1, st = tries >= 3 ? 'failed' : 'pending';
+            const err = miss.map(id => { const f = failMap.get(id) || {}; return (String(f.code || '') + ' ' + String(f.message || '응답 없음')).trim(); }).join(' / ').slice(0, 300);
+            await pool.query(`UPDATE experience_bookings SET confirm_state=$2, confirm_tries=$3, confirm_error=$4, confirm_at=NOW() WHERE id=$1`, [p.id, st, tries, err]);
+            bad++; if (st === 'failed') dead++;
+        }
+        await audit('experience_auto_confirm', null, { after: { asked: all.length, success: (cr.success || []).length, already: already.length, fail: failMap.size, bookings_done: ok, bookings_failed: bad, gave_up: dead } }, { id: null, name: '체험 예약 수집' });
+        if (dead && deps.notifyTelegram) deps.notifyTelegram(`🍊 체험 주문 발주확인 ${dead}건이 3번 실패했어요 — 스마트스토어센터에서 직접 발주확인해 주세요(에이전트 오피스 · 체험 예약 「발주확인 실패」)`);
+        return ` · 발주확인 ${ok}${bad ? ' · 발주확인 실패 ' + bad : ''}`;
+    }
     async function collectStore() {
         await ready;
         const now = Date.now();
@@ -257,6 +300,9 @@ module.exports = function mountExperience(app, deps) {
         const miss = await pool.query(`SELECT k.order_key FROM kakao_notify_log k WHERE k.status='experience' AND k.created_at > NOW() - interval '60 days'
             AND NOT EXISTS (SELECT 1 FROM experience_bookings b WHERE b.source='store' AND b.items ? k.order_key) LIMIT 200`);
         for (const r of miss.rows) ids.add(String(r.order_key));
+        // #780 발주확인을 아직 못 한 예약(실패 뒤 다음 틱 · 3회 상한) — 그 상품주문을 다시 읽어 지금 상태로 판단
+        const retry = await pool.query(`SELECT jsonb_object_keys(items) AS k FROM experience_bookings WHERE source='store' AND confirm_state='pending' AND confirm_tries < 3 AND (confirm_at IS NULL OR confirm_at < NOW() - interval '30 min')`);
+        for (const r of retry.rows) ids.add(String(r.k));
         if (!ids.size) return '체험 주문 변경 0';
         const expIds = await deps.experienceProductIds();
         const groups = new Map(); let seenExp = 0;
@@ -280,19 +326,20 @@ module.exports = function mountExperience(app, deps) {
                 if (!digits(tel) && deps.resolveReceiver) { try { tel = await deps.resolveReceiver(tel, poid); } catch (_) { } }
                 const g = groups.get(orderId) || { orderId, name: od.ordererName || null, phone: null, orderedAt: od.paymentDate || od.orderDate || null, items: {} };
                 const dg = digits(tel); if (dg.length >= 10 && !(deps.isMaskedTel && deps.isMaskedTel(tel))) g.phone = dg;
-                g.items[poid] = { kind: optKind(parsed.option || opt), qty: gone || qty === 0 ? 0 : qty, amount: gone ? 0 : (Number(po.totalPaymentAmount) || 0), status: st, claim, gone, option_text: opt.slice(0, 400), parsed };
+                g.items[poid] = { kind: optKind(parsed.option || opt), qty: gone || qty === 0 ? 0 : qty, amount: gone ? 0 : (Number(po.totalPaymentAmount) || 0), status: st, place: String(po.placeOrderStatus || ''), claim, gone, option_text: opt.slice(0, 400), parsed };
                 groups.set(orderId, g);
             }
         }
-        let made = 0, upd = 0, canceled = 0, needCheck = 0;
+        let made = 0, upd = 0, canceled = 0, needCheck = 0; const pairs = [];
         for (const g of groups.values()) {
-            const r = await upsertStore(g);
+            const r = await upsertStore(g); pairs.push([g, r]);
             if (r.created) made++; else upd++;
             if ((r.status === 'canceled' || r.status === 'returned') && r.prev !== r.status) canceled++;
             const row = (await pool.query('SELECT date_ok FROM experience_bookings WHERE id=$1', [r.id])).rows[0]; if (row && !row.date_ok) needCheck++;
         }
         if (made || canceled) await audit('experience_store_collect', null, { after: { made, upd, canceled, need_check: needCheck } }, { id: null, name: '체험 예약 수집' });
-        return `체험 주문 ${seenExp}줄 · 예약 새로 ${made} · 고침 ${upd} · 취소·반품 ${canceled}${needCheck ? ' · 날짜 확인 필요 ' + needCheck : ''}`;
+        const conf = await autoConfirm(pairs);   // #780 명단 저장 뒤 발주확인(문자는 그 뒤 experience_sms 틱)
+        return `체험 주문 ${seenExp}줄 · 예약 새로 ${made} · 고침 ${upd} · 취소·반품 ${canceled}${needCheck ? ' · 날짜 확인 필요 ' + needCheck : ''}${conf}`;
     }
 
     // ── 플레이스 메일 수집 ───────────────────────────────────────────────
@@ -426,7 +473,7 @@ module.exports = function mountExperience(app, deps) {
 
     // ── 화면 API ─────────────────────────────────────────────────────────
     const ROW_COLS = `id, source, order_no, name, phone, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time, exp_count, entry_count, infant_count, amount, status, date_ok, date_why, date_fixed, option_text, memo,
-        sms_recv_at, sms_eve_at, sms_error, sms_recv_tries, sms_eve_tries, sms_skip, visited_at, visited_by, ordered_at, created_at, (raw IS NOT NULL) AS has_raw`;
+        sms_recv_at, sms_eve_at, sms_error, sms_recv_tries, sms_eve_tries, sms_skip, confirm_state, confirm_error, visited_at, visited_by, ordered_at, created_at, (raw IS NOT NULL) AS has_raw`;
     async function summary() {
         await ready;
         const today = kstDay(), tomorrow = addDays(today, 1);
@@ -484,6 +531,7 @@ module.exports = function mountExperience(app, deps) {
         try {
             const b = req.body || {}, cur = await notifyCfg(), next = { ...cur };
             if ('enabled' in b) next.enabled = b.enabled === true;
+            if ('auto_confirm' in b) next.auto_confirm = b.auto_confirm !== false;   // #780
             if ('daily_cap' in b) { const n = Math.floor(Number(b.daily_cap)); if (!(n >= 1 && n <= 300)) return res.status(400).json({ error: '하루 상한은 1~300' }); next.daily_cap = n; }
             for (const k of ['recv_from', 'recv_to', 'eve_from', 'eve_to']) if (k in b) { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[k]))) return res.status(400).json({ error: '시각은 HH:MM' }); next[k] = String(b[k]); }
             if ('sender' in b) { const d = String(b.sender || '').replace(/\D/g, ''); if (d && !/^0\d{8,11}$/.test(d)) return res.status(400).json({ error: '발신번호는 0 으로 시작하는 9~12자리(비우면 회사 기본 번호)' }); next.sender = d; }
