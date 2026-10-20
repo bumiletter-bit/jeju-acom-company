@@ -130,7 +130,15 @@ function HINTS(id) {
         + `· 답변은 한국어로, 평소 기준(업무지식.md) 그대로 씁니다.`;
 }
 
-const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, running: new Map(), directBusy: false, fast: fast.settings(null), key: null, planTried: new Set(), lastTrim: Date.now() };
+const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, running: new Map(), directBusy: false, fast: fast.settings(null), key: null, planTried: new Set(), lastTrim: Date.now(), subAuthFailAt: 0 };
+
+// #798 대표 요금제(이 PC 의 Claude 로그인)가 만료되면 대표 지시가 「Failed to authenticate: OAuth session expired」로 3번 실패 → 오류(10/20 밤 실사고 #2980~#2982).
+//   로그인은 PC 터미널에서 /login 을 쳐야만 풀리므로, 그동안은 대표 지시도 콘솔 API 키로 대신 돌린다(요금 분리 #474 의 예외 · 창구가 멈추는 것보다 낫다 — 대표 지시 10/21).
+//   한 번 만료를 보면 SUB_RETRY_MS 동안 대표 요금제를 건너뛰고(헛시도 방지), 그 뒤 다시 대표 요금제를 먼저 써 본다(/login 하면 저절로 돌아옴).
+const SUB_RETRY_MS = 30 * 60 * 1000;
+const SUB_LOGIN_NOTE = '대표 요금제 로그인이 만료됐습니다 — 대표 지시는 당분간 콘솔 키로 처리합니다. PC 의 Claude Code 터미널에서 /login 을 해 주세요';
+const subAuthDown = () => st.subAuthFailAt && Date.now() - st.subAuthFailAt < SUB_RETRY_MS;
+const isAuthFail = r => !!(r && r.info && (r.info.error === 'authentication_failed' || /Failed to authenticate|OAuth session expired/i.test(r.info.result_text || '')));
 
 function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 · opt = { model, prompt, stream, runId, live }
     opt = opt || {};
@@ -499,7 +507,17 @@ async function handle(order, key) {
             let inl = null;
             if (got && f.inline) { try { inl = fast.inlineFinalOrder(got, p => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { return null; } }); } catch (e) { inl = null; log(`#${order.id} 규칙 미리 넣기 실패(종전 방식으로): ${e.message}`); } }
             if (inl) log(`#${order.id} 규칙 문서 미리 넣음 (${inl.name}${inl.withData ? ' + 자료' : ''} · ${inl.text.length}자)`);
-            if (got) r = await run(order, key, { model: rt.model, prompt: promptPrefetched(order, got, inl), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' });
+            if (got) {
+                const ropt = { model: rt.model, prompt: promptPrefetched(order, got, inl), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' };
+                r = await run(order, key, ropt);
+                // #798 대표 요금제 로그인 만료 → 같은 지시를 콘솔 키로 바로 다시(횟수 안 씀)
+                if (!key && st.key && isAuthFail(r)) {
+                    st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
+                    log(`#${order.id} 대표 요금제 로그인 만료(${(r.info.result_text || r.info.error || '').slice(0, 80)}) → 콘솔 키로 다시 돌림`);
+                    if (got.run_id) await appendStep(got.run_id, 'lane', '🔑 대표 요금제 만료 → 콘솔 키').catch(() => { });
+                    r = await run(order, st.key, ropt);
+                } else if (!key && !isAuthFail(r) && r.code === 0) { st.subAuthFailAt = 0; if (st.note === SUB_LOGIN_NOTE) st.note = ''; }
+            }
             // 미리 넣은 경우 자료 파일은 여기서 지운다(창구에게 「지우지 말라」고 했으므로) — 다시 시도하게 되면 받기(claim)가 파일을 새로 쓴다
             if (inl && inl.cleanup) { try { fs.unlinkSync(inl.cleanup); } catch (e) { /* 이미 없음 */ } }
         } else {
@@ -507,7 +525,13 @@ async function handle(order, key) {
             if (f.stream) {   // 미리 받기를 껐을 때: 단계 기록에 쓸 실행 번호는 창구가 받은 뒤에야 생긴다 → 잠깐 기다렸다 찾는다
                 setTimeout(async () => { try { runId = (await pool.query(`SELECT run_id FROM pending_orders WHERE id = $1`, [order.id])).rows[0].run_id; } catch (e) { /* 무시 */ } }, 20000).unref();
             }
-            r = await runDesk(order, key, { model: rt.model, stream: f.stream, lean: f.lean, effort: f.effort, get runId() { return runId; }, live: f.stream && order.status !== '승인됨' });
+            const ropt = { model: rt.model, stream: f.stream, lean: f.lean, effort: f.effort, get runId() { return runId; }, live: f.stream && order.status !== '승인됨' };
+            r = await runDesk(order, key, ropt);
+            if (!key && st.key && isAuthFail(r)) {   // #798
+                st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
+                log(`#${order.id} 대표 요금제 로그인 만료 → 콘솔 키로 다시 돌림`);
+                r = await runDesk(order, st.key, ropt);
+            }
         }
     } catch (e) { log(`#${order.id} 처리 중 오류: ${e.message}`); }
     finally { clearInterval(keep); try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* respond.js 가 이미 치웠거나 없음(#598 A) */ } }
@@ -566,6 +590,7 @@ async function slowTick() {
     st.key = key;
     if (!key) st.note = '콘솔 API 키 파일이 없습니다 (' + KEY_FILE + ')';
     else if (st.paused) st.note = '꺼 둔 상태입니다 — 화면에서 [창구 켜기]를 누르면 다시 받습니다';
+    else if (subAuthDown()) st.note = SUB_LOGIN_NOTE;   // #798
     else st.note = '';
 
     const active = !!key && !st.paused;
@@ -588,7 +613,9 @@ async function tick(mode) {
     if (mode === 'dry') { const rt = st.fast.off ? { lane: 'ai', model: MODEL, why: '종전 방식' } : fast.route(o, FORCED_MODEL); log(`(시험) 처리할 지시 #${o.id} ${o.status} → ${rt.lane} ${rt.model || ''} (${rt.why})`); return true; }
     try { trust.ensure(); } catch (e) { /* 신뢰 등록은 창을 직접 열 때만 필요하다 */ }
     if (direct) st.directBusy = true;
-    const p = handle(o, (st.sub || mine) ? null : key).catch(e => log(`#${o.id} 처리 실패: ${e.message}`)).finally(() => { if (direct) st.directBusy = false; });
+    // #798 대표 요금제가 만료된 것을 본 뒤 30분은 대표 지시도 콘솔 키로(헛시도 없이) · --sub 시험은 그대로 대표 요금제
+    const useKey = st.sub ? null : (mine && !subAuthDown()) ? null : key;
+    const p = handle(o, useKey).catch(e => log(`#${o.id} 처리 실패: ${e.message}`)).finally(() => { if (direct) st.directBusy = false; });
     if (mode && !st.multi) await p;   // 시험(--once 1건)은 끝까지 기다린다 · --ids 여러 건과 상주 모드는 바로 다음 자리를 본다
     return true;
 }

@@ -276,7 +276,8 @@ function streamWatcher(cb) {
                 return;
             }
             if (j.type === 'result') {
-                try { cb.onResult && cb.onResult({ cost_usd: j.total_cost_usd, turns: j.num_turns, api_ms: j.duration_api_ms, is_error: !!j.is_error }); } catch (e) { /* 무시 */ }
+                // #798: error 열쇠(예 authentication_failed = 대표 요금제 로그인 만료)와 결과 글 앞부분도 넘긴다 — launcher 가 콘솔 키로 다시 돌릴지 판단
+                try { cb.onResult && cb.onResult({ cost_usd: j.total_cost_usd, turns: j.num_turns, api_ms: j.duration_api_ms, is_error: !!j.is_error, error: j.error || null, result_text: typeof j.result === 'string' ? j.result.slice(0, 300) : '' }); } catch (e) { /* 무시 */ }
             }
         },
     };
