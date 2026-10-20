@@ -1,3 +1,7 @@
+## v5.9.577 (2026-10-20) — #775 폰에서 체험 예약 창이 열리자마자 닫히던 것
+- 원인: 폰 [+] 시트 닫기 history.go(-1)(비동기)가 창의 pushState 뒤에 도착해 popstate → 창 닫힘(PC 는 시트 칸 없음 · 대표 폴드7 실물) → ao-exp.js 열기를 AkmAoDesk.histIdle 로(최종발주 창과 같은 길) · 창 기록 칸 = aoDesk 깊이 위에 xpExp · ao-exp.js v=2.
+- 재현 시험 옛 길 열림 false → 고친 길 true · 뒤로가기 닫힘 · ui775 30/30.
+
 ## v5.9.576 (2026-10-20) — #776 네이버 메일 한글 찾기 대비 길
 - 실측: 네이버 IMAP 은 SEARCH CHARSET UTF-8 한글 낱말을 오류 없이 받고 늘 0통(영문·날짜는 정상) → 한글 낱말 + 서버 0통이면 날짜·영문 조건으로만 서버 검색 + 메일함마다 최근 500통(합 2천) 제목·보낸 사람 머리말(BODY.PEEK[HEADER.FIELDS]) 받아 직접 대조 · 결과 korean_scan · 본문 속 한글은 못 찾음(기간 --since/--until 로 좁히면 그 안에서) · 접속 상한 120초 · 창구 기다림 3분.
 - 검증 verify-776-mail 51/51 · verify-775-booking 73/73.
