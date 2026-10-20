@@ -16130,6 +16130,56 @@ function npwDetailNorm(h) {
         .replace(/\s+/g, ' ').replace(/>\s+</g, '><').trim();
 }
 const npwDetailSame = (a, b) => npwDetailNorm(a) === npwDetailNorm(b);
+// #773 옵션 묶음 이름(주문서 옵션 글 「묶음: 값」 앞부분) · 즉시할인(WON/PERCENT) · 입력형 옵션(optionCustom = 손님이 직접 적는 칸 · groupName)
+const NPW_GROUP_PATH = ['originProduct', 'detailAttribute', 'optionInfo', 'optionCombinationGroupNames'];
+const NPW_DISC_PATH = ['originProduct', 'customerBenefit', 'immediateDiscountPolicy', 'discountMethod'];
+const NPW_CUSTOM_PATH = ['originProduct', 'detailAttribute', 'optionInfo', 'optionCustom'];
+const NPW_DISC_MAX_RATE = 0.5;   // 대표 기준: 판매가 대비 할인 50% 넘으면 거절
+const NPW_MAX_CUSTOM = 10;
+const npwCustoms = (j) => { const a = npwGet(j, NPW_CUSTOM_PATH); return Array.isArray(a) ? a : []; };
+// #773 링크 카드(se-oglink · se-material) 함정(#762·#768 실사고): <a> 안에 div·p 가 든 카드를 통째 PUT 하면 네이버가 그 태그를 「&lt;div class=…&gt;」 글자로 바꿔
+//   손님 화면에 코드가 보인다(상세를 안 바꾼 patch 도 상세가 같이 가므로 똑같이) → PUT 전에 찾아 멈추거나(card_fix 없을 때) 글 링크 한 줄로 바꾼다(card_fix)
+//   risky = 아직 멀쩡하지만 PUT 하면 깨질 카드 · broken = 이미 코드 글자가 보이는 카드(PUT 해도 더 나빠지진 않음 · card_fix 면 같이 고침)
+const NPW_CARD_MSG = '상세에 링크 카드(블로그·지도·상품 카드)가 있어 통째 저장하면 네이버가 카드 속 태그를 코드 글자로 바꿔 손님 화면에 보여요(#762·#768) — 카드를 글 링크로 바꿔 보내려면 card_fix';
+function npwCards(html) {
+    const s = String(html || ''), out = [];
+    const re = /<div class="se-component (se-oglink|se-material)\b[^"]*"[^>]*>/g; let m;
+    while ((m = re.exec(s))) {
+        // 컴포넌트 끝 = div 짝 맞춤(주석·이미 글자가 된 &lt;div 는 안 셈)
+        const tk = /<!--[\s\S]*?-->|<div\b[^>]*>|<\/div\s*>/gi; tk.lastIndex = m.index; let depth = 0, end = -1, t;
+        while ((t = tk.exec(s))) { if (t[0].startsWith('<!--')) continue; depth += t[0].startsWith('</') ? -1 : 1; if (depth === 0) { end = tk.lastIndex; break; } }
+        if (end < 0) { out.push({ kind: m[1].slice(3), start: m.index, end: -1, risky: true, broken: false, link: null, title: null }); break; }
+        const chunk = s.slice(m.index, end), live = chunk.replace(/<!--[\s\S]*?-->/g, '');
+        const broken = /&lt;(div|p)\b/i.test(live);
+        const risky = !broken && /<a\b[^>]*>(?:(?!<\/a\s*>)[\s\S])*?<(div|p)\b/i.test(live);   // 이미 깨진 카드는 PUT 해도 더 나빠지지 않음(10/20 7673020911 보관본 99→100 실측)
+        let link = null, title = null;
+        const ld = chunk.match(/data-linkdata="([^"]*)"/);
+        if (ld) { try { const j = JSON.parse(ld[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')); link = j.link || null; title = j.title || null; } catch (_) { const x = ld[1].replace(/&quot;/g, '"').match(/"link"\s*:\s*"(https?:[^"]+)"/); if (x) link = x[1]; } }
+        if (!link) { const h = live.match(/<a\b[^>]*\bhref="(https?:[^"]+)"/i); if (h) link = h[1].replace(/&amp;/g, '&'); }
+        if (!title) { const tt = live.match(/class="se-(?:oglink|material)-title"[^>]*>([\s\S]*?)<\//); if (tt) title = tt[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || null; }
+        out.push({ kind: m[1].slice(3), start: m.index, end, risky, broken, link: link && /^https?:\/\//.test(link) ? link : null, title });
+        re.lastIndex = end;
+    }
+    return out;
+}
+const npwCardRisk = (html) => npwCards(html).filter(c => c.risky).map(c => ({ kind: c.kind, title: c.title, link: c.link }));
+// card_fix: 깨질·깨진 카드를 가운데 글 링크 한 줄(👉 제목)로 · 링크를 못 찾은 카드가 있으면 ok false(안 보냄)
+function npwFixCards(html) {
+    const cards = npwCards(html).filter(c => c.risky || c.broken);
+    if (!cards.length) return { ok: true, html: String(html || ''), n: 0, cards: [] };
+    const bad = cards.filter(c => c.end < 0 || !c.link);
+    if (bad.length) return { ok: false, html: String(html || ''), n: 0, cards: bad.map(c => ({ kind: c.kind, title: c.title })) };
+    const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    let s = String(html), n = 0;
+    for (const c of cards.slice().reverse()) {
+        const text = c.title || (c.kind === 'material' ? '상품 보러 가기' : '바로 가기');
+        const id = 'SE-773' + String(c.start).padStart(8, '0') + '-card-4000-8000-000000000773';
+        const line = `<div class="se-component se-text se-l-default" id="${id}"><div class="se-component-content"><div class="se-section se-section-text se-l-default"><div class="se-module se-module-text"><p class="se-text-paragraph se-text-paragraph-align-center"><span class="se-fs-fs16 se-ff-"><b><a href="${esc(c.link)}">👉 ${esc(text)}</a></b></span></p></div></div></div></div>`;
+        s = s.slice(0, c.start) + line + s.slice(c.end); n++;
+    }
+    return { ok: true, html: s, n, cards: cards.map(c => ({ kind: c.kind, title: c.title, link: c.link, broken: c.broken })) };
+}
+const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -16178,6 +16228,7 @@ function npwSaleCheck(j, ref) {
     if (priceKey(j) !== priceKey(ref)) bad.push('option_price');
     if (op.detailContent !== rp.detailContent) bad.push('detail');
     if (rep(j) !== rep(ref)) bad.push('rep_image');
+    if (JSON.stringify(npwDiscount(j)) !== JSON.stringify(npwDiscount(ref))) bad.push('discount');   // #773 즉시할인(결제가)도 ref 와 같아야
     return { ok: bad.length === 0, bad, status: op.statusType ?? null, stock_total: stock, options_n: oc.length };
 }
 // #733-B 옵션 추가(options_add) — 새 조합은 id 없이 배열 끝에 · 단 수(옵션명 칸 수)는 지금 상품과 같아야 · 삭제 없음(되돌리기 = usable false)
@@ -16222,6 +16273,19 @@ function npwApplyPatch(j, patch) {
         const oc = npwGet(j, ['originProduct', 'detailAttribute', 'optionInfo', 'optionCombinations']);
         if (Array.isArray(oc)) for (const p of patch.options_add) oc.push(npwAddCombo(p));
     }
+    // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름 — 준 칸만(즉시할인은 discountMethod 의 value·unitType 만 · 다른 칸 그대로)
+    if (patch.group_names && typeof patch.group_names === 'object') {
+        const g = npwGet(j, NPW_GROUP_PATH);
+        if (g && typeof g === 'object') for (const n of [1, 2, 3]) if (('name' + n) in patch.group_names) g['optionGroupName' + n] = patch.group_names['name' + n];
+    }
+    if (patch.discount && typeof patch.discount === 'object') {
+        const d = npwGet(j, NPW_DISC_PATH);
+        if (d && typeof d === 'object') { d.value = patch.discount.value; d.unitType = patch.discount.unitType; }
+    }
+    for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) {
+        const c = npwCustoms(j).find(x => String(x.id) === String(p.id));
+        if (c) c.groupName = p.name;
+    }
     return j;
 }
 // 결제가 = 판매가 − 즉시할인 + 옵션 추가금 · 즉시할인 PERCENT = floor(판매가 × 값 / 100) · 그 밖 = 값(원) — PERCENT 끝자리는 실조회로 확정 예정(문서 2차-2)
@@ -16258,9 +16322,53 @@ function npwCheckPatch(patch, before) {
     const keys = Object.keys(patch);
     if (!keys.length) return 'patch 가 비었어요';
     if (keys.includes('stock')) return NPW_STOCK_MSG;
-    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add'];
+    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'group_names', 'discount', 'custom_options'];
     const bad = keys.filter(k => !allowed.includes(k));
     if (bad.length) return '허용되지 않은 칸: ' + bad.join(', ') + ' (허용 = ' + allowed.join(', ') + ')';
+    if ('group_names' in patch) {   // #773 옵션 묶음 이름 — 지금 있는 묶음만 · 1~50자
+        const gn = patch.group_names, g = npwGet(before, NPW_GROUP_PATH) || {};
+        if (!gn || typeof gn !== 'object' || Array.isArray(gn) || !Object.keys(gn).length) return 'group_names 가 비었어요({ name1?, name2?, name3? })';
+        const extra = Object.keys(gn).filter(k => !['name1', 'name2', 'name3'].includes(k));
+        if (extra.length) return 'group_names 칸은 name1·name2·name3 만: ' + extra.join(', ');
+        for (const [k, v] of Object.entries(gn)) {
+            const cur = g['optionGroupName' + k.slice(4)];
+            if (typeof cur !== 'string' || !cur.trim()) return `이 상품엔 옵션 묶음 ${k.slice(4)}번이 없어요(묶음 추가는 센터에서)`;
+            if (typeof v !== 'string' || !v.trim() || v.length > NPW_MAX_OPT_NAME) return `묶음 이름 ${k.slice(4)}번은 1~${NPW_MAX_OPT_NAME}자 글`;
+            if (v === cur) return `묶음 이름 ${k.slice(4)}번이 지금과 같아요`;
+        }
+    }
+    if ('custom_options' in patch) {   // #773 입력형 옵션(optionCustom · 손님이 직접 적는 칸) 이름 — id 로만
+        const cs = patch.custom_options, have = npwCustoms(before), seen = new Set();
+        if (!Array.isArray(cs) || !cs.length) return 'custom_options 가 비었어요([{ id, name }])';
+        if (cs.length > NPW_MAX_CUSTOM) return `입력형 옵션은 한 번에 ${NPW_MAX_CUSTOM}개까지`;
+        for (const p of cs) {
+            if (!p || typeof p !== 'object' || p.id == null || p.id === '') return '입력형 옵션은 id 로 골라요(show 의 입력형 옵션 표)';
+            const extra = Object.keys(p).filter(k => k !== 'id' && k !== 'name');
+            if (extra.length) return `입력형 옵션 ${p.id}: 허용되지 않은 칸 ${extra.join(', ')}(이름만)`;
+            const id = String(p.id), c = have.find(x => String(x.id) === id);
+            if (seen.has(id)) return `입력형 옵션 ${id} 이 두 번 들어 있어요`;
+            seen.add(id);
+            if (!c) return `입력형 옵션 ${id} 은 이 상품에 없어요(입력형 옵션 추가는 센터에서)`;
+            if (typeof p.name !== 'string' || !p.name.trim() || p.name.length > NPW_MAX_OPT_NAME) return `입력형 옵션 ${id}: 이름은 1~${NPW_MAX_OPT_NAME}자 글`;
+            if (p.name === c.groupName) return `입력형 옵션 ${id}: 지금과 같은 이름이에요`;
+        }
+    }
+    if ('discount' in patch) {   // #773 즉시할인 — 지금 할인이 있는 상품만(처음 걸기는 센터) · 값 = 원 또는 %
+        const d = patch.discount, cur = npwGet(before, NPW_DISC_PATH);
+        if (!cur || typeof cur !== 'object' || cur.value == null) return '지금 즉시할인이 없는 상품이에요 — 처음 할인 걸기는 스마트스토어센터에서';
+        if (!d || typeof d !== 'object' || Array.isArray(d)) return 'discount 는 { unitType: WON|PERCENT, value }';
+        const extra = Object.keys(d).filter(k => k !== 'unitType' && k !== 'value');
+        if (extra.length) return 'discount 칸은 unitType·value 만: ' + extra.join(', ');
+        if (!['WON', 'PERCENT'].includes(d.unitType)) return '할인 방식은 WON(원) 또는 PERCENT(%)';
+        if (!Number.isInteger(d.value) || d.value <= 0) return '할인 값은 1 이상 정수(원 또는 %)';
+        if (d.unitType === 'PERCENT' && d.value > 99) return '할인 % 는 99 까지';
+        if (d.unitType === cur.unitType && d.value === Number(cur.value)) return '즉시할인이 지금과 같아요';
+    }
+    if ('discount' in patch || ('sale_price' in patch && npwGet(before, NPW_DISC_PATH))) {   // 판매가 대비 할인율 50% 상한(바뀐 뒤 기준)
+        const exp0 = npwApplyPatch(npwClone(before), patch), sp = Number(npwGet(exp0, NPW_FIELDS.sale_price)) || 0, dd = npwDiscount(exp0);
+        const off = dd.unitType === 'PERCENT' ? Math.floor(sp * dd.value / 100) : dd.value;
+        if (sp > 0 && off / sp > NPW_DISC_MAX_RATE) return `할인이 판매가의 ${Math.round(off / sp * 1000) / 10}% 예요 — ${NPW_DISC_MAX_RATE * 100}% 넘는 할인은 안 받아요(대표 기준)`;
+    }
     if ('options_add' in patch) {
         const adds = patch.options_add;
         if (!Array.isArray(adds) || !adds.length) return 'options_add 가 비었어요';
@@ -16318,7 +16426,7 @@ function npwCheckPatch(patch, before) {
     }
     const exp = npwApplyPatch(npwClone(before), patch);   // 보관본 + patch 기대값
     // 결제가 상한 — 0 이하 · 보관본 대비 10배 이상/10분의 1 이하는 숫자 실수로 보고 거절
-    if ('sale_price' in patch || (patch.options || []).some(p => p && 'price' in p) || 'options_add' in patch) {   // 새 옵션 = 기본 결제가(판매가 − 할인) 대비
+    if ('sale_price' in patch || 'discount' in patch || (patch.options || []).some(p => p && 'price' in p) || 'options_add' in patch) {   // 새 옵션 = 기본 결제가(판매가 − 할인) 대비
         const bo = npwOptions(before), eo = npwOptions(exp);
         const pairs = eo.length ? eo.map(o => [npwPay(before, bo.find(x => String(x.id) === String(o.id))), npwPay(exp, o), o.id]) : [[npwPay(before, {}), npwPay(exp, {}), '상품']];
         for (const [a, b, id] of pairs) {
@@ -16360,6 +16468,11 @@ function npwExpected(patch, base, allStock) {
     const nAdd = Array.isArray(patch.options_add) ? patch.options_add.length : 0;
     for (let i = 0; i < nAdd; i++) exp.push(`originProduct.detailAttribute.optionInfo.optionCombinations[${oc.length + i}]`);
     if (nAdd) exp.push('originProduct.stockQuantity');
+    // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름(base 의 자리 번호로)
+    for (const k of Object.keys((patch.group_names && typeof patch.group_names === 'object') ? patch.group_names : {})) exp.push(npwPathStr(NPW_GROUP_PATH) + '.optionGroupName' + k.slice(4));
+    if ('discount' in patch) exp.push(npwPathStr(NPW_DISC_PATH));
+    const cu = npwCustoms(base || {});
+    for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) { const i = cu.findIndex(x => String(x.id) === String(p.id)); if (i >= 0) exp.push(`${npwPathStr(NPW_CUSTOM_PATH)}[${i}].groupName`); }
     if (allStock) exp.push(npwPathStr(NPW_FIELDS.status));   // 재고만 넣어 판매 복귀(auto_sale) = 상태도 기대
     if (allStock || 'status' in patch) exp.push(NPW_OPT_STOCK_RE);
     if (allStock || 'status' in patch || (patch.options || []).some(p => p && 'stock' in p)) exp.push('originProduct.stockQuantity');
@@ -16597,8 +16710,17 @@ async function naverProductWriteRun(req, deps) {
         const getNow = async () => callG({ method: 'GET', path: NPW_PRODUCT_PATH(pno) });
         // 통째 PUT 은 늘 상세가 같이 감 → 상세 그림 링크를 일반 <a href> 로(걸러진 주석에서도 되살림 · deps.convertImageLinks = naver-detail-links.js)
         let links_converted = 0, sentDetail = null;   // sentDetail = 마지막 통째 PUT 이 실제로 보낸 상세(거름 판정 기준)
+        // #773 링크 카드 함정 — 통째 PUT 마다 상세의 깨질 카드를 본다: card_fix 면 글 링크로 바꿔 보내고 · 아니면 PUT 하지 않고 멈춤(apply·revert 가 먼저 멈춤 · 이건 마지막 안전망)
+        const cardFix = req && req.card_fix === true; let cards_fixed = 0, cards_fixed_list = [];
         const putChannel = async (j) => {
-            const b = npwPutBody(j), d = npwGet(b, NPW_FIELDS.detail_html);
+            const b = npwPutBody(j);
+            const d0 = npwGet(b, NPW_FIELDS.detail_html);
+            if (typeof d0 === 'string') {
+                const risk = npwCardRisk(d0);
+                if (risk.length && !cardFix) { const e = new Error(NPW_CARD_MSG); e.cardRisk = risk; throw e; }
+                if (cardFix) { const f = npwFixCards(d0); if (!f.ok) { const e = new Error('링크 카드의 주소를 못 찾아 글 링크로 못 바꿔요'); e.cardRisk = f.cards; throw e; } if (f.n) { npwSet(b, NPW_FIELDS.detail_html, f.html); cards_fixed += f.n; cards_fixed_list = f.cards; } }
+            }
+            const d = npwGet(b, NPW_FIELDS.detail_html);
             if (typeof deps.convertImageLinks === 'function' && typeof d === 'string') {
                 const r = deps.convertImageLinks(d);
                 if (r && r.converted > 0 && typeof r.html === 'string') { npwSet(b, NPW_FIELDS.detail_html, r.html); links_converted += r.converted; }
@@ -16684,7 +16806,7 @@ async function naverProductWriteRun(req, deps) {
             if ((patch && patch.status === 'SUSPENSION' || (patch && patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'SUSPENSION')) && !row.origin_product_no) return fail('원상품 번호를 못 찾은 보관본이라 판매 상태를 바꿀 수 없어요');
             // #721-B 통째 PUT 잠금: 통째 PUT 을 타는 길(상세·옵션·판매가·품목명·품절 걸기/풀기)은 설정 'naver_product_write'.put_enabled === true 일 때만
             //   · change-status 길(판매중지·재개)은 늘 열림 · 시험 번호 계정(≥990000) 지시는 통과 · 상세는 그 안에서 detail_enabled 로 한 번 더(#720-D)
-            const usesPut = ['detail_html', 'sale_price', 'name', 'options', 'options_add'].some(k => k in patch) || patch.status === 'OUTOFSTOCK' || (patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'OUTOFSTOCK');
+            const usesPut = NPW_PUT_KEYS.some(k => k in patch) || patch.status === 'OUTOFSTOCK' || (patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'OUTOFSTOCK');
             const isTest = Number(ord.created_by_id) >= NPW_TEST_UID_MIN;
             if (usesPut && !isTest) {
                 const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'naver_product_write'`)).rows[0] || {}).value || {};
@@ -16702,10 +16824,19 @@ async function naverProductWriteRun(req, deps) {
             // 바디 = 지금 값(cur) 위에 patch 칸만(보관 뒤 팔려 줄어든 재고를 옛 값으로 되올리지 않게) — 상세·판매가·품목명·옵션을 PUT 한 번에 모은다
             const body = npwApplyPatch(npwClone(cur), patch);
             const curStatus = npwGet(cur, NPW_FIELDS.status);
-            const bodyChanged = ['detail_html', 'sale_price', 'name', 'options', 'options_add'].some(k => k in patch);
+            const bodyChanged = NPW_PUT_KEYS.some(k => k in patch);
             // 품절 상품에 옵션 재고만 넣는 patch 도 판매 복귀 길로(네이버가 재고만으로 저절로 SALE 되는지 미확인 · 총괄 10/17)
             const auto_sale = !('status' in patch) && curStatus === 'OUTOFSTOCK' && ((patch.options || []).some(p => p && p.stock > 0) || (patch.options_add || []).some(p => p && p.stock > 0));   // #733-A: 품절 상품 옵션 추가 = 판매 복귀 길(statusType SALE 같이)
             const toSaleNow = auto_sale || (patch.status === 'SALE' && curStatus === 'OUTOFSTOCK');
+            // #773 링크 카드 함정 — 통째 PUT 이 나가는 apply 면 보낼 상세를 먼저 본다(PUT 전 · 바뀐 것 없음으로 멈춤)
+            const willPut = bodyChanged || patch.status === 'OUTOFSTOCK' || toSaleNow;
+            let cardPlan = null;
+            if (willPut) {
+                const dSend = npwGet(body, NPW_FIELDS.detail_html);
+                const risk = npwCardRisk(dSend);
+                if (risk.length && !cardFix) return fail(NPW_CARD_MSG, { risky_cards: risk });
+                if (cardFix) { cardPlan = npwFixCards(dSend); if (!cardPlan.ok) return fail('링크 카드의 주소를 못 찾아 글 링크로 못 바꿔요 — 그 카드는 스마트스토어센터에서', { risky_cards: cardPlan.cards }); }
+            }
             // 상세만(+판매중지·재개) 바꾸는 PUT 이면 종전 이름 'detail' · 그 밖 PUT 은 'channel'(품절 걸기 포함)
             const putStep = 'detail_html' in patch && patch.status !== 'OUTOFSTOCK' && Object.keys(patch).every(k => k === 'detail_html' || k === 'status') ? 'detail' : 'channel';
             const putFail = async (e) => {
@@ -16749,6 +16880,10 @@ async function naverProductWriteRun(req, deps) {
             try { after = await getNow(); } catch (e) { return naverErr(e, '수정 뒤 재조회', { steps_done: steps }); }
             const ref = npwApplyPatch(npwClone(before), patch);   // 보관본 + patch 기대값
             const exp = npwExpected(patch, cur, auto_sale);
+            if (cards_fixed) {   // #773 카드를 글 링크로 바꿔 보냈으면 = 상세가 바뀌는 게 기대값(손님 화면도 카드 → 글 링크 한 줄)
+                const rf = npwFixCards(npwGet(ref, NPW_FIELDS.detail_html)); if (rf.ok) npwSet(ref, NPW_FIELDS.detail_html, rf.html);
+                exp.push(npwPathStr(NPW_FIELDS.detail_html));
+            }
             // #733-B 옵션 추가: 새 조합(재조회에서 id 생김)을 이름으로 찾아 기대값에 id 를 채우고 · 비교는 id 순으로(순서 바뀜 흔들림 방지)
             const adds = Array.isArray(patch.options_add) ? patch.options_add : [];
             const added = adds.length ? npwFindAdded(cur, after, adds) : [];
@@ -16768,6 +16903,10 @@ async function naverProductWriteRun(req, deps) {
                 const o = npwOptions(after).find(x => String(x.id) === String(p.id));
                 for (const k of Object.keys(p)) if (k in NPW_OPT_KEYS && (!o || o[NPW_OPT_KEYS[k]] !== p[k])) not_applied.push(`options.${p.id}.${k}`);
             }
+            // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름이 다시 읽은 상품에 그대로 있는지
+            if (patch.group_names) { const g = npwGet(after, NPW_GROUP_PATH) || {}; for (const [k, v] of Object.entries(patch.group_names)) if (g['optionGroupName' + k.slice(4)] !== v) not_applied.push('group_names.' + k); }
+            if (patch.discount) { const d = npwDiscount(after); if (d.unitType !== patch.discount.unitType || d.value !== patch.discount.value) not_applied.push('discount'); }
+            for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) { const c = npwCustoms(after).find(x => String(x.id) === String(p.id)); if (!c || c.groupName !== p.name) not_applied.push('custom_options.' + p.id); }
             for (const { i, o } of added) {
                 if (!o) { not_applied.push(`options_add.${i}`); continue; }
                 const p = adds[i];
@@ -16779,11 +16918,16 @@ async function naverProductWriteRun(req, deps) {
                 price: o ? o.price ?? null : null, stock: o ? o.stockQuantity ?? null : null, usable: o ? o.usable ?? null : null, pay: o ? npwPay(after, o) : null }));
             const sale_ok = detail_filtered ? dropDetailBad(npwSaleCheck(after, ref)) : npwSaleCheck(after, ref);   // 품절·판매중지로 바꾼 apply 면 status·stock 이 bad 인 게 정상 · 상세 거름만이면 detail ✓(filtered)
             const options_table = npwOptTable(before, after), price_basis = npwPriceBasis(before, after), option_ids_kept = regen.length === 0;
+            // #773 결과 카드용 — 묶음 이름 · 즉시할인 · 입력형 옵션 전/후 · 글 링크로 바꾼 카드
+            const x773 = { ...(patch.group_names ? { group_names_before: npwGet(before, NPW_GROUP_PATH) || null, group_names_after: npwGet(after, NPW_GROUP_PATH) || null } : {}),
+                ...(patch.discount ? { discount_before: npwDiscount(before), discount_after: npwDiscount(after) } : {}),
+                ...(patch.custom_options ? { custom_before: npwCustoms(before).map(c => ({ id: c.id, name: c.groupName })), custom_after: npwCustoms(after).map(c => ({ id: c.id, name: c.groupName })) } : {}),
+                ...(cards_fixed ? { cards_fixed, cards_fixed_list } : {}) };
             await db.query(`UPDATE naver_product_backups SET after_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`,
-                [row.id, JSON.stringify(after), JSON.stringify({ steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, option_ids_kept, price_basis, links_converted, links_after: npwHrefCount(after), detail_filtered, ...(adds.length ? { new_options } : {}) })]);
+                [row.id, JSON.stringify(after), JSON.stringify({ steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, option_ids_kept, price_basis, links_converted, links_after: npwHrefCount(after), detail_filtered, ...(adds.length ? { new_options } : {}), ...x773 })]);
             await auditW('naver_product_apply', { product_no: pno, order_id: orderId, backup_id: row.id, patch_keys: Object.keys(patch), steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, sale_ok, price_basis });
             return { ok: true, op, product_no: pno, backup_id: row.id, steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, sale_attempts,
-                options_table, price_basis, option_ids_kept, links_converted, links_after: npwHrefCount(after), detail_filtered, before_summary: npwSummary(before), after_summary: npwSummary(after), ...(adds.length ? { new_options } : {}) };
+                options_table, price_basis, option_ids_kept, links_converted, links_after: npwHrefCount(after), detail_filtered, before_summary: npwSummary(before), after_summary: npwSummary(after), ...(adds.length ? { new_options } : {}), ...x773 };
         }
         // revert — 적용한 보관본만 · 적용 뒤 또 바뀌었으면 force 없이는 안 덮음(재고 칸은 판매로 움직이니 제외)
         if (!row.applied_at) return fail('아직 적용하지 않은 보관본이에요');
@@ -16807,6 +16951,16 @@ async function naverProductWriteRun(req, deps) {
             const o = npwOptions(body).find(x => String(x.id) === String(p.id)), bo = npwOptions(before).find(x => String(x.id) === String(p.id));
             if (o && bo) for (const k of Object.keys(p)) if (k in NPW_OPT_KEYS) { o[NPW_OPT_KEYS[k]] = bo[NPW_OPT_KEYS[k]]; needPut = true; }
         }
+        // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름 = patch 에 준 칸만 보관본 값으로
+        if (patch.group_names && typeof patch.group_names === 'object') {
+            const g = npwGet(body, NPW_GROUP_PATH), bg = npwGet(before, NPW_GROUP_PATH) || {};
+            if (g && typeof g === 'object') for (const k of Object.keys(patch.group_names)) { g['optionGroupName' + k.slice(4)] = bg['optionGroupName' + k.slice(4)]; needPut = true; }
+        }
+        if (patch.discount) { const d = npwGet(body, NPW_DISC_PATH), bd = npwGet(before, NPW_DISC_PATH); if (d && bd) { d.value = bd.value; d.unitType = bd.unitType; needPut = true; } }
+        for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) {
+            const c = npwCustoms(body).find(x => String(x.id) === String(p.id)), bc = npwCustoms(before).find(x => String(x.id) === String(p.id));
+            if (c && bc) { c.groupName = bc.groupName; needPut = true; }
+        }
         // #733-B 추가한 옵션은 지우지 않고 숨김(usable false) — 배열에서 빼면 네이버가 조합을 지움(삭제 금지 원칙)
         const radds = Array.isArray(patch.options_add) ? patch.options_add : [];
         const hidden = [];
@@ -16826,6 +16980,12 @@ async function naverProductWriteRun(req, deps) {
             }
         }
         const bs = npwGet(before, NPW_FIELDS.status), cs = npwGet(cur, NPW_FIELDS.status);
+        // #773 링크 카드 함정 — 되돌리기 통째 PUT 도 같음(상세를 보관본으로 되돌리면 그 안 카드가 깨짐) · card_fix 없으면 보내지 않고 멈춤
+        if (needPut || (bs === 'SALE' && cs === 'OUTOFSTOCK' && 'status' in patch) || (bs === 'OUTOFSTOCK' && cs !== 'OUTOFSTOCK')) {
+            const risk = npwCardRisk(npwGet(body, NPW_FIELDS.detail_html));
+            if (risk.length && !cardFix) return fail(NPW_CARD_MSG + '(되돌리기)', { risky_cards: risk });
+            if (cardFix) { const f = npwFixCards(npwGet(body, NPW_FIELDS.detail_html)); if (!f.ok) return fail('링크 카드의 주소를 못 찾아 글 링크로 못 바꿔요 — 그 카드는 스마트스토어센터에서', { risky_cards: f.cards }); }
+        }
         let status_after_put = null, sale_attempts = null;
         if (bs === 'SALE' && cs === 'OUTOFSTOCK' && 'status' in patch) {
             // 품절을 판매로 되돌림(#721-B) = toSale(통째 PUT 하나 · 재고 + statusType SALE · 안전망 change-status 1회)
@@ -16869,14 +17029,15 @@ async function naverProductWriteRun(req, deps) {
         const allBack = npwDiff(rview(refBack), rview(back));
         const detail_filtered = detailFiltered(npwGet(before, NPW_FIELDS.detail_html), npwGet(back, NPW_FIELDS.detail_html));
         const hidden_not_applied = radds.length ? npwFindAdded(before, back, radds).filter(({ o }) => o && o.usable !== false).map(({ o }) => String(o.id)) : [];
-        const residual = [...npwNoStock(allBack).filter(p => !(detail_filtered && p === npwPathStr(NPW_FIELDS.detail_html))), ...npwOptRegen(before, back), ...hidden_not_applied.map(id => 'option_still_usable:' + id)], stock_paths = allBack.filter(p => NPW_STOCK_RE.test(p));
-        const sale_ok = detail_filtered ? dropDetailBad(npwSaleCheck(back, refBack)) : npwSaleCheck(back, refBack);   // 보관본이 판매중이었다면 ok true 여야 「되돌림 = 다시 팔림」
+        const residual = [...npwNoStock(allBack).filter(p => !((detail_filtered || cards_fixed) && p === npwPathStr(NPW_FIELDS.detail_html))), ...npwOptRegen(before, back), ...hidden_not_applied.map(id => 'option_still_usable:' + id)], stock_paths = allBack.filter(p => NPW_STOCK_RE.test(p));
+        const sale_ok = (detail_filtered || cards_fixed) ? dropDetailBad(npwSaleCheck(back, refBack)) : npwSaleCheck(back, refBack);   // #773 카드를 글 링크로 바꾼 상세 = 보관본과 다른 게 정상   // 보관본이 판매중이었다면 ok true 여야 「되돌림 = 다시 팔림」
         const options_table = npwOptTable(cur, back), price_basis = npwPriceBasis(cur, back);
         await db.query(`UPDATE naver_product_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-            [row.id, JSON.stringify({ revert_steps: steps, revert_residual_paths: residual, revert_stock_paths: stock_paths, revert_forced: since.length > 0, revert_status_after_put: status_after_put, revert_sale_attempts: sale_attempts, revert_sale_ok: sale_ok, revert_links_converted: links_converted, revert_links_after: npwHrefCount(back), revert_detail_filtered: detail_filtered, ...(radds.length ? { revert_hidden_options: hidden } : {}) })]);
+            [row.id, JSON.stringify({ revert_steps: steps, revert_residual_paths: residual, revert_stock_paths: stock_paths, revert_forced: since.length > 0, revert_status_after_put: status_after_put, revert_sale_attempts: sale_attempts, revert_sale_ok: sale_ok, revert_links_converted: links_converted, revert_links_after: npwHrefCount(back), revert_detail_filtered: detail_filtered, ...(radds.length ? { revert_hidden_options: hidden } : {}), ...(cards_fixed ? { revert_cards_fixed: cards_fixed } : {}) })]);
         await auditW('naver_product_revert', { product_no: pno, order_id: orderId, backup_id: row.id, steps, residual_paths: residual, forced_over: since.slice(0, 50), sale_ok });
+        const cards_kept = Number((row.result_json || {}).cards_fixed) || 0;   // #773 apply 때 글 링크로 바꾼 카드는 되돌리지 않음(카드로 되돌리면 코드 글자)
         return { ok: true, op, product_no: pno, backup_id: row.id, steps, same_as_before: residual.length === 0, residual_paths: residual, stock_paths, status_after_put, sale_attempts, sale_ok,
-            options_table, price_basis, option_ids_kept: npwOptRegen(before, back).length === 0, links_converted, links_after: npwHrefCount(back), detail_filtered, after_summary: npwSummary(back), ...(radds.length ? { hidden_options: hidden } : {}) };
+            options_table, price_basis, option_ids_kept: npwOptRegen(before, back).length === 0, links_converted, links_after: npwHrefCount(back), detail_filtered, after_summary: npwSummary(back), ...(radds.length ? { hidden_options: hidden } : {}), ...(cards_fixed ? { cards_fixed, cards_fixed_list } : {}), ...(cards_kept ? { cards_kept } : {}) };
     } finally { npwInFlight.delete(pno); }
 }
 // #720-B 끝

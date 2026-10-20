@@ -1,3 +1,10 @@
+## v5.9.571 (2026-10-20) — #773 네이버 상품 쓰기 확장(옵션 묶음 이름 · 즉시할인 · 입력형 옵션 이름 · 링크 카드 깨짐 막기)
+- patch group_names{name1~3} → optionCombinationGroupNames(있는 묶음만 · 1~50자) · 창구 --group-name1|2|3 · plan 때 바꾼 뒤 이름으로 송장 매칭·발송안내 전→후 · 🔴 면 멈춤(--accept-impact) · 택배 아닌 상품 = 해당 없음.
+- patch discount{unitType WON|PERCENT,value} → immediateDiscountPolicy.discountMethod · 창구 --discount 5000|20% · 결제가 전/후 · 판매가 대비 50% 초과 거절(판매가만 내려 넘는 경우도) · 첫 할인 걸기 = 센터.
+- patch custom_options[{id,name}] → optionInfo.optionCustom groupName(체험 「00월」 등) · 창구 --custom-name id=이름 · show 에 group_names·custom_options 표.
+- 링크 카드 함정(#762·#768): se-oglink·se-material 카드 중 <a> 안 div/p = 통째 PUT 전 멈춤 · --card-fix = 「👉 제목」 글 링크로 바꿔 보냄 · 되돌리기도 같은 검사(cards_kept).
+- 검증 verify-773-npw 68/68 · verify-720-write 214/214 · 워커2 읽기 점검 막을 것 0(5상품 지금 상세 카드 판정 risky 0). 실네이버 왕복(테스트 한라봉)은 배포 뒤.
+
 ## v5.9.570 (2026-10-18) — #758 가격 확인 카드 판매처 색(네이버 초록 · 쿠팡 빨강 · 자사몰 귤색)
 
 - 대표 「네이버 쿠팡 자사몰 이제 다 되니깐 플랫폼마다 색을 넣어서 구별하게해」 → 에이전트 오피스 「전체 가격 확인」 표 줄·「페이지 등급 설정」 목록의 판매처 글자 = 7px 점 + 판매처 색 글자(바탕 없음 · 「일반/VIP」 알약과 모양 다름) · ao-desk.js PC_PF·pcChTag(data-pf naver|mall|coupang · cafe24 → mall · 모르는 채널 = 종전 회색) · 토큰 --d-pf-naver/coupang/mall(밝음 #067A3A·#C4001F·#A64B06 · 야간 #5EE08F·#FF8A99·#FFB066 · #568 야간 블록 + hand568.css 손 3줄).
