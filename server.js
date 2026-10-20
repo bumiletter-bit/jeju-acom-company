@@ -18598,6 +18598,8 @@ require('./rules.js')(app, { pool, authMiddleware, adminOnly, writeAudit, create
 // #775 감귤체험 예약 관리(표 experience_bookings · 스토어 주문 + 플레이스 예약 메일 · 손님 문자 = 설정 꺼짐 · 화면 = public/ao-exp.js) — 타이머 키 experience_store/place/sms
 const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, adminOnly, writeAudit, naverCfgGet, naverCfgSet, naverFetchChanges, naverKstIso, naverCall: naverCallWithRetry,
     experienceProductIds, isExperienceOrder, resolveReceiver, isMaskedTel, kakaoNotify, notifyTelegram });
+// #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
+require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답

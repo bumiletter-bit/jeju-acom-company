@@ -233,13 +233,13 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const t2 = mk(); t2.db.S.rows.push(row(1), row(2), row(3)); t2.db.S.cfg.experience_notify = { enabled: true, daily_cap: 5, recv_from: '00:00', recv_to: '23:59' }; t2.db.S.sentToday = 4;
         await t2.M.collectSms();
         ok(t2.sent.length === 1, '하루 상한(5 중 4 씀) = 1통만', t2.sent.length);
-        // 알림톡(총괄 10/20 · UM_6788 접수 · UM_6789 전날) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
+        // 알림톡(총괄 10/20 · UM_6808 접수 · UM_6789 전날) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
         ok(t.sent.every(x => !x.alim), '알림톡 설정 꺼짐(기본) = LMS 만');
         const t3 = mk(); t3.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, sms_recv_at: 'x', name: '' }));
         t3.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true } };
         await t3.M.collectSms();
         const a1 = t3.sent.find(x => x.alim), l2 = t3.sent.find(x => !x.alim);
-        ok(a1 && a1.tplCode === 'UM_6788' && a1.message === T.EXP_ALIMTALK.UM_6788.content.replace('#{고객명}', '홍길동').replace('#{방문일시}', '11월 30일(월) 12:30').replace('#{인원}', '체험 2명 · 입장 1명'), '접수 알림톡 = UM_6788 원문에 변수만(방문일시 「11월 30일(월) 12:30」 · 인원 「체험 2명 · 입장 1명」)', a1 && a1.tplCode);
+        ok(a1 && a1.tplCode === 'UM_6808' && a1.message === T.EXP_ALIMTALK.UM_6808.content.replace('#{고객명}', '홍길동').replace('#{방문일시}', '11월 30일(월) 12:30').replace('#{인원}', '체험 2명 · 입장 1명'), '접수 알림톡 = UM_6808 원문에 변수만(방문일시 「11월 30일(월) 12:30」 · 인원 「체험 2명 · 입장 1명」)', a1 && a1.tplCode);
         ok(a1 && /\[제주아꼼이네 감귤체험장\] 홍길동님, 예약이 확정되었습니다/.test(a1.failoverMessage) && a1.buttons && a1.buttons.button.length === 2 && a1.buttons.button[0].linkMo === 'https://map.naver.com/p/entry/place/1911847116' && a1.buttons.button[1].name === '체험 안내 보기', '실패 대체 = 확정 문자 전문 · 버튼 2(길찾기·체험 안내 보기)', a1 && a1.buttons);
         ok(l2 && !l2.alim && /내일/.test(l2.message), '이름 빈칸 예약 = 알림톡 대신 LMS(원문과 달라지면 거절되므로)', l2 && l2.message.slice(0, 40));
         ok(T.alimVars({ name: 'a', visit_date: '2026-11-01', visit_time: '10:00', exp_count: 0, entry_count: 3, infant_count: 1 })['인원'] === '입장 3명 · 유아 1명', '인원 = 0명 칸 빼고 · 유아 뒤에');

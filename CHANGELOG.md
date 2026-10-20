@@ -1,3 +1,9 @@
+## v5.9.574 (2026-10-20) — #776 네이버 메일 찾기(창구 · 읽기 전용) · #775 예약확인 알림톡 UM_6808
+- 새 naver-mail.js(experience.js IMAP·MIME 이동 + LIST·리터럴·BODYSTRUCTURE) · 러너 mail_search/read/attach_request(DELETE…RETURNING 집기 · 결과 줄 10분 정리 · 10초 간격 · 한 번에 하나) · 명령 = LOGIN·LIST·EXAMINE·UID SEARCH·UID FETCH(BODY.PEEK)·LOGOUT 만 · 스팸·휴지통·보낸·임시 제외 · 첨부 10MB · audit 검색 조건·건수만 · 렌더에서만 틱(!RENDER = 꺼짐).
+- 창구 scripts/desk/mail-find.js find/read/attach · 주민번호 꼴 가림 · 업무지식 「네이버 메일 찾기」 절.
+- #775 알림톡 예약확인 UM_6788 삭제 → UM_6808(「오션라운지 아메리카노 또는 하겐다즈 교환권」 · 대표 「커피·음료 말고 아메리카노」) · 기본 confirm_tpl UM_6808.
+- 검증 verify-776-mail 45/45 · verify-775-booking 68/68 · 워커3 읽기 점검 막을 것 0.
+
 ## v5.9.573 (2026-10-20) — #775 감귤체험 예약 관리(스토어 주문 + 플레이스 예약 메일 · 체험 예약 창 · 손님 안내 문자/알림톡) — 전부 꺼진 채 배포
 - 새 experience.js: 표 experience_bookings·experience_mail_seen · 타이머 experience_store(5분)·experience_place(5분 · IMAP 읽기 전용 EXAMINE·BODY.PEEK · NAVER_MAIL_USER/APP_PW · 보낸 사람 낱말 조건)·experience_sms(10분) = 꺼진 채 시드 · 모르는 키 건너뜀(#467) · 옵션 글자 월·일·시간 판독(못 읽으면 날짜 확인 필요) · 반품·취소 반영 · 직원 고친 날짜 유지.
 - 손님 문자 = 설정 experience_notify(enabled false) · 접수 09~21시 + 전날 10~18시 · 하루 상한 40 · 보내기 전 줄 잡기(30분·3회 · 실패 표시) · 수신거부 건너뜀(상한 미포함) · 체험장 010-6259-8420 · 알림톡 UM_6788/UM_6789(검수중 · alimtalk.enabled false · 실패 시 LMS).

@@ -12,22 +12,21 @@
 //     GET/PUT /api/agent-office/experience/settings            문구·켜기·하루 상한(PUT = 관리자)
 //   요청 줄(창구·총괄용 · 토큰 없이): agent_office_config 'experience_mail_probe_request' → 'experience_mail_probe_result'(메일 수·낱말별 건수·최근 1통의 보낸 주소와 제목 꼴만 · 본문·손님 정보 0)
 'use strict';
-const tls = require('tls');
 
 const KEY_NOTIFY = 'experience_notify', KEY_MAIL = 'experience_mail';
 const DEFAULT_TPL_RECV = '[제주아꼼이네 감귤체험장] {이름}님, 예약이 확정되었습니다.\n방문: {월}월 {일}일 {시간} / 체험 {체험}명 · 입장 {입장}명{유아}\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네")\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요. 주황색 컨테이너 옆 주차장에 후진주차 부탁드려요.\n체험 손님께는 오션라운지 아메리카노 또는 하겐다즈 교환권을 드려요(체험 당일 사용).\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요.\n방문 전날까지 취소하시면 전액 환불됩니다. 날짜 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.\n예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.';
 const DEFAULT_TPL_EVE = '[제주아꼼이네 감귤체험장] {이름}님, 내일 {월}월 {일}일 {시간} 방문 예약 안내드려요.\n주소: 제주시 연삼로 1066-31 제주아꼼이네 (카카오내비 "제주아꼼이네") · 주황색 컨테이너 옆 주차장\n비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드려요. 변경·취소는 체험장 010-6259-8420 으로 연락 주세요.';
 //   sender = 알리고 발신번호(비우면 ALIGO_SENDER) — 알리고에 미리 등록된 번호만 나감 · 체험장 번호 010-6259-8420 은 등록 확인 뒤 넣는다(대표 10/20 · 문자 API 에 등록 목록 조회가 없음)
 const NOTIFY_DEFAULT = { enabled: false, daily_cap: 40, recv_from: '09:00', recv_to: '21:00', eve_from: '10:00', eve_to: '18:00', sender: '', tpl_recv: DEFAULT_TPL_RECV, tpl_eve: DEFAULT_TPL_EVE,
-    alimtalk: { enabled: false, confirm_tpl: 'UM_6788', remind_tpl: 'UM_6789' } };
+    alimtalk: { enabled: false, confirm_tpl: 'UM_6808', remind_tpl: 'UM_6789' } };
 // 알림톡 템플릿 원문(알리고 등록본과 글자 하나까지 같아야 나감 · 변수 #{고객명} #{방문일시} #{인원}) — 🔴 원문이 비어 있으면(null) 알림톡을 시도하지 않고 LMS 만
-//   UM_6788 「제주아꼼이네_감귤체험_예약확인」 · UM_6789 「제주아꼼이네_감귤체험_방문안내」(10/20 등록 · 검수중) — 원문은 알리고 template/list 에서 그대로 옮긴다
+//   UM_6808 「제주아꼼이네_감귤체험_예약확인」(10/20 UM_6788 을 지우고 다시 신청 — 「음료」 → 「아메리카노 또는 하겐다즈」) · UM_6789 「제주아꼼이네_감귤체험_방문안내」(10/20 등록 · 검수중) — 원문은 알리고 template/list 에서 그대로 옮긴다
 //   원문 = 총괄이 알리고 화면에 넣은 글자 그대로(10/20 · 줄바꿈 \n · 빈 줄 \n\n · 「·」「■」「"」 그대로) — 승인 뒤 template/list 로 한 번 더 대조
 const EXP_MAP_URL = 'https://map.naver.com/p/entry/place/1911847116', EXP_PRODUCT_URL = 'https://brand.naver.com/jejuakkome/products/7673020911';
 const wl = (name, url) => ({ name, linkType: 'WL', linkTypeName: '웹링크', linkMo: url, linkPc: url });
 const EXP_ALIMTALK = {
-    UM_6788: {
-        content: '[제주아꼼이네 감귤체험장] 예약 확정 안내\n\n#{고객명}님, 감귤체험 예약이 확정되었습니다.\n\n■ 방문 일시 : #{방문일시}\n■ 인원 : #{인원}\n\n■ 오시는 길\n제주시 연삼로 1066-31 제주아꼼이네\n(카카오내비 "제주아꼼이네" 검색)\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요.\n주황색 컨테이너 옆 주차장에 후진주차 부탁드립니다.\n\n■ 체험 안내\n- 귤따기 체험 손님께는 오션라운지 음료 교환권(체험 당일 사용)을 드립니다.\n- 비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드립니다.\n\n■ 취소·변경\n- 방문 전날까지 취소 시 전액 환불됩니다.\n- 날짜 변경·취소 문의 : 체험장 010-6259-8420\n- 예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.',
+    UM_6808: {
+        content: '[제주아꼼이네 감귤체험장] 예약 확정 안내\n\n#{고객명}님, 감귤체험 예약이 확정되었습니다.\n\n■ 방문 일시 : #{방문일시}\n■ 인원 : #{인원}\n\n■ 오시는 길\n제주시 연삼로 1066-31 제주아꼼이네\n(카카오내비 "제주아꼼이네" 검색)\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요.\n주황색 컨테이너 옆 주차장에 후진주차 부탁드립니다.\n\n■ 체험 안내\n- 귤따기 체험 손님께는 오션라운지 아메리카노 또는 하겐다즈 교환권(체험 당일 사용)을 드립니다.\n- 비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드립니다.\n\n■ 취소·변경\n- 방문 전날까지 취소 시 전액 환불됩니다.\n- 날짜 변경·취소 문의 : 체험장 010-6259-8420\n- 예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.',
         button: { button: [wl('길찾기', EXP_MAP_URL), wl('체험 안내 보기', EXP_PRODUCT_URL)] },
     },
     UM_6789: {
@@ -121,105 +120,8 @@ function parsePlaceMail(subject, text) {
     return { known, no, name, phone: phone ? digits(phone) : null, date, time, status, exp: adult != null ? adult : (total != null ? total : null), entry, infant, amount, date_ok: !!(date && time) };
 }
 
-// ── 아주 작은 IMAP 읽기 전용 클라이언트(내장 tls · LOGIN/EXAMINE/UID SEARCH/UID FETCH/LOGOUT 만 · 쓰기 명령 없음) ──
-function imapOpen({ host, port, user, pass, timeoutMs, connect }) {   // connect = 검증용 가짜 소켓(없으면 tls)
-    return new Promise((resolve, reject) => {
-        const sock = (connect || tls.connect)({ host, port, servername: host });
-        let buf = Buffer.alloc(0), tagN = 0, cur = null, need = 0, parts = [], greeted = false, closed = false;
-        const pending = [];
-        const timer = setTimeout(() => { fail(new Error('IMAP 시간 초과')); }, timeoutMs || 30000);
-        const fail = (e) => { if (closed) return; closed = true; clearTimeout(timer); try { sock.destroy(); } catch (_) { } if (!greeted) reject(e); while (pending.length) pending.shift().reject(e); };
-        const onResp = (resp) => {   // resp = { text, literals[] }
-            if (!greeted) { greeted = true; if (/^\* (OK|PREAUTH)/i.test(resp.text)) resolve(api); else fail(new Error('IMAP 인사 실패')); return; }
-            const p = pending[0]; if (!p) return;
-            const m = new RegExp('^' + p.tag + ' (OK|NO|BAD)', 'i').exec(resp.text);
-            if (m) { pending.shift(); if (m[1].toUpperCase() === 'OK') p.resolve(p.items); else p.reject(new Error('IMAP ' + m[1] + ' ' + resp.text.slice(p.tag.length + 1, p.tag.length + 80).replace(/[^\x20-\x7e]/g, ''))); }
-            else p.items.push(resp);
-        };
-        sock.on('data', (d) => {
-            buf = Buffer.concat([buf, d]);
-            for (;;) {
-                if (need > 0) { if (buf.length < need) return; parts.push({ lit: buf.slice(0, need) }); buf = buf.slice(need); need = 0; continue; }
-                const i = buf.indexOf('\r\n'); if (i < 0) return;
-                const line = buf.slice(0, i).toString('utf8'); buf = buf.slice(i + 2);
-                const lm = /\{(\d+)\}$/.exec(line);
-                parts.push({ text: line });
-                if (lm) { need = +lm[1]; if (need === 0) continue; continue; }
-                const resp = { text: parts.filter(x => x.text != null).map(x => x.text).join(''), literals: parts.filter(x => x.lit).map(x => x.lit) };
-                parts = []; onResp(resp);
-            }
-        });
-        sock.on('error', fail);
-        sock.on('close', () => fail(new Error('IMAP 연결 끊김')));
-        const q = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-        const cmd = (c) => new Promise((res, rej) => { if (closed) return rej(new Error('IMAP 닫힘')); const tag = 'X' + (++tagN); pending.push({ tag, items: [], resolve: res, reject: rej }); sock.write(tag + ' ' + c + '\r\n'); });
-        const api = {
-            login: () => cmd('LOGIN ' + q(user) + ' ' + q(pass)),
-            examine: (box) => cmd('EXAMINE ' + q(box || 'INBOX')),   // 읽기 전용 열기(\Seen 등 깃발이 안 바뀜)
-            search: async (crit) => { const items = await cmd('UID SEARCH ' + crit); const ln = items.map(x => x.text).find(t => /^\* SEARCH/i.test(t)) || ''; return ln.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter(Boolean).map(Number); },
-            fetch: async (uid, what) => { const items = await cmd('UID FETCH ' + uid + ' (' + what + ')'); const it = items.find(x => x.literals && x.literals.length); return it ? it.literals[0] : null; },   // what = BODY.PEEK[…] 만 넘긴다
-            status: async (box) => { const items = await cmd('STATUS ' + q(box || 'INBOX') + ' (MESSAGES)'); const ln = items.map(x => x.text).find(t => /MESSAGES/i.test(t)) || ''; const m = /MESSAGES (\d+)/i.exec(ln); return m ? +m[1] : null; },
-            close: async () => { try { await cmd('LOGOUT'); } catch (_) { } closed = true; clearTimeout(timer); try { sock.end(); } catch (_) { } },
-        };
-    });
-}
-const imapDate = (ms) => { const d = new Date(ms); return d.getUTCDate() + '-' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()] + '-' + d.getUTCFullYear(); };
-const imapFromCrit = (terms) => { const t = terms.map(x => 'FROM "' + String(x).replace(/["\\]/g, '') + '"'); if (!t.length) return 'ALL'; let c = t[t.length - 1]; for (let i = t.length - 2; i >= 0; i--) c = 'OR ' + t[i] + ' ' + c; return c; };
-
-// ── MIME(메일 원문) → { subject, from, date, messageId, text } ─────────────
-function decodeCharset(buf, cs) {
-    const c = String(cs || 'utf-8').toLowerCase().replace(/^ks_c_5601-1987$|^cp949$|^x-windows-949$/, 'euc-kr');
-    try { return new TextDecoder(c).decode(buf); } catch (_) { return buf.toString('utf8'); }
-}
-function decodeWords(s) {
-    return String(s || '').replace(/\?=\s+=\?/g, '?==?').replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (m, cs, enc, txt) => {
-        try { const b = enc.toUpperCase() === 'B' ? Buffer.from(txt, 'base64') : Buffer.from(txt.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))), 'latin1'); return decodeCharset(b, cs); } catch (_) { return m; }
-    });
-}
-function splitHead(raw) {
-    const i = raw.indexOf('\r\n\r\n'), j = raw.indexOf('\n\n');
-    const k = i >= 0 && (j < 0 || i <= j) ? i : j; const sep = k === i ? 4 : 2;
-    if (k < 0) return { head: raw, body: '' };
-    return { head: raw.slice(0, k), body: raw.slice(k + sep) };
-}
-function headers(head) {
-    // 머리말에 인코딩 없이 UTF-8 바이트가 그대로 든 메일(라틴1 로 읽힌 글자) → UTF-8 로 다시 읽음(ASCII 만이면 그대로)
-    if (/[\x80-\xff]/.test(head)) { const u = Buffer.from(head, 'latin1').toString('utf8'); if (!u.includes('�')) head = u; }
-    const h = {}; for (const line of head.replace(/\r?\n[ \t]+/g, ' ').split(/\r?\n/)) { const i = line.indexOf(':'); if (i > 0) { const k = line.slice(0, i).trim().toLowerCase(); if (!(k in h)) h[k] = line.slice(i + 1).trim(); } }
-    return h;
-}
-const param = (v, name) => { const m = new RegExp(name + '\\s*=\\s*"?([^";]+)"?', 'i').exec(String(v || '')); return m ? m[1] : null; };
-function decodeBody(bodyLatin, h) {
-    const te = String(h['content-transfer-encoding'] || '').toLowerCase();
-    let b;
-    if (te === 'base64') b = Buffer.from(bodyLatin.replace(/[^A-Za-z0-9+/=]/g, ''), 'base64');
-    else if (te === 'quoted-printable') b = Buffer.from(bodyLatin.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (x, hx) => String.fromCharCode(parseInt(hx, 16))), 'latin1');
-    else b = Buffer.from(bodyLatin, 'latin1');
-    return decodeCharset(b, param(h['content-type'], 'charset'));
-}
-const htmlText = (s) => String(s).replace(/<(script|style)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|tr|li|h\d|table)>/gi, '\n').replace(/<\/t[dh]>/gi, ' ').replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
-function mimeText(latin, h, depth) {
-    const ct = String(h['content-type'] || 'text/plain').toLowerCase();
-    if (ct.startsWith('multipart/') && depth < 6) {
-        const bd = param(h['content-type'], 'boundary'); if (!bd) return { plain: '', html: '' };
-        const chunks = latin.split('--' + bd).slice(1).filter(c => !/^--/.test(c));
-        let plain = '', html = '';
-        for (const c of chunks) { const p = splitHead(c.replace(/^\r?\n/, '')); const r = mimeText(p.body, headers(p.head), depth + 1); if (!plain && r.plain) plain = r.plain; if (!html && r.html) html = r.html; }
-        return { plain, html };
-    }
-    if (ct.startsWith('text/html')) return { plain: '', html: decodeBody(latin, h) };
-    if (ct.startsWith('text/')) return { plain: decodeBody(latin, h), html: '' };
-    return { plain: '', html: '' };
-}
-function parseMail(rawBuf) {
-    const latin = Buffer.isBuffer(rawBuf) ? rawBuf.toString('latin1') : String(rawBuf || '');
-    const p = splitHead(latin), h = headers(p.head);
-    const r = mimeText(p.body, h, 0);
-    const text = (r.plain && r.plain.trim()) ? r.plain.replace(/\r/g, '') : htmlText(r.html || '');
-    return { subject: decodeWords(h.subject || ''), from: decodeWords(h.from || ''), date: h.date || '', messageId: (h['message-id'] || '').replace(/[<>\s]/g, '').slice(0, 200), text: text.slice(0, 20000) };
-}
-const fromAddr = (f) => { const m = /<([^>]+)>/.exec(String(f || '')) || /([^\s<>"]+@[^\s<>"]+)/.exec(String(f || '')); return m ? m[1].toLowerCase() : ''; };
+// ── IMAP 읽기 전용 클라이언트 · MIME = naver-mail.js(#776 메일 찾기와 같이 씀 · 옮기기만 · 동작 그대로)
+const { imapOpen, imapDate, imapFromCrit, decodeCharset, decodeWords, splitHead, headers, param, decodeBody, htmlText, mimeText, parseMail, fromAddr } = require('./naver-mail.js');
 const maskSubject = (s) => String(s || '').replace(/\d/g, '#').replace(/([가-힣])[가-힣]{1,3}(?=\s*님)/g, '$1**').slice(0, 80);
 
 // ── 알림톡 변수(꼴 = 총괄 10/20: 방문일시 「11월 30일(일) 12:30」 · 인원 「체험 2명 · 입장 1명」 · 0명 칸은 뺌 · 유아 있으면 뒤에) ──
@@ -572,7 +474,7 @@ module.exports = function mountExperience(app, deps) {
             if (b.alimtalk && typeof b.alimtalk === 'object') {   // 알림톡(검수 승인 뒤 켬) — 켜기·템플릿 코드만 · 원문은 코드 상수(EXP_ALIMTALK)
                 const a = { ...cur.alimtalk };
                 if ('enabled' in b.alimtalk) a.enabled = b.alimtalk.enabled === true;
-                for (const k of ['confirm_tpl', 'remind_tpl']) if (k in b.alimtalk) { const v = String(b.alimtalk[k] || ''); if (!/^U[A-Z]_\d{4}$/.test(v)) return res.status(400).json({ error: '템플릿 코드는 UM_6788 꼴' }); a[k] = v; }
+                for (const k of ['confirm_tpl', 'remind_tpl']) if (k in b.alimtalk) { const v = String(b.alimtalk[k] || ''); if (!/^U[A-Z]_\d{4}$/.test(v)) return res.status(400).json({ error: '템플릿 코드는 UM_6808 꼴' }); a[k] = v; }
                 next.alimtalk = a;
             }
             await cfgSet(KEY_NOTIFY, next);
