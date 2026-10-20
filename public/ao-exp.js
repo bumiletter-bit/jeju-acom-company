@@ -49,16 +49,19 @@
     }
     async function load(quiet) {
         if (X.busy) return; X.busy = true;
-        const r0 = monthRange(X.ym);
+        const r0 = monthRange(X.ym), r2 = monthRange(shiftYm(X.ym, 2));   // #786 보는 달 ~ 2달 뒤까지 한 번에(다음 달 안내·자동 이동용 · 호출 수 그대로)
         try {
-            const r = await call(`/api/agent-office/experience?from=${r0.from}&to=${r0.to}`);
+            const r = await call(`/api/agent-office/experience?from=${r0.from}&to=${r2.to}`);
             if (!r.ok) { if (!quiet) $('xp-body').innerHTML = `<div class="xp-empty">${esc(r.body.error || '체험 예약을 읽지 못했어요')}</div>`; return; }
             X.data = r.body; render();
         } catch (e) { if (!quiet) $('xp-body').innerHTML = '<div class="xp-empty">연결이 끊겼어요 — 잠시 뒤 다시</div>'; }
         finally { X.busy = false; }
     }
     const people = b => [b.exp_count ? `체험 ${b.exp_count}` : '', b.entry_count ? `입장 ${b.entry_count}` : '', b.infant_count ? `유아 ${b.infant_count}` : ''].filter(Boolean).join(' · ') || '인원 0';
-    const headCount = b => (Number(b.exp_count) || 0) + (Number(b.entry_count) || 0) + (Number(b.infant_count) || 0);
+    // #786 그 달 확정·방문 예약 수(취소·반품 빼고 · from 이 있으면 그날부터) · 1~2달 뒤 첫 예약 달
+    const liveIn = (ym, from) => ((X.data && X.data.items) || []).filter(b => ['confirmed', 'visited'].includes(b.status) && b.visit_date && b.visit_date.startsWith(ym + '-') && (!from || b.visit_date >= from)).length;
+    const nextBooked = (ym) => { for (let n = 1; n <= 2; n++) { const y2 = shiftYm(ym, n), c = liveIn(y2); if (c) return { ym: y2, n: c }; } return null; };
+    const headCount = b =>(Number(b.exp_count) || 0) + (Number(b.entry_count) || 0) + (Number(b.infant_count) || 0);
     const telLink = p => p ? `<a class="xp-tel" href="tel:${esc(p)}">${esc(String(p).replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3'))}</a>` : '<span class="xp-dim">연락처 없음</span>';
     function rowHtml(b) {
         const off = OFF.includes(b.status), vis = b.status === 'visited';
@@ -102,10 +105,16 @@
     }
     function render() {
         const d = X.data; if (!d || !X.layer) return;
+        // #786 처음 열 때(오늘 달)만: 오늘 이후 확정·방문 예약이 이 달에 0 이고 1~2달 뒤에 있으면 그 달로 · 위에 안내(손으로 달을 넘긴 뒤엔 안 함)
+        if (X.auto) {
+            X.auto = false;
+            if (X.ym === ymOf(today()) && !liveIn(X.ym, today())) { const nx = nextBooked(X.ym); if (nx) { X.jumpFrom = X.ym; X.ym = nx.ym; } }
+        }
         const mr = monthRange(X.ym);   // #785 요약 4칸(오늘·내일·날짜 확인 필요·손님 문자) 뺌 — 대표 「달력으로 보여서 필요 없다」
         $('xp-range').textContent = `${mr.y}년 ${mr.m}월`;
         const { need, byDay, offNoDate } = sets(), t = today();
         let html = '';
+        if (X.jumpFrom) html += `<div class="xp-jump">${+X.jumpFrom.slice(5)}월엔 남은 예약이 없어 ${+X.ym.slice(5)}월을 보여 드려요 · <button type="button" class="xp-link" data-nav="0">‹ 이번 달</button></div>`;
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
         if (offNoDate.length) html += `<button type="button" class="xp-needbar off" data-day="offnodate"><b>날짜 없는 취소·반품 ${offNoDate.length}건</b><span>${esc(offNoDate.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${offNoDate.length > 3 ? ' 외' : ''} — 눌러서 보기</span></button>`;
         html += '<div class="xp-cal" role="grid" aria-label="체험 예약 달력"><div class="xp-cal-h" role="row">' + [...DOW].map((w, i) => `<span role="columnheader" class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + '</div><div class="xp-cal-g">';
@@ -124,7 +133,11 @@
         const tail = (7 - (lead + mr.last) % 7) % 7;
         for (let i = 0; i < tail; i++) html += '<span class="xp-cell out" aria-hidden="true"></span>';
         html += '</div></div>';
-        if (!byDay.size && !need.length && !offNoDate.length) html += '<p class="xp-hint xp-cal-empty">이 달엔 체험 예약이 없어요. ‹ › 로 다른 달을 볼 수 있어요.</p>';
+        const inMonth = [...byDay.keys()].filter(k => k.startsWith(X.ym + '-')).length;   // #786 목록이 2달 뒤까지 오므로 빈 달 판정은 보는 달만
+        if (!inMonth) {
+            const nx = nextBooked(X.ym);
+            html += `<p class="xp-hint xp-cal-empty">이 달엔 체험 예약이 없어요. ‹ › 로 다른 달을 볼 수 있어요.${nx ? ` <button type="button" class="xp-btn xp-next" data-goym="${nx.ym}">${+nx.ym.slice(5)}월 ${nx.n}팀 ›</button>` : ''}</p>`;
+        }
         $('xp-body').innerHTML = html;
         if (X.day) renderPanel();
     }
@@ -151,7 +164,9 @@
     async function onClick(e) {
         if (e.target.closest('#xp-close')) return close();
         const nav = e.target.closest('[data-nav]');
-        if (nav) { const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.edit = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        if (nav) { const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.auto = false; X.jumpFrom = null; X.edit = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        const goym = e.target.closest('[data-goym]');   // #786 빈 달의 「n월 n팀 ›」
+        if (goym) { X.ym = goym.dataset.goym; X.auto = false; X.jumpFrom = null; X.edit = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
         const cell = e.target.closest('[data-day]'); if (cell && !e.target.closest('#xp-panel')) return openDay(cell.dataset.day);
         if (e.target.closest('#xp-xlsx')) return xlsx();
         if (e.target.closest('#xp-set-btn')) return toggleSet();
@@ -182,7 +197,7 @@
             if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
             Object.assign(b, r.body.item); X.edit = 0; toast('저장했어요');
             if (body.visit_date) X.day = body.visit_date;   // 날짜를 넣거나 옮기면 판도 그 날로(확인 필요 묶음에서 넣은 경우 포함)
-            if (body.visit_date && ymOf(body.visit_date) !== X.ym) X.ym = ymOf(body.visit_date);
+            if (body.visit_date && ymOf(body.visit_date) !== X.ym) { X.ym = ymOf(body.visit_date); X.jumpFrom = null; }
             return load(true);
         }
         if (act === 'sms' || act === 'raw') {
@@ -241,7 +256,7 @@
         X.layer = shell(); document.body.classList.add('xp-open'); document.addEventListener('keydown', onKey, true);
         // 뒤로가기 칸 = 지금 기록(ao-desk 의 aoDesk 깊이 값 포함) 위에 한 칸 — 깊이 값을 이어 붙여야 ao-desk 가 제 칸을 잘못 닫지 않는다
         try { history.pushState(Object.assign({}, history.state || {}, { xpExp: 1 }), ''); X.pushed = true; window.addEventListener('popstate', onPop); } catch (e) { X.pushed = false; }
-        X.ym = ymOf(today()); X.day = null; X.edit = 0; load();
+        X.ym = ymOf(today()); X.day = null; X.edit = 0; X.auto = true; X.jumpFrom = null; load();
         X.timer = setInterval(() => { if (!document.hidden && !X.edit && !document.activeElement.closest('#xp-set')) load(true); }, 60000);
         setTimeout(() => { const c = $('xp-close'); if (c) c.focus({ preventScroll: true }); }, 0);
     }

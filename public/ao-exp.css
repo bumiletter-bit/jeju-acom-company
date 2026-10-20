@@ -94,6 +94,9 @@ html[data-ao-theme="dark"] .xp-layer { --x-sun: #F6948D; --x-sat: #84ADFF; }
 .xp-needbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; margin: 10px 0 0; padding: 10px 14px; border: 1px solid var(--x-warn); border-radius: 12px; background: var(--x-soft); color: var(--x-ink); font: inherit; text-align: left; cursor: pointer; }
 .xp-needbar b { color: var(--x-warn); font-size: 14px; }
 .xp-needbar span { font-size: 13px; color: var(--x-sub); }
+.xp-jump { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--x-acc-soft); color: var(--x-ink); font-size: 13px; }   /* #786 다음 달로 열었다는 안내 */
+.xp-link { min-height: 32px; padding: 0 4px; border: 0; background: none; color: var(--x-acc); font: inherit; font-weight: 700; cursor: pointer; }
+.xp-next { margin-left: 6px; vertical-align: middle; color: var(--x-acc); }   /* #786 빈 달 → 다음 예약 달 */
 .xp-needbar.off { border-color: var(--x-line); }   /* #785 날짜 없는 취소·반품 = 할 일 아님(회색) */
 .xp-needbar.off b { color: var(--x-dim); }
 .xp-cal { margin-top: 12px; border: 1px solid var(--x-line); border-radius: 12px; overflow: hidden; }
