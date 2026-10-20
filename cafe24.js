@@ -23,6 +23,16 @@ let _refreshLock = null;     // 동시 갱신 방지
 let _lastState = null;       // 상태 전환 시 1회 알림용
 
 function init({ pool, notify }) { _pool = pool; _notify = notify || null; }
+// #794 fetch 시간 제한 — 카페24가 응답을 안 주면 요청이 영원히 붙잡혀 있던 것(일반 API 20초 · 토큰 갱신 15초 · env 는 검증용)
+const API_TIMEOUT_MS = Number(process.env.CAFE24_API_TIMEOUT_MS) || 20000;
+const TOKEN_TIMEOUT_MS = Number(process.env.CAFE24_TOKEN_TIMEOUT_MS) || 15000;
+//   시간 초과 = 네트워크 오류와 같은 길(status 없음 → 재시도 없이 그대로 실패 · 토큰은 「일시 오류」) — 쓰기(PUT·POST)가 두 번 반영될 일 없음
+function timeoutErr(e, ms) {
+    if (!e || (e.name !== 'TimeoutError' && e.name !== 'AbortError')) return e;
+    const x = new Error('cafe24_timeout'); x.code = 'timeout'; x.reason = '카페24 응답 없음(' + Math.round(ms / 1000) + '초)'; return x;
+}
+async function fetchT(url, opt, ms) { try { return await fetch(url, { ...opt, signal: AbortSignal.timeout(ms) }); } catch (e) { throw timeoutErr(e, ms); } }
+async function textT(res, ms) { try { return await res.text(); } catch (e) { throw timeoutErr(e, ms); } }   // 본문 읽기도 같은 시간 제한 안(신호가 본문까지 걸림)
 function secretSet() { return !!process.env.CAFE24_CLIENT_SECRET; }
 
 // ── 토큰 암호화 저장 (AES-256-GCM) ──
@@ -58,12 +68,12 @@ function getAuthUrl(state) {
 }
 async function tokenRequest(form) {
     const basic = Buffer.from(`${CLIENT_ID}:${process.env.CAFE24_CLIENT_SECRET}`).toString('base64');
-    const res = await fetch(`${API_BASE}/api/v2/oauth/token`, {
+    const res = await fetchT(`${API_BASE}/api/v2/oauth/token`, {
         method: 'POST',
         headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(form).toString(),
-    });
-    const text = await res.text();
+    }, TOKEN_TIMEOUT_MS);
+    const text = await textT(res, TOKEN_TIMEOUT_MS);
     let data; try { data = JSON.parse(text); } catch { data = {}; }
     if (!res.ok || !data.access_token) {
         const e = new Error('cafe24_token_' + res.status); e.status = res.status;
@@ -150,13 +160,13 @@ async function apiGet(path, query, extraHeaders) {
     const qs = query ? '?' + new URLSearchParams(query).toString() : '';
     let retried401 = false;
     for (let attempt = 0; ; attempt++) {
-        const res = await fetch(`${API_BASE}${path}${qs}`, {
+        const res = await fetchT(`${API_BASE}${path}${qs}`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(extraHeaders || {}) },
-        });
+        }, API_TIMEOUT_MS);
         // 401(토큰 만료·무효) → 강제 갱신 후 정확히 1회 재시도 (2026-07-26 실장애 수정의 2중 방어)
         if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }
         if ((res.status === 429 || res.status >= 500) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
-        const text = await res.text();
+        const text = await textT(res, API_TIMEOUT_MS);
         let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
         if (!res.ok) {
             const e = new Error('cafe24_api_' + res.status); e.status = res.status;
@@ -172,14 +182,16 @@ async function apiReq(method, path, body, extraHeaders) {
     let token = await getToken();
     let retried401 = false;
     for (let attempt = 0; ; attempt++) {
-        const res = await fetch(`${API_BASE}${path}`, {
+        const res = await fetchT(`${API_BASE}${path}`, {
             method,
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(extraHeaders || {}) },
             body: body != null ? JSON.stringify(body) : undefined,
-        });
+        }, API_TIMEOUT_MS);
         if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }
-        if ((res.status === 429 || res.status >= 500) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
-        const text = await res.text();
+        // #794 쓰기(GET 아닌 것)는 429(처리 전 거절)만 재시도 — 5xx 는 카페24가 반영한 뒤일 수 있어 다시 보내지 않음(두 번 반영 방지 · 대표 10/20)
+        const readOnly = String(method || 'GET').toUpperCase() === 'GET';
+        if ((res.status === 429 || (readOnly && res.status >= 500)) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
+        const text = await textT(res, API_TIMEOUT_MS);
         let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
         if (!res.ok) {
             const e = new Error('cafe24_api_' + res.status); e.status = res.status;

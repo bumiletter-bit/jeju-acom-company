@@ -31,12 +31,18 @@ if (!JWT_SECRET) {
 
 // DB 연결
 const dbConfig = {
-    connectionString: process.env.DATABASE_URL
+    connectionString: process.env.DATABASE_URL,
+    // #794 무한 대기 막기: 연결 얻기 15초 · 쿼리 하나 60초(DB 크기 200MB 안팎 · 표 최대 2만여 행 · 실측 가장 긴 것도 수 초) — 넘으면 그 쿼리만 오류(부르는 쪽 catch 그대로)
+    //   부팅 initDB 의 DDL 이 옛 인스턴스 잠금에 60초 넘게 막히면 부팅이 실패 → Render 가 옛 인스턴스를 그대로 둠(종전 = 끝없이 대기)
+    connectionTimeoutMillis: 15000,
+    statement_timeout: 60000,
 };
 if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')) {
     dbConfig.ssl = { rejectUnauthorized: false };
 }
 const pool = new Pool(dbConfig);
+// #794 쉬는 연결이 DB 쪽에서 끊길 때 오는 오류 — 받는 곳이 없으면 프로세스가 죽는다(창구 #701 과 같은 꼴) → 로그만(풀이 그 연결을 버리고 새로 만든다)
+pool.on('error', (e) => { try { console.error('[DB] 쉬는 연결 오류(계속 실행):', String(e && e.message || e).slice(0, 200)); } catch (_) { /* 무시 */ } });
 
 app.disable('x-powered-by');   // #610 검토: 서버 종류 노출 안 함
 app.use('/api/track-order', express.json({ limit: '2kb' }));   // #610 손님 셀프 조회(공개)는 작은 본문만 — 전역 15MB 파서 앞에
@@ -10050,6 +10056,33 @@ app.get('/api/public/store-snapshot', async (req, res) => {
     } catch (e) { console.error('[공개 store-snapshot] 오류:', String(e.message || e).slice(0, 200)); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만
 });
 
+// ── #794 수집기 시간 상한 시작 (verify-794-collect-limit.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
+// 대표 10/20 「이런 문제 안 생기도록」: 수집기 하나가 외부 응답을 끝없이 기다리면 1분 틱 전체(18개)가 멈췄다.
+//   → 키마다 시간 상한(분). 넘으면 그 회차는 「시간 초과」로 기록하고 틱을 풀어 다른 키가 돈다.
+//   뒤에서 마저 도는 수집기는 끊지 않는다(손님 발송 중간에 끊으면 「보냈는데 기록 없음」이 생길 수 있음) — 대신 같은 키는 앞 것이 끝날 때까지 건너뜀(겹침 0 = 같은 발송 두 번 0).
+//   상한 근거(10/20 실측): 대부분 수 초 · 발송안내 최대 1,102건 305초(10/11) · 상품 스냅샷 2~4분(429 백오프 때 더) · 카페24 동기화 약 3분 · 0 = 상한 없음(겹침만 막음)
+const COLLECT_LIMIT_MIN = { default: 5, settlement: 10, order: 10, product_snapshot: 20, cafe24_sync: 15,
+    kakao_notify: 20, lms_guide: 20, cafe24_notify: 15, cafe24_guide: 20, coupang_notify: 15, coupang_guide: 20, welcome_notify: 15, coupon_expire_notify: 15,
+    inquiry: 20, qna: 20 };   // 문의·상품문의 = AI 답(한 건 최대 수 분) · 체험 3종·claim = 기본 5분
+const _collectRunning = new Map();   // key → 시작 시각(ms) — 뒤에서 도는 동안 같은 키 건너뜀
+function collectLimitMs(key) { const m = Object.prototype.hasOwnProperty.call(COLLECT_LIMIT_MIN, key) ? COLLECT_LIMIT_MIN[key] : COLLECT_LIMIT_MIN.default; return m > 0 ? m * 60000 : 0; }
+// fn 을 상한 안에서 기다린다 → { v } 정상 · { e } 실패 · { timeout: true } 상한 넘김(fn 은 뒤에서 계속 · 끝나면 _collectRunning 에서 빠지고 로그 한 줄)
+async function runCollectorLimited(key, fn, limitMs) {
+    _collectRunning.set(key, Date.now());
+    let timer = null, timedOut = false;
+    const done = Promise.resolve().then(() => fn()).then(v => ({ v }), e => ({ e }));
+    done.then(r => {
+        _collectRunning.delete(key);
+        if (timedOut) console.log(`[자동수집] ${key}: 시간 초과 뒤 늦게 끝남 — ${r.e ? '실패 ' + String(r.e && r.e.message || r.e).slice(0, 120) : '정상' + (r.v ? ' (' + String(r.v).slice(0, 80) + ')' : '')}`);
+    });
+    if (!(limitMs > 0)) return done;
+    const out = await Promise.race([done, new Promise(res => { timer = setTimeout(() => res({ timeout: true }), limitMs); if (timer.unref) timer.unref(); })]);
+    clearTimeout(timer);
+    if (out.timeout) timedOut = true;
+    return out;
+}
+// ── #794 수집기 시간 상한 끝 ──
+
 let _naverTickBusy = false;
 async function naverAutoCollectTick() {
     if (_naverTickBusy) return;
@@ -10062,6 +10095,7 @@ async function naverAutoCollectTick() {
         const kstNow = new Date(now + 9 * 3600 * 1000);
         const due = [];
         for (const r of rows) {
+            if (_collectRunning.has(r.key)) continue;   // #794 앞 회차가 시간 초과 뒤 아직 뒤에서 도는 중 — 끝날 때까지 이 키만 건너뜀
             const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
             if (r.key === 'settlement' || r.key === 'product_snapshot' || r.key === 'cafe24_sync' || r.key === 'coupon_expire_notify') {   /* #467: 쿠폰 만료 안내 = 하루 1회 10:00 */
                 // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30 · cafe24_sync 05:10)
@@ -10082,8 +10116,11 @@ async function naverAutoCollectTick() {
             experience_store: () => EXPERIENCE.collectStore(), experience_place: () => EXPERIENCE.collectPlace(), experience_sms: () => EXPERIENCE.collectSms() }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내 · #775 체험 예약
         if (typeof fn !== 'function') return;   // #775 모르는 키(새 키를 옛 코드가 만났을 때 · #467 함정)는 건너뜀
         let status = 'ok', errMsg = null, summary = '';
-        try { summary = await fn(); }
-        catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
+        const limitMs = collectLimitMs(r.key);   // #794
+        const out = await runCollectorLimited(r.key, fn, limitMs);
+        if (out.timeout) { status = 'fail'; errMsg = `시간 초과(${Math.round(limitMs / 60000)}분) — 뒤에서 마저 도는 중 · 끝날 때까지 이 수집만 건너뜀`; }
+        else if (out.e) { status = 'fail'; errMsg = String(out.e && out.e.message || out.e).slice(0, 300); }
+        else summary = out.v;
         await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
             [r.key, status, errMsg]);
         if (status === 'fail' && r.last_status !== 'fail') {
@@ -15046,6 +15083,7 @@ app.get('/api/agent-office/config', authMiddleware, adminOnly, async (req, res) 
 //  - TELEGRAM_NOTIFY=off로 전체 비활성 (기본 on)
 // ============================================================
 let _tgChatId = null;
+const TG_TIMEOUT_MS = 10000;   // #794 텔레그램 호출 시간 상한
 async function telegramChatId() {
     if (_tgChatId) return _tgChatId;
     if (process.env.TELEGRAM_CHAT_ID) { _tgChatId = String(process.env.TELEGRAM_CHAT_ID); return _tgChatId; }
@@ -15055,7 +15093,7 @@ async function telegramChatId() {
     if (!token) return null;
     // 최초 1회: 대표가 봇에게 보낸 메시지에서 chat_id 확보 → DB 고정 (이후 변경 경로 없음)
     try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, { signal: AbortSignal.timeout(TG_TIMEOUT_MS) });
         const j = await res.json();
         const msg = (j.result || []).map(u => u.message || u.edited_message).filter(Boolean).pop();
         const id = msg && msg.chat && msg.chat.id;
@@ -15093,6 +15131,7 @@ async function notifyTelegram(text) {
         const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ chat_id: chatId, text: tgMask(text) }),
+            signal: AbortSignal.timeout(TG_TIMEOUT_MS),   // #794 텔레그램이 응답을 안 주면 10초에 끊음(재시도 1회 포함 최대 약 25초 · 던지지 않고 audit 만 — 호출부 동작 무변경)
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return 'sent';
@@ -15128,7 +15167,7 @@ async function telegramSelfcheck() {
         const token = process.env.TELEGRAM_BOT_TOKEN;
         if (token && !diag.chat_env_set && !diag.chat_db_saved) {
             try {
-                const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+                const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, { signal: AbortSignal.timeout(TG_TIMEOUT_MS) });
                 const j = await res.json();
                 diag.getupdates = { ok: !!j.ok, updates: (j.result || []).length, error: j.ok ? null : String(j.description || 'unknown').slice(0, 80) };
             } catch (e) { diag.getupdates = { ok: false, error: String(e.message || e).slice(0, 80) }; }
