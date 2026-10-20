@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-18.3'; // #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-20.1'; // #782 발송처리 POST product-orders/dispatch = 「배송 없음(NOTHING)」 바디만(체험) · 종전 2026-10-18.3 = #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -97,8 +97,32 @@ const ALLOW = [
     { m: 'PUT',  re: /^\/external\/v1\/products\/origin-products\/\d+\/change-status$/ },        // #720 판매 상태·재고 변경(원상품 번호 · 바디 statusType·stockQuantity 만) — 쓰기 5번째
     { m: 'POST', re: /^\/external\/v1\/product-images\/upload$/ },                                // #720 그림 올리기(multipart · MULTIPART_ALLOW 와 짝 · allowed() 를 먼저 타므로 여기도 필요)
     { m: 'POST', re: /^\/external\/v2\/products$/ },                                              // #723 신규 상품 등록(대표 확정 10/17 「2번으로」 · 정확일치 · 뒤에 붙은 경로 없음)
+    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/dispatch$/ },          // #782 발송처리 — 🔴 「배송 없음」(체험) 만 · 바디 검사 dispatchBodyOk(택배 송장 발송처리는 계속 막힘)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
+// ── #782 발송처리 바디 검사 시작(verify-782-dispatch.js 가 이 구간을 떼어 시험한다) ──
+//   네이버 발송처리 = POST …/product-orders/dispatch { dispatchProductOrders:[{ productOrderId, deliveryMethod, deliveryCompanyCode?, trackingNumber?, dispatchDate }] }
+//   (개발자포럼 #2114 정상 호출 꼴 · #2170 「NOTHING = 디지털 상품 또는 상품 배송 여부가 '배송없음'일 때만」 · dispatchDate = ISO 8601 + 밀리초 + +09:00)
+//   허용 = 줄마다 deliveryMethod 'NOTHING'(배송 없음) 만 · 택배사·송장 칸은 비었거나 없음 · 한 번에 30줄 · 다른 칸 0 — 택배 송장 발송처리(실물 배송)는 여기서 거절
+const DISPATCH_PATH_RE = /^\/external\/v1\/pay-order\/seller\/product-orders\/dispatch$/;
+function dispatchBodyOk(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return 'dispatch_body_not_object';
+    const keys = Object.keys(body);
+    if (keys.length !== 1 || keys[0] !== 'dispatchProductOrders') return 'dispatch_body_keys';
+    const list = body.dispatchProductOrders;
+    if (!Array.isArray(list) || !list.length || list.length > 30) return 'dispatch_count';
+    const OK_KEYS = ['productOrderId', 'deliveryMethod', 'deliveryCompanyCode', 'trackingNumber', 'dispatchDate'];
+    for (const x of list) {
+        if (!x || typeof x !== 'object' || Array.isArray(x)) return 'dispatch_item_not_object';
+        if (Object.keys(x).some(k => !OK_KEYS.includes(k))) return 'dispatch_item_keys';
+        if (!/^\d{10,30}$/.test(String(x.productOrderId || ''))) return 'dispatch_product_order_id';
+        if (x.deliveryMethod !== 'NOTHING') return 'dispatch_only_nothing';   // 🔴 배송 없음만
+        if ((x.deliveryCompanyCode != null && x.deliveryCompanyCode !== '') || (x.trackingNumber != null && x.trackingNumber !== '')) return 'dispatch_no_tracking';
+        if (!/^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+09:00$/.test(String(x.dispatchDate || ''))) return 'dispatch_date_format';
+    }
+    return null;
+}
+// ── #782 발송처리 바디 검사 끝 ──
 
 // #720 그림 올리기만 multipart — 회사프로그램이 body = { __multipart: { field, files:[{ name, mime, b64 }] } } 로 보낸다.
 //   이 경로에서만 FormData 로 바꿔 보내고, 다른 경로에 __multipart 가 오면 400. 그 밖 JSON 길은 종전 그대로.
@@ -163,6 +187,11 @@ app.post('/naver', async (req, res) => {
     if (!allowed(method, path)) {
         log('차단(허용목록 외)', method, path);
         return res.status(403).json({ error: 'path_not_allowed', method, path });
+    }
+    // #782 발송처리는 「배송 없음」 바디만 — 아니면 네이버로 보내지 않고 거절
+    if (DISPATCH_PATH_RE.test(path)) {
+        const bad = dispatchBodyOk(body);
+        if (bad) { log('차단(발송처리 바디)', bad); return res.status(403).json({ error: bad, method, path }); }
     }
     // #720 multipart 는 그림 올리기 경로에서만 — 다른 경로에 오면 네이버로 보내지 않고 거절
     const mp = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, '__multipart') ? body.__multipart : null;

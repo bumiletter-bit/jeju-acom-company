@@ -21,7 +21,11 @@ function fakeDb() {
         if (/^INSERT INTO agent_office_config/.test(s)) { S.cfg[a[0]] = JSON.parse(a[1]); return { rows: [] }; }
         if (/^DELETE FROM agent_office_config/.test(s)) { delete S.cfg.experience_mail_probe_request; return { rows: [] }; }
         const due30 = r => !r.confirm_at || Date.now() - r.confirm_at > 30 * 60000;   // 마지막 시도 30분 지남
-        if (/jsonb_object_keys\(items\).*confirm_state='pending'/.test(s)) return { rows: S.rows.filter(r => r.source === 'store' && r.confirm_state === 'pending' && (r.confirm_tries || 0) < 3 && due30(r)).flatMap(r => Object.keys(r.items || {})).map(k => ({ k })) };
+        const dueD = r => !r.dispatch_at || Date.now() - r.dispatch_at > 30 * 60000;
+        if (/jsonb_object_keys\(items\).*confirm_state='pending'/.test(s)) return { rows: S.rows.filter(r => r.source === 'store' && ((r.confirm_state === 'pending' && (r.confirm_tries || 0) < 3 && due30(r)) || (r.confirm_state === 'done' && (r.dispatch_tries || 0) < 3 && dueD(r)) || (!r.confirm_state && r.status === 'confirmed'))).flatMap(r => Object.keys(r.items || {})).map(k => ({ k })) };
+        if (/^SELECT confirm_state, dispatch_tries, \(dispatch_at IS NULL/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ confirm_state: r.confirm_state || null, dispatch_tries: r.dispatch_tries || 0, due: dueD(r) }] : [] }; }
+        if (/^UPDATE experience_bookings SET confirm_state='dispatched'/.test(s)) { const r = byId(a[0]); r.confirm_state = 'dispatched'; r.dispatch_error = null; r.dispatch_at = r.dispatch_at || Date.now(); return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET confirm_state=\$2, dispatch_tries=\$3, dispatch_error=\$4, dispatch_at=NOW\(\)/.test(s)) { const r = byId(a[0]); r.confirm_state = a[1]; r.dispatch_tries = a[2]; r.dispatch_error = a[3]; r.dispatch_at = Date.now(); return { rows: [] }; }
         if (/^SELECT confirm_state, confirm_tries, \(confirm_at IS NULL/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ confirm_state: r.confirm_state || null, confirm_tries: r.confirm_tries || 0, due: due30(r) }] : [] }; }
         if (/^UPDATE experience_bookings SET confirm_state='done'/.test(s)) { const r = byId(a[0]); r.confirm_state = 'done'; r.confirm_error = null; r.confirm_at = r.confirm_at || Date.now(); return { rows: [] }; }
         if (/^UPDATE experience_bookings SET confirm_state='skipped_claim'/.test(s)) { const r = byId(a[0]); r.confirm_state = 'skipped_claim'; r.confirm_error = a[1]; return { rows: [] }; }
@@ -81,7 +85,7 @@ function mk(extra) {
     const deps = Object.assign({
         pool: db.pool, authMiddleware: passMw, adminOnly: passMw, writeAudit: x => { audits.push(x); }, skipInit: true, noTimers: true,
         naverCfgGet: async k => db.S.cfg[k] || null, naverCfgSet: async (k, v) => { db.S.cfg[k] = v; }, naverKstIso: ms => new Date(ms).toISOString(),
-        naverFetchChanges: async () => db.S.changes || [], naverCall: async (req) => ({ data: { data: (db.S.detail || []).filter(it => req.body.productOrderIds.includes(it.productOrder.productOrderId)) } }),
+        naverFetchChanges: async () => db.S.changes || [], naverCall: async (req) => { if (/\/dispatch$/.test(req.path)) { (db.S.dispatchCalls = db.S.dispatchCalls || []).push(req.body); const ids = req.body.dispatchProductOrders.map(x => x.productOrderId); return db.S.dispatchReply ? db.S.dispatchReply(ids) : { data: { data: { successProductOrderIds: ids, failProductOrderInfos: [] } } }; } return { data: { data: (db.S.detail || []).filter(it => req.body.productOrderIds.includes(it.productOrder.productOrderId)) } }; },
         experienceProductIds: async () => ['7673020911'], isExperienceOrder: (po, ids) => ids.includes(String(po.productId || '')),
         resolveReceiver: async t => t, isMaskedTel: t => t === '__MASKED__',
         kakaoNotify: { sendLms: async o => { sent.push(o); return { mode: 'real', status: 'sent' }; }, sendAlimtalk: async o => { sent.push({ ...o, alim: true }); return { mode: 'real', status: 'sent' }; }, smsSafe: s => s },
@@ -223,7 +227,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const out = await t.M.collectStore();
         const by = k => d.rows.find(r => r.ext_key === 'store:' + k);
         ok(calls.length === 1 && JSON.stringify(calls[0].slice().sort()) === '["P1","P2","P3"]', '발주확인 1번 · 대상 = 결제완료·발주확인 전 체험 줄만(취소 요청 P4 · 이미 발주확인 P6 · 택배 Q1 제외 · 날짜 확인 필요 P3 은 함)', calls);
-        ok(by('O1').confirm_state === 'done' && by('O2').confirm_state === 'done' && !by('O3').confirm_state && !by('O4').confirm_state, '명단 = 발주확인 끝(done) · 대상 아닌 예약은 표시 없음', d.rows.map(r => r.ext_key + ':' + (r.confirm_state || '-')));
+        ok(by('O1').confirm_state === 'dispatched' && by('O2').confirm_state === 'dispatched' && !by('O3').confirm_state && by('O4').confirm_state === 'dispatched', '명단 = 발주확인 → 발송처리 끝(dispatched) · 이미 발주확인(네이버 OK)이던 O4 도 발송처리 · 취소 요청 O3 표시 없음(#782)', d.rows.map(r => r.ext_key + ':' + (r.confirm_state || '-')));
         ok(/발주확인 2/.test(out) && t.audits.some(a => a.action === 'experience_auto_confirm' && a.changes.after.asked === 3), '결과 글 「발주확인 2」 · audit experience_auto_confirm', out);
         // 다음 틱: 이미 done = 다시 안 함(한 주문 1회)
         d.changes = [{ productOrderId: 'P1', lastChangedType: 'DELIVERED' }]; calls.length = 0;
@@ -254,13 +258,77 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const a = mk({ naverConfirmOrders: async ids => ({ success: [], fail: ids.map(id => ({ id, code: '105306', message: '이미 발주확인된 주문' })) }), naverConfirmIsAlready: isAlready });
         a.db.S.changes = [{ productOrderId: 'P7', lastChangedType: 'PAYED' }]; a.db.S.detail = [po('P7', 'O7', '7673020911', OPT('x', '11', '5', '10:00'), 1)];
         await a.M.collectStore();
-        ok(a.db.S.rows[0].confirm_state === 'done', '「이미 발주확인」 응답 = 됨(done)', a.db.S.rows[0].confirm_state);
+        ok(a.db.S.rows[0].confirm_state === 'dispatched', '「이미 발주확인」 응답 = 됨 → 이어서 발송처리(dispatched)', a.db.S.rows[0].confirm_state);
         const off = []; const n = mk({ naverConfirmOrders: async ids => { off.push(ids); return { success: ids, fail: [] }; } });
         n.db.S.cfg.experience_notify = { auto_confirm: false }; n.db.S.changes = [{ productOrderId: 'P8', lastChangedType: 'PAYED' }]; n.db.S.detail = [po('P8', 'O8', '7673020911', OPT('x', '11', '6', '10:00'), 1)];
         await n.M.collectStore();
         ok(off.length === 0 && n.db.S.rows.length === 1 && !n.db.S.rows[0].confirm_state, '설정 auto_confirm false = 명단만 · 발주확인 0');
         const uiSrc2 = require('fs').readFileSync(path.join(__dirname, '..', 'public', 'ao-exp.js'), 'utf8');
         ok(/confirm_state === 'failed'/.test(uiSrc2) && /발주확인 실패/.test(uiSrc2) && /xp-s-ac/.test(uiSrc2), '화면 = 「발주확인 실패」 표시 · 문자 설정에 자동 발주확인 켜기·끄기');
+    }
+
+    console.log('\n③-3 #782 발송처리(배송 없음) · 가짜 중계·네이버');
+    {
+        // 발송처리 바디 꼴 = 줄마다 deliveryMethod NOTHING · dispatchDate 밀리초 +09:00 · 택배사·송장 칸 없음
+        const t = mk({ naverConfirmOrders: async ids => ({ success: ids, fail: [] }), naverConfirmIsAlready: () => false });
+        t.db.S.changes = [{ productOrderId: 'D1', lastChangedType: 'PAYED' }]; t.db.S.detail = [po('D1', 'OD1', '7673020911', OPT('x', '11', '10', '16:30'), 1)];
+        const out = await t.M.collectStore();
+        const body = t.db.S.dispatchCalls && t.db.S.dispatchCalls[0];
+        ok(body && Object.keys(body).join() === 'dispatchProductOrders' && body.dispatchProductOrders.length === 1 && body.dispatchProductOrders[0].productOrderId === 'D1' && body.dispatchProductOrders[0].deliveryMethod === 'NOTHING'
+            && /^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+09:00$/.test(body.dispatchProductOrders[0].dispatchDate) && !('trackingNumber' in body.dispatchProductOrders[0]) && !('deliveryCompanyCode' in body.dispatchProductOrders[0]), '발송처리 바디 = NOTHING · dispatchDate(밀리초 +09:00) · 송장 칸 없음', body);
+        ok(t.db.S.rows[0].confirm_state === 'dispatched' && /발송처리 1/.test(out) && t.audits.some(a => a.action === 'experience_auto_dispatch'), '발주확인 → 발송처리 같은 틱 · audit experience_auto_dispatch', out);
+        // 대표 시험 주문 꼴: 네이버가 이미 발주확인(OK) · 우리 표시 없음 · 변경 목록에 다시 안 나와도 → 다음 틱에 다시 읽어 발송처리
+        const u = mk({ naverConfirmOrders: async () => { throw new Error('부르면 안 됨'); } });
+        u.db.S.rows.push({ id: 1, source: 'store', ext_key: 'store:OR', status: 'confirmed', date_ok: true, items: { R1: {} }, confirm_state: null });
+        u.db.S.nextId = 2; u.db.S.changes = []; u.db.S.detail = [po('R1', 'OR', '7673020911', OPT('x', '11', '10', '16:30'), 1, { placeOrderStatus: 'OK' })];
+        await u.M.collectStore();
+        ok(u.db.S.rows[0].confirm_state === 'dispatched' && (u.db.S.dispatchCalls || []).length === 1, '네이버가 이미 OK 로 둔 주문(대표 시험 꼴) = 다음 틱에 다시 읽어 발송처리 · 발주확인은 안 부름', u.db.S.rows[0].confirm_state);
+        // 실패 → done 유지 + 30분 간격 → 3번 = dispatch_failed + 텔레그램 1
+        const f = mk({ naverConfirmOrders: async ids => ({ success: ids, fail: [] }) });
+        f.db.S.dispatchReply = ids => ({ data: { data: { successProductOrderIds: [], failProductOrderInfos: ids.map(id => ({ productOrderId: id, code: '104100', message: '처리 불가' })) } } });
+        f.db.S.changes = [{ productOrderId: 'F1', lastChangedType: 'PAYED' }]; f.db.S.detail = [po('F1', 'OF1', '7673020911', OPT('x', '11', '11', '10:00'), 1)];
+        await f.M.collectStore(); const of1 = f.db.S.rows[0];
+        ok(of1.confirm_state === 'done' && of1.dispatch_tries === 1 && /104100 처리 불가/.test(of1.dispatch_error), '발송처리 실패 1 = done 유지 · 사유', { st: of1.confirm_state, n: of1.dispatch_tries });
+        f.db.S.changes = []; await f.M.collectStore();
+        ok(of1.dispatch_tries === 1 && f.db.S.dispatchCalls.length === 1, '30분 안 = 다시 안 함', f.db.S.dispatchCalls.length);
+        for (let i = 0; i < 3; i++) { of1.dispatch_at = Date.now() - 31 * 60000; await f.M.collectStore(); }
+        ok(of1.confirm_state === 'dispatch_failed' && of1.dispatch_tries === 3 && f.db.S.dispatchCalls.length === 3 && f.tg.length === 1 && /발송처리/.test(f.tg[0]), '3번 실패 = dispatch_failed + 텔레그램 1 · 그 뒤 안 함', { st: of1.confirm_state, calls: f.db.S.dispatchCalls.length, tg: f.tg.length });
+        // 설정 auto_dispatch false = 발주확인만 · 사람이 센터에서 발송처리하면(배송중·완료) 끝으로 표시
+        const n = mk({ naverConfirmOrders: async ids => ({ success: ids, fail: [] }) });
+        n.db.S.cfg.experience_notify = { auto_dispatch: false }; n.db.S.changes = [{ productOrderId: 'N1', lastChangedType: 'PAYED' }]; n.db.S.detail = [po('N1', 'ON1', '7673020911', OPT('x', '11', '12', '10:00'), 1)];
+        await n.M.collectStore();
+        ok(n.db.S.rows[0].confirm_state === 'done' && !(n.db.S.dispatchCalls || []).length, '설정 auto_dispatch false = 발주확인만(발송처리 0)', n.db.S.rows[0].confirm_state);
+        n.db.S.cfg.experience_notify = {}; n.db.S.changes = [{ productOrderId: 'N1', lastChangedType: 'DELIVERED' }]; n.db.S.detail = [po('N1', 'ON1', '7673020911', OPT('x', '11', '12', '10:00'), 1, { productOrderStatus: 'DELIVERED', placeOrderStatus: 'OK' })];
+        await n.M.collectStore();
+        ok(n.db.S.rows[0].confirm_state === 'dispatched' && !(n.db.S.dispatchCalls || []).length, '센터에서 이미 발송(배송완료) = 부르지 않고 끝으로 표시', n.db.S.rows[0].confirm_state);
+        const ui3 = require('fs').readFileSync(path.join(__dirname, '..', 'public', 'ao-exp.js'), 'utf8');
+        ok(/dispatch_failed/.test(ui3) && /발송처리 실패 — 센터에서 발송처리/.test(ui3) && /xp-s-ad/.test(ui3), '화면 = 「발송처리 실패」·「발송처리✓」 · 설정 자동 발송처리 켜기·끄기');
+    }
+
+    console.log('\n③-4 #782 중계서버 발송처리 바디 검사(relay/server.js 의 dispatchBodyOk 를 떼어 실행)');
+    {
+        const rsrc = require('fs').readFileSync(path.join(__dirname, '..', 'relay', 'server.js'), 'utf8');
+        const ra = rsrc.indexOf('// ── #782 발송처리 바디 검사 시작'), rb = rsrc.indexOf('// ── #782 발송처리 바디 검사 끝');
+        const G = new Function(rsrc.slice(ra, rb) + '\nreturn { dispatchBodyOk, DISPATCH_PATH_RE };')();
+        const okItem = { productOrderId: '2026102038638821', deliveryMethod: 'NOTHING', dispatchDate: '2026-10-20T14:10:00.123+09:00' };
+        const cases = [
+            [{ dispatchProductOrders: [okItem] }, null, '배송 없음 1줄 = 통과'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryCompanyCode: '', trackingNumber: '' }] }, null, '빈 택배사·송장 칸 = 통과'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'CJGLS', trackingNumber: '123456789012' }] }, 'dispatch_only_nothing', '택배 송장 발송처리 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DIRECT_DELIVERY' }] }, 'dispatch_only_nothing', '직접 전달 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, trackingNumber: '1234' }] }, 'dispatch_no_tracking', 'NOTHING 인데 송장 번호 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, dispatchDate: '2026-10-20T14:10:00+09:00' }] }, 'dispatch_date_format', '밀리초 없는 날짜 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, extra: 1 }] }, 'dispatch_item_keys', '다른 칸 = 거절'],
+            [{ dispatchProductOrders: [okItem], other: 1 }, 'dispatch_body_keys', '바디에 다른 칸 = 거절'],
+            [{ dispatchProductOrders: Array(31).fill(okItem) }, 'dispatch_count', '31줄 = 거절'],
+            [{ dispatchProductOrders: [] }, 'dispatch_count', '0줄 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, productOrderId: 'abc' }] }, 'dispatch_product_order_id', '번호 꼴 = 거절'],
+            [null, 'dispatch_body_not_object', '바디 없음 = 거절'],
+        ];
+        const res2 = cases.map(([b, want, nm]) => [G.dispatchBodyOk(b) === want, nm, G.dispatchBodyOk(b)]);
+        ok(res2.every(x => x[0]), '바디 검사 12가지', res2.filter(x => !x[0]).map(x => x[1] + '→' + x[2]).join(' · ') || '전부 맞음');
+        ok(G.DISPATCH_PATH_RE.test('/external/v1/pay-order/seller/product-orders/dispatch') && !G.DISPATCH_PATH_RE.test('/external/v1/pay-order/seller/product-orders/dispatch/x'), '경로 정확 일치');
+        ok(/m: 'POST', re: \/\^\\\/external\\\/v1\\\/pay-order\\\/seller\\\/product-orders\\\/dispatch\$\//.test(rsrc) && /if \(DISPATCH_PATH_RE\.test\(path\)\)/.test(rsrc) && /RELAY_VERSION = '2026-10-20\.1'/.test(rsrc), '허용 목록 1줄 · /naver 에서 바디 검사 · RELAY_VERSION 2026-10-20.1');
     }
 
     console.log('\n④ 플레이스 메일 수집');
@@ -303,6 +371,13 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         ok(d.rows.find(r => r.id === 3).sms_error && /수신거부/.test(d.rows.find(r => r.id === 3).sms_error), '수신거부 기억 번호 = 건너뜀 기록', d.rows.find(r => r.id === 3).sms_error);
         ok(t.sent.every(x => x.sender === '01062598420'), '설정 발신번호로', t.sent.map(x => x.sender));
         ok(/홍길동님, 예약이 확정되었습니다/.test(t.sent[0].message) && /체험 2명 · 입장 1명/.test(t.sent[0].message) && /체험장 010-6259-8420 으로 연락 주세요/.test(t.sent[0].message) && !/\{/.test(t.sent[0].message), '접수 문구 = 대표 확정 원문(이름·인원·체험장 번호 · 자리표 남은 것 0)');
+        {   // #782 LMS {인원} = 알림톡 #{인원} 과 같은 함수(0명 칸 뺌 · 유아는 있을 때만) · 기본 접수 문구도 {인원}
+            const d1 = { name: '전**', visit_date: '2026-11-10', visit_time: '16:30', exp_count: 1, entry_count: 0, infant_count: 0 };
+            const one = T.renderTpl('방문: {월}월 {일}일 {시간} / {인원}', d1), three = T.renderTpl('{인원}', { ...d1, exp_count: 2, entry_count: 1, infant_count: 1 });
+            const s = mk(); const r0 = res(); await s.app.routes['GET /api/agent-office/experience/settings']({}, r0);
+            const def = T.renderTpl(r0.body.defaults.tpl_recv, d1);
+            ok(one === '방문: 11월 10일 16:30 / 체험 1명' && three === '체험 2명 · 입장 1명 · 유아 1명' && /방문: 11월 10일 16:30 \/ 체험 1명\n/.test(def) && !/입장 0명/.test(def), 'LMS {인원} = 「체험 1명」(입장 0명 안 씀) · 「체험 2명 · 입장 1명 · 유아 1명」 · 기본 접수 문구도', { one, three });
+        }
         ok(/내일 \d+월 \d+일 13:30 방문 예약/.test(t.sent[1].message) && /체험장 010-6259-8420/.test(t.sent[1].message), '전날 문구');
         const before = t.sent.length; await t.M.collectSms();
         ok(t.sent.length === before, '이미 보낸 것은 다시 안 보냄');

@@ -1,3 +1,10 @@
+## v5.9.580 (2026-10-20) — #782 체험 주문 자동 발송처리(배송 없음) · relay 2026-10-20.1
+- 실측: 네이버는 배송 없는 상품을 결제 즉시 발주확인(OK)으로 둠(대표 시험 주문 = 신규주문 건너뛰고 배송준비) → 센터처럼 발송처리까지 해야 배송완료.
+- relay: POST /external/v1/pay-order/seller/product-orders/dispatch 허용(정확 일치) + dispatchBodyOk = dispatchProductOrders 1~30줄 · deliveryMethod NOTHING 만 · 택배사·송장 비움 · dispatchDate +09:00 · 택배 발송처리는 403 그대로(우회 14가지 시험 · 워커3).
+- experience.js autoDispatch: 발주확인된 체험 상품주문만 · PAYED · 클레임 없음 · 이미 배송중/완료면 표시만 · 30분 간격 3회 → dispatch_failed + 텔레그램 · 설정 experience_notify.auto_dispatch(기본 true) · audit · 근거 = 커머스API 포럼 운영자 답(#2114·#2170 · 공식 문서 본문은 SPA 로 못 읽음 → 첫 실호출로 확정).
+- LMS 문자 인원 {인원} = 0명 칸 빼고(알림톡과 같은 함수) · ao-exp.js v=4(발송처리 표시·설정).
+- 검증 verify-775-booking 99/99 · verify-775-exp 18/18 · 워커3 읽기 점검 막을 것 0.
+
 ## v5.9.579 (2026-10-20) — #779 메일 찾기 실메일 고침
 - 실측: 네이버 IMAP 은 SEARCH 리터럴({n})을 받고 늘 0통 · 여러 통 FETCH 를 두 줄로 나눠 줌 → 검색어 = 따옴표 글(한글 CHARSET UTF-8 · 거절이면 대비 길) · FETCH 줄을 메일 번호별로 합침(mergeFetch) · 그래도 머리말이 비면 한 통씩(100통) · 기간 없으면 최근 90일.
 - 보내기 실시험 통과(대표 주소 · 8초 · 지시자 표시).
