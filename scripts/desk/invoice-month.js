@@ -73,19 +73,30 @@ async function getBrowser() {
 const smartbillOf = (mail) => {
     const t = String((mail && mail.text) || ''), m = /비회원\s*비밀번호\s*[:：]?\s*([0-9a-fA-F]{32})(?![0-9a-fA-F])/.exec(t);
     if (!/스마트빌|smartbill/i.test(t) || !m) return null;
-    const ls = (mail.links || []).filter(l => /smartbill/i.test(String(l.href || '')));
-    const l = ls.find(x => /계산서|보기|조회/.test(x.text || '')) || ls[0];
-    return { hex: m[1], url: l ? l.href : null };
+    const ls = (mail.links || []).filter(l => /smartbill|businesson/i.test(String(l.href || '')) && l.how !== 'form');   // form(POST) 꼴은 주소만으론 안 열림 → HTML 원문 길
+    const l = ls.find(x => /계산서|보기|조회/.test(x.text || '')) || ls.find(x => x.how !== 'raw') || ls[0];
+    return { hex: m[1], url: l ? l.href : null, html: l ? null : (mail.html || null) };
 };
-async function openSmartbill(url, hex) {
+// #818-b 링크가 없거나 form·스크립트 꼴이면 = 메일 HTML 원문을 화면에 띄워 「계산서 보기」(또는 조회) 단추를 누름 → 새 창이든 같은 창이든 그 뒤는 같은 길
+async function openSmartbill(sb, hex) {
+    if (typeof sb === 'string') sb = { url: sb };
     const b = await getBrowser(); if (!b) return { ok: false, error: NO_PW };
     const ctx = await b.newContext();
     const allText = async () => { let t = ''; for (const p of ctx.pages()) for (const fr of p.frames()) { try { t += '\n' + await fr.evaluate(() => document.body ? document.body.innerText : ''); } catch (_) { } } return t; };
     try {
         const pg = await ctx.newPage();
-        try { await pg.goto(url, { waitUntil: 'load', timeout: 30000 }); } catch (_) { return { ok: false, error: '스마트빌 화면을 못 엶(인터넷·링크 확인)' }; }
+        if (sb.url) { try { await pg.goto(sb.url, { waitUntil: 'load', timeout: 30000 }); } catch (_) { return { ok: false, error: '스마트빌 화면을 못 엶(인터넷·링크 확인)' }; } }
+        else if (sb.html) {
+            await pg.setContent(sb.html, { waitUntil: 'load', timeout: 30000 }).catch(() => { });
+            const bt = pg.locator('a, button, input[type=submit], input[type=button], input[type=image], [onclick]').filter({ hasText: /계산서\s*보기|세금계산서\s*보기|조회/ }).first();
+            const bt2 = pg.locator('input[type=submit][value*="보기"], input[type=submit][value*="조회"], input[type=button][value*="보기"], input[type=button][value*="조회"]').first();
+            const hit = (await bt.count().catch(() => 0)) ? bt : (await bt2.count().catch(() => 0)) ? bt2 : null;
+            if (!hit) return { ok: false, error: '스마트빌 메일에 「계산서 보기」 단추가 없음' };
+            await Promise.all([pg.waitForLoadState('load').catch(() => { }), hit.click({ timeout: 10000 }).catch(() => { })]);
+            await pg.waitForTimeout(1500);
+        } else return { ok: false, error: '계산서 보기 링크 없음' };
         let box = null;
-        for (let i = 0; i < 30 && !box; i++) { for (const fr of pg.frames()) { box = await fr.$('input[type=password]').catch(() => null); if (box) break; } if (!box) await pg.waitForTimeout(500); }
+        for (let i = 0; i < 30 && !box; i++) { for (const p of ctx.pages()) { for (const fr of p.frames()) { box = await fr.$('input[type=password]').catch(() => null); if (box) break; } if (box) break; } if (!box) await pg.waitForTimeout(500); }
         if (!box) return { ok: false, error: '스마트빌 비밀번호 칸을 못 찾음' };
         await box.fill(hex); await box.press('Enter').catch(() => { });
         let txt = '';
@@ -93,7 +104,7 @@ async function openSmartbill(url, hex) {
             await pg.waitForTimeout(500);
             txt = await allText();
             if (/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt)) break;
-            if (i === 10) { for (const fr of pg.frames()) { const bt = await fr.$('button:has-text("확인"), input[type=submit], input[type=button][value*="확인"], a:has-text("확인")').catch(() => null); if (bt) { await bt.click().catch(() => { }); break; } } }
+            if (i === 10) { for (const fr of ctx.pages().flatMap(p => p.frames())) { const bt = await fr.$('button:has-text("확인"), input[type=submit], input[type=button][value*="확인"], a:has-text("확인")').catch(() => null); if (bt) { await bt.click().catch(() => { }); break; } } }
         }
         if (!(/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt))) return { ok: false, error: /비밀번호/.test(txt) ? '스마트빌이 안 풀림(비밀번호 확인)' : '스마트빌 계산서 글을 못 읽음' };
         let pdf = null;
@@ -197,7 +208,7 @@ async function main(args, deps) {
                 }
             } else {
                 const sb = smartbillOf(rd.mail);   // #818 CJ 정발행 = 스마트빌(첨부 0 · 링크 + 비회원 비밀번호)
-                const sr = sb && sb.url ? await openSmartbill(sb.url, sb.hex) : null;
+                const sr = sb && (sb.url || sb.html) ? await openSmartbill(sb, sb.hex) : null;
                 if (sr && sr.ok) {
                     parsed = parseInvoiceText(sr.text, our); srcText = sr.text;
                     if (sr.pdf) { pdfBuf = Buffer.from(sr.pdf); pdfName = `스마트빌_${mm.uid}.pdf`; }

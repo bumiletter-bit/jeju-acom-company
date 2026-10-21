@@ -1,3 +1,7 @@
+## v5.9.600 (2026-10-21) — #818-b 메일 HTML 링크 넓힘(javascript·onclick·form) · 스마트빌 = 메일 HTML 을 띄워 「계산서 보기」 누르는 길
+
+- 라이브 read 64910(CJ 정발행) 에 links 키가 없던 것 = htmlLinks 가 `<a href="http…">` 만 잡고 0개면 키를 안 붙임(스마트빌 「계산서 보기」는 javascript/onclick/form 꼴). naver-mail.js htmlLinks = a href(http·//) · javascript:/onclick 안 주소(how js) · [onclick] 태그 · form action(how form) · 그래도 0이면 글 속 주소(how raw) · read 결과에 html_info{size,a,a_http,js,form,url} + html 원문(20만 자 · 계산서 도구용 · 미리보기는 종전) · mail-find read 에 links(how)·html_info 줄. invoice-month.js smartbillOf = smartbill|businesson 주소(form 꼴 뺌) · 없으면 메일 HTML 원문을 setContent 로 띄워 「계산서 보기·세금계산서 보기·조회」 누름 → 비밀번호 칸(모든 창·프레임) → 계산서 글 · 실패 = check 줄. 검증 verify-811 61/61 · verify-814 63/63 · 워커3 읽기 점검. 배포 뒤 총괄 = read 64910 links/how 확인 → 색인 찬 뒤 invoice-month --dry.
+
 ## v5.9.599 (2026-10-21) — #818 CJ 정발행 계산서(청구·결제 메일함 · 스마트빌) 잡히게: 메일함별 색인 상한 · HTML 링크 · 스마트빌 비회원 조회 읽기
 
 - 발단 = 대표 폰 「메일은 있는데 반영이 안 돼」(네이버 메일 「청구·결제」 메일함에 씨제이대한통운㈜ 정발행 메일 매달 · 05.06~10.06). 원인(워커3) = #811 색인이 받은메일함이 5,000 상한을 혼자 다 써 다른 10개 메일함이 n=0·done=true 로 닫힘 → 찾기가 색인 길만 타서 0통 · CJ 메일 = 스마트빌(mailing@businesson.co.kr) · 첨부 0 · 본문 비회원 비밀번호 + HTML 「계산서 보기」 링크만.

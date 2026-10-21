@@ -234,21 +234,43 @@ function partText(latin, p) {
     const t = decodeBody(body, h);
     return (p.type === 'text/html' ? htmlText(t) : t.replace(/\r/g, '')).replace(/\n{3,}/g, '\n\n').trim();
 }
-// #818 HTML 부분 → [{ href, text }] · http(s) 만 · 20개 · 글자 300자
-function htmlLinks(latin, p) {
+// #818 HTML 부분 → 글(HTML 원문) · base64 는 잘린 끝을 버림
+function htmlOf(latin, p) {
     let body = String(latin || '');
     if (p.enc === 'base64') { const clean = body.replace(/[^A-Za-z0-9+/=]/g, ''); body = clean.slice(0, clean.length - (clean.length % 4)); }
-    const html = decodeBody(body, { 'content-transfer-encoding': p.enc, 'content-type': p.type + (p.charset ? '; charset=' + p.charset : '') });
-    const out = [], seen = new Set(), re = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+    return decodeBody(body, { 'content-transfer-encoding': p.enc, 'content-type': p.type + (p.charset ? '; charset=' + p.charset : '') });
+}
+// #818-b HTML → [{ href, text, how? }] · 20개 · 글자 300자
+//   a href = http(s) · 「//」 꼴 / javascript:·onclick 안 따옴표 주소(how 'js') / form action(how 'form') / 그래도 없으면 글 속 http(s) 주소(그림·css·js 빼고 · how 'raw')
+//   (v5.9.599 실메일 64910 = HTML 부분은 있는데 http(s) a href 가 0 → links 칸 없음)
+const absUrl = (u) => { u = String(u || '').replace(/&amp;/g, '&').trim(); return /^\/\//.test(u) ? 'https:' + u : u; };
+const isHttp = (u) => /^https?:\/\/[^\s]/i.test(u);
+const jsUrl = (t) => { const m = /['"]((?:https?:)?\/\/[^'"\s]+)['"]/i.exec(String(t || '').replace(/&quot;/g, '"').replace(/&#39;/g, "'")); return m ? absUrl(m[1]) : null; };
+function htmlLinks(html) {
+    html = String(html || '');
+    const out = [], seen = new Set();
+    const add = (href, text, how) => { if (!href || !isHttp(href) || seen.has(href) || out.length >= 20) return; seen.add(href); out.push({ href: href.slice(0, 1000), text: htmlText(String(text || '')).replace(/\s+/g, ' ').trim().slice(0, 300), ...(how ? { how } : {}) }); };
     let m;
-    while ((m = re.exec(html)) && out.length < 20) {
-        const href = String(m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]).replace(/&amp;/g, '&').trim();
-        if (!/^https?:\/\//i.test(href) || seen.has(href)) continue;
-        seen.add(href);
-        out.push({ href: href.slice(0, 1000), text: htmlText(m[4]).replace(/\s+/g, ' ').trim().slice(0, 300) });
+    const reA = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    while ((m = reA.exec(html))) {
+        const at = m[1], hm = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(at);
+        const href = hm ? absUrl(hm[1] != null ? hm[1] : hm[2] != null ? hm[2] : hm[3]) : '';
+        if (isHttp(href)) add(href, m[2]);
+        else { const j = jsUrl(at); if (j) add(j, m[2], 'js'); }
     }
+    const reOn = /<(?!a\b)(\w+)\b([^>]*\bonclick\s*=[^>]*)>([\s\S]{0,300}?)<\/\1>/gi;
+    while ((m = reOn.exec(html))) { const j = jsUrl(m[2]); if (j) add(j, m[3], 'js'); }
+    const reF = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+    while ((m = reF.exec(html))) {
+        const am = /\baction\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(m[1]); if (!am) continue;
+        const bt = /<input\b[^>]*\btype\s*=\s*["']?(?:submit|image|button)\b[^>]*>/i.exec(m[2]), bv = bt && /\bvalue\s*=\s*["']([^"']*)/i.exec(bt[0]);
+        add(absUrl(am[1] != null ? am[1] : am[2] != null ? am[2] : am[3]), (bv && bv[1]) || htmlText(m[2]).trim().slice(0, 60) || '(form)', 'form');
+    }
+    if (!out.length) for (const r of html.matchAll(/https?:\/\/[^\s"'<>()]+/gi)) { if (!/\.(png|jpe?g|gif|css|js|ico|bmp|svg)(\?|$)/i.test(r[0])) add(absUrl(r[0]), '', 'raw'); }
     return out;
 }
+// #818-b 링크가 0일 때 원인 보기용(값 없음 · 수만)
+const htmlInfo = (html) => { html = String(html || ''); const c = (re) => (html.match(re) || []).length; return { size: html.length, a: c(/<a\b/gi), a_http: c(/<a\b[^>]*\bhref\s*=\s*["']?(?:https?:)?\/\//gi), js: c(/javascript:|\bonclick\s*=/gi), form: c(/<form\b/gi), url: c(/https?:\/\//gi) }; };
 function partBytes(latin, p) {
     const s = String(latin || '');
     if (p.enc === 'base64') return Buffer.from(s.replace(/[^A-Za-z0-9+/=]/g, ''), 'base64');
@@ -332,11 +354,12 @@ async function describeMail(im, uid, textMax, withLinks) {
     let text = '';
     if (tp) { const want = Math.min(Math.max(textMax * 4, 4096), 200000); const raw = await im.fetch(uid, `BODY.PEEK[${tp.part}]<0.${want}>`); text = partText(raw ? raw.toString('latin1') : '', tp); }
     // #818 HTML 부분의 링크(스마트빌 「계산서 보기」처럼 HTML 에만 있는 주소) · 한 통 읽기(read)에서만 · text 는 종전 그대로
-    let links;
+    //   #818-b 링크 0 = html_info(수만) · html = HTML 원문(20만 자 · 창구 계산서 도구가 링크 대신 화면에 띄워 「계산서 보기」를 누를 때)
+    let links, hinfo, hraw;
     const hp = withLinks ? parts.find(p => p.type === 'text/html' && !isAttach(p)) : null;
-    if (hp) { const raw = await im.fetch(uid, `BODY.PEEK[${hp.part}]<0.200000>`); links = htmlLinks(raw ? raw.toString('latin1') : '', hp); }
+    if (hp) { const raw = await im.fetch(uid, `BODY.PEEK[${hp.part}]<0.200000>`); hraw = htmlOf(raw ? raw.toString('latin1') : '', hp).slice(0, 200000); links = htmlLinks(hraw); hinfo = htmlInfo(hraw); }
     return { uid, date: hh.date || null, from: decodeWords(hh.from || ''), to: decodeWords(hh.to || ''), cc: decodeWords(hh.cc || '') || undefined, subject: decodeWords(hh.subject || ''),
-        text: text.slice(0, textMax), text_cut: text.length > textMax, attachments: attachList(parts), ...(links && links.length ? { links } : {}) };
+        text: text.slice(0, textMax), text_cut: text.length > textMax, attachments: attachList(parts), ...(links && links.length ? { links } : {}), ...(hraw ? { html_info: hinfo, html: hraw } : {}) };
 }
 // ════════ #811 메일 색인(대표 10/21 「공유폴더 송장 색인처럼 먼저 읽어 두면 빨라지는 구조면 넣자」) ════════
 //   표 mail_index = 메일 머리만(보낸이·제목·날짜·첨부 이름·크기 · 본문 X) · 수집기 naver_mail_index(1분 틱 체계 · 기본 10분) · 처음 = 메일함들 최근 5천 통을 한 번에 1천 통씩 · 그 뒤 새 uid 만
@@ -935,4 +958,4 @@ function mountMailRunner(deps) {
 }
 
 module.exports = { imapOpen, imapDate, imapFromCrit, decodeCharset, decodeWords, splitHead, headers, param, decodeBody, htmlText, mimeText, parseMail, fromAddr,
-    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { classifyMail, idxSuppliers, readHeads, IDX_INITIAL_MAX, IDX_FOLDER_MAX, htmlLinks, IDX_PER_RUN, isTrashFolder, encWord, mergeFetch, imapQuote, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };
+    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { classifyMail, idxSuppliers, readHeads, IDX_INITIAL_MAX, IDX_FOLDER_MAX, htmlLinks, htmlOf, htmlInfo, IDX_PER_RUN, isTrashFolder, encWord, mergeFetch, imapQuote, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };

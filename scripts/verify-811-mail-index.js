@@ -76,7 +76,7 @@ function fakeImap(state) {
                     else if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
                     else if (what === 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') { const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
                     else if (what === 'BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)]') { const h = Buffer.from(`From: ${x.from}\r\nTo: bumiletter@naver.com\r\nSubject: ${x.subject}\r\nDate: ${x.date}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
-                    else if ((m = /^BODY\.PEEK\[([\d.]+)\](?:<0\.(\d+)>)?$/.exec(what))) { const body = Buffer.from(x.text, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[${m[1]}]${m[2] ? '<0>' : ''} {${body.length}}\r\n`), body, Buffer.from(')\r\n')); }
+                    else if ((m = /^BODY\.PEEK\[([\d.]+)\](?:<0\.(\d+)>)?$/.exec(what))) { const body = Buffer.from(x.partBody && x.partBody[m[1]] != null ? x.partBody[m[1]] : x.text, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[${m[1]}]${m[2] ? '<0>' : ''} {${body.length}}\r\n`), body, Buffer.from(')\r\n')); }
                 }
                 return say(Buffer.concat(parts.concat([Buffer.from(`${tag} OK FETCH\r\n`)])));
             }
@@ -213,6 +213,16 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
         DR.cfg.set('mail_read_request', { id: 'rd1', uid: 301, folder: BOX2 }); await RR.tick();
         const rd = DR.cfg.get('mail_read_result');
         ok(rd && rd.ok && JSON.stringify(rd.mail.links) === JSON.stringify([{ href: 'https://www.smartbill.co.kr/', text: '스마트빌' }, { href: 'https://www.smartbill.co.kr/view?a=1&b=2', text: '계산서 보기' }]) && /스마트빌/.test(rd.mail.text), '읽기 = HTML 링크(http(s)만 · 겹침 1번 · &amp; 풂 · 글자) + 본문 글은 종전대로', rd);
+        // #818-b 실메일 꼴 재현(v5.9.599 64910 = links 칸 없음): multipart/alternative 안 text/plain(7bit) + text/html(BASE64 · charset utf-8) · 「계산서 보기」 = javascript:+onclick · 비번 화면 = form(POST)
+        const sbHtml = '<html><body><p>스마트빌 비회원 비밀번호</p><table><tr><td><a href="javascript:void(0);" onclick="window.open(&#39;https://www.smartbill.co.kr/serp/nonmember/view.do?k=AB12&amp;t=1&#39;,&#39;pop&#39;)"><img src="https://www.smartbill.co.kr/img/btn.gif" alt=""> 세금계산서 보기</a></td></tr></table><form action="//www.smartbill.co.kr/serp/login.do" method="post"><input type="hidden" name="k" value="1"><input type="submit" value="조회하기"></form></body></html>';
+        const hm2 = mail(302, 'cj', 9010); hm2.bs = '(("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 20 1 NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "BASE64" 900 12 NIL NIL NIL) "ALTERNATIVE" ("BOUNDARY" "b") NIL NIL)';
+        hm2.partBody = { 1: '스마트빌 안내 글', 2: Buffer.from(sbHtml, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n') };
+        sR.box[BOX2].push(hm2);
+        DR.cfg.set('mail_read_request', { id: 'rd2', uid: 302, folder: BOX2 }); await RR.tick();
+        const rd2 = DR.cfg.get('mail_read_result'), l2 = rd2 && rd2.mail && rd2.mail.links;
+        ok(rd2 && rd2.ok && l2 && l2[0].href === 'https://www.smartbill.co.kr/serp/nonmember/view.do?k=AB12&t=1' && l2[0].how === 'js' && /세금계산서 보기/.test(l2[0].text) && l2.some(x => x.how === 'form' && x.href === 'https://www.smartbill.co.kr/serp/login.do' && x.text === '조회하기') && rd2.mail.text === '스마트빌 안내 글',
+            '읽기 = base64 HTML 부분 · javascript:/onclick 안 주소(how js) · form action(「//」 꼴 → https · how form) · 글은 text/plain 그대로', rd2 && rd2.mail && { links: l2, info: rd2.mail.html_info });
+        ok(rd2.mail.html_info && rd2.mail.html_info.a === 1 && rd2.mail.html_info.a_http === 0 && rd2.mail.html_info.form === 1 && rd2.mail.html === sbHtml && T.htmlLinks('<p>링크 없음</p>').length === 0, '진단 칸 html_info(a·http·js·form 수) + HTML 원문(창구 도구가 화면에 띄울 때) · http a href 0 꼴이 그대로 보임', rd2.mail.html_info);
     }
 
     console.log('③ UIDVALIDITY 바뀐 메일함 = 버리고 다시');

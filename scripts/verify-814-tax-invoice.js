@@ -265,10 +265,10 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const SB_TXT = '전자세금계산서\n승인번호 20260930-41000000-00000777\n공급자 등록번호 110-81-05034 상호 씨제이대한통운㈜ 성명 대표\n공급받는자 등록번호 422-81-04127 상호 제주아꼼이네 성명 대표\n작성일자 공급가액 세액 비고\n2026-09-30 3,000,000 300,000\n품목 택배비\n합계금액 3,300,000';
         const sbSrv = http.createServer((q, s) => {
             s.setHeader('content-type', 'text/html; charset=utf-8');
-            if (q.url.startsWith('/smartbill/inv')) return s.end(`<!doctype html><meta charset="utf-8"><pre>${SB_TXT}</pre>`);
+            if (q.url.startsWith('/smartbill/inv')) return s.end(`<!doctype html><meta charset="utf-8"><pre>${/k=2/.test(q.url) ? SB_TXT.replace('00000777', '00000778') : SB_TXT}</pre>`);
             s.end(`<!doctype html><meta charset="utf-8"><p>스마트빌 비회원 조회 · 비밀번호를 넣으세요</p><input type="password" id="p"><div id="o"></div><script>
 document.getElementById('p').addEventListener('keydown', function (e) { if (e.key !== 'Enter') return;
-  if (this.value === ${JSON.stringify(HEX)}) window.open('/smartbill/inv'); else document.getElementById('o').textContent = '비밀번호가 틀렸습니다'; });</script>`);
+  if (this.value === ${JSON.stringify(HEX)}) window.open('/smartbill/inv' + location.search); else document.getElementById('o').textContent = '비밀번호가 틀렸습니다'; });</script>`);
         });
         await new Promise(r => sbSrv.listen(0, '127.0.0.1', r));
         const sbUrl = `http://127.0.0.1:${sbSrv.address().port}/smartbill/view?k=1`;
@@ -281,14 +281,16 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
             CREATE TABLE mail_index (id SERIAL PRIMARY KEY, folder TEXT, folder_name TEXT, uidvalidity BIGINT, uid BIGINT, from_addr TEXT, from_name TEXT, subject TEXT, msg_date TEXT, at TIMESTAMPTZ, has_attach BOOLEAN, attach_names TEXT, size INTEGER, parsed JSONB, indexed_at TIMESTAMPTZ DEFAULT NOW());
             INSERT INTO mail_index (folder, uidvalidity, uid, from_name, subject, at, parsed) VALUES
               ('&zK2tbAC3rLDIHA-', 7, 41, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-06T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}'),
-              ('&zK2tbAC3rLDIHA-', 7, 42, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-07T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}');`);
+              ('&zK2tbAC3rLDIHA-', 7, 42, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-07T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}'),
+              ('&zK2tbAC3rLDIHA-', 7, 43, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-08T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}');`);
         await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
         const reqs4 = [];
         const hook4 = async (sql, p) => {
             const m = /INSERT INTO agent_office_config \(key, value\) VALUES \(\$1, \$2::jsonb\)/.test(sql) && /^mail_(read|attach)_request$/.exec(p[0]);
             if (!m) return null;
             const req = JSON.parse(p[1]); reqs4.push({ op: m[1], ...req });
-            const res = { id: req.id, ok: true, mail: { uid: req.uid, ...sbMail(req.uid === 41 ? HEX : 'ffffffffffffffffffffffffffffffff') } };
+            const res = { id: req.id, ok: true, mail: { uid: req.uid, ...sbMail(req.uid === 42 ? 'ffffffffffffffffffffffffffffffff' : HEX) } };
+            if (req.uid === 43) { res.mail.links = [{ href: sbUrl.replace(/\?.*$/, ''), text: '조회', how: 'form' }]; res.mail.html = `<p>스마트빌</p><form action="${sbUrl.replace(/\?.*$/, '')}" method="get"><input type="hidden" name="k" value="2"><input type="submit" value="세금계산서 보기"></form>`; }   // #818-b 링크 = form 꼴 → HTML 원문을 띄워 단추
             await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['mail_' + m[1] + '_result', JSON.stringify(res)]);
             return { rows: [], rowCount: 1 };
         };
@@ -296,10 +298,11 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const o4 = await IM.main(['2026-10'], { pool: mkPool(db4, hook4), sleep: () => Promise.resolve(), now: () => Date.now() + Math.random(), print: (s) => printed4.push(s) });
         sbSrv.close();
         const tv4 = (await db4.query(`SELECT mail_uid::int AS u, supplier, supplier_bizno, approval_no, issue_date::text AS d, supply_amount::int AS sa, vat_amount::int AS va, total_amount::int AS t, read_status, read_note, pdf_name, substring(pdf_data from 1 for 5) AS head FROM tax_invoices ORDER BY mail_uid`)).rows;
-        const [s41, s42] = tv4;
+        const [s41, s42, s43] = tv4;
         ok(s41 && s41.read_status === 'read' && s41.supplier === 'cj' && s41.supplier_bizno === '110-81-05034' && s41.approval_no === '202609304100000000000777' && s41.d === '2026-09-30' && s41.sa === 3000000 && s41.va === 300000 && s41.t === 3300000 && Buffer.from(s41.head || []).toString() === '%PDF-' && !reqs4.some(x => x.op === 'attach'),
             '스마트빌 = 링크 → 비밀번호 → 새 창 계산서 표 = 승인번호·공급자 번호·공급가액·세액·합계·작성일 · 열람용 PDF · 공급자 = 색인 분류 cj(본사 번호는 설정 밖)', s41 && { ...s41, head: undefined });
         ok(s42 && s42.read_status === 'check' && /스마트빌/.test(s42.read_note || '') && s42.d === '2026-09-30' && s42.supplier === 'cj' && !s42.pdf_name, '스마트빌 비밀번호가 안 맞으면 = 종전 「원본 확인」 줄(본문의 작성일만)', s42 && { ...s42, head: undefined });
+        ok(s43 && s43.read_status === 'read' && s43.approval_no === '202609304100000000000778' && s43.t === 3300000 && s43.supplier === 'cj' && Buffer.from(s43.head || []).toString() === '%PDF-', '링크가 form 꼴(주소만으론 안 열림) = 메일 HTML 원문을 띄워 「세금계산서 보기」 누름 → 비밀번호 → 계산서 표 · PDF', s43 && { ...s43, head: undefined });
         ok(!printed4.join('').includes(HEX) && !JSON.stringify(tv4).includes(HEX) && !reqs4.some(x => JSON.stringify(x).includes(HEX)) && !printed4.join('').includes(OUR), '스마트빌 비밀번호(hex)·사업자 비밀번호 = 출력·표·요청 줄에 0', o4.counts);
     }
     console.log(`\n결과 ${pass}/${pass + failN}`);
