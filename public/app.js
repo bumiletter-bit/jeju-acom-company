@@ -14779,7 +14779,7 @@ setupNaverTimerCard();
         pdf: id => `/api/tax-invoices/${encodeURIComponent(id)}/pdf`,
     };
     const GROUPS = [['sion', '시온(조천감귤농협)'], ['hyodon', '효돈농협유통'], ['cj', 'CJ대한통운(택배비)']];   // #816 대표: 기타 없음 · 서버 groups 순서와 같게
-    const ST = { draft: ['초안', 'pill-wait'], confirmed: ['확인', 'pill-ok'], hold: ['보류', 'pill-off'] };
+    const ST = { draft: ['초안', 'pill-wait'], confirmed: ['확인', 'si-pill-done'], hold: ['보류', 'pill-off'] };
     const KIND = { free: '면세', modify: '수정' };
     const S = { from: '', to: '', months: [], rows: [], groups: [], totals: {}, group: 'all', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0 };
     const $ = id => document.getElementById(id);
@@ -14801,11 +14801,10 @@ setupNaverTimerCard();
         const root = $('settlement-invoice'); if (!root || root.dataset.si) return;
         root.dataset.si = '1';
         root.innerHTML = `<div class="card si-head">
-            <div class="si-top"><div class="si-tt"><h2 id="si-title">계산서 발행현황</h2><span class="si-sum" id="si-sum"></span></div>
-                <div class="month-nav"><button type="button" class="btn-nav" data-si="prev" aria-label="이전 달">&lt;</button><button type="button" class="btn-nav" data-si="next" aria-label="다음 달">&gt;</button></div></div>
-            <div class="si-range" role="group" aria-label="기간"><label class="si-rl"><span>시작일</span><input type="text" id="si-from" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="시작일"></label><span class="si-tilde" aria-hidden="true">~</span><label class="si-rl"><span>종료일</span><input type="text" id="si-to" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="종료일"></label><button type="button" class="btn-primary si-go" id="si-go" data-si="go">조회</button></div>
+            <div class="si-top"><h2 id="si-title">계산서 발행현황</h2><div class="si-sum" id="si-sum"></div></div>
+            <div class="si-range" role="group" aria-label="기간"><label class="si-rl"><span>시작일</span><input type="text" id="si-from" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="시작일"></label><span class="si-tilde" aria-hidden="true">~</span><label class="si-rl"><span>종료일</span><input type="text" id="si-to" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="종료일"></label><div class="si-ctl"><button type="button" class="btn-primary si-go" id="si-go" data-si="go">조회</button><div class="month-nav"><button type="button" class="btn-nav" data-si="prev" aria-label="이전 달">&lt;</button><button type="button" class="btn-nav" data-si="next" aria-label="다음 달">&gt;</button></div></div></div>
             <p class="si-range-err" id="si-range-err" role="alert" hidden>시작일이 종료일보다 늦어요 — 날짜를 다시 골라 주세요.</p>
-            <div class="si-search-row"><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
+            <div class="si-search-row"><svg class="si-qi" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.5 13.5 17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
             <div class="si-chips" id="si-groups" role="group" aria-label="거래처"></div>
         </div><div id="si-body" aria-live="polite"></div>`;
         root.addEventListener('click', onClick);
@@ -14852,10 +14851,14 @@ setupNaverTimerCard();
         $('si-range-err').hidden = !bad;
         $('si-go').disabled = S.loading || finding; $('si-go').textContent = S.loading ? '조회 중…' : '조회';
         const base = finding ? S.found : S.rows;
-        $('si-sum').textContent = S.loading || bad ? '' : finding ? `${base.length}건${S.more ? '+(앞 200건만)' : ''}` : `${S.totals.count != null ? S.totals.count : base.length}건 · 발행 합계 ${won(S.totals.issued_total)}원`;
+        const nSt = k => base.filter(x => (x.status || 'draft') === k).length, nChk = base.filter(x => x.read_status === 'check' || x.read_status === 'error').length;
+        $('si-sum').innerHTML = S.loading || bad ? '' : finding ? `<span class="si-sp"><b>${base.length}</b>건${S.more ? ' (앞 200건만)' : ''}</span>`
+            : `<span class="si-sp"><b>${S.totals.count != null ? S.totals.count : base.length}</b>건</span><span class="si-sp">발행 합계 <b>${won(S.totals.issued_total)}원</b></span>`
+            + `<span class="si-sp ok">확인 <b>${nSt('confirmed')}</b></span><span class="si-sp wait">초안 <b>${nSt('draft')}</b></span>`
+            + (nSt('hold') ? `<span class="si-sp">보류 <b>${nSt('hold')}</b></span>` : '') + (nChk ? `<span class="si-sp err">원본 확인 <b>${nChk}</b></span>` : '');
         document.querySelectorAll('#settlement-invoice .month-nav .btn-nav').forEach(b => { b.disabled = finding; });
         const cnt = g => base.filter(x => g === 'all' || x.supplier === g).length;
-        $('si-groups').innerHTML = [['all', '전체'], ...GROUPS].map(([k, l]) => `<button type="button" class="si-chip${S.group === k ? ' on' : ''}" data-si="group" data-v="${k}" aria-pressed="${S.group === k}">${esc(k === 'all' ? l : ((S.groups.find(g => g.supplier === k) || {}).label || l))} <b>${cnt(k)}</b></button>`).join('');
+        $('si-groups').innerHTML = [['all', '전체'], ...GROUPS].map(([k, l]) => `<button type="button" class="si-chip si-c-${k}${S.group === k ? ' on' : ''}" data-si="group" data-v="${k}" aria-pressed="${S.group === k}">${k === 'all' ? '' : '<i class="si-dot" aria-hidden="true"></i>'}${esc(k === 'all' ? l : ((S.groups.find(g => g.supplier === k) || {}).label || l))} <b>${cnt(k)}</b></button>`).join('');
         const body = $('si-body');
         if (bad) { body.innerHTML = ''; return; }
         if (S.loading) { body.innerHTML = `<div class="card si-group"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>`; return; }
@@ -14868,25 +14871,26 @@ setupNaverTimerCard();
         const html = keys.map(k => {
             const rows = vis.filter(x => x.supplier === k), g = S.groups.find(x => x.supplier === k) || {};
             if (!rows.length && finding) return '';   // 기간 보기 = 3곳 늘 보임(0건이면 「아직 없음」 · 정산 합계는 그대로)
-            const cmp = finding ? '' : `<span>우리 정산 ${month ? '월 ' : ''}합계 <b>${g.settle_total == null ? '—' : won(g.settle_total) + '원'}</b></span><span>계산서 합계 <b>${won(g.issued_total)}원</b></span>`
-                + (g.diff == null ? '' : `<span class="si-diff${Number(g.diff) === 0 ? ' zero' : ''}">차이 <b>${Number(g.diff) === 0 ? '0' : (g.diff > 0 ? '+' : '−') + won(Math.abs(g.diff))}원</b></span>`)
-                + (g.check_count ? `<span class="si-chk">원본 확인 ${g.check_count}건</span>` : '');
-            return `<section class="card si-group" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><h3>${esc(g.label || label(k))}</h3>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>${cmp ? monthNote : ''}
+            const stat = (l, v, c) => `<div class="si-stat${c ? ' ' + c : ''}"><span class="si-sl">${l}</span><span class="si-sv">${v}</span></div>`;
+            const cmp = finding ? '' : stat(`우리 정산 ${month ? '월 ' : ''}합계`, g.settle_total == null ? '—' : won(g.settle_total) + '원') + stat('계산서 합계', won(g.issued_total) + '원')
+                + stat('차이', g.diff == null ? '—' : Number(g.diff) === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="si-diffv">${g.diff > 0 ? '+' : '−'}${won(Math.abs(g.diff))}원</span>`, 'si-diff');
+            const gchk = !finding && g.check_count ? `<span class="pill si-pill-chk si-gchk">원본 확인 ${g.check_count}건</span>` : '';
+            return `<section class="card si-group si-g-${esc(k)}" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><div class="si-gn"><h3><i class="si-dot" aria-hidden="true"></i>${esc(g.label || label(k))}</h3>${gchk}</div>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>${cmp ? monthNote : ''}
                 ${rows.length ? `<div class="table-scroll-wrapper si-tw"><table class="data-table si-table"><thead><tr><th>공급자</th><th>작성일</th><th>승인번호</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>받은 날</th><th>상태</th><th>할 일</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>` : `<p class="si-empty si-none-yet">${month ? '이 달' : '이 기간'} 계산서 아직 없음</p>`}</section>`;
         }).join('');
         body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
     }
     function rowHtml(r) {
         const [lab, cls] = ST[r.status] || ST.draft, ed = canEdit(), chk = r.read_status === 'check' || r.read_status === 'error';
-        const acts = (ed && r.status !== 'confirmed' ? `<button type="button" class="btn-outline si-btn" data-si="act" data-v="confirm">확인</button>` : '')
+        const acts = (ed && r.status !== 'confirmed' ? `<button type="button" class="btn-primary si-btn" data-si="act" data-v="confirm">확인</button>` : '')
             + (ed && r.status !== 'hold' ? `<button type="button" class="btn-outline si-btn" data-si="act" data-v="hold">보류</button>` : '')
             + (ed && r.status !== 'draft' ? `<button type="button" class="btn-outline si-btn si-btn-q" data-si="act" data-v="reset">되돌리기</button>` : '')
             + (r.has_pdf ? `<button type="button" class="btn-outline si-btn" data-si="pdf">PDF 열기</button>` : '');
-        return `<tr data-id="${esc(r.id)}"><td data-label="공급자" class="si-sup">${esc(r.supplier_name || r.supplier_label || label(r.supplier))}${KIND[r.kind] ? ` <span class="si-kind">${KIND[r.kind]}</span>` : ''}${r.memo ? `<div class="si-memo">${esc(r.memo)}</div>` : ''}${chk && r.read_note ? `<div class="si-memo">${esc(r.read_note)}</div>` : ''}</td>
+        return `<tr data-id="${esc(r.id)}"${r.status === 'confirmed' ? ' class="si-done"' : ''}><td data-label="공급자" class="si-sup"><i class="si-dot" aria-hidden="true"></i>${esc(r.supplier_name || r.supplier_label || label(r.supplier))}${KIND[r.kind] ? ` <span class="si-kind">${KIND[r.kind]}</span>` : ''}${r.memo ? `<div class="si-memo">${esc(r.memo)}</div>` : ''}${chk && r.read_note ? `<div class="si-memo">${esc(r.read_note)}</div>` : ''}</td>
             <td data-label="작성일">${esc(r.issue_date ? String(r.issue_date).slice(0, 10) : '—')}</td><td data-label="승인번호" class="si-apv">${esc(r.approval_no || '—')}</td>
             <td data-label="공급가액" class="num">${won(r.supply_amount)}</td><td data-label="세액" class="num">${won(r.vat_amount)}</td><td data-label="합계" class="num si-tot">${won(r.total_amount)}</td>
             <td data-label="받은 날">${esc(r.mail_at ? kstDay(r.mail_at) : '—')}</td>
-            <td data-label="상태" class="si-st"><span class="pill ${cls}">${lab}</span>${chk ? ` <span class="pill si-pill-chk" title="${esc(r.read_note || '숫자를 다 못 읽었어요 — PDF 원본을 확인해 주세요')}">원본 확인</span>` : ''}</td>
+            <td data-label="상태" class="si-st"><span class="pill ${cls}">${r.status === 'confirmed' ? '✓ ' : ''}${lab}</span>${chk ? ` <span class="pill si-pill-chk" title="${esc(r.read_note || '숫자를 다 못 읽었어요 — PDF 원본을 확인해 주세요')}">원본 확인</span>` : ''}</td>
             <td data-label="할 일" class="si-act">${acts || '<span class="si-none">—</span>'}</td></tr>`;
     }
     async function onClick(e) {

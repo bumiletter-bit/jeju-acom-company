@@ -49,7 +49,7 @@ html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { 
 /* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
 html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
 
-/* ── styles.css 에서 옮긴 것 (877규칙) ── */
+/* ── styles.css 에서 옮긴 것 (913규칙) ── */
 :where(html[data-ao-theme="dark"]) .btn-login { background: var(--d-accent-fill); color: #FFFFFF; border: none; }
 :where(html[data-ao-theme="dark"]) .btn-login:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); }
@@ -903,11 +903,22 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) #ps-view-frame { border: 0; background: var(--d-soft); }
 :where(html[data-ao-theme="dark"]) .cr-old summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 :where(html[data-ao-theme="dark"]) #cr-view-frame { border: 0; }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sum { color: var(--text-mid, #667085); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); color: var(--text-dark, #101828); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(85, 76, 230, 0.23)); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp { background: var(--bg, #F5F6F8); color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp b { color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.ok { background: rgba(76, 230, 139, 0.14); color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.ok b { color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.wait { background: rgba(230, 191, 76, 0.14); color: #F89963; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.wait b { color: #F89963; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.err { background: var(--d-soft); color: #F19A93; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sp.err b { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-qi { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q { border: 1px solid transparent; background: var(--bg, #F5F6F8); color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q::placeholder { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q:hover { border-color: var(--border, #ECEDF1); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-q:focus { outline: none; background: var(--card-bg, #fff); border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(85, 76, 230, 0.23)); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-rl { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-tilde { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-ctl .month-nav { border-left: 1px solid var(--border, #ECEDF1); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-range-err { color: #F19A93; }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-none-yet { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-month-note { color: var(--text-mid, #667085); }
@@ -917,20 +928,41 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on b { color: var(--primary, #4F46E5); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip:focus-visible, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-cmp { color: var(--text-mid, #667085); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-cmp b { color: var(--text-dark, #101828); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-diff b { color: #F89963; }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-diff.zero b { color: #5AF7B5; }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chk { color: #F89963; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-dot { background: #98A2B3; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-sion .si-dot, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-c-sion .si-dot { background: #E8590C; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-hyodon .si-dot, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-c-hyodon .si-dot { background: #2F9E44; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-cj .si-dot, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-c-cj .si-dot { background: #2B7BC4; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-sion:hover { border-color: #E8590C; color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-hyodon:hover { border-color: #6AD37D; color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-cj:hover { border-color: #2B7BC4; color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-sion.on { background: rgba(230, 141, 76, 0.14); border-color: #E8590C; color: #F69664; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-sion.on b { color: #F69664; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-hyodon.on { background: var(--d-soft); border-color: #6AD37D; color: #74DD8D; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-hyodon.on b { color: #74DD8D; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-cj.on { background: rgba(79, 153, 227, 0.14); border-color: #2B7BC4; color: #7CB5E9; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.si-c-cj.on b { color: #7CB5E9; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-group[class*="si-g-"]::before { background: #98A2B3; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-group.si-g-sion::before { background: #E8590C; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-group.si-g-hyodon::before { background: #2F9E44; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-group.si-g-cj::before { background: #2B7BC4; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-gh h3 { color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-stat + .si-stat { border-left: 1px solid var(--border, #ECEDF1); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sl { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-sv { color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-diffv { color: #F89963; }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table .si-tot { color: var(--text-dark, #101828); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-apv { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-memo { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-kind { background: var(--bg, #F5F6F8); color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-pill-chk { background: var(--d-soft); color: #F19A93; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-pill-done { border: 1px solid #3A4168; background: transparent; color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-table tr.si-done td { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-table tr.si-done .si-tot { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-btn-q { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-empty { color: var(--text-mid, #667085); }
 @media (max-width: 768px) {
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-cmp { border-top: 1px solid var(--border, #ECEDF1); border-bottom: 1px solid var(--border, #ECEDF1); }
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-date { background-position: right 8px center; }
 }
 @media (max-width: 768px) {
@@ -938,6 +970,10 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table tr { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); }
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table td { border: 0 !important; }
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table td::before { color: var(--text-mid, #667085); }
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table tr { box-shadow: inset 4px 0 0 rgba(152, 162, 179, 0.9); }
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-sion .si-table tr { box-shadow: inset 4px 0 0 rgba(245, 125, 61, 0.9); }
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-hyodon .si-table tr { box-shadow: inset 4px 0 0 rgba(98, 208, 119, 0.9); }
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-g-cj .si-table tr { box-shadow: inset 4px 0 0 rgba(88, 156, 218, 0.9); }
 }
 
 /* ── theme.css 에서 옮긴 것 (160규칙) ── */

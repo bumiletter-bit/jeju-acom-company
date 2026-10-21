@@ -4841,13 +4841,25 @@ body.ps-view-open { overflow: hidden; }
 /* ============================================================
    #814 정산관리 › 계산서 발행현황(.si-*) — 이 탭 안에서만 · 색은 토큰·기존 알약(pill) 재사용
    ============================================================ */
-#settlement-invoice .si-head { display: flex; flex-direction: column; gap: 12px; }
-#settlement-invoice .si-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-#settlement-invoice .si-tt { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
-#settlement-invoice .si-tt h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
-#settlement-invoice .si-sum { font-size: 13px; color: var(--text-mid, #667085); font-variant-numeric: tabular-nums; }
-#settlement-invoice .si-q { width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 14px; border: 1px solid var(--border, #ECEDF1); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-dark, #101828); font: inherit; font-size: 14px; }
-#settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(79,70,229,.15)); }
+#settlement-invoice .si-head { display: flex; flex-direction: column; gap: 14px; }
+#settlement-invoice .si-top { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+#settlement-invoice .si-top h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; text-wrap: balance; }
+/* #819 요약 알약 줄 = n건 · 발행 합계 · 확인 · 초안 (+보류 · 원본 확인 있을 때만) */
+#settlement-invoice .si-sum { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; }
+#settlement-invoice .si-sp { display: inline-block; line-height: 26px; padding: 0 10px; border-radius: 999px; background: var(--bg, #F5F6F8); color: var(--text-mid, #667085); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#settlement-invoice .si-sp b { font-weight: 700; color: var(--text-dark, #101828); }
+#settlement-invoice .si-sp.ok { background: #ECFDF3; color: #067647; }
+#settlement-invoice .si-sp.ok b { color: #067647; }
+#settlement-invoice .si-sp.wait { background: #FFFAEB; color: #B54708; }
+#settlement-invoice .si-sp.wait b { color: #B54708; }
+#settlement-invoice .si-sp.err { background: #FEF3F2; color: #B42318; }
+#settlement-invoice .si-sp.err b { color: #B42318; }
+#settlement-invoice .si-search-row { position: relative; }
+#settlement-invoice .si-qi { position: absolute; left: 12px; top: 50%; width: 16px; height: 16px; margin-top: -8px; color: var(--text-mid, #667085); pointer-events: none; }
+#settlement-invoice .si-q { width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 14px 0 36px; border: 1px solid transparent; border-radius: 10px; background: var(--bg, #F5F6F8); color: var(--text-dark, #101828); font: inherit; font-size: 14px; }   /* #819 검색 = 낮은 톤(옅은 바탕 · 돋보기) */
+#settlement-invoice .si-q::placeholder { color: var(--text-mid, #667085); opacity: 1; }
+#settlement-invoice .si-q:hover { border-color: var(--border, #ECEDF1); }
+#settlement-invoice .si-q:focus { outline: none; background: var(--card-bg, #fff); border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(79,70,229,.15)); }
 #settlement-invoice .si-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 /* #816 기간 = 시작일 ~ 종료일(akm-date 공통 달력) */
 #settlement-invoice .si-range { display: flex; align-items: flex-end; gap: 8px; flex-wrap: nowrap; }   /* #817 PC = 기간 두 칸 + [조회] 한 줄(칸이 줄어 맞춤) · 폰은 아래 @media 에서 줄바꿈 */
@@ -4855,8 +4867,10 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-date { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; font-variant-numeric: tabular-nums; }
 #settlement-invoice .si-date:disabled { opacity: .55; cursor: not-allowed; }
 #settlement-invoice .si-tilde { padding-bottom: 10px; color: var(--text-mid, #667085); }
-#settlement-invoice .si-go { min-height: 40px; min-width: 76px; padding: 0 18px; white-space: nowrap; }   /* #817 기간 옆 [조회] = 공통 주 단추 */
+#settlement-invoice .si-go { min-height: 40px; min-width: 76px; margin: 0; padding: 0 18px; white-space: nowrap; }   /* #817 기간 옆 [조회] = 공통 주 단추 */
 #settlement-invoice .si-go:disabled { opacity: .6; cursor: progress; }
+#settlement-invoice .si-ctl { display: flex; align-items: center; gap: 8px; flex: none; }   /* #819 [조회] + 월 ‹ › 한 묶음 */
+#settlement-invoice .si-ctl .month-nav { display: flex; gap: 4px; margin: 0; padding-left: 8px; border-left: 1px solid var(--border, #ECEDF1); }
 #settlement-invoice .si-range-err { margin: -4px 0 0; font-size: 13px; font-weight: 600; color: #B42318; }
 #settlement-invoice .si-none-yet { color: var(--text-mid, #667085); }
 #settlement-invoice .si-month-note { margin: -4px 0 10px; font-size: 12px; color: var(--text-mid, #667085); }
@@ -4866,15 +4880,39 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-chip.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
 #settlement-invoice .si-chip.on b { color: var(--primary, #4F46E5); }
 #settlement-invoice .si-chip:focus-visible, #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
-#settlement-invoice .si-group { margin-top: 12px; }
-#settlement-invoice .month-nav .btn-nav { min-width: 36px; min-height: 36px; }
-#settlement-invoice .si-gh { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; }
-#settlement-invoice .si-gh h3 { margin: 0; font-size: 16px; }
-#settlement-invoice .si-cmp { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-mid, #667085); font-variant-numeric: tabular-nums; }
-#settlement-invoice .si-cmp b { color: var(--text-dark, #101828); font-weight: 700; }
-#settlement-invoice .si-diff b { color: #B54708; }
-#settlement-invoice .si-diff.zero b { color: #067647; }
-#settlement-invoice .si-chk { color: #B54708; font-weight: 600; }
+/* #819 거래처 색 — 시온 귤색 · 효돈 초록 · CJ 파랑(점 = 흰 바탕 3:1↑ · 글자 = 옅은 바탕 4.5:1↑ · 야간은 gen-dark 가 색상 그대로 밝기만) · 그 밖 = 회색 */
+#settlement-invoice .si-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #98A2B3; }
+#settlement-invoice .si-g-sion .si-dot, #settlement-invoice .si-c-sion .si-dot { background: #E8590C; }
+#settlement-invoice .si-g-hyodon .si-dot, #settlement-invoice .si-c-hyodon .si-dot { background: #2F9E44; }
+#settlement-invoice .si-g-cj .si-dot, #settlement-invoice .si-c-cj .si-dot { background: #2B7BC4; }
+#settlement-invoice .si-chip.si-c-sion:hover { border-color: #E8590C; color: var(--text-dark, #101828); }
+#settlement-invoice .si-chip.si-c-hyodon:hover { border-color: #2F9E44; color: var(--text-dark, #101828); }
+#settlement-invoice .si-chip.si-c-cj:hover { border-color: #2B7BC4; color: var(--text-dark, #101828); }
+#settlement-invoice .si-chip.si-c-sion.on { background: #FFF4EC; border-color: #E8590C; color: #B4440A; }
+#settlement-invoice .si-chip.si-c-sion.on b { color: #B4440A; }
+#settlement-invoice .si-chip.si-c-hyodon.on { background: #EEF8F0; border-color: #2F9E44; color: #1E7B34; }
+#settlement-invoice .si-chip.si-c-hyodon.on b { color: #1E7B34; }
+#settlement-invoice .si-chip.si-c-cj.on { background: #ECF4FC; border-color: #2B7BC4; color: #1A5E9C; }
+#settlement-invoice .si-chip.si-c-cj.on b { color: #1A5E9C; }
+#settlement-invoice .si-group { position: relative; margin-top: 12px; }
+#settlement-invoice .si-group[class*="si-g-"]::before { content: ''; position: absolute; left: 0; top: 16px; bottom: 16px; width: 4px; border-radius: 0 4px 4px 0; background: #98A2B3; }   /* 묶음 왼쪽 띠 4px */
+#settlement-invoice .si-group.si-g-sion::before { background: #E8590C; }
+#settlement-invoice .si-group.si-g-hyodon::before { background: #2F9E44; }
+#settlement-invoice .si-group.si-g-cj::before { background: #2B7BC4; }
+#settlement-invoice .month-nav .btn-nav { min-width: 40px; min-height: 40px; }
+/* #819 묶음 머리 = 색 점 + 이름(18px) · 오른쪽 3칸 스탯(라벨 위 · 숫자 아래) */
+#settlement-invoice .si-gh { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 14px; }
+#settlement-invoice .si-gn { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0; padding-top: 2px; }
+#settlement-invoice .si-gh h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--text-dark, #101828); }
+#settlement-invoice .si-gh h3 .si-dot { width: 10px; height: 10px; }
+#settlement-invoice .si-cmp { display: flex; flex-wrap: nowrap; font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-stat { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 0 16px; min-width: 0; }
+#settlement-invoice .si-stat + .si-stat { border-left: 1px solid var(--border, #ECEDF1); }
+#settlement-invoice .si-stat:last-child { padding-right: 0; }
+#settlement-invoice .si-sl { font-size: 12px; font-weight: 500; color: var(--text-mid, #667085); white-space: nowrap; }
+#settlement-invoice .si-sv { display: flex; align-items: center; min-height: 22px; font-size: 15px; font-weight: 700; color: var(--text-dark, #101828); white-space: nowrap; }
+#settlement-invoice .si-diffv { color: #B54708; }   /* 차이 ± = 호박(크기는 가르지 않음) · 0 = 「일치」 초록 알약 */
+#settlement-invoice .si-match { font-size: 12px; }
 #settlement-invoice .si-table td, #settlement-invoice .si-table th { white-space: nowrap; padding-left: 10px; padding-right: 10px; }   /* 9칸이 PC 카드 폭(약 950) 안에 들게 */
 #settlement-invoice .si-table td.si-st { white-space: normal; min-width: 64px; }
 #settlement-invoice .si-table .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -4884,8 +4922,19 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-memo { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--text-mid, #667085); white-space: normal; }
 #settlement-invoice .si-kind { display: inline-block; align-self: flex-start; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: var(--bg, #F5F6F8); color: var(--text-mid, #667085); font-size: 11px; font-weight: 600; }
 #settlement-invoice .si-pill-chk { background: #FEF3F2; color: #B42318; }
+#settlement-invoice .si-pill-done { padding: 1px 9px; border: 1px solid #D0D5DD; background: transparent; color: #067647; }   /* #819 확인 = 「✓ 확인」 회색 테두리(효돈 초록 바탕과 안 겹치게) */
+#settlement-invoice .si-sup .si-dot { margin-right: 8px; vertical-align: 1px; }
+#settlement-invoice .si-table tbody td { transition: background-color .12s cubic-bezier(0.23, 1, 0.32, 1); }
+#settlement-invoice .si-table tr.si-done td { color: var(--text-mid, #667085); }   /* 확인된 줄 = 살짝 흐리게(완료) · 글자 대비 4.5:1 유지 */
+#settlement-invoice .si-table tr.si-done .si-tot { color: var(--text-mid, #667085); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { #settlement-invoice .si-table tbody td { transition: none; } }
 #settlement-invoice .si-table td.si-act { white-space: normal; min-width: 132px; }   /* 표 칸 그대로(flex 를 주면 칸이 표에서 떨어짐) · 단추는 줄바꿈 → 표가 카드 폭 안에 */
-#settlement-invoice .si-table td.si-act .si-btn { margin: 2px 6px 2px 0; }
+#settlement-invoice .si-table td.si-act .si-btn { margin: 2px 6px 2px 0; vertical-align: middle; }
+@media (min-width: 1101px) {   /* #819 넓은 PC = 할 일 단추 세 개 한 줄 · 그 폭은 승인번호 두 줄(12자씩)·공급자 칸에서 · 1100 이하는 접혀도 됨 */
+    #settlement-invoice .si-table td.si-act { white-space: nowrap; min-width: 0; }
+    #settlement-invoice .si-table td.si-apv { white-space: normal; word-break: break-all; width: 104px; min-width: 104px; max-width: 104px; }
+    #settlement-invoice .si-sup { min-width: 100px; max-width: 200px; }
+}
 #settlement-invoice .si-btn { min-height: 36px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
 #settlement-invoice .si-btn-q { color: var(--text-mid, #667085); }
 #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
@@ -4898,7 +4947,16 @@ body.ps-view-open { overflow: hidden; }
 @media (max-width: 768px) {   /* #816 폰 = 시작일 ~ 종료일 한 줄(반씩) */
     #settlement-invoice .si-range { flex-wrap: wrap; gap: 6px; }
     #settlement-invoice .si-rl { flex: 1 1 0; min-width: 120px; }
-    #settlement-invoice .si-go { flex: 1 0 100%; }   /* 폰 = 시작일 ~ 종료일 한 줄 · [조회] 다음 줄 꽉 차게 */
+    #settlement-invoice .si-ctl { flex: 1 0 100%; }   /* 폰 = 시작일 ~ 종료일 한 줄 · [조회]+월 ‹ › 다음 줄 */
+    #settlement-invoice .si-go { flex: 1 1 auto; }
+    /* #819 폰 묶음 머리 = 이름 한 줄 · 3칸 스탯 한 줄 3열(작게) */
+    #settlement-invoice .si-gh { flex-direction: column; gap: 10px; }
+    #settlement-invoice .si-gh h3 { font-size: 17px; }
+    #settlement-invoice .si-cmp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; padding: 10px 0; border-top: 1px solid var(--border, #ECEDF1); border-bottom: 1px solid var(--border, #ECEDF1); }
+    #settlement-invoice .si-stat { align-items: flex-start; padding: 0 10px; }
+    #settlement-invoice .si-stat:first-child { padding-left: 0; }
+    #settlement-invoice .si-sl { font-size: 11px; white-space: normal; }
+    #settlement-invoice .si-sv { font-size: 14px; white-space: normal; word-break: keep-all; }
     #settlement-invoice .si-date { padding-left: 10px; padding-right: 30px; background-position: right 8px center; }
 }
 /* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */
@@ -4916,4 +4974,11 @@ body.ps-view-open { overflow: hidden; }
     #settlement-invoice .si-table td.si-act { flex-direction: row; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     #settlement-invoice .si-table td.si-act .si-btn { flex: 1 1 auto; margin: 0; }
     #settlement-invoice .si-apv { word-break: break-all; }
+    #settlement-invoice .si-table td.si-apv::before { font-family: var(--font-app, 'Pretendard', sans-serif); letter-spacing: 0; }   /* #819 칸 이름은 본문 글꼴 · 값만 mono */
+    #settlement-invoice .si-table tr { box-shadow: inset 4px 0 0 #98A2B3; padding-left: 16px; }   /* #819 폰 줄 카드 = 왼쪽 띠(점 대신) */
+    #settlement-invoice .si-g-sion .si-table tr { box-shadow: inset 4px 0 0 #E8590C; }
+    #settlement-invoice .si-g-hyodon .si-table tr { box-shadow: inset 4px 0 0 #2F9E44; }
+    #settlement-invoice .si-g-cj .si-table tr { box-shadow: inset 4px 0 0 #2B7BC4; }
+    #settlement-invoice .si-sup .si-dot { display: none; }
+    #settlement-invoice .si-group[class*="si-g-"]::before { display: none; }   /* 폰 = 줄 띠만(묶음 띠와 겹쳐 두 줄로 보임) · 묶음은 이름 앞 색 점 */
 }
