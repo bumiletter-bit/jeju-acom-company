@@ -191,3 +191,30 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
     .xp-row { grid-template-columns: 58px minmax(0, 1fr); }
     .xp-wd { font-size: 11.5px; }
 }
+/* #808(대표 10/21) 수기(현금) 예약 = 남색 띠·배지 · 추가 칸 · 시간 알약 · 번호 칸 잘못 표시 · 「번호 미입력 없음」 흐린 알약 */
+.xp-layer { --x-mn: var(--d-ch-sms-fg, #3730A3); --x-mn-bg: var(--d-ch-sms-bg, #E0E7FF); }
+.xp-src.mn { background: var(--x-mn-bg); color: var(--x-mn); }
+.xp-row.src-mn { box-shadow: inset 3px 0 0 var(--x-mn); padding-left: 10px; }
+.xp-row.src-mn.sent { box-shadow: inset 6px 0 0 var(--x-mn); }
+.xp-nm.src-mn { border-left-color: var(--x-mn); }
+.xp-dot.src-mn { background: var(--x-mn); }
+.xp-panel-h .xp-addbtn { flex: none; align-self: center; white-space: nowrap; }
+.xp-add { margin: 12px 0 4px; border-color: var(--x-mn); }
+.xp-add-h { flex-basis: 100%; font-size: 14px; color: var(--x-ink); }
+.xp-add-h small { margin-left: 6px; font-weight: 500; font-size: 12px; color: var(--x-sub); }
+.xp-edit input.xp-date { width: 132px; cursor: pointer; }
+.xp-tpick { flex-basis: 100%; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.xp-tp { min-height: 34px; padding: 0 4px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.xp-tp:hover { border-color: var(--x-acc); }
+.xp-tp.on { background: var(--x-acc-fill); border-color: var(--x-acc-fill); color: #fff; font-weight: 700; }
+.xp-tp:focus-visible { outline: 2px solid var(--x-acc); outline-offset: 2px; }
+.xp-err { color: var(--x-err); font-size: 12px; }
+.xp-err[hidden] { display: none; }
+.xp-edit input[aria-invalid="true"] { border-color: var(--x-err); }
+.xp-pill.none { border-color: var(--x-line); color: var(--x-dim); font-weight: 600; }
+.xp-pill.none:hover { background: transparent; }
+@media (max-width: 960px), (pointer: coarse) { .xp-tp { min-height: 44px; } .xp-panel-h .xp-addbtn { min-height: 44px; } }
+@media (max-width: 720px) {
+    .xp-tpick { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .xp-panel-h { flex-wrap: wrap; }
+}

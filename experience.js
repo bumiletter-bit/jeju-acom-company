@@ -157,7 +157,7 @@ function fillAlim(content, vars) {
 // ── 문자 문구 ───────────────────────────────────────────────────────────
 // #804 플레이스 예약 = 네이버 「자동 구매확정」이 없는 길 → 그 줄(스토어 전용)을 뺀 문구 · 알림톡 UM_6987/6988 원문엔 그 줄이 없어 무관
 const STORE_ONLY_LINE = /자동 구매확정/;
-function tplFor(tpl, b) { return b && b.source === 'place' ? String(tpl || '').split('\n').filter(l => !STORE_ONLY_LINE.test(l)).join('\n') : tpl; }
+function tplFor(tpl, b) { return b && b.source && b.source !== 'store' ? String(tpl || '').split('\n').filter(l => !STORE_ONLY_LINE.test(l)).join('\n') : tpl; }
 function renderTpl(tpl, b) {
     const [, mo, da] = String(b.visit_date || '').split('-');
     const inf = Number(b.infant_count) > 0 ? ` · 유아 ${b.infant_count}명` : '';
@@ -199,7 +199,7 @@ module.exports = function mountExperience(app, deps) {
         )`);
         await pool.query(`CREATE INDEX IF NOT EXISTS experience_bookings_visit ON experience_bookings (visit_date)`);
         // 문자 잡기·시도 횟수(중복 발송 방지 · 3번 실패면 멈춤) · 건너뜀 사유(refused = 문자봇 수신거부 기억 · 하루 상한에 안 셈)
-        for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)', 'confirm_state VARCHAR(12)', 'confirm_tries INTEGER NOT NULL DEFAULT 0', 'confirm_at TIMESTAMPTZ', 'confirm_error TEXT', 'dispatch_tries INTEGER NOT NULL DEFAULT 0', 'dispatch_at TIMESTAMPTZ', 'dispatch_error TEXT', 'contact_at TIMESTAMPTZ', 'contact_by VARCHAR(60)'])   // #804 contact_* = 사람이 플레이스 손님 이름·번호를 넣은 때·사람(메일 재수집이 덮지 않음 · 문자 대상)
+        for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)', 'confirm_state VARCHAR(12)', 'confirm_tries INTEGER NOT NULL DEFAULT 0', 'confirm_at TIMESTAMPTZ', 'confirm_error TEXT', 'dispatch_tries INTEGER NOT NULL DEFAULT 0', 'dispatch_at TIMESTAMPTZ', 'dispatch_error TEXT', 'contact_at TIMESTAMPTZ', 'contact_by VARCHAR(60)', 'sms_recv_via VARCHAR(10)', 'sms_eve_via VARCHAR(10)'])   // #808 *_via = 실제로 나간 길(alimtalk = 알림톡(실패 땐 알리고가 문자로 대체) | lms = 문자)   // #804 contact_* = 사람이 플레이스 손님 이름·번호를 넣은 때·사람(메일 재수집이 덮지 않음 · 문자 대상)
             await pool.query(`ALTER TABLE experience_bookings ADD COLUMN IF NOT EXISTS ${c}`);
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_mail_seen (message_id VARCHAR(200) PRIMARY KEY, uid BIGINT, booking_id INTEGER, state VARCHAR(16), seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     })().catch(e => console.error('[#775] 표 준비 실패:', e.message)));
@@ -501,7 +501,7 @@ module.exports = function mountExperience(app, deps) {
                 ? await deps.kakaoNotify.sendAlimtalk({ receiver: b.phone, subject: '제주아꼼이네 체험 예약', message: alimMsg, failoverMessage: msg, tplCode: code, buttons: tpl.button || undefined })
                 : await deps.kakaoNotify.sendLms({ receiver: b.phone, subject: '제주아꼼이네 체험 예약', message: msg, ...(c.sender ? { sender: c.sender } : {}) });
         } catch (e) { res = { status: 'failed', error: String(e.message || e) }; }
-        if (res && res.status === 'sent') { await pool.query(`UPDATE experience_bookings SET ${col}=NOW(), sms_error=NULL WHERE id=$1`, [b.id]); return 'sent'; }
+        if (res && res.status === 'sent') { await pool.query(`UPDATE experience_bookings SET ${col}=NOW(), sms_error=NULL, ${kind === 'recv' ? 'sms_recv_via' : 'sms_eve_via'}=$2 WHERE id=$1`, [b.id, alimMsg ? 'alimtalk' : 'lms']); return 'sent'; }   // #808 나간 길
         await pool.query(`UPDATE experience_bookings SET sms_error=$2 WHERE id=$1`, [b.id, (kind + ': ' + (res && (res.status + ' ' + (res.error || ''))) || '실패').slice(0, 200)]);
         return 'failed';
     }
@@ -533,7 +533,7 @@ module.exports = function mountExperience(app, deps) {
         const sentToday = Number((await pool.query(`SELECT (COUNT(*) FILTER (WHERE (sms_recv_at + interval '9 hours')::date = $1::date) + COUNT(*) FILTER (WHERE (sms_eve_at + interval '9 hours')::date = $1::date))::int AS n FROM experience_bookings`, [today])).rows[0].n) || 0;
         let room = Math.max(0, Number(c.daily_cap) - sentToday);
         if (!room) return `손님 문자 하루 상한(${c.daily_cap}) 다 씀`;
-        const base = `(source='store' OR (source='place' AND contact_at IS NOT NULL)) AND status='confirmed' AND date_ok AND phone IS NOT NULL AND length(phone) >= 10 AND visit_date >= $1::date AND sms_skip IS NULL`;
+        const base = `(source='store' OR (source IN ('place','manual') AND contact_at IS NOT NULL)) AND status='confirmed' AND date_ok AND phone IS NOT NULL AND length(phone) >= 10 AND visit_date >= $1::date AND sms_skip IS NULL`;
         const recvOn = inRange(c.recv_from, c.recv_to), eveOn = inRange(c.eve_from, c.eve_to);
         const recv = recvOn ? (await pool.query(`SELECT * FROM experience_bookings WHERE ${base} AND sms_recv_at IS NULL AND sms_recv_tries < 3 AND (sms_recv_try_at IS NULL OR sms_recv_try_at < NOW() - interval '30 min') ORDER BY id LIMIT 20`, [today])).rows : [];
         // 전날 문자는 접수 문자가 끝난 예약만(보냈거나 3번 실패) — 같은 틱에 두 통이 몰리지 않게
@@ -546,7 +546,7 @@ module.exports = function mountExperience(app, deps) {
 
     // ── 화면 API ─────────────────────────────────────────────────────────
     const ROW_COLS = `id, source, order_no, name, phone, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time, exp_count, entry_count, infant_count, amount, status, date_ok, date_why, date_fixed, option_text, memo,
-        sms_recv_at, sms_eve_at, sms_error, sms_recv_tries, sms_eve_tries, sms_skip, confirm_state, confirm_error, dispatch_error, visited_at, visited_by, ordered_at, created_at, (raw IS NOT NULL) AS has_raw, contact_at`;
+        sms_recv_at, sms_eve_at, sms_error, sms_recv_tries, sms_eve_tries, sms_skip, confirm_state, confirm_error, dispatch_error, visited_at, visited_by, ordered_at, created_at, (raw IS NOT NULL) AS has_raw, contact_at, sms_recv_via, sms_eve_via`;
     async function summary() {
         await ready;
         const today = kstDay(), tomorrow = addDays(today, 1);
@@ -556,7 +556,7 @@ module.exports = function mountExperience(app, deps) {
               COALESCE(SUM(exp_count + entry_count + infant_count) FILTER (WHERE visit_date = $1::date AND status IN ('confirmed','visited')),0)::int AS today_people,
               COALESCE(SUM(exp_count + entry_count + infant_count) FILTER (WHERE visit_date = $2::date AND status = 'confirmed'),0)::int AS tomorrow_people,
               COUNT(*) FILTER (WHERE status IN ('confirmed','unknown') AND NOT date_ok AND (visit_date IS NULL OR visit_date >= $1::date))::int AS need_check,
-              COUNT(*) FILTER (WHERE source = 'place' AND status = 'confirmed' AND (phone IS NULL OR length(phone) < 10) AND (visit_date IS NULL OR visit_date >= $1::date))::int AS place_no_phone   -- #804 번호 미입력(달력 머리 알약)
+              COUNT(*) FILTER (WHERE source IN ('place','manual') AND status = 'confirmed' AND (phone IS NULL OR length(phone) < 10) AND (visit_date IS NULL OR visit_date >= $1::date))::int AS place_no_phone   -- #804 번호 미입력(달력 머리 알약)
             FROM experience_bookings`, [today, tomorrow])).rows[0];
         return { today_date: today, tomorrow_date: tomorrow, ...r };
     }
@@ -590,7 +590,7 @@ module.exports = function mountExperience(app, deps) {
             ws.columns = [{ header: '방문일', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '시간', key: 't', width: 7 }, { header: '구분', key: 's', width: 8 }, { header: '이름', key: 'n', width: 10 }, { header: '연락처', key: 'p', width: 14 },
                 { header: '체험', key: 'e', width: 6 }, { header: '입장', key: 'en', width: 6 }, { header: '유아', key: 'i', width: 6 }, { header: '금액', key: 'a', width: 10 }, { header: '상태', key: 'st', width: 8 }, { header: '날짜 확인', key: 'dk', width: 14 }, { header: '메모', key: 'm', width: 24 }, { header: '번호', key: 'no', width: 18 }];
             const ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '확인 필요' };
-            for (const r of rows) ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || '', s: r.source === 'store' ? '스토어' : '플레이스', n: r.name || '', p: r.phone || '', e: r.exp_count, en: r.entry_count, i: r.infant_count, a: r.amount, st: ST[r.status] || r.status, dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
+            for (const r of rows) ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || '', s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: r.phone || '', e: r.exp_count, en: r.entry_count, i: r.infant_count, a: r.amount, st: ST[r.status] || r.status, dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
             ws.getRow(1).font = { bold: true };
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('체험예약_' + from + '_' + to + '.xlsx')}`);
@@ -628,7 +628,7 @@ module.exports = function mountExperience(app, deps) {
             if (!b) return res.status(404).json({ error: '없는 예약이에요' });
             const c = await notifyCfg();
             const smsSafe = deps.kakaoNotify && deps.kakaoNotify.smsSafe ? deps.kakaoNotify.smsSafe : (s => s);
-            res.json({ recv: smsSafe(renderTpl(tplFor(c.tpl_recv, b), b)), eve: smsSafe(renderTpl(tplFor(c.tpl_eve, b), b)), will_send: c.enabled && (b.source === 'store' || (b.source === 'place' && !!b.contact_at)) && b.date_ok && b.status === 'confirmed' && !!b.phone });   // #804
+            res.json({ recv: smsSafe(renderTpl(tplFor(c.tpl_recv, b), b)), eve: smsSafe(renderTpl(tplFor(c.tpl_eve, b), b)), will_send: c.enabled && (b.source === 'store' || ((b.source === 'place' || b.source === 'manual') && !!b.contact_at)) && b.date_ok && b.status === 'confirmed' && !!b.phone });   // #804
         } catch (e) { res.status(500).json({ error: '미리보기를 만들지 못했어요' }); }
     });
     app.get('/api/agent-office/experience/:id/raw', authMiddleware, async (req, res) => {
@@ -647,8 +647,12 @@ module.exports = function mountExperience(app, deps) {
             for (const k of ['exp_count', 'entry_count', 'infant_count']) if (k in b) { const n = Math.floor(Number(b[k])); if (!(n >= 0 && n <= 200)) return res.status(400).json({ error: '인원은 0~200' }); put(k, n); }
             if ('memo' in b) put('memo', String(b.memo || '').slice(0, 500) || null);
             // #804(대표 10/21) 플레이스 손님 이름·번호 = 사람이 넣음(메일엔 번호가 없고 이름은 가려 옴) · 스토어는 주문 정보가 정본이라 안 받음
+            if ('amount' in b) {   // #808 금액 = 수기 건만(스토어·플레이스는 결제 정보가 정본)
+                if (old.source !== 'manual') return res.status(400).json({ error: '금액은 수기 예약만 고칠 수 있어요' });
+                const n = Math.floor(Number(b.amount)); if (!(n >= 0 && n <= 10000000)) return res.status(400).json({ error: '금액은 0~1천만 원' }); put('amount', n);
+            }
             if ('name' in b || 'phone' in b) {
-                if (old.source !== 'place') return res.status(400).json({ error: '스토어 예약의 이름·번호는 주문 정보 그대로예요' });
+                if (old.source !== 'place' && old.source !== 'manual') return res.status(400).json({ error: '스토어 예약의 이름·번호는 주문 정보 그대로예요' });
                 if ('name' in b) { const nm = String(b.name || '').replace(/\s+/g, ' ').trim(); if (!nm || nm.length > 30) return res.status(400).json({ error: '이름은 1~30자' }); if (/\*/.test(nm)) return res.status(400).json({ error: '이름에 *(가린 글자)가 있어요 — 손님 이름으로 고쳐 주세요' }); put('name', nm); }
                 if ('phone' in b) { const ph = String(b.phone || '').replace(/\D/g, ''); if (ph && !/^01\d{8,9}$/.test(ph)) return res.status(400).json({ error: '번호는 010 으로 시작하는 10~11자리' }); put('phone', ph || null); }
                 const nmNow = 'name' in ch ? ch.name : old.name, phNow = 'phone' in ch ? ch.phone : old.phone;
@@ -668,10 +672,42 @@ module.exports = function mountExperience(app, deps) {
             await audit('experience_edit', id, { before: { ...old, phone: tail4(old.phone) }, after: { ...ch, ...('phone' in ch ? { phone: tail4(ch.phone) } : {}) } }, actor(req));
             // #804 번호가 새로 들어왔으면 그 자리에서 접수 안내(알림톡 → 실패면 문자) — 안 되는 사유면 보내지 않고 5분 타이머가 나중에(같은 잡기 줄이라 두 번 0)
             let sent = null;
-            if (old.source === 'place' && 'phone' in ch && ch.phone && ch.phone !== old.phone) { try { sent = await sendRecvNow(id); } catch (e) { sent = 'later:' + String(e.message || e).slice(0, 80); } }
+            if ((old.source === 'place' || old.source === 'manual') && 'phone' in ch && ch.phone && ch.phone !== old.phone) { try { sent = await sendRecvNow(id); } catch (e) { sent = 'later:' + String(e.message || e).slice(0, 80); } }
             const row = (await pool.query(`SELECT ${ROW_COLS} FROM experience_bookings WHERE id=$1`, [id])).rows[0];
             res.json({ ok: true, item: row, sent });
         } catch (e) { console.error('[#775] 고치기:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
+    });
+    // #808(대표 10/21 「현금으로 추가하는 경우」) 수기 예약 = source 'manual' · ext_key 'manual:<id>' · order_no 'M<id>' — 스토어·메일 수집은 ext_key 접두가 달라 안 건드림
+    //   방문일·시간·이름 필수 · 번호 있으면 그 자리에서 접수 안내(#804 와 같은 sendRecvNow) · 인원 합 1명 이상 · 금액 = 화면이 18,000·10,000 으로 셈(사람이 고칠 수 있음)
+    app.post('/api/agent-office/experience', authMiddleware, async (req, res) => {
+        try {
+            await ready;
+            const b = req.body || {};
+            if (!ymdOk(b.visit_date) || !validYmd(+b.visit_date.slice(0, 4), +b.visit_date.slice(5, 7), +b.visit_date.slice(8, 10))) return res.status(400).json({ error: '방문일을 골라 주세요' });
+            const vt = parseTime(b.visit_time); if (!vt) return res.status(400).json({ error: '시간은 13:30 꼴로' });
+            const nm = String(b.name || '').replace(/\s+/g, ' ').trim();
+            if (!nm || nm.length > 30) return res.status(400).json({ error: '이름은 1~30자' });
+            if (/\*/.test(nm)) return res.status(400).json({ error: '이름에 *(가린 글자)가 있어요 — 손님 이름으로 넣어 주세요' });
+            const ph = String(b.phone || '').replace(/\D/g, '');
+            if (ph && !/^01\d{8,9}$/.test(ph)) return res.status(400).json({ error: '번호는 010 으로 시작하는 10~11자리' });
+            const cnt = {}; for (const k of ['exp_count', 'entry_count', 'infant_count']) { const n = Math.floor(Number(b[k] || 0)); if (!(n >= 0 && n <= 200)) return res.status(400).json({ error: '인원은 0~200' }); cnt[k] = n; }
+            if (cnt.exp_count + cnt.entry_count + cnt.infant_count < 1) return res.status(400).json({ error: '인원을 1명 이상 넣어 주세요' });
+            let amount = null; if (b.amount != null && b.amount !== '') { amount = Math.floor(Number(b.amount)); if (!(amount >= 0 && amount <= 10000000)) return res.status(400).json({ error: '금액은 0~1천만 원' }); }
+            const memo = String(b.memo || '').slice(0, 500) || null;
+            const who = String(actor(req).name || '').slice(0, 60) || null;
+            const tmpKey = 'manual:new-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+            const ins = await pool.query(`INSERT INTO experience_bookings (source, ext_key, order_no, name, phone, visit_date, visit_time, date_ok, date_fixed, exp_count, entry_count, infant_count, amount, status, memo, contact_at, contact_by, ordered_at)
+                VALUES ('manual',$1,NULL,$2,$3,$4,$5,TRUE,TRUE,$6,$7,$8,$9,'confirmed',$10,NOW(),$11,NOW()) RETURNING id`,
+                [tmpKey, nm, ph || null, b.visit_date, vt, cnt.exp_count, cnt.entry_count, cnt.infant_count, amount, memo, who]);
+            const id = ins.rows[0].id;
+            try { await pool.query(`UPDATE experience_bookings SET ext_key=$2, order_no=$3 WHERE id=$1`, [id, 'manual:' + id, 'M' + id]); }
+            catch (e) { await pool.query(`DELETE FROM experience_bookings WHERE id=$1 AND source='manual' AND ext_key LIKE 'manual:new-%'`, [id]).catch(() => { }); throw e; }   // #808 번호 붙이기 실패 = 임시 줄 지움(반쪽 줄 0)
+            await audit('experience_manual_add', id, { after: { visit_date: b.visit_date, visit_time: vt, name: nm, phone: ph ? '…' + ph.slice(-4) : null, ...cnt, amount, memo } }, actor(req));
+            let sent = null;
+            if (ph) { try { sent = await sendRecvNow(id); } catch (e) { sent = 'later:' + String(e.message || e).slice(0, 80); } }
+            const row = (await pool.query(`SELECT ${ROW_COLS} FROM experience_bookings WHERE id=$1`, [id])).rows[0];
+            res.json({ ok: true, item: row, sent });
+        } catch (e) { console.error('[#808] 수기 추가:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
     });
     app.post('/api/agent-office/experience/:id/visit', authMiddleware, async (req, res) => {
         try {

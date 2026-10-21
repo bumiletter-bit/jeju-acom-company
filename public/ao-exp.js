@@ -5,6 +5,8 @@
 //     날짜 칸 = 「n팀 · m명」 + 이름 2~3개(시간순 · 넘치면 「+n 더보기」 · 폰·폴드 = 숫자만) · 칸을 누르면 그 날 명단 판(종전 목록 줄 그대로 · 고치기·방문·문자 미리보기)
 //     날짜 확인 필요 = 달력 위 띠 · 요약 4칸·취소 포함·엑셀·문자 설정은 그대로 · 모양 = 일정 메뉴 달력(오늘 동그라미 · 일 빨강 · 토 파랑)
 //   #804(대표 10/21): 스토어(초록)·플레이스(귤색) = 줄·달력 이름 왼쪽 띠 색 · 접수 안내 보냄 = 띠 굵게 + 「✓ 알림톡」 · 플레이스 = 고치기에 이름·번호(넣고 저장 = 그 자리에서 접수 안내)
+//   #808(대표 10/21): 날짜 판 [+ 예약 추가] = 수기(현금) 예약(source manual · 남색 띠 · 「수기」 · 번호 넣으면 그 자리에서 접수 안내) · 「고치기」 → 「수정」 · 방문일 = 공통 달력(akm-date) · 시간 = 30분 알약 + 직접 입력
+//     번호 칸 = 치는 대로 010-0000-0000 · 「✓」 배지 = 실제로 나간 길(알림톡/문자) · 수기 건만 「삭제(취소)」·「되돌리기」
 //     달력 머리 「번호 미입력 n건」 알약 → 그 묶음 판(줄마다 이름·번호 바로 넣기) · 「메일 원문」·「예약 취소로」·「확정으로 되돌리기」 단추 뺌(취소는 플레이스·스토어에서 → 수집이 반영)
 (function () {
     'use strict';
@@ -65,6 +67,8 @@
         document.body.appendChild(el);
         el.addEventListener('click', onClick);
         el.addEventListener('change', e => { if (e.target.id === 'xp-off') { X.showOff = e.target.checked; render(); } });
+        el.addEventListener('input', onInput);   // #808
+        el.addEventListener('focusout', e => { if (e.target.classList && e.target.classList.contains('xp-ph')) telCheck(e.target); });
         if (isAdmin()) $('xp-set-btn').hidden = false;
         return el;
     }
@@ -84,45 +88,72 @@
     const nextBooked = (ym) => { for (let n = 1; n <= 2; n++) { const y2 = shiftYm(ym, n), c = liveIn(y2); if (c) return { ym: y2, n: c }; } return null; };
     const headCount = b =>(Number(b.exp_count) || 0) + (Number(b.entry_count) || 0) + (Number(b.infant_count) || 0);
     // #804 줄·달력 이름의 출처 띠 · 보냄 표시 · 번호 미입력(플레이스·확정·번호 없음·오늘 이후)
-    const srcCls = b => (b.source === 'place' ? ' src-pl' : ' src-st') + (b.sms_recv_at ? ' sent' : '');
-    const noPhone = b => b.source === 'place' && b.status === 'confirmed' && !(b.phone && String(b.phone).length >= 10) && (!b.visit_date || b.visit_date >= today());
+    const srcCls = b => (b.source === 'place' ? ' src-pl' : b.source === 'manual' ? ' src-mn' : ' src-st') + (b.sms_recv_at ? ' sent' : '');
+    const SRC = { store: ['st', '스토어', '주문', '주문번호(스토어)'], place: ['pl', '플레이스', '예약', '예약번호(스마트플레이스 예약자관리와 대조)'], manual: ['mn', '수기', '수기', '수기 예약 번호(현금 등 · 직원이 넣음)'] };
+    const srcOf = b => SRC[b.source] || SRC.store;
+    const PRICE = { exp: 18000, entry: 10000 };   // #808 수기 금액 기본 셈(체험 18,000 · 입장 10,000 · 유아 0) — 사람이 고칠 수 있음
+    const TIMES = []; for (let h = 10; h <= 16; h++) for (const m of ['00', '30']) TIMES.push(String(h).padStart(2, '0') + ':' + m);   // 10:00~16:30
+    const tpick = (forId, cur) => `<div class="xp-tpick" data-for="${forId}" role="group" aria-label="시간 고르기">${TIMES.map(t => `<button type="button" class="xp-tp${t === cur ? ' on' : ''}" data-tp="${t}" aria-pressed="${t === cur}">${t}</button>`).join('')}</div>`;
+    const fmtTel = v => { const d = String(v || '').replace(/[^0-9]/g, '').slice(0, 11); return d.length < 4 ? d : d.length < 8 ? d.slice(0, 3) + '-' + d.slice(3) : d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7); };
+    const telOk = v => { const d = String(v || '').replace(/[^0-9]/g, ''); return !d || /^01[0-9]{8,9}$/.test(d); };
+    const telInput = (id, val) => `<label>번호<input type="tel" inputmode="numeric" class="xp-ph" id="${id}" maxlength="13" value="${esc(fmtTel(val))}" placeholder="010-0000-0000" autocomplete="off"><small class="xp-err" id="${id}-err" hidden>번호는 010 으로 시작하는 10~11자리</small></label>`;
+    const viaBadge = b => !b.sms_recv_at ? '' : b.sms_recv_via === 'alimtalk' ? '<i class="xp-sms ok" title="접수 안내 = 알림톡으로 보냄(알림톡이 안 되면 알리고가 문자로 대신 보냄)">알림톡✓</i>' : '<i class="xp-sms ok" title="접수 안내 = 문자로 보냄">문자✓</i>';
+    const noPhone = b => (b.source === 'place' || b.source === 'manual') && b.status === 'confirmed'   /* #808 번호 없이 넣은 수기도 */ && !(b.phone && String(b.phone).length >= 10) && (!b.visit_date || b.visit_date >= today());
     const sentLabel = () => (X.data && X.data.settings_view && X.data.settings_view.alimtalk) ? '✓ 알림톡' : '✓ 문자';
     const sentMsg = v => v === 'sent' ? (sentLabel() === '✓ 알림톡' ? '저장 · 접수 알림톡 보냈어요 ✓' : '저장 · 접수 문자 보냈어요 ✓') : /^skip:/.test(String(v || '')) ? '저장 · 접수 안내는 이미 보냈어요 ✓' : v === 'refused' ? '저장했어요 · 이 번호는 문자 수신거부라 안 보냈어요' : v === 'failed' ? '저장했어요 · 보내기 실패 — 30분 뒤 다시 보내요' : /^later:/.test(String(v || '')) ? '저장했어요 · 지금은 안 보냄(' + String(v).slice(6) + ') — 조건이 되면 저절로 보내요' : '저장했어요';
     const telLink = p => p ? `<a class="xp-tel" href="tel:${esc(p)}">${esc(String(p).replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3'))}</a>` : '<span class="xp-dim">연락처 없음</span>';
     function rowHtml(b) {
         const off = OFF.includes(b.status), vis = b.status === 'visited';
-        const badge = b.source === 'store' ? '<i class="xp-src st">스토어</i>' : '<i class="xp-src pl">플레이스</i>';
+        const badge = `<i class="xp-src ${srcOf(b)[0]}">${srcOf(b)[1]}</i>`;
         const chk = !b.date_ok ? `<i class="xp-need">${esc(b.date_why || '날짜 확인 필요')}</i>` : '';
         const smsFail = (!b.sms_recv_at && Number(b.sms_recv_tries) >= 3) || (!b.sms_eve_at && Number(b.sms_eve_tries) >= 3);   // 3번 실패 = 멈춤(서버) · 직원이 전화로
         const cf = b.confirm_state === 'failed' ? `<i class="xp-sms err" title="${esc(b.confirm_error || '')}">발주확인 실패</i>` : b.confirm_state === 'skipped_claim' ? `<i class="xp-sms err" title="${esc(b.confirm_error || '')}">자동 안 함 · 클레임 이력 — 센터에서 발주확인</i>`
             : b.confirm_state === 'dispatch_failed' ? `<i class="xp-sms err" title="${esc(b.dispatch_error || '')}">발송처리 실패 — 센터에서 발송처리</i>` : b.confirm_state === 'dispatched' ? '<i class="xp-sms ok" title="발주확인·발송처리(배송 없음) 끝">발송처리✓</i>' : '';   // #782   // #780 3번 실패 = 센터에서 직접
-        const sms = (b.source !== 'store' && !b.contact_at && !b.sms_recv_at) ? (noPhone(b) ? '<i class="xp-sms err">번호 미입력</i>' : '') : b.sms_skip === 'refused' ? '<i class="xp-sms err" title="문자봇 수신거부 기억 — 문자 안 보냄">수신거부</i>' : smsFail ? `<i class="xp-sms err" title="${esc(b.sms_error || '')}">문자 실패</i>` : b.sms_recv_at ? '<i class="xp-sms ok" title="접수 문자 보냄">문자✓</i>' : '';
+        const sms = noPhone(b) ? '<i class="xp-sms err">번호 미입력</i>' : (b.source !== 'store' && !b.contact_at && !b.sms_recv_at) ? '' : b.sms_skip === 'refused' ? '<i class="xp-sms err" title="문자봇 수신거부 기억 — 문자 안 보냄">수신거부</i>' : smsFail ? `<i class="xp-sms err" title="${esc(b.sms_error || '')}">문자 실패</i>` : viaBadge(b);   // #808 나간 길
         const editing = X.edit === b.id;
         return `<li class="xp-row${srcCls(b)}${off ? ' off' : ''}${vis ? ' vis' : ''}" data-id="${b.id}">
             <span class="xp-time">${whenHtml(b)}</span>
-            <div class="xp-main"><div class="xp-l1">${badge}<b class="xp-name">${esc(b.name || '(이름 없음)')}</b>${b.order_no ? `<span class="xp-ono" title="${b.source === 'place' ? '예약번호(스마트플레이스 예약자관리와 대조)' : '주문번호(스토어)'}"><i>${b.source === 'place' ? '예약' : '주문'}</i>${esc(b.order_no)}</span>` : ''}${telLink(b.phone)}${chk}</div>
+            <div class="xp-main"><div class="xp-l1">${badge}<b class="xp-name">${esc(b.name || '(이름 없음)')}</b>${b.order_no ? `<span class="xp-ono" title="${srcOf(b)[3]}"><i>${srcOf(b)[2]}</i>${esc(b.order_no)}</span>` : ''}${telLink(b.phone)}${chk}</div>
                 <div class="xp-l2"><span>${esc(people(b))}</span>${b.amount ? `<span>${Number(b.amount).toLocaleString('ko-KR')}원</span>` : ''}<span class="xp-st s-${esc(b.status)}">${ST[b.status] || esc(b.status)}</span>${cf}${sms}${b.memo ? `<span class="xp-memo">${esc(b.memo)}</span>` : ''}</div></div>
-            <div class="xp-acts">${off || b.status === 'unknown' ? '' : `<button type="button" class="xp-btn xp-visit${vis ? ' on' : ''}" data-act="visit" aria-pressed="${vis}">${vis ? '방문함' : '방문'}</button>`}<button type="button" class="xp-btn" data-act="edit" aria-expanded="${editing}">고치기</button></div>
+            <div class="xp-acts">${off || b.status === 'unknown' ? '' : `<button type="button" class="xp-btn xp-visit${vis ? ' on' : ''}" data-act="visit" aria-pressed="${vis}">${vis ? '방문함' : '방문'}</button>`}<button type="button" class="xp-btn" data-act="edit" aria-expanded="${editing}">수정</button></div>
             ${editing ? editHtml(b) : X.day === 'nophone' && noPhone(b) ? quickHtml(b) : ''}</li>`;
     }
-    // #804 번호 미입력 판 = 줄마다 바로 넣기(고치기를 안 열어도)
+    // #804 번호 미입력 판 = 줄마다 바로 넣기(수정을 안 열어도)
     function quickHtml(b) {
-        return `<div class="xp-edit xp-quick" data-id="${b.id}"><label>이름<input type="text" id="xp-q-name-${b.id}" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label><label>번호<input type="tel" inputmode="tel" id="xp-q-phone-${b.id}" maxlength="13" value="${esc(b.phone || '')}" placeholder="010-0000-0000"></label><button type="button" class="xp-btn pri" data-act="qsave">저장·보내기</button><small class="xp-hint">저장하면 그 자리에서 접수 알림톡이 나가요 · 이름의 *(가린 글자)는 손님 이름으로 고쳐 주세요</small></div>`;
+        return `<div class="xp-edit xp-quick" data-id="${b.id}"><label>이름<input type="text" id="xp-q-name-${b.id}" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label>${telInput('xp-q-phone-' + b.id, b.phone)}<button type="button" class="xp-btn pri" data-act="qsave">저장·보내기</button><small class="xp-hint">저장하면 그 자리에서 접수 알림톡이 나가요 · 이름의 *(가린 글자)는 손님 이름으로 고쳐 주세요</small></div>`;
     }
     function editHtml(b) {
-        const pl = b.source === 'place';
+        const pl = b.source === 'place', mn = b.source === 'manual', who = pl || mn;
         return `<div class="xp-edit" data-id="${b.id}">
-            ${pl ? `<label>이름<input type="text" id="xp-e-name" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label><label>번호<input type="tel" inputmode="tel" id="xp-e-phone" maxlength="13" value="${esc(b.phone || '')}" placeholder="010-0000-0000"></label>` : ''}
-            <label>방문일<input type="text" inputmode="numeric" id="xp-e-date" value="${esc(b.visit_date || '')}" placeholder="2026-11-01"></label>
-            <label>시간<input type="text" id="xp-e-time" value="${esc(b.visit_time || '')}" placeholder="13:30"></label>
+            ${who ? `<label>이름<input type="text" id="xp-e-name" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label>${telInput('xp-e-phone', b.phone)}` : ''}
+            <label>방문일<input type="text" class="akm-date xp-date" id="xp-e-date" value="${esc(b.visit_date || '')}" placeholder="날짜 선택" readonly autocomplete="off"></label>
+            <label>시간<input type="text" id="xp-e-time" value="${esc(b.visit_time || '')}" placeholder="13:30" autocomplete="off"></label>
+            ${tpick('xp-e-time', b.visit_time)}
             <label>체험<input type="number" min="0" max="200" id="xp-e-exp" value="${b.exp_count || 0}"></label>
             <label>입장<input type="number" min="0" max="200" id="xp-e-entry" value="${b.entry_count || 0}"></label>
             <label>유아<input type="number" min="0" max="200" id="xp-e-inf" value="${b.infant_count || 0}"></label>
+            ${mn ? `<label>금액(원)<input type="number" min="0" step="1000" id="xp-e-amount" value="${b.amount == null ? '' : Number(b.amount)}"></label>` : ''}
             <label class="w">메모<input type="text" id="xp-e-memo" maxlength="500" value="${esc(b.memo || '')}"></label>
             ${b.option_text ? `<div class="xp-raw"><b>주문 옵션 글</b>${esc(b.option_text)}</div>` : ''}
             <div class="xp-edit-acts"><button type="button" class="xp-btn pri" data-act="save">저장</button>${b.source === 'store' || b.contact_at ? '<button type="button" class="xp-btn" data-act="sms">문자 미리보기</button>' : ''}
-            ${pl ? '<small class="xp-hint">번호를 넣고 저장하면 그 자리에서 접수 알림톡이 나가요 · 취소는 네이버 플레이스에서(메일로 반영)</small>' : ''}<button type="button" class="xp-btn" data-act="close-edit">닫기</button></div>
+            ${mn ? (b.status === 'canceled' ? '<button type="button" class="xp-btn" data-act="undel">되돌리기</button>' : '<button type="button" class="xp-btn warn" data-act="del">삭제(취소)</button>') : ''}
+            ${pl ? '<small class="xp-hint">번호를 넣고 저장하면 그 자리에서 접수 알림톡이 나가요 · 취소는 네이버 플레이스에서(메일로 반영)</small>' : mn ? '<small class="xp-hint">수기 예약은 직원이 직접 고치고 지워요(수집이 덮지 않음) · 번호를 바꾸면 그 자리에서 접수 안내</small>' : ''}<button type="button" class="xp-btn" data-act="close-edit">닫기</button></div>
             <div class="xp-pre" id="xp-pre" hidden></div></div>`;
+    }
+    // #808 수기(현금) 예약 추가 칸 — 그 날 판 맨 위 · 금액은 인원으로 셈(고치면 그 값 유지)
+    function addHtml(day) {
+        return `<div class="xp-edit xp-add" id="xp-add">
+            <b class="xp-add-h">수기 예약 추가 <small>현금 등 · 직원이 받은 예약</small></b>
+            <label>이름<input type="text" id="xp-a-name" maxlength="30" placeholder="손님 이름" autocomplete="off"></label>${telInput('xp-a-phone', '')}
+            <label>방문일<input type="text" class="akm-date xp-date" id="xp-a-date" value="${esc(day)}" placeholder="날짜 선택" readonly autocomplete="off"></label>
+            <label>시간<input type="text" id="xp-a-time" placeholder="13:30" autocomplete="off"></label>
+            ${tpick('xp-a-time', '')}
+            <label>체험<input type="number" min="0" max="200" id="xp-a-exp" value="1"></label>
+            <label>입장<input type="number" min="0" max="200" id="xp-a-entry" value="0"></label>
+            <label>유아<input type="number" min="0" max="200" id="xp-a-inf" value="0"></label>
+            <label>금액(원)<input type="number" min="0" step="1000" id="xp-a-amount" value="${PRICE.exp}"></label>
+            <label class="w">메모<input type="text" id="xp-a-memo" maxlength="500" placeholder="예: 현금 결제"></label>
+            <div class="xp-edit-acts"><button type="button" class="xp-btn pri" data-act="add-save">추가</button><button type="button" class="xp-btn" data-act="add-cancel">닫기</button><small class="xp-hint">번호를 넣으면 추가하는 그 자리에서 접수 알림톡이 나가요 · 방문 전날 안내도 같이</small></div></div>`;
     }
     // 보이는 예약(취소 포함 체크 때만 취소·반품) · 날짜 확인 필요 · 날짜별 묶음(시간순)
     function sets() {
@@ -146,7 +177,7 @@
         const mr = monthRange(X.ym);   // #785 요약 4칸(오늘·내일·날짜 확인 필요·손님 문자) 뺌 — 대표 「달력으로 보여서 필요 없다」
         $('xp-range').textContent = `${mr.y}년 ${mr.m}월`;
         const { need, byDay, offNoDate, nophone } = sets(), t = today();
-        const pill = $('xp-nophone'); if (pill) { pill.hidden = !nophone.length; pill.textContent = `번호 미입력 ${nophone.length}건`; pill.setAttribute('aria-label', `플레이스 번호 미입력 ${nophone.length}건 — 눌러서 이름·번호 넣기`); }   // #804
+        const pill = $('xp-nophone'); if (pill) { pill.hidden = false; pill.classList.toggle('none', !nophone.length); pill.textContent = nophone.length ? `번호 미입력 ${nophone.length}건` : '번호 미입력 없음'; pill.setAttribute('aria-label', `플레이스·수기 번호 미입력 ${nophone.length}건 — 눌러서 이름·번호 넣기`); }   // #804
         let html = '';
         if (X.jumpFrom) html += `<div class="xp-jump">${+X.jumpFrom.slice(5)}월엔 남은 예약이 없어 ${+X.ym.slice(5)}월을 보여 드려요 · <button type="button" class="xp-link" data-nav="0">‹ 이번 달</button></div>`;
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
@@ -183,18 +214,36 @@
         const list = X.day === 'need' ? need : X.day === 'offnodate' ? offNoDate : X.day === 'nophone' ? nophone : (byDay.get(X.day) || []);
         const live = list.filter(b => !OFF.includes(b.status));
         const tot = k => live.reduce((a, b) => a + (Number(b[k]) || 0), 0);
-        const title = X.day === 'need' ? '날짜 확인 필요' : X.day === 'offnodate' ? '날짜 없는 취소·반품' : X.day === 'nophone' ? '번호 미입력(플레이스)' : dLabel(X.day);
-        const sub = X.day === 'nophone' ? `${list.length}건 · 스마트플레이스 예약자관리에서 같은 예약번호 줄의 이름·전화번호를 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [고치기]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
+        const title = X.day === 'need' ? '날짜 확인 필요' : X.day === 'offnodate' ? '날짜 없는 취소·반품' : X.day === 'nophone' ? '번호 미입력(플레이스·수기)' : dLabel(X.day);
+        const sub = X.day === 'nophone' ? `${list.length}건 · 플레이스는 스마트플레이스 예약자관리에서 같은 예약번호 줄의 이름·전화번호를, 수기는 받아 둔 번호를 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [수정]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
         p.hidden = false;
-        p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div><button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
-            <div class="xp-panel-b">${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : '<div class="xp-empty">이 날은 예약이 없어요.</div>'}</div>`;
+        const isDay = /^\d{4}-\d{2}-\d{2}$/.test(X.day || '');   // #808 날짜 판에만 [+ 예약 추가]
+        p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
+            <div class="xp-panel-b">${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
     }
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시
     function pushDayHist() { if (X.dayPushed || !X.pushed) return; try { history.pushState(Object.assign({}, history.state || {}, { xpDay: 1 }), ''); X.dayPushed = true; } catch (e) { X.dayPushed = false; } }
     function dropDayHist() { if (!X.dayPushed) return; X.dayPushed = false; X.ignorePop = true; try { history.back(); } catch (e) { X.ignorePop = false; } }
-    function openDay(day) { X.day = day; X.edit = 0; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
-    function closeDay(fromPop) { const was = X.day; X.day = null; X.edit = 0; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
+    function openDay(day) { X.day = day; X.edit = 0; X.adding = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
+    function closeDay(fromPop) { const was = X.day; X.day = null; X.edit = 0; X.adding = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
+    // #808 번호 = 치는 대로 하이픈(숫자만 남겨 3-4-4 · 10자리 3-3-4) · 커서는 끝 · 수기 금액 = 인원으로 셈(금액을 손으로 고치면 그 뒤론 안 셈)
+    function onInput(e) {
+        const t = e.target;
+        if (t.classList.contains('xp-ph')) {
+            if (e.isComposing) return;   // 한글 조합 중엔 안 건드림
+            const f = fmtTel(t.value);
+            if (f !== t.value) {   // 바뀐 때만 · 커서 = 그 앞 숫자 개수 기준(가운데를 고쳐도 끝으로 안 튐)
+                const pos = t.selectionStart == null ? t.value.length : t.selectionStart, nd = t.value.slice(0, pos).replace(/[^0-9]/g, '').length;
+                t.value = f; let c = 0, i = 0; while (i < f.length && c < nd) { if (/[0-9]/.test(f[i])) c++; i++; }
+                try { t.setSelectionRange(i, i); } catch (_) { }
+            } const er = $(t.id + '-err'); if (er && !er.hidden && telOk(t.value) && t.value.replace(/[^0-9]/g, '').length >= 10) { er.hidden = true; t.removeAttribute('aria-invalid'); } return; }
+        if (t.id === 'xp-a-amount') { t.dataset.touched = '1'; return; }
+        if (/^xp-a-(exp|entry)$/.test(t.id)) { const a = $('xp-a-amount'); if (a && !a.dataset.touched) a.value = (Number(($('xp-a-exp') || {}).value) || 0) * PRICE.exp + (Number(($('xp-a-entry') || {}).value) || 0) * PRICE.entry; }
+        if (t.id === 'xp-e-time' || t.id === 'xp-a-time') markTp(t);
+    }
+    function telCheck(t) { const er = $(t.id + '-err'); const bad = !telOk(t.value); if (er) er.hidden = !bad; if (bad) t.setAttribute('aria-invalid', 'true'); else t.removeAttribute('aria-invalid'); return !bad; }
+    function markTp(input) { const box = X.layer && X.layer.querySelector(`.xp-tpick[data-for="${input.id}"]`); if (!box) return; for (const b of box.querySelectorAll('.xp-tp')) { const on = b.dataset.tp === input.value.trim(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); } }
     async function onClick(e) {
         if (e.target.closest('#xp-close')) return close();
         const nav = e.target.closest('[data-nav]');
@@ -205,11 +254,36 @@
         if (e.target.closest('#xp-xlsx')) return xlsx();
         if (e.target.closest('#xp-set-btn')) return toggleSet();
         if (e.target.closest('#xp-set-save')) return saveSet();
+        const tp = e.target.closest('[data-tp]');   // #808 시간 알약
+        if (tp) { const box = tp.closest('.xp-tpick'), inp = box && $(box.dataset.for); if (inp) { inp.value = tp.dataset.tp; markTp(inp); } return; }
         const btn = e.target.closest('[data-act]'); if (!btn) return;
         const act = btn.dataset.act;
         if (act === 'close-panel') return closeDay();
+        if (act === 'add') { X.adding = X.adding === X.day ? null : X.day; X.edit = 0; renderPanel(); const n = $('xp-a-name'); if (n) n.focus({ preventScroll: false }); return; }
+        if (act === 'add-cancel') { X.adding = null; return renderPanel(); }
+        if (act === 'add-save') {
+            const v = id2 => String(($(id2) || {}).value || '').trim();
+            const body = { name: v('xp-a-name'), phone: v('xp-a-phone').replace(/[^0-9]/g, ''), visit_date: v('xp-a-date'), visit_time: v('xp-a-time'), exp_count: Number(v('xp-a-exp')) || 0, entry_count: Number(v('xp-a-entry')) || 0, infant_count: Number(v('xp-a-inf')) || 0, amount: v('xp-a-amount') === '' ? null : Number(v('xp-a-amount')), memo: v('xp-a-memo') };
+            if (!body.name) { toast('손님 이름을 넣어 주세요'); $('xp-a-name').focus(); return; }
+            if (body.name.includes('*')) { toast('이름에 *(가린 글자)가 있어요 — 손님 이름으로 넣어 주세요'); return; }
+            if (!telCheck($('xp-a-phone'))) { $('xp-a-phone').focus(); return; }
+            if (!body.visit_date) { toast('방문일을 골라 주세요'); return; }
+            if (!body.visit_time) { toast('시간을 골라 주세요'); $('xp-a-time').focus(); return; }
+            if (body.exp_count + body.entry_count + body.infant_count < 1) { toast('인원을 1명 이상 넣어 주세요'); return; }
+            btn.disabled = true; const r = await call('/api/agent-office/experience', 'POST', body);
+            if (!r.ok) { toast(r.body.error || '추가하지 못했어요'); btn.disabled = false; return; }
+            X.adding = null; toast(r.body.sent ? sentMsg(r.body.sent).replace(/^저장/, '추가') : '추가했어요 · 번호가 없어 접수 안내는 안 보냈어요');
+            if (body.visit_date !== X.day) { X.day = body.visit_date; if (ymOf(body.visit_date) !== X.ym) { X.ym = ymOf(body.visit_date); X.jumpFrom = null; } }
+            return load(true);
+        }
         const li = btn.closest('[data-id]'); const id = li ? +li.dataset.id : 0; const b = (X.data.items || []).find(x => x.id === id);
-        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; return renderPanel(); }
+        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; X.adding = null; return renderPanel(); }
+        if (act === 'del' || act === 'undel') {   // #808 수기 건만 · 지우기 = 취소 표시(되돌리기 가능) · 한 번 더 눌러 확인
+            if (act === 'del' && btn.dataset.ask !== '1') { btn.dataset.ask = '1'; btn.textContent = '정말 삭제(한 번 더)'; return; }
+            btn.disabled = true; const r = await call(`/api/agent-office/experience/${id}`, 'PATCH', { status: act === 'del' ? 'canceled' : 'confirmed' });
+            if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
+            Object.assign(b, r.body.item); X.edit = 0; toast(act === 'del' ? '수기 예약을 지웠어요(취소 포함에서 보이고 되돌릴 수 있어요)' : '되돌렸어요'); return load(true);
+        }
         if (act === 'close-edit') { X.edit = 0; return renderPanel(); }
         if (act === 'visit') {
             btn.disabled = true; const r = await call(`/api/agent-office/experience/${id}/visit`, 'POST', { on: b.status !== 'visited' });
@@ -219,13 +293,13 @@
         if (act === 'save' || act === 'qsave') {
             const body = {};
             const v = id2 => ($(id2) || {}).value;
-            if (b.source === 'place') {   // #804 이름·번호(바뀐 것만)
+            if (b.source === 'place' || b.source === 'manual') {   // #804 이름·번호(바뀐 것만) · #808 수기도
                 const nm = String(v(act === 'qsave' ? 'xp-q-name-' + id : 'xp-e-name') == null ? (b.name || '') : v(act === 'qsave' ? 'xp-q-name-' + id : 'xp-e-name')).trim();
                 const ph = String(v(act === 'qsave' ? 'xp-q-phone-' + id : 'xp-e-phone') == null ? (b.phone || '') : v(act === 'qsave' ? 'xp-q-phone-' + id : 'xp-e-phone')).replace(/[^0-9]/g, '');
                 if (nm !== (b.name || '')) body.name = nm;
                 if (ph !== (b.phone || '')) body.phone = ph;
                 if ((ph || b.phone) && nm.includes('*')) { toast('이름에 *(가린 글자)가 남아 있어요 — 손님 이름으로 고쳐 주세요'); return; }
-                if (ph && !/^01[0-9]{8,9}$/.test(ph)) { toast('번호는 010 으로 시작하는 10~11자리'); return; }
+                if (ph && !/^01[0-9]{8,9}$/.test(ph)) { const pi = $(act === 'qsave' ? 'xp-q-phone-' + id : 'xp-e-phone'); if (pi) { telCheck(pi); pi.focus(); } toast('번호는 010 으로 시작하는 10~11자리'); return; }
             }
             if (act === 'save') {
                 const nd = String(v('xp-e-date') || '').trim(), nt = String(v('xp-e-time') || '').trim();
@@ -233,6 +307,7 @@
                 if (nt !== (b.visit_time || '')) body.visit_time = nt || null;
                 for (const [k, f] of [['exp_count', 'xp-e-exp'], ['entry_count', 'xp-e-entry'], ['infant_count', 'xp-e-inf']]) { const n = Number(v(f)); if (n !== Number(b[k] || 0)) body[k] = n; }
                 const memo = String(v('xp-e-memo') || ''); if (memo !== (b.memo || '')) body.memo = memo;
+                if (b.source === 'manual') { const am = String(v('xp-e-amount') == null ? '' : v('xp-e-amount')).trim(); if (am !== '' && Number(am) !== Number(b.amount)) body.amount = Number(am); }   // #808
                 if (!Object.keys(body).length) { X.edit = 0; return renderPanel(); }   // (이름·번호만 바뀐 경우도 body 에 있어 여기 안 옴)
             }
             if (act === 'qsave' && !Object.keys(body).length) { toast('바뀐 것이 없어요'); return; }
@@ -289,10 +364,11 @@
         if (X.dayPushed) { X.dayPushed = false; if (X.day) closeDay(true); return; }   // 뒤로가기 1번 = 명단 판만
         close(true);
     }
-    // Esc = 고치기 칸 → 그 날 명단 판 → 문자 설정 → 창 순으로 하나씩 닫는다 — 초점이 창 밖(body)으로 빠져도 받게 문서에 건다(열려 있을 때만)
+    // Esc = (달력) → 추가·수정 칸 → 그 날 명단 판 → 문자 설정 → 창 순으로 하나씩 닫는다 — 초점이 창 밖(body)으로 빠져도 받게 문서에 건다(열려 있을 때만)
     function onKey(e) {
         if (e.key !== 'Escape' || !X.layer) return; e.preventDefault(); e.stopPropagation();
-        if (X.edit) { X.edit = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
+        const cal = document.querySelector('.akm-cal'); if (cal && cal.style.display !== 'none') { if (typeof AkmCal !== 'undefined' && AkmCal.close) AkmCal.close(); else cal.style.display = 'none'; return; }   // #808 달력부터
+        if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
     }
     function open() {
         if (X.layer) { load(); return; }

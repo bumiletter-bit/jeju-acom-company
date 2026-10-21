@@ -53,8 +53,8 @@ function fakeDb() {
         // 오늘 보낸 것 = 실제로 보낸 칸(sms_recv_at · sms_eve_at)만 — 'now' 또는 S.sentToday(미리 쓴 수)
         if (/sms_recv_at \+ interval '9 hours'/.test(s)) return { rows: [{ n: (S.sentToday || 0) + S.rows.filter(r => r.sms_recv_at === 'now').length + S.rows.filter(r => r.sms_eve_at === 'now').length }] };
         const fresh = (t) => !t || Date.now() - t > 30 * 60000;   // 30분 넘은 잡기
-        if (/^SELECT \* FROM experience_bookings WHERE \(source='store' OR \(source='place' AND contact_at IS NOT NULL\)\) AND status='confirmed'/.test(s)) {   // #804 사람이 번호를 넣은 플레이스 건도
-            const base = S.rows.filter(r => (r.source === 'store' || (r.source === 'place' && r.contact_at)) && r.status === 'confirmed' && r.date_ok && r.phone && r.phone.length >= 10 && r.visit_date >= a[0] && !r.sms_skip);
+        if (/^SELECT \* FROM experience_bookings WHERE \(source='store' OR \(source IN \('place','manual'\) AND contact_at IS NOT NULL\)\) AND status='confirmed'/.test(s)) {   // #804 사람이 번호를 넣은 플레이스 건도 · #808 수기도
+            const base = S.rows.filter(r => (r.source === 'store' || ((r.source === 'place' || r.source === 'manual') && r.contact_at)) && r.status === 'confirmed' && r.date_ok && r.phone && r.phone.length >= 10 && r.visit_date >= a[0] && !r.sms_skip);
             return { rows: /sms_recv_at IS NULL/.test(s) ? base.filter(r => !r.sms_recv_at && (r.sms_recv_tries || 0) < 3 && fresh(r.sms_recv_try_at)).map(r => ({ ...r }))
                 : base.filter(r => r.visit_date === a[1] && !r.sms_eve_at && (r.sms_eve_tries || 0) < 3 && fresh(r.sms_eve_try_at) && (r.sms_recv_at || (r.sms_recv_tries || 0) >= 3)).map(r => ({ ...r })) };
         }
@@ -65,7 +65,13 @@ function fakeDb() {
             r['sms_' + k + '_try_at'] = Date.now(); r['sms_' + k + '_tries'] = (r['sms_' + k + '_tries'] || 0) + 1; S.claims = (S.claims || 0) + 1; return { rows: [{ id: r.id }] };
         }
         if (/^UPDATE experience_bookings SET sms_skip='refused'/.test(s)) { const r = byId(a[0]); r.sms_skip = 'refused'; r.sms_error = a[1]; return { rows: [] }; }
-        if (/^UPDATE experience_bookings SET sms_(recv|eve)_at=NOW\(\)/.test(s)) { const r = byId(a[0]); const col = /sms_recv_at/.test(s) ? 'sms_recv_at' : 'sms_eve_at'; r[col] = 'now'; r.sms_error = a[1] || null; return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET sms_(recv|eve)_at=NOW\(\)/.test(s)) { const r = byId(a[0]); const col = /sms_recv_at/.test(s) ? 'sms_recv_at' : 'sms_eve_at'; r[col] = 'now'; r.sms_error = null; const vm = /(sms_(?:recv|eve)_via)=\$2/.exec(s); if (vm) r[vm[1]] = a[1]; return { rows: [] }; }   // #808 나간 길(via)
+        if (/^INSERT INTO experience_bookings \(source, ext_key, order_no, name, phone, visit_date, visit_time, date_ok, date_fixed, exp_count, entry_count, infant_count, amount, status, memo, contact_at, contact_by, ordered_at\) VALUES \('manual'/.test(s)) {   // #808 수기
+            const r = { id: S.nextId++, source: 'manual', ext_key: a[0], order_no: null, name: a[1], phone: a[2], visit_date: a[3], visit_time: a[4], date_ok: true, date_fixed: true, exp_count: a[5], entry_count: a[6], infant_count: a[7], amount: a[8], status: 'confirmed', memo: a[9], contact_at: Date.now(), contact_by: a[10], sms_recv_tries: 0, sms_eve_tries: 0 };
+            S.rows.push(r); return { rows: [{ id: r.id }] };
+        }
+        if (/^UPDATE experience_bookings SET ext_key=\$2, order_no=\$3 WHERE id=\$1/.test(s)) { if (S.failExtKey) throw new Error('가짜 실패'); const r = byId(a[0]); r.ext_key = a[1]; r.order_no = a[2]; return { rows: [] }; }
+        if (/^DELETE FROM experience_bookings WHERE id=\$1 AND source='manual' AND ext_key LIKE 'manual:new-%'/.test(s)) { const i = S.rows.findIndex(r => r.id === a[0] && r.source === 'manual' && /^manual:new-/.test(r.ext_key)); if (i >= 0) S.rows.splice(i, 1); S.deleted = (S.deleted || 0) + 1; return { rows: [] }; }
         if (/^UPDATE experience_bookings SET sms_error=\$2/.test(s)) { byId(a[0]).sms_error = a[1]; return { rows: [] }; }
         if (/COUNT\(\*\) FILTER \(WHERE visit_date = \$1::date AND status IN/.test(s)) {
             const live = S.rows; const t = a[0], tm = a[1];
@@ -528,7 +534,61 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const tp = T.tplFor('a\n예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.\nb', { source: 'place' });
         ok(tp === 'a\nb' && T.tplFor('x\n자동 구매확정\ny', { source: 'store' }) === 'x\n자동 구매확정\ny', 'tplFor = 플레이스만 스토어 전용 줄 뺌');
         // 번호 미입력 알약 집계(실코드 SQL)
-        ok(/source = 'place' AND status = 'confirmed' AND \(phone IS NULL OR length\(phone\) < 10\) AND \(visit_date IS NULL OR visit_date >= \$1::date\)\)::int AS place_no_phone/.test(src), 'summary 「번호 미입력」 집계 = 확정·플레이스·번호 없음·오늘 이후');
+        ok(/source IN \('place','manual'\) AND status = 'confirmed' AND \(phone IS NULL OR length\(phone\) < 10\) AND \(visit_date IS NULL OR visit_date >= \$1::date\)\)::int AS place_no_phone/.test(src), 'summary 「번호 미입력」 집계 = 확정·플레이스·수기(#808)·번호 없음·오늘 이후');
+    }
+
+    console.log('\n⑨ #808 수기(현금) 예약 추가 · 나간 길 기록 · 수기 수정 범위');
+    {
+        const POST = 'POST /api/agent-office/experience', PATCH = 'PATCH /api/agent-office/experience/:id';
+        const fut = kstDay(7);
+        const t = mk(); const d = t.db.S;
+        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+        const add = async (body) => { const r = res(); await t.app.routes[POST]({ body, user: { id: 7, name: '직원' } }, r); return r; };
+        ok(!!t.app.routes[POST], '수기 추가 라우트 있음');
+        let r = await add({ visit_date: '2026-11-31', visit_time: '11:00', name: '김현금', exp_count: 1 });
+        ok(r.code === 400, '없는 날짜 거절', r.body);
+        r = await add({ visit_date: fut, visit_time: '', name: '김현금', exp_count: 1 });
+        ok(r.code === 400 && /시간/.test(r.body.error), '시간 없으면 거절', r.body);
+        r = await add({ visit_date: fut, visit_time: '11:00', name: '김*금', exp_count: 1 });
+        ok(r.code === 400 && /\*/.test(r.body.error), '이름 * 거절');
+        r = await add({ visit_date: fut, visit_time: '11:00', name: '김현금', phone: '010-12', exp_count: 1 });
+        ok(r.code === 400 && /10~11자리/.test(r.body.error), '번호 꼴 틀리면 거절');
+        r = await add({ visit_date: fut, visit_time: '11:00', name: '김현금', exp_count: 0, entry_count: 0, infant_count: 0 });
+        ok(r.code === 400 && /1명/.test(r.body.error), '인원 0 거절');
+        r = await add({ visit_date: fut, visit_time: '오후 1시 30분', name: '김현금', phone: '010 2222 3333', exp_count: 2, entry_count: 1, infant_count: 1, amount: 46000, memo: '현금' });
+        const m = d.rows.find(x => x.source === 'manual');
+        ok(r.code === 200 && m && m.ext_key === 'manual:' + m.id && m.order_no === 'M' + m.id && m.visit_time === '13:30' && m.phone === '01022223333' && m.amount === 46000 && m.contact_by === '직원' && m.status === 'confirmed', '수기 저장 = manual:<id> · M<id> · 시간 13:30 · 번호 숫자만 · 금액 · 저장한 사람', m && { k: m.ext_key, no: m.order_no, t: m.visit_time, ph: m.phone });
+        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].tplCode === 'UM_6987' && /김현금님/.test(t.sent[0].message) && /체험 2명 · 입장 1명 · 유아 1명/.test(t.sent[0].message) && !/자동 구매확정/.test(t.sent[0].failoverMessage), '추가하는 그 자리에서 접수 알림톡(이름·인원) · 대체 문자에 스토어 줄 없음', r.body.sent);
+        ok(m.sms_recv_via === 'alimtalk' && m.sms_recv_at === 'now', '나간 길 기록 = sms_recv_via alimtalk', m.sms_recv_via);
+        ok(t.audits.some(a => a.action === 'experience_manual_add' && a.changes.after.phone === '…3333'), 'audit experience_manual_add(번호 끝 4자리)');
+        // 번호 없는 수기 = 저장만 · 전날 문자 대상(번호 넣은 수기)
+        r = await add({ visit_date: kstDay(1), visit_time: '10:00', name: '이현금', exp_count: 1 });
+        ok(r.code === 200 && r.body.sent === null && t.sent.length === 1, '번호 없는 수기 = 저장만(보내지 않음)');
+        const t2 = mk(); const d2 = t2.db.S;
+        d2.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00' };
+        d2.rows.push({ id: 61, source: 'manual', ext_key: 'manual:61', order_no: 'M61', status: 'confirmed', date_ok: true, visit_date: kstDay(1), visit_time: '11:00', exp_count: 1, entry_count: 0, infant_count: 0, name: '박현금', phone: '01044445555', contact_at: Date.now(), sms_recv_at: 'old', sms_recv_tries: 1, sms_eve_tries: 0 });
+        await t2.M.collectSms();
+        const ev = t2.sent.find(x => x.receiver === '01044445555');
+        ok(ev && /내일/.test(ev.message) && d2.rows[0].sms_eve_via === 'lms', '수기 = 전날 「내일 뵙겠습니다」 대상 · 나간 길 lms 기록(알림톡 꺼짐)', d2.rows[0].sms_eve_via);
+        // 수정: 금액은 수기만 · 이름·번호 수기 가능 · 지우기(취소)·되돌리기
+        const call = async (id, body) => { const q = res(); await t.app.routes[PATCH]({ params: { id: String(id) }, body, user: { id: 7, name: '직원' } }, q); return q; };
+        d.rows.push({ id: 90, source: 'place', ext_key: 'place:90', status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '11:00', exp_count: 1, entry_count: 0, infant_count: 0, name: '정플레', phone: null });
+        r = await call(90, { amount: 1000 });
+        ok(r.code === 400 && /수기/.test(r.body.error), '금액은 수기만(플레이스 400)');
+        r = await call(m.id, { amount: 50000 });
+        ok(r.code === 200 && /amount=\$\d/.test(d.lastPatch.sql) && d.lastPatch.args.includes(50000), '수기 금액 수정');
+        r = await call(m.id, { name: '김현금(현장)', phone: '01066667777' });
+        ok(r.code === 200 && r.body.sent === 'skip:이미 보냄', '수기 이름·번호 수정 가능 · 이미 보낸 접수는 다시 안 보냄(skip)', r.body.sent);
+        r = await call(m.id, { status: 'canceled' });
+        ok(r.code === 200 && /status=\$\d/.test(d.lastPatch.sql) && d.lastPatch.args.includes('canceled'), '수기 지우기 = 취소 표시(soft)');
+        // 수집이 수기를 안 건드림: 스토어·메일 길은 ext_key store:/place: 로만 찾음
+        const src = require('fs').readFileSync(path.join(__dirname, '..', 'experience.js'), 'utf8');
+        ok(/const key = 'place:' \+ p\.no;/.test(src) && /WHERE source='store' AND items/.test(src) && !/source='manual'.*UPDATE|UPDATE[^`]*source='manual'/.test(src), '수집 = place:/store: 열쇠로만 · 수기 줄을 고치는 수집 문장 0');
+        // 번호 붙이기(두 번째 UPDATE) 실패 = 임시 줄 지움 · 500
+        const t3 = mk(); t3.db.S.failExtKey = true;
+        const r3 = res(); await t3.app.routes[POST]({ body: { visit_date: fut, visit_time: '11:00', name: '최현금', exp_count: 1 }, user: { name: '직원' } }, r3);
+        ok(r3.code === 500 && t3.db.S.deleted === 1 && !t3.db.S.rows.some(x => x.source === 'manual'), '번호 붙이기 실패 = 임시 줄 지움(반쪽 줄 0) · 500', { code: r3.code, del: t3.db.S.deleted });
+        ok(/source IN \('place','manual'\) AND contact_at IS NOT NULL/.test(src) && /s: r\.source === 'store' \? '스토어' : r\.source === 'manual' \? '수기' : '플레이스'/.test(src), '문자 대상에 수기 · 엑셀 출처 「수기」');
     }
 
     console.log(`\n결과: ${pass}/${pass + fail}`);
