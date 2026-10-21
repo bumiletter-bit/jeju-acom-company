@@ -95,23 +95,24 @@ async function openSmartbill(sb, hex) {
             await Promise.all([pg.waitForLoadState('load').catch(() => { }), hit.click({ timeout: 10000 }).catch(() => { })]);
             await pg.waitForTimeout(1500);
         } else return { ok: false, error: '계산서 보기 링크 없음' };
-        let box = null;
-        for (let i = 0; i < 30 && !box; i++) { for (const p of ctx.pages()) { for (const fr of p.frames()) { box = await fr.$('input[type=password]').catch(() => null); if (box) break; } if (box) break; } if (!box) await pg.waitForTimeout(500); }
-        if (!box) return { ok: false, error: '스마트빌 비밀번호 칸을 못 찾음' };
-        await box.fill(hex); await box.press('Enter').catch(() => { });
-        let txt = '';
-        for (let i = 0; i < 30; i++) {   // 풀리기를 최대 15초 · 5초째에도 그대로면 「확인」 단추를 한 번 누름
+        // #818-c 실물(10/21): 메일의 「전자세금계산서 확인」(loginCookieClear … login_ticket) = 비밀번호 화면 없이 바로 계산서(프레임 DisplayDtiEmail_V2)
+        //   → 계산서가 뜬 프레임이 있으면 그 글만 읽음 · 없고 비밀번호 칸이 있으면 hex 넣기(비회원 조회 꼴) · 둘 다 15초 안에 없으면 실패
+        const isInv = (t) => /작성\s*일\s*자/.test(t) && /승인\s*번호/.test(t);
+        const findInv = async () => { for (const p of ctx.pages()) for (const fr of p.frames()) { try { const t = await fr.evaluate(() => document.body ? document.body.innerText : ''); if (isInv(t)) return { p, fr, t }; } catch (_) { } } return null; };
+        let inv = null, box = null, typed = null;
+        for (let i = 0; i < 40 && !inv; i++) {   // 최대 20초 · 비번 넣은 뒤 5초째에도 그대로면 「확인」 단추를 한 번 누름
+            inv = await findInv(); if (inv) break;
+            if (typed === null) { for (const p of ctx.pages()) { for (const fr of p.frames()) { box = await fr.$('input[type=password]').catch(() => null); if (box) break; } if (box) break; }
+                if (box) { await box.fill(hex); await box.press('Enter').catch(() => { }); typed = i; } }
+            else if (i === typed + 10) { for (const fr of ctx.pages().flatMap(p => p.frames())) { const bt = await fr.$('button:has-text("확인"), input[type=submit], input[type=button][value*="확인"], a:has-text("확인")').catch(() => null); if (bt) { await bt.click().catch(() => { }); break; } } }
             await pg.waitForTimeout(500);
-            txt = await allText();
-            if (/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt)) break;
-            if (i === 10) { for (const fr of ctx.pages().flatMap(p => p.frames())) { const bt = await fr.$('button:has-text("확인"), input[type=submit], input[type=button][value*="확인"], a:has-text("확인")').catch(() => null); if (bt) { await bt.click().catch(() => { }); break; } } }
         }
-        if (!(/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt))) return { ok: false, error: /비밀번호/.test(txt) ? '스마트빌이 안 풀림(비밀번호 확인)' : '스마트빌 계산서 글을 못 읽음' };
+        if (!inv) { const t = await allText(); return { ok: false, error: typed === null ? '스마트빌 계산서 화면도 비밀번호 칸도 못 찾음' : /비밀번호/.test(t) ? '스마트빌이 안 풀림(비밀번호 확인)' : '스마트빌 계산서 글을 못 읽음' }; }
+        const txt = inv.t;
+        // PDF = 계산서 프레임만 새 창으로(같은 세션 · 광고·머리 메뉴 빼고) → 안 되면 그 창 통째
         let pdf = null;
-        for (const p of ctx.pages().slice().reverse()) {   // 계산서가 뜬 창(새 창이면 그것)을 PDF 로
-            let has = false; for (const fr of p.frames()) { try { if (/승인\s*번호/.test(await fr.evaluate(() => document.body ? document.body.innerText : ''))) { has = true; break; } } catch (_) { } }
-            if (has) { try { pdf = await p.pdf({ format: 'A4', printBackground: true }); } catch (_) { } break; }
-        }
+        if (inv.fr !== inv.p.mainFrame() && /^https?:/.test(inv.fr.url())) { const p2 = await ctx.newPage(); try { await p2.goto(inv.fr.url(), { waitUntil: 'load', timeout: 30000 }); if (isInv(await p2.evaluate(() => document.body ? document.body.innerText : ''))) pdf = await p2.pdf({ format: 'A4', printBackground: true }); } catch (_) { } }
+        if (!pdf) { try { pdf = await inv.p.pdf({ format: 'A4', printBackground: true }); } catch (_) { } }
         return { ok: true, text: txt.split(hex).join(''), pdf };
     } finally { await ctx.close().catch(() => { }); }
 }
