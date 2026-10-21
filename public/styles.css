@@ -4850,8 +4850,8 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(79,70,229,.15)); }
 #settlement-invoice .si-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 /* #816 기간 = 시작일 ~ 종료일(akm-date 공통 달력) */
-#settlement-invoice .si-range { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
-#settlement-invoice .si-rl { display: flex; flex-direction: column; gap: 4px; flex: 0 1 180px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--text-mid, #667085); }
+#settlement-invoice .si-range { display: flex; align-items: flex-end; gap: 8px; flex-wrap: nowrap; }   /* #817 PC = 기간 두 칸 + [조회] 한 줄(칸이 줄어 맞춤) · 폰은 아래 @media 에서 줄바꿈 */
+#settlement-invoice .si-rl { display: flex; flex-direction: column; gap: 4px; flex: 0 1 180px; min-width: 136px; font-size: 12px; font-weight: 600; color: var(--text-mid, #667085); }
 #settlement-invoice .si-date { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; font-variant-numeric: tabular-nums; }
 #settlement-invoice .si-date:disabled { opacity: .55; cursor: not-allowed; }
 #settlement-invoice .si-tilde { padding-bottom: 10px; color: var(--text-mid, #667085); }
