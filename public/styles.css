@@ -4855,6 +4855,8 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-date { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; font-variant-numeric: tabular-nums; }
 #settlement-invoice .si-date:disabled { opacity: .55; cursor: not-allowed; }
 #settlement-invoice .si-tilde { padding-bottom: 10px; color: var(--text-mid, #667085); }
+#settlement-invoice .si-go { min-height: 40px; min-width: 76px; padding: 0 18px; white-space: nowrap; }   /* #817 기간 옆 [조회] = 공통 주 단추 */
+#settlement-invoice .si-go:disabled { opacity: .6; cursor: progress; }
 #settlement-invoice .si-range-err { margin: -4px 0 0; font-size: 13px; font-weight: 600; color: #B42318; }
 #settlement-invoice .si-none-yet { color: var(--text-mid, #667085); }
 #settlement-invoice .si-month-note { margin: -4px 0 10px; font-size: 12px; color: var(--text-mid, #667085); }
@@ -4889,13 +4891,14 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
 #settlement-invoice .si-empty { margin: 4px 0; color: var(--text-mid, #667085); font-size: 14px; line-height: 1.6; }
 @media (max-width: 960px), (pointer: coarse) {
-    #settlement-invoice .si-chip, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav, #settlement-invoice .si-date { min-height: 44px; }
+    #settlement-invoice .si-chip, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav, #settlement-invoice .si-date, #settlement-invoice .si-go { min-height: 44px; }
     #settlement-invoice .si-tilde { padding-bottom: 12px; }
     #settlement-invoice .month-nav .btn-nav { min-width: 44px; }
 }
 @media (max-width: 768px) {   /* #816 폰 = 시작일 ~ 종료일 한 줄(반씩) */
-    #settlement-invoice .si-range { flex-wrap: nowrap; gap: 6px; }
-    #settlement-invoice .si-rl { flex: 1 1 0; }
+    #settlement-invoice .si-range { flex-wrap: wrap; gap: 6px; }
+    #settlement-invoice .si-rl { flex: 1 1 0; min-width: 120px; }
+    #settlement-invoice .si-go { flex: 1 0 100%; }   /* 폰 = 시작일 ~ 종료일 한 줄 · [조회] 다음 줄 꽉 차게 */
     #settlement-invoice .si-date { padding-left: 10px; padding-right: 30px; background-position: right 8px center; }
 }
 /* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */

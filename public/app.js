@@ -14803,7 +14803,7 @@ setupNaverTimerCard();
         root.innerHTML = `<div class="card si-head">
             <div class="si-top"><div class="si-tt"><h2 id="si-title">계산서 발행현황</h2><span class="si-sum" id="si-sum"></span></div>
                 <div class="month-nav"><button type="button" class="btn-nav" data-si="prev" aria-label="이전 달">&lt;</button><button type="button" class="btn-nav" data-si="next" aria-label="다음 달">&gt;</button></div></div>
-            <div class="si-range" role="group" aria-label="기간"><label class="si-rl"><span>시작일</span><input type="text" id="si-from" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="시작일"></label><span class="si-tilde" aria-hidden="true">~</span><label class="si-rl"><span>종료일</span><input type="text" id="si-to" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="종료일"></label></div>
+            <div class="si-range" role="group" aria-label="기간"><label class="si-rl"><span>시작일</span><input type="text" id="si-from" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="시작일"></label><span class="si-tilde" aria-hidden="true">~</span><label class="si-rl"><span>종료일</span><input type="text" id="si-to" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="종료일"></label><button type="button" class="btn-primary si-go" id="si-go" data-si="go">조회</button></div>
             <p class="si-range-err" id="si-range-err" role="alert" hidden>시작일이 종료일보다 늦어요 — 날짜를 다시 골라 주세요.</p>
             <div class="si-search-row"><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
             <div class="si-chips" id="si-groups" role="group" aria-label="거래처"></div>
@@ -14812,13 +14812,15 @@ setupNaverTimerCard();
         let tm = null;
         $('si-q').addEventListener('input', e => { S.q = e.target.value; clearTimeout(tm); tm = setTimeout(search, 300); });
         root.addEventListener('change', e => {   // akm-date 는 날짜를 고르면 change(bubbles)를 쏜다 → 바로 조회
-            if (e.target.id !== 'si-from' && e.target.id !== 'si-to') return;
-            const f = $('si-from').value.trim(), t = $('si-to').value.trim();
-            if (!okDay(f) || !okDay(t)) return;
-            S.from = f; S.to = t;
-            if (f > t) { S.seq++; S.loading = false; render(); return; }   // 빨간 한 줄만 · 조회 안 함(가는 중인 응답도 버림)
-            load();
+            if (e.target.id === 'si-from' || e.target.id === 'si-to') query();
         });
+    }
+    function query() {   // 기간 칸 값으로 조회 — 달력 고를 때 · [조회] 단추(#817) 같은 길
+        const f = $('si-from').value.trim(), t = $('si-to').value.trim();
+        if (!okDay(f) || !okDay(t)) return;
+        S.from = f; S.to = t;
+        if (f > t) { S.seq++; S.loading = false; render(); return; }   // 빨간 한 줄만 · 조회 안 함(가는 중인 응답도 버림)
+        load();
     }
     async function load() {
         const my = ++S.seq;
@@ -14848,6 +14850,7 @@ setupNaverTimerCard();
         if ($('si-to').value !== S.to) $('si-to').value = S.to;
         $('si-from').disabled = $('si-to').disabled = finding;
         $('si-range-err').hidden = !bad;
+        $('si-go').disabled = S.loading || finding; $('si-go').textContent = S.loading ? '조회 중…' : '조회';
         const base = finding ? S.found : S.rows;
         $('si-sum').textContent = S.loading || bad ? '' : finding ? `${base.length}건${S.more ? '+(앞 200건만)' : ''}` : `${S.totals.count != null ? S.totals.count : base.length}건 · 발행 합계 ${won(S.totals.issued_total)}원`;
         document.querySelectorAll('#settlement-invoice .month-nav .btn-nav').forEach(b => { b.disabled = finding; });
@@ -14890,6 +14893,7 @@ setupNaverTimerCard();
         const b = e.target.closest('[data-si]'); if (!b) return;
         const k = b.dataset.si;
         if (k === 'prev' || k === 'next') { setMonth(ymShift((S.from || kstYm() + '-01').slice(0, 7), k === 'prev' ? -1 : 1)); load(); }   // 시작일의 달 기준 앞뒤 달 1일~말일
+        else if (k === 'go') { if (!S.loading) query(); }
         else if (k === 'group') { S.group = b.dataset.v; render(); }
         else if (k === 'reload') { if (S.found !== null) search(); else load(); }
         else if (k === 'pdf') openPdf(b.closest('tr').dataset.id, b);
