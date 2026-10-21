@@ -147,3 +147,31 @@ html[data-ao-theme="dark"] .xp-layer { --x-sun: #F6948D; --x-sat: #84ADFF; }
     .xp-panel-h { padding-left: 16px; } .xp-panel-b { padding: 0 16px 28px; }
     .xp-cell { min-height: 54px; }
 }
+/* #804(대표 10/21) 출처 띠 = 스토어 초록 · 플레이스 귤색 · 접수 안내 보냄 = 띠 굵게 · 번호 미입력 알약 · 바로 넣기 칸 */
+.xp-layer { --x-st: var(--d-ch-talk-fg, #05603A); --x-pl: #E8590C; }
+.xp-row.src-st { box-shadow: inset 3px 0 0 var(--x-st); padding-left: 10px; }
+.xp-row.src-pl { box-shadow: inset 3px 0 0 var(--x-pl); padding-left: 10px; }
+.xp-row.src-st.sent { box-shadow: inset 6px 0 0 var(--x-st); }
+.xp-row.src-pl.sent { box-shadow: inset 6px 0 0 var(--x-pl); }
+.xp-nm.src-st { border-left-color: var(--x-st); }
+.xp-nm.src-pl { border-left-color: var(--x-pl); }
+.xp-nm.sent { border-left-width: 5px; }
+.xp-dots { display: none; gap: 3px; justify-content: center; }
+.xp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-st); }
+.xp-dot.src-pl { background: var(--x-pl); }
+.xp-dot.sent { box-shadow: 0 0 0 1.5px var(--x-card), 0 0 0 3px currentColor; color: var(--x-ok); }
+.xp-pill { margin-left: 6px; padding: 4px 12px; border: 1px solid var(--x-pl); border-radius: 999px; background: transparent; color: var(--x-pl); font-size: 13px; font-weight: 700; cursor: pointer; }
+.xp-pill:hover { background: var(--x-soft); }
+.xp-pill[hidden] { display: none; }
+.xp-quick { align-items: flex-end; }
+.xp-quick input[type="text"] { width: 120px; } .xp-quick input[type="tel"], .xp-edit input[type="tel"] { width: 150px; }
+.xp-quick .xp-hint, .xp-edit-acts .xp-hint { flex-basis: 100%; font-size: 12px; color: var(--x-sub); }
+html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
+@media (max-width: 960px) {
+    .xp-dots { display: flex; }
+    .xp-pill { min-height: 44px; }
+}
+@media (max-width: 720px) {
+    .xp-nav { flex-wrap: wrap; }
+    .xp-quick label, .xp-quick input[type="text"], .xp-quick input[type="tel"] { flex: 1 1 140px; width: auto; }
+}

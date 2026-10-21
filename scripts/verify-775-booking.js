@@ -39,21 +39,22 @@ function fakeDb() {
             const r = { id: S.nextId++, source: 'store', ext_key: a[0], order_no: a[1], name: a[2], phone: a[3], visit_date: a[4], visit_time: a[5], date_ok: a[6], date_why: a[7], exp_count: a[8], entry_count: a[9], infant_count: 0, amount: a[10], status: a[11], option_text: a[12], items: JSON.parse(a[13]), date_fixed: false, sms_recv_at: null, sms_eve_at: null };
             S.rows.push(r); return { rows: [{ id: r.id }] };
         }
-        if (/^UPDATE experience_bookings SET name=\$2, phone=\$3/.test(s)) { const r = byId(a[0]); Object.assign(r, { name: a[1], phone: a[2], visit_date: a[3], visit_time: a[4], date_ok: a[5], date_why: a[6], exp_count: a[7], entry_count: a[8], amount: a[9], status: a[10], option_text: a[11], items: JSON.parse(a[12]) }); return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET name=\$2, phone=\$3, visit_date=\$4/.test(s)) { const r = byId(a[0]); Object.assign(r, { name: a[1], phone: a[2], visit_date: a[3], visit_time: a[4], date_ok: a[5], date_why: a[6], exp_count: a[7], entry_count: a[8], amount: a[9], status: a[10], option_text: a[11], items: JSON.parse(a[12]) }); return { rows: [] }; }
         if (/^INSERT INTO experience_bookings \(source, ext_key, status, date_ok, date_why, raw\) VALUES \('place'/.test(s)) { if (byKey(a[0])) return { rows: [] }; const r = { id: S.nextId++, source: 'place', ext_key: a[0], status: 'unknown', date_ok: false, raw: a[1] }; S.rows.push(r); return { rows: [{ id: r.id }] }; }
         if (/^INSERT INTO experience_bookings \(source, ext_key, order_no, name, phone, visit_date, visit_time, date_ok, date_why, exp_count, entry_count, infant_count, amount, status, raw\)/.test(s)) {
             if (byKey(a[0])) return { rows: [] };
             const r = { id: S.nextId++, source: 'place', ext_key: a[0], order_no: a[1], name: a[2], phone: a[3], visit_date: a[4], visit_time: a[5], date_ok: a[6], date_why: a[7], exp_count: a[8], entry_count: a[9], infant_count: a[10], amount: a[11], status: a[12], raw: a[13], date_fixed: false };
             S.rows.push(r); return { rows: [{ id: r.id }] };
         }
-        if (/^UPDATE experience_bookings SET status=\$2, name=COALESCE/.test(s)) { const r = byId(a[0]); Object.assign(r, { status: a[1], visit_date: a[4], visit_time: a[5], date_ok: a[6] }); return { rows: [] }; }
+        if (/^UPDATE experience_bookings SET status=\$2, name=CASE WHEN contact_at IS NOT NULL THEN name ELSE COALESCE\(\$3,name\) END, phone=CASE WHEN contact_at IS NOT NULL THEN phone ELSE COALESCE\(\$4,phone\) END/.test(s)) {   // #804 사람이 넣은 이름·번호는 메일이 안 덮음
+            const r = byId(a[0]); Object.assign(r, { status: a[1], visit_date: a[4], visit_time: a[5], date_ok: a[6] }); if (!r.contact_at) { if (a[2] != null) r.name = a[2]; if (a[3] != null) r.phone = a[3]; } return { rows: [] }; }
         if (/^SELECT 1 FROM experience_mail_seen/.test(s)) return { rows: S.seen.has(a[0]) ? [{}] : [] };
         if (/^INSERT INTO experience_mail_seen/.test(s)) { S.seen.add(a[0]); return { rows: [] }; }
         // 오늘 보낸 것 = 실제로 보낸 칸(sms_recv_at · sms_eve_at)만 — 'now' 또는 S.sentToday(미리 쓴 수)
         if (/sms_recv_at \+ interval '9 hours'/.test(s)) return { rows: [{ n: (S.sentToday || 0) + S.rows.filter(r => r.sms_recv_at === 'now').length + S.rows.filter(r => r.sms_eve_at === 'now').length }] };
         const fresh = (t) => !t || Date.now() - t > 30 * 60000;   // 30분 넘은 잡기
-        if (/^SELECT \* FROM experience_bookings WHERE source='store' AND status='confirmed'/.test(s)) {
-            const base = S.rows.filter(r => r.source === 'store' && r.status === 'confirmed' && r.date_ok && r.phone && r.phone.length >= 10 && r.visit_date >= a[0] && !r.sms_skip);
+        if (/^SELECT \* FROM experience_bookings WHERE \(source='store' OR \(source='place' AND contact_at IS NOT NULL\)\) AND status='confirmed'/.test(s)) {   // #804 사람이 번호를 넣은 플레이스 건도
+            const base = S.rows.filter(r => (r.source === 'store' || (r.source === 'place' && r.contact_at)) && r.status === 'confirmed' && r.date_ok && r.phone && r.phone.length >= 10 && r.visit_date >= a[0] && !r.sms_skip);
             return { rows: /sms_recv_at IS NULL/.test(s) ? base.filter(r => !r.sms_recv_at && (r.sms_recv_tries || 0) < 3 && fresh(r.sms_recv_try_at)).map(r => ({ ...r }))
                 : base.filter(r => r.visit_date === a[1] && !r.sms_eve_at && (r.sms_eve_tries || 0) < 3 && fresh(r.sms_eve_try_at) && (r.sms_recv_at || (r.sms_recv_tries || 0) >= 3)).map(r => ({ ...r })) };
         }
@@ -71,7 +72,16 @@ function fakeDb() {
             return { rows: [{ today: live.filter(r => r.visit_date === t && ['confirmed', 'visited'].includes(r.status)).length, tomorrow: live.filter(r => r.visit_date === tm && r.status === 'confirmed').length, today_people: 0, tomorrow_people: 0, need_check: live.filter(r => ['confirmed', 'unknown'].includes(r.status) && !r.date_ok && (!r.visit_date || r.visit_date >= t)).length }] };
         }
         if (/^SELECT id, to_char\(visit_date/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ ...r }] : [] }; }
-        if (/^UPDATE experience_bookings SET .* WHERE id=\$1$/.test(s) && !/sms_/.test(s.split('WHERE')[0].slice(0, 30))) { S.lastPatch = { sql: s, args: a }; return { rows: [] }; }
+        if (/^SELECT \*, to_char\(visit_date,'YYYY-MM-DD'\) AS visit_date FROM experience_bookings WHERE id=\$1/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ ...r }] : [] }; }   // #804 즉시 발송·미리보기
+        if (/^UPDATE experience_bookings SET .* WHERE id=\$1$/.test(s) && !/sms_/.test(s.split('WHERE')[0].slice(0, 30))) {
+            S.lastPatch = { sql: s, args: a };
+            if (/contact_at=NOW\(\)/.test(s)) {   // #804 이름·번호 고침은 가짜 줄에도 반영(즉시 발송 시험용 · 그 밖 고치기는 종전처럼 기록만)
+                const r = byId(a[0]); const set = s.slice('UPDATE experience_bookings SET '.length, s.lastIndexOf(' WHERE id=$1'));
+                for (const m of set.matchAll(/(\w+)=\$(\d+)/g)) r[m[1]] = a[Number(m[2]) - 1];
+                r.contact_at = Date.now();
+            }
+            return { rows: [] };
+        }
         if (/^UPDATE experience_bookings SET status = CASE WHEN \$2/.test(s)) { const r = byId(a[0]); if (!r || !['confirmed', 'visited'].includes(r.status)) return { rows: [] }; r.status = a[1] ? 'visited' : 'confirmed'; return { rows: [{ id: r.id }] }; }
         if (/^SELECT id, source, order_no/.test(s)) { const r = byId(a[0]); return { rows: r ? [{ ...r }] : [] }; }
         throw new Error('가짜 pool 이 모르는 SQL: ' + s.slice(0, 140));
@@ -453,6 +463,72 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         t.db.S.rows.push({ id: 1, status: 'confirmed', date_ok: true, visit_date: kstDay(0) }, { id: 2, status: 'confirmed', date_ok: true, visit_date: kstDay(1) }, { id: 3, status: 'confirmed', date_ok: true, visit_date: kstDay(1) }, { id: 4, status: 'unknown', date_ok: false, visit_date: null });
         const l = await t.M.todoLine();
         ok(l && l.key === 'exp' && l.label === '오늘 체험 1팀 · 내일 2팀 · 날짜 확인 필요 1' && l.count === 4, '「오늘 체험 1팀 · 내일 2팀 · 날짜 확인 필요 1」', l && l.label);
+    }
+
+    console.log('\n⑧ #804 플레이스 손님 이름·번호 · 넣는 즉시 접수 안내 · 메일이 안 덮음 · 전날 문자 대상');
+    {
+        const PATCH = 'PATCH /api/agent-office/experience/:id';
+        const fut = kstDay(10);
+        const place = (id, extra) => Object.assign({ id, source: 'place', ext_key: 'place:' + id, order_no: String(id), status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '11:00', exp_count: 2, entry_count: 1, infant_count: 0, name: '박*현', phone: null, sms_recv_tries: 0, sms_eve_tries: 0 }, extra || {});
+        const t = mk(); const d = t.db.S;
+        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+        d.rows.push(place(11), place(12), { id: 13, source: 'store', ext_key: 'store:13', status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '10:00', exp_count: 1, entry_count: 0, infant_count: 0, name: '홍길동', phone: '01011112222' });
+        const call = async (id, body) => { const r = res(); await t.app.routes[PATCH]({ params: { id: String(id) }, body, user: { id: 7, name: '직원' } }, r); return r; };
+        let r = await call(13, { name: '김철수', phone: '01033334444' });
+        ok(r.code === 400 && /스토어/.test(r.body.error), '스토어 예약 이름·번호는 거절(주문 정보가 정본)', r.body);
+        r = await call(11, { phone: '01055556666' });
+        ok(r.code === 400 && /\*/.test(r.body.error) && !d.rows.find(x => x.id === 11).phone && t.sent.length === 0, '가린 이름(박*현) 그대로 번호만 넣으면 = 저장·발송 막음', r.body);
+        r = await call(11, { name: '박*현' });
+        ok(r.code === 400, '이름에 * 넣어도 막음');
+        r = await call(11, { name: '박지현', phone: '010-123' });
+        ok(r.code === 400 && /10~11자리/.test(r.body.error), '번호 꼴 틀리면 거절', r.body);
+        r = await call(11, { name: '박지현', phone: '010-5555-6666' });
+        const b11 = d.rows.find(x => x.id === 11);
+        ok(r.code === 200 && b11.name === '박지현' && b11.phone === '01055556666' && b11.contact_at && b11.contact_by === '직원', '이름·번호 저장 · contact_at·contact_by 기록', { name: b11.name, phone: b11.phone, by: b11.contact_by });
+        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].alim && t.sent[0].tplCode === 'UM_6987' && t.sent[0].receiver === '01055556666' && /박지현님/.test(t.sent[0].message) && /체험 2명 · 입장 1명/.test(t.sent[0].message), '그 자리에서 접수 알림톡 1통(UM_6987 · 이름·인원 채움)', { sent: r.body.sent, n: t.sent.length });
+        ok(t.sent[0].failoverMessage && !/자동 구매확정/.test(t.sent[0].failoverMessage) && /예약이 확정되었습니다/.test(t.sent[0].failoverMessage), '대체 문자(실패 때) = 플레이스용(스토어 전용 「자동 구매확정」 줄 없음)');
+        ok(b11.sms_recv_at === 'now' && r.body.item, '발송 표시 = sms_recv_at · 응답에 줄');
+        const au = t.audits.find(a => a.action === 'experience_edit' && a.targetId === 11);
+        ok(au && au.changes.after.phone === '…6666' && !JSON.stringify(au.changes).includes('01055556666'), '감사 기록엔 번호 끝 4자리만', au && au.changes.after);
+        // 타이머가 같은 건을 또 집지 않음 · 같은 번호로 다시 저장 = 다시 안 보냄
+        await t.M.collectSms();
+        const to11 = () => t.sent.filter(x => x.receiver === '01055556666').length;
+        ok(to11() === 1, '5분 타이머 = 이미 보낸 접수 안 보냄(겹침 0 · 같은 틱의 스토어 건은 종전대로)', t.sent.map(x => x.receiver));
+        r = await call(11, { phone: '01055556666' });
+        ok(r.code === 200 && r.body.sent === null && to11() === 1, '같은 번호 다시 저장 = 다시 안 보냄');
+        // 메일이 다시 와도 사람이 넣은 이름·번호 유지
+        const before = { ...b11 };   // savePlace 의 UPDATE(메일 이름 = 가린 이름 · 번호 없음)를 그대로 흉내
+        await t.db.pool.query("UPDATE experience_bookings SET status=$2, name=CASE WHEN contact_at IS NOT NULL THEN name ELSE COALESCE($3,name) END, phone=CASE WHEN contact_at IS NOT NULL THEN phone ELSE COALESCE($4,phone) END, visit_date=$5", [11, 'confirmed', '박*현', null, before.visit_date, before.visit_time, true]);
+        ok(b11.name === '박지현' && b11.phone === '01055556666', '메일 재수집 꼴(가린 이름) = 사람이 넣은 이름·번호 유지');
+        const src = require('fs').readFileSync(path.join(__dirname, '..', 'experience.js'), 'utf8');
+        ok(/name=CASE WHEN contact_at IS NOT NULL THEN name ELSE COALESCE\(\$3,name\) END, phone=CASE WHEN contact_at IS NOT NULL THEN phone ELSE COALESCE\(\$4,phone\) END/.test(src), 'savePlace UPDATE 가 그 꼴(실코드)');
+        ok(/sms_eve_at = CASE WHEN visit_date IS DISTINCT FROM \$5::date THEN NULL ELSE sms_eve_at END/.test(src), '메일 「변경」으로 날짜가 바뀌면 전날 문자 다시(sms_eve_at 비움 · 실코드)');
+        // 사람이 안 넣은 플레이스 건 = 문자 대상 아님 · 넣은 건 = 전날 문자 대상
+        const t2 = mk(); const d2 = t2.db.S;
+        d2.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00' };
+        d2.rows.push(place(21, { name: '이민수', phone: '01077778888' }), place(22, { name: '최유리', phone: '01099990000', contact_at: Date.now(), visit_date: kstDay(1), sms_recv_at: 'old' }));
+        await t2.M.collectSms();
+        ok(!t2.sent.some(x => x.receiver === '01077778888'), '메일에서 온 번호라도 사람이 안 넣은 플레이스 건 = 안 보냄');
+        ok(t2.sent.some(x => x.receiver === '01099990000' && /내일/.test(x.message) && !/자동 구매확정/.test(x.message)), '사람이 번호를 넣은 플레이스 건 = 전날 「내일 뵙겠습니다」 대상(⑦)', t2.sent.map(x => x.receiver));
+        // 조건 밖 = 보내지 않고 사유(타이머가 나중에)
+        const t3 = mk(); const d3 = t3.db.S;
+        d3.cfg.experience_notify = { enabled: true, daily_cap: 1, recv_from: '00:00', recv_to: '24:00' }; d3.sentToday = 1;
+        d3.rows.push(place(31, { name: '정하늘' }));
+        const r3 = res(); await t3.app.routes[PATCH]({ params: { id: '31' }, body: { phone: '01012121212' }, user: { name: '직원' } }, r3);
+        ok(r3.code === 200 && /^later:하루 상한/.test(r3.body.sent) && t3.sent.length === 0, '하루 상한이면 저장만 · 사유 「하루 상한」(나중에)', r3.body.sent);
+        d3.cfg.experience_notify.enabled = false; d3.rows.push(place(32, { name: '한별' }));
+        const r4 = res(); await t3.app.routes[PATCH]({ params: { id: '32' }, body: { phone: '01034343434' }, user: { name: '직원' } }, r4);
+        ok(r4.code === 200 && r4.body.sent === 'later:손님 문자 꺼짐' && t3.sent.length === 0, '손님 문자 꺼짐 = 안 보냄', r4.body.sent);
+        // 수신거부 번호
+        const t5 = mk(); const d5 = t5.db.S; d5.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00' }; d5.refuse.add('01056565656');
+        d5.rows.push(place(51, { name: '오수아' }));
+        const r5 = res(); await t5.app.routes[PATCH]({ params: { id: '51' }, body: { phone: '01056565656' }, user: { name: '직원' } }, r5);
+        ok(r5.code === 200 && r5.body.sent === 'refused' && t5.sent.length === 0, '수신거부 번호 = 안 보냄(refused)', r5.body.sent);
+        // 문구 함수
+        const tp = T.tplFor('a\n예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.\nb', { source: 'place' });
+        ok(tp === 'a\nb' && T.tplFor('x\n자동 구매확정\ny', { source: 'store' }) === 'x\n자동 구매확정\ny', 'tplFor = 플레이스만 스토어 전용 줄 뺌');
+        // 번호 미입력 알약 집계(실코드 SQL)
+        ok(/source = 'place' AND status = 'confirmed' AND \(phone IS NULL OR length\(phone\) < 10\) AND \(visit_date IS NULL OR visit_date >= \$1::date\)\)::int AS place_no_phone/.test(src), 'summary 「번호 미입력」 집계 = 확정·플레이스·번호 없음·오늘 이후');
     }
 
     console.log(`\n결과: ${pass}/${pass + fail}`);
