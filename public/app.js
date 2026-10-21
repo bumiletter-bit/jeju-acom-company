@@ -14768,28 +14768,34 @@ setupNaverTimerCard();
 })();
 
 // ============================================================
-//  #814 정산관리 › 「계산서 발행현황」 탭 — 그 달 세금계산서 목록(월 ‹ ›) · 날짜·거래처별 보기 · 전체 기간 찾기 · [확인]/[보류]/[되돌리기](대표·경리) · [PDF 열기]
+//  #814 정산관리 › 「계산서 발행현황」 탭 — 세금계산서 목록(시작일~종료일 · 월 ‹ › = 그 달 1일~말일 지름길 · #816) · 거래처별 보기(시온·택배비(CJ)·효돈 · 묶음 3개 늘 보임) · 전체 기간 찾기 · [확인]/[보류]/[되돌리기](대표·경리) · [PDF 열기]
 //  거래처 머리 = 「우리 정산 월 합계 · 계산서 합계 · 차이」 표시만(서버 값 그대로 · 자동 맞춤·합계 섞기 0). 서버 계약 = docs/814-api.md(워커2). 접두사 si
 // ============================================================
 (function () {
     const SI_API = {
-        list: ym => `/api/tax-invoices?month=${ym}`,
+        list: (from, to) => `/api/tax-invoices?from=${from}&to=${to}`,
         search: q => `/api/tax-invoices/search?q=${encodeURIComponent(q)}`,
         act: (id, a) => `/api/tax-invoices/${encodeURIComponent(id)}/${a}`,   // confirm | hold | reset
         pdf: id => `/api/tax-invoices/${encodeURIComponent(id)}/pdf`,
     };
-    const GROUPS = [['cj', 'CJ대한통운(택배비)'], ['sion', '시온(조천감귤농협)'], ['hyodon', '효돈농협유통'], ['other', '기타']];
+    const GROUPS = [['sion', '시온(조천감귤농협)'], ['hyodon', '효돈농협유통'], ['cj', 'CJ대한통운(택배비)']];   // #816 대표: 기타 없음 · 서버 groups 순서와 같게
     const ST = { draft: ['초안', 'pill-wait'], confirmed: ['확인', 'pill-ok'], hold: ['보류', 'pill-off'] };
     const KIND = { free: '면세', modify: '수정' };
-    const S = { ym: null, rows: [], days: {}, groups: [], totals: {}, group: 'all', day: '', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0 };
+    const S = { from: '', to: '', months: [], rows: [], groups: [], totals: {}, group: 'all', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0 };
     const $ = id => document.getElementById(id);
     const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const won = n => (n == null || n === '' || isNaN(Number(n))) ? '—' : Number(n).toLocaleString('ko-KR');
     const kstYm = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 7);
     const kstDay = t => { const d = new Date(t); return isNaN(d) ? '' : new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10); };
     const ymShift = (ym, k) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + k, 1)).toISOString().slice(0, 7); };
+    const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
+    const setMonth = ym => { S.from = ym + '-01'; S.to = lastDay(ym); };
+    const wholeMonths = () => !!S.from && S.from.slice(8) === '01' && S.to === lastDay(S.to.slice(0, 7));   // 달 단위로 딱 떨어짐(정산 합계와 같은 기간)
+    const wholeMonth = () => !!S.from && S.from.slice(8) === '01' && S.to === lastDay(S.from.slice(0, 7));   // 기간이 딱 한 달이면 「YYYY년 M월」
+    const okDay = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
     const md = d => d ? `${+String(d).slice(5, 7)}/${+String(d).slice(8, 10)}` : '';
-    const label = k => (GROUPS.find(g => g[0] === k) || GROUPS[3])[1];
+    const ymd = (d, withY) => withY ? `${String(d).slice(0, 4)}/${md(d)}` : md(d);
+    const label = k => (GROUPS.find(g => g[0] === k) || [k, '그 밖'])[1];
     const canEdit = () => !!(currentUser && currentUser.role === 'admin');   // 대표·경리(관리자 계정) — 서버도 adminOnly
     function shell() {
         const root = $('settlement-invoice'); if (!root || root.dataset.si) return;
@@ -14797,22 +14803,31 @@ setupNaverTimerCard();
         root.innerHTML = `<div class="card si-head">
             <div class="si-top"><div class="si-tt"><h2 id="si-title">계산서 발행현황</h2><span class="si-sum" id="si-sum"></span></div>
                 <div class="month-nav"><button type="button" class="btn-nav" data-si="prev" aria-label="이전 달">&lt;</button><button type="button" class="btn-nav" data-si="next" aria-label="다음 달">&gt;</button></div></div>
+            <div class="si-range" role="group" aria-label="기간"><label class="si-rl"><span>시작일</span><input type="text" id="si-from" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="시작일"></label><span class="si-tilde" aria-hidden="true">~</span><label class="si-rl"><span>종료일</span><input type="text" id="si-to" class="form-input akm-date si-date" readonly autocomplete="off" placeholder="종료일"></label></div>
+            <p class="si-range-err" id="si-range-err" role="alert" hidden>시작일이 종료일보다 늦어요 — 날짜를 다시 골라 주세요.</p>
             <div class="si-search-row"><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
             <div class="si-chips" id="si-groups" role="group" aria-label="거래처"></div>
-            <div class="si-days" id="si-days" role="group" aria-label="작성일"></div>
         </div><div id="si-body" aria-live="polite"></div>`;
         root.addEventListener('click', onClick);
         let tm = null;
         $('si-q').addEventListener('input', e => { S.q = e.target.value; clearTimeout(tm); tm = setTimeout(search, 300); });
+        root.addEventListener('change', e => {   // akm-date 는 날짜를 고르면 change(bubbles)를 쏜다 → 바로 조회
+            if (e.target.id !== 'si-from' && e.target.id !== 'si-to') return;
+            const f = $('si-from').value.trim(), t = $('si-to').value.trim();
+            if (!okDay(f) || !okDay(t)) return;
+            S.from = f; S.to = t;
+            if (f > t) { S.seq++; S.loading = false; render(); return; }   // 빨간 한 줄만 · 조회 안 함(가는 중인 응답도 버림)
+            load();
+        });
     }
     async function load() {
         const my = ++S.seq;
         S.loading = true; S.err = ''; render();
         try {
-            const r = await api(SI_API.list(S.ym));
+            const r = await api(SI_API.list(S.from, S.to));
             if (my !== S.seq) return;
-            S.rows = Array.isArray(r.rows) ? r.rows : []; S.days = r.days || {}; S.groups = Array.isArray(r.groups) ? r.groups : []; S.totals = r.totals || {};
-        } catch (e) { if (my !== S.seq) return; S.rows = []; S.days = {}; S.groups = []; S.totals = {}; S.err = e && e.message ? e.message : '불러오지 못했어요'; }
+            S.rows = Array.isArray(r.rows) ? r.rows : []; S.groups = Array.isArray(r.groups) ? r.groups : []; S.totals = r.totals || {}; S.months = Array.isArray(r.months) ? r.months : [];
+        } catch (e) { if (my !== S.seq) return; S.rows = []; S.groups = []; S.months = []; S.totals = {}; S.err = e && e.message ? e.message : '불러오지 못했어요'; }
         S.loading = false; render();
     }
     async function search() {
@@ -14824,34 +14839,37 @@ setupNaverTimerCard();
         catch (e) { if (my !== S.seq) return; S.found = []; S.err = e && e.message ? e.message : '찾지 못했어요'; }
         S.loading = false; render();
     }
-    const visible = () => (S.found || S.rows).filter(r => (S.group === 'all' || r.supplier === S.group) && (S.found || !S.day || String(r.day || r.issue_date || '').slice(0, 10) === S.day));
+    const visible = () => (S.found || S.rows).filter(r => S.group === 'all' || r.supplier === S.group);
     function render() {
-        const [y, m] = S.ym.split('-'), finding = S.found !== null;
-        $('si-title').textContent = finding ? '계산서 찾기 · 전체 기간' : `${y}년 ${+m}월 계산서`;
+        const finding = S.found !== null, bad = !finding && S.from > S.to, month = wholeMonth();
+        const [y, m] = S.from.split('-'), crossY = S.from.slice(0, 4) !== S.to.slice(0, 4);
+        $('si-title').textContent = finding ? '계산서 찾기 · 전체 기간' : month ? `${y}년 ${+m}월 계산서` : `${ymd(S.from, crossY)} ~ ${ymd(S.to, crossY)} 계산서`;
+        if ($('si-from').value !== S.from) $('si-from').value = S.from;
+        if ($('si-to').value !== S.to) $('si-to').value = S.to;
+        $('si-from').disabled = $('si-to').disabled = finding;
+        $('si-range-err').hidden = !bad;
         const base = finding ? S.found : S.rows;
-        $('si-sum').textContent = S.loading ? '' : finding ? `${base.length}건${S.more ? '+(앞 200건만)' : ''}` : `${S.totals.count != null ? S.totals.count : base.length}건 · 발행 합계 ${won(S.totals.issued_total)}원`;
+        $('si-sum').textContent = S.loading || bad ? '' : finding ? `${base.length}건${S.more ? '+(앞 200건만)' : ''}` : `${S.totals.count != null ? S.totals.count : base.length}건 · 발행 합계 ${won(S.totals.issued_total)}원`;
         document.querySelectorAll('#settlement-invoice .month-nav .btn-nav').forEach(b => { b.disabled = finding; });
         const cnt = g => base.filter(x => g === 'all' || x.supplier === g).length;
         $('si-groups').innerHTML = [['all', '전체'], ...GROUPS].map(([k, l]) => `<button type="button" class="si-chip${S.group === k ? ' on' : ''}" data-si="group" data-v="${k}" aria-pressed="${S.group === k}">${esc(k === 'all' ? l : ((S.groups.find(g => g.supplier === k) || {}).label || l))} <b>${cnt(k)}</b></button>`).join('');
-        const days = finding ? [] : Object.keys(S.days || {}).sort();
-        if (S.day && !days.includes(S.day)) S.day = '';
-        $('si-days').hidden = !days.length;
-        $('si-days').innerHTML = days.length ? [`<button type="button" class="si-day${!S.day ? ' on' : ''}" data-si="day" data-v="" aria-pressed="${!S.day}">전체 날짜</button>`,
-            ...days.map(d => `<button type="button" class="si-day${S.day === d ? ' on' : ''}" data-si="day" data-v="${d}" aria-pressed="${S.day === d}">${md(d)} <b>${S.days[d]}</b></button>`)].join('') : '';
         const body = $('si-body');
+        if (bad) { body.innerHTML = ''; return; }
         if (S.loading) { body.innerHTML = `<div class="card si-group"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>`; return; }
         if (S.err) { body.innerHTML = `<div class="card si-group"><p class="si-empty">계산서 목록을 불러오지 못했어요 — ${esc(S.err)} <button type="button" class="btn-outline si-btn" data-si="reload">다시 불러오기</button></p></div>`; return; }
-        if (!base.length) { body.innerHTML = `<div class="card si-group"><p class="si-empty">${finding ? '찾는 계산서가 없어요.' : '이 달에 받은 계산서가 없어요.'}</p></div>`; return; }
+        if (finding && !base.length) { body.innerHTML = `<div class="card si-group"><p class="si-empty">찾는 계산서가 없어요.</p></div>`; return; }
         const vis = visible();
-        const keys = S.group === 'all' ? GROUPS.map(g => g[0]) : [S.group];
+        const keys = S.group === 'all' ? (S.groups.length && !finding ? S.groups.map(g => g.supplier) : GROUPS.map(g => g[0])) : [S.group];   // 서버 groups 순서 그대로
+        const monthNote = finding || wholeMonths() ? '' : `<p class="si-month-note">우리 정산 합계는 달 단위 — ${esc((S.months.length ? S.months : [S.from.slice(0, 7), S.to.slice(0, 7)].filter((v, i, a) => a.indexOf(v) === i)).map(x => +x.slice(5, 7) + '월').join('·'))} 통째로 더한 값이에요.</p>`;
+        if (finding && S.group === 'all') vis.forEach(r => { if (!keys.includes(r.supplier)) keys.push(r.supplier); });   // 찾기에 3곳 밖 공급자가 나오면 그 묶음도
         const html = keys.map(k => {
             const rows = vis.filter(x => x.supplier === k), g = S.groups.find(x => x.supplier === k) || {};
-            if (!rows.length && (finding || S.day || S.group === 'all')) return '';
-            const cmp = finding ? '' : `<span>우리 정산 월 합계 <b>${g.settle_total == null ? '—' : won(g.settle_total) + '원'}</b></span><span>계산서 합계 <b>${won(g.issued_total)}원</b></span>`
+            if (!rows.length && finding) return '';   // 기간 보기 = 3곳 늘 보임(0건이면 「아직 없음」 · 정산 합계는 그대로)
+            const cmp = finding ? '' : `<span>우리 정산 ${month ? '월 ' : ''}합계 <b>${g.settle_total == null ? '—' : won(g.settle_total) + '원'}</b></span><span>계산서 합계 <b>${won(g.issued_total)}원</b></span>`
                 + (g.diff == null ? '' : `<span class="si-diff${Number(g.diff) === 0 ? ' zero' : ''}">차이 <b>${Number(g.diff) === 0 ? '0' : (g.diff > 0 ? '+' : '−') + won(Math.abs(g.diff))}원</b></span>`)
                 + (g.check_count ? `<span class="si-chk">원본 확인 ${g.check_count}건</span>` : '');
-            return `<section class="card si-group" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><h3>${esc(g.label || label(k))}</h3>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>
-                ${rows.length ? `<div class="table-scroll-wrapper si-tw"><table class="data-table si-table"><thead><tr><th>공급자</th><th>작성일</th><th>승인번호</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>받은 날</th><th>상태</th><th>할 일</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>` : `<p class="si-empty">조건에 맞는 계산서가 없어요.</p>`}</section>`;
+            return `<section class="card si-group" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><h3>${esc(g.label || label(k))}</h3>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>${cmp ? monthNote : ''}
+                ${rows.length ? `<div class="table-scroll-wrapper si-tw"><table class="data-table si-table"><thead><tr><th>공급자</th><th>작성일</th><th>승인번호</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>받은 날</th><th>상태</th><th>할 일</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>` : `<p class="si-empty si-none-yet">${month ? '이 달' : '이 기간'} 계산서 아직 없음</p>`}</section>`;
         }).join('');
         body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
     }
@@ -14871,9 +14889,8 @@ setupNaverTimerCard();
     async function onClick(e) {
         const b = e.target.closest('[data-si]'); if (!b) return;
         const k = b.dataset.si;
-        if (k === 'prev' || k === 'next') { S.ym = ymShift(S.ym, k === 'prev' ? -1 : 1); S.day = ''; load(); }
+        if (k === 'prev' || k === 'next') { setMonth(ymShift((S.from || kstYm() + '-01').slice(0, 7), k === 'prev' ? -1 : 1)); load(); }   // 시작일의 달 기준 앞뒤 달 1일~말일
         else if (k === 'group') { S.group = b.dataset.v; render(); }
-        else if (k === 'day') { S.day = b.dataset.v; render(); }
         else if (k === 'reload') { if (S.found !== null) search(); else load(); }
         else if (k === 'pdf') openPdf(b.closest('tr').dataset.id, b);
         else if (k === 'act') {
@@ -14901,6 +14918,6 @@ setupNaverTimerCard();
         } catch (e) { if (w) w.close(); showToast(e.message, 'error'); }
         finally { btn.disabled = false; }
     }
-    window.siOpen = function () { shell(); if (!S.inited) { S.inited = true; S.ym = kstYm(); load(); } };
+    window.siOpen = function () { shell(); if (!S.inited) { S.inited = true; setMonth(kstYm()); load(); } };
     window._siState = S;   // 검증용
 })();

@@ -4848,14 +4848,22 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-sum { font-size: 13px; color: var(--text-mid, #667085); font-variant-numeric: tabular-nums; }
 #settlement-invoice .si-q { width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 14px; border: 1px solid var(--border, #ECEDF1); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-dark, #101828); font: inherit; font-size: 14px; }
 #settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(79,70,229,.15)); }
-#settlement-invoice .si-chips, #settlement-invoice .si-days { display: flex; flex-wrap: wrap; gap: 6px; }
-#settlement-invoice .si-days { padding-top: 10px; border-top: 1px solid var(--border, #ECEDF1); }
-#settlement-invoice .si-chip, #settlement-invoice .si-day { min-height: 36px; padding: 0 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 999px; background: var(--card-bg, #fff); color: var(--text-mid, #667085); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-#settlement-invoice .si-chip b, #settlement-invoice .si-day b { font-weight: 700; color: var(--text-dark, #101828); font-variant-numeric: tabular-nums; }
-#settlement-invoice .si-chip:hover, #settlement-invoice .si-day:hover { border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
-#settlement-invoice .si-chip.on, #settlement-invoice .si-day.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
-#settlement-invoice .si-chip.on b, #settlement-invoice .si-day.on b { color: var(--primary, #4F46E5); }
-#settlement-invoice .si-chip:focus-visible, #settlement-invoice .si-day:focus-visible, #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
+#settlement-invoice .si-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* #816 기간 = 시작일 ~ 종료일(akm-date 공통 달력) */
+#settlement-invoice .si-range { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+#settlement-invoice .si-rl { display: flex; flex-direction: column; gap: 4px; flex: 0 1 180px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--text-mid, #667085); }
+#settlement-invoice .si-date { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-date:disabled { opacity: .55; cursor: not-allowed; }
+#settlement-invoice .si-tilde { padding-bottom: 10px; color: var(--text-mid, #667085); }
+#settlement-invoice .si-range-err { margin: -4px 0 0; font-size: 13px; font-weight: 600; color: #B42318; }
+#settlement-invoice .si-none-yet { color: var(--text-mid, #667085); }
+#settlement-invoice .si-month-note { margin: -4px 0 10px; font-size: 12px; color: var(--text-mid, #667085); }
+#settlement-invoice .si-chip { min-height: 36px; padding: 0 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 999px; background: var(--card-bg, #fff); color: var(--text-mid, #667085); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+#settlement-invoice .si-chip b { font-weight: 700; color: var(--text-dark, #101828); font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-chip:hover { border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip.on b { color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip:focus-visible, #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
 #settlement-invoice .si-group { margin-top: 12px; }
 #settlement-invoice .month-nav .btn-nav { min-width: 36px; min-height: 36px; }
 #settlement-invoice .si-gh { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -4881,8 +4889,14 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
 #settlement-invoice .si-empty { margin: 4px 0; color: var(--text-mid, #667085); font-size: 14px; line-height: 1.6; }
 @media (max-width: 960px), (pointer: coarse) {
-    #settlement-invoice .si-chip, #settlement-invoice .si-day, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav { min-height: 44px; }
+    #settlement-invoice .si-chip, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav, #settlement-invoice .si-date { min-height: 44px; }
+    #settlement-invoice .si-tilde { padding-bottom: 12px; }
     #settlement-invoice .month-nav .btn-nav { min-width: 44px; }
+}
+@media (max-width: 768px) {   /* #816 폰 = 시작일 ~ 종료일 한 줄(반씩) */
+    #settlement-invoice .si-range { flex-wrap: nowrap; gap: 6px; }
+    #settlement-invoice .si-rl { flex: 1 1 0; }
+    #settlement-invoice .si-date { padding-left: 10px; padding-right: 30px; background-position: right 8px center; }
 }
 /* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */
 @media (max-width: 768px) {

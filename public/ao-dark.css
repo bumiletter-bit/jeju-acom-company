@@ -49,7 +49,7 @@ html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { 
 /* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
 html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
 
-/* ── styles.css 에서 옮긴 것 (872규칙) ── */
+/* ── styles.css 에서 옮긴 것 (877규칙) ── */
 :where(html[data-ao-theme="dark"]) .btn-login { background: var(--d-accent-fill); color: #FFFFFF; border: none; }
 :where(html[data-ao-theme="dark"]) .btn-login:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); }
@@ -906,13 +906,17 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-sum { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-q { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); color: var(--text-dark, #101828); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(85, 76, 230, 0.23)); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-days { border-top: 1px solid var(--border, #ECEDF1); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); color: var(--text-mid, #667085); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip b, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day b { color: var(--text-dark, #101828); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip:hover, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day:hover { border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on b, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day.on b { color: var(--primary, #4F46E5); }
-:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip:focus-visible, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-day:focus-visible, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-rl { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-tilde { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-range-err { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-none-yet { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-month-note { color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); color: var(--text-mid, #667085); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip b { color: var(--text-dark, #101828); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip:hover { border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip.on b { color: var(--primary, #4F46E5); }
+:where(html[data-ao-theme="dark"]) #settlement-invoice .si-chip:focus-visible, :where(html[data-ao-theme="dark"]) #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-cmp { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-cmp b { color: var(--text-dark, #101828); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-diff b { color: #F89963; }
@@ -926,6 +930,9 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-btn-q { color: var(--text-mid, #667085); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
 :where(html[data-ao-theme="dark"]) #settlement-invoice .si-empty { color: var(--text-mid, #667085); }
+@media (max-width: 768px) {
+    :where(html[data-ao-theme="dark"]) #settlement-invoice .si-date { background-position: right 8px center; }
+}
 @media (max-width: 768px) {
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-tw { border: 0; box-shadow: none; background: none; }
     :where(html[data-ao-theme="dark"]) #settlement-invoice .si-table tr { border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); }

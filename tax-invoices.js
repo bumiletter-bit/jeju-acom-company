@@ -7,7 +7,12 @@ const SUPPLIERS = ['cj', 'sion', 'hyodon', 'other'];
 const LABEL = { cj: 'CJ대한통운(택배비)', sion: '시온(조천감귤농협)', hyodon: '효돈농협유통', other: '기타' };
 const SETTLE_PARTNER = { sion: '대성(시온)', hyodon: '효돈농협' };
 const CJ_PARTNERS = ['대성(시온)', '효돈농협', '기타거래처'], CJ_BOX_FEE = 3100;   // 정산관리와 같은 계산(agents/세미.js)
-const YM = /^\d{4}-(0[1-9]|1[0-2])$/, YMD = /^\d{4}-\d{2}-\d{2}$/;
+const SHOWN = ['sion', 'hyodon', 'cj'];   // #816 대표 10/21 = 화면·검색은 이 셋만(순서 = 묶음 순서) · 'other' 줄은 표에 남고 안 보임
+const SHOWN_SQL = SHOWN.map(s => `'${s}'`).join(', ');   // 고정 글자(손님 값 아님)
+const YM = /^\d{4}-(0[1-9]|1[0-2])$/, YMD = /^\d{4}-\d{2}-\d{2}$/, MAX_DAYS = 366;
+const isDay = (d) => YMD.test(d) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;   // 2026-02-30 같은 없는 날 거름
+const monthsOf = (from, to) => { const out = []; let [y, m] = from.slice(0, 7).split('-').map(Number); const end = to.slice(0, 7);
+    for (;;) { const k = `${y}-${String(m).padStart(2, '0')}`; out.push(k); if (k >= end) return out; if (++m > 12) { m = 1; y++; } } };
 
 async function ensureTable(pool) {
     await pool.query(`CREATE TABLE IF NOT EXISTS tax_invoices (
@@ -75,32 +80,42 @@ function mount(app, deps) {
     const actorOf = (req) => ({ id: req.user && req.user.id, name: req.user && (req.user.name || req.user.username) });
     const fail = (res, e, where) => { console.error(`[#814 계산서] ${where}:`, String(e && e.message || e).slice(0, 200)); res.status(500).json({ error: '계산서 목록을 읽지 못했어요 — 잠시 뒤 다시' }); };
 
+    // #816 기간 검색(from~to · day 기준 포함 범위 · 달을 넘어도 됨 · 상한 366일) · 없으면 month(없으면 이번 달) · 화면 = 시온·효돈·택배비(CJ)만(「기타」 줄은 표에만 남음)
     app.get('/api/tax-invoices', authMiddleware, adminOnly, async (req, res) => {
         try {
             await ready;
-            const ym = String(req.query.month || '');
-            if (!YM.test(ym)) return res.status(400).json({ error: 'month 는 YYYY-MM' });
+            const qFrom = req.query.from ? String(req.query.from) : '', qTo = req.query.to ? String(req.query.to) : '';
+            let from, to, ym = null;
+            if (qFrom || qTo) {
+                if (!isDay(qFrom) || !isDay(qTo)) return res.status(400).json({ error: 'from·to 는 둘 다 YYYY-MM-DD' });
+                if (qFrom > qTo) return res.status(400).json({ error: '시작일이 종료일보다 늦어요' });
+                if ((Date.parse(qTo) - Date.parse(qFrom)) / 86400000 + 1 > MAX_DAYS) return res.status(400).json({ error: `기간은 ${MAX_DAYS}일까지` });
+                from = qFrom; to = qTo;
+            } else {
+                ym = req.query.month ? String(req.query.month) : new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 7);
+                if (!YM.test(ym)) return res.status(400).json({ error: 'month 는 YYYY-MM' });
+                from = ym + '-01'; to = monthEnd(ym);
+            }
             const sup = req.query.supplier == null || req.query.supplier === '' ? null : String(req.query.supplier);
-            if (sup && !SUPPLIERS.includes(sup)) return res.status(400).json({ error: 'supplier 는 cj · sion · hyodon · other' });
-            const date = req.query.date ? String(req.query.date) : null;
-            if (date && (!YMD.test(date) || date.slice(0, 7) !== ym)) return res.status(400).json({ error: 'date 는 그 달의 YYYY-MM-DD' });
-            const from = ym + '-01', to = monthEnd(ym);
-            // 달·날짜 = 작성일자 · 작성일을 못 읽은 줄(확인 필요·오류)은 받은 날(KST)로 — 그 달 화면에서 빠지지 않게 · day = 그 기준 날짜
+            if (sup && !SHOWN.includes(sup)) return res.status(400).json({ error: 'supplier 는 sion · hyodon · cj' });
+            // 날짜 = 작성일자 · 작성일을 못 읽은 줄(확인 필요·오류)은 받은 날(KST)로 — 기간에서 빠지지 않게 · day = 그 기준 날짜
             const DAY = `COALESCE(issue_date, (mail_at AT TIME ZONE 'Asia/Seoul')::date)`;
-            const all = (await pool.query(`SELECT ${COLS}, to_char(${DAY}, 'YYYY-MM-DD') AS day FROM tax_invoices WHERE ${DAY} >= $1::date AND ${DAY} <= $2::date ORDER BY ${DAY}, id`, [from, to])).rows.map(shape);
-            const days = {}; for (const r of all) days[r.day] = (days[r.day] || 0) + 1;
-            const st = await settleTotals(pool, helpers, ym);
-            const groups = SUPPLIERS.map(s => {
+            const all = (await pool.query(`SELECT ${COLS}, to_char(${DAY}, 'YYYY-MM-DD') AS day FROM tax_invoices
+                WHERE supplier IN (${SHOWN_SQL}) AND ${DAY} >= $1::date AND ${DAY} <= $2::date ORDER BY ${DAY}, id`, [from, to])).rows.map(shape);
+            // 우리 정산 = 기간이 걸치는 달마다 월 합계를 더함(한 달 안이면 그 달 합계 그대로)
+            const months = monthsOf(from, to), settle = { sion: 0, hyodon: 0, cj: 0 }, basis = { sion: [], hyodon: [], cj: [] };
+            for (const m of months) { const st = await settleTotals(pool, helpers, m); for (const s of SHOWN) { settle[s] += st.totals[s]; basis[s].push(st.basis[s]); } }
+            const checkOf = (g) => g.filter(r => r.read_status !== 'read' || r.total_amount == null).length;
+            const groups = SHOWN.map(s => {
                 const g = all.filter(r => r.supplier === s), live = g.filter(r => r.status !== 'hold');
                 const issued = live.reduce((a, r) => a + (r.total_amount || 0), 0);
-                const settle = st.totals[s];
-                return { supplier: s, label: LABEL[s], count: g.length, check_count: g.filter(r => r.read_status !== 'read' || r.total_amount == null).length,
+                return { supplier: s, label: LABEL[s], count: g.length, check_count: checkOf(g),
                     issued_total: issued, confirmed_total: g.filter(r => r.status === 'confirmed').reduce((a, r) => a + (r.total_amount || 0), 0),
-                    settle_total: settle, settle_basis: st.basis[s], diff: settle == null ? null : issued - settle };
+                    settle_total: settle[s], settle_basis: basis[s].join(' + '), diff: issued - settle[s] };
             });
-            const rows = all.filter(r => (!sup || r.supplier === sup) && (!date || r.day === date));
+            const rows = all.filter(r => !sup || r.supplier === sup);
             const live = all.filter(r => r.status !== 'hold');
-            res.json({ month: ym, rows, days, groups, totals: { count: all.length, issued_total: live.reduce((a, r) => a + (r.total_amount || 0), 0), confirmed_total: all.filter(r => r.status === 'confirmed').reduce((a, r) => a + (r.total_amount || 0), 0) } });
+            res.json({ from, to, month: ym, months, rows, groups, totals: { count: all.length, check_count: checkOf(all), issued_total: live.reduce((a, r) => a + (r.total_amount || 0), 0), confirmed_total: all.filter(r => r.status === 'confirmed').reduce((a, r) => a + (r.total_amount || 0), 0) } });
         } catch (e) { fail(res, e, '목록'); }
     });
 
@@ -111,8 +126,8 @@ function mount(app, deps) {
             if (!q) return res.status(400).json({ error: '찾을 글자를 넣어 주세요' });
             const like = '%' + q.replace(/[\\%_]/g, m => '\\' + m) + '%', digits = q.replace(/[^0-9]/g, '');
             const r = await pool.query(`SELECT ${COLS} FROM tax_invoices
-                WHERE supplier_name ILIKE $1 OR supplier_bizno ILIKE $1 OR approval_no ILIKE $1 OR memo ILIKE $1 OR mail_subject ILIKE $1
-                   OR ($2 <> '' AND (approval_no LIKE '%' || $2 || '%' OR replace(COALESCE(supplier_bizno, ''), '-', '') LIKE '%' || $2 || '%' OR total_amount::text = $2 OR supply_amount::text = $2))
+                WHERE supplier IN (${SHOWN_SQL}) AND (supplier_name ILIKE $1 OR supplier_bizno ILIKE $1 OR approval_no ILIKE $1 OR memo ILIKE $1 OR mail_subject ILIKE $1
+                   OR ($2 <> '' AND (approval_no LIKE '%' || $2 || '%' OR replace(COALESCE(supplier_bizno, ''), '-', '') LIKE '%' || $2 || '%' OR total_amount::text = $2 OR supply_amount::text = $2)))
                 ORDER BY issue_date DESC NULLS LAST, id DESC LIMIT 201`, [like, digits.length >= 3 ? digits : '']);
             res.json({ q, rows: r.rows.slice(0, 200).map(shape), more: r.rows.length > 200 });
         } catch (e) { fail(res, e, '찾기'); }
@@ -158,4 +173,4 @@ function mount(app, deps) {
     });
     return { ready, settleTotals: (ym) => settleTotals(pool, helpers, ym) };
 }
-module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, SUPPLIERS, LABEL };
+module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, SUPPLIERS, SHOWN, LABEL };

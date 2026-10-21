@@ -8,6 +8,7 @@
 const path = require('path'), fs = require('fs'), os = require('os'), { spawnSync } = require('child_process');
 const TI = require(path.join(__dirname, '..', '..', 'tax-invoices.js'));
 const MF = require('./mail-find.js');
+const DEFAULT_EXCLUDE = ['오션라운지'];   // 설정 tax_invoice.exclude_words 가 없을 때
 const DIR = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'invoice');
 const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -92,6 +93,9 @@ async function main(args, deps) {
     const cfg = ((await pool.query(`SELECT value FROM agent_office_config WHERE key = 'tax_invoice'`)).rows[0] || {}).value || {};
     const pw = String(cfg.pdf_password || ''), our = digitsOf(cfg.our_bizno || cfg.pdf_password || '');
     if (!pw) return out({ ok: false, error: "설정 'tax_invoice'.pdf_password 가 없어요 — 총괄에게(실DB 설정)" });
+    // #816 대표 10/21: 계산서 발행현황 = 시온·효돈·택배비(CJ)만 · 이 낱말이 받는 쪽·제목·본문에 있으면 무조건 건너뜀(기본 오션라운지)
+    const EXCL = (Array.isArray(cfg.exclude_words) ? cfg.exclude_words : DEFAULT_EXCLUDE).map(w => String(w || '').normalize('NFC').trim()).filter(Boolean);
+    const hasExcl = (...ts) => { const t = ts.map(x => String(x || '')).join('\n').normalize('NFC'); return EXCL.find(w => t.includes(w)) || null; };
     const st = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'mail_index_state'`)).rows[0];
     if (!st || !st.value || !st.value.initial_done) return out({ ok: false, error: '메일 색인이 아직 다 안 찼어요(처음 채우기 중) — 몇 분 뒤 다시' });
     const [y, m] = ym.split('-').map(Number), next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7);
@@ -103,18 +107,21 @@ async function main(args, deps) {
     const R = MF.makeRunner({ pool, sleep: deps.sleep, now: deps.now });
     const by = orderId ? await R.orderBy(orderId) : '창구';
     fs.mkdirSync(DIR, { recursive: true });
-    const done = [], cnt = { mails: mails.length, read: 0, check: 0, error: 0, inserted: 0, updated: 0, skipped: 0 };
+    const done = [], cnt = { mails: mails.length, read: 0, check: 0, error: 0, inserted: 0, updated: 0, skipped: 0, other: 0, excluded: 0 };
     try {
     for (const mm of mails) {
         const key = `m:${mm.folder}:${mm.uidvalidity || 0}:${mm.uid}`;
-        const have = (await pool.query(`SELECT id, dedup_key, read_status FROM tax_invoices WHERE (dedup_key = $1 OR (mail_folder = $2 AND mail_uid = $3 AND COALESCE(mail_uidvalidity, 0) = $4)) ORDER BY id LIMIT 1`, [key, mm.folder, mm.uid, mm.uidvalidity || 0]).catch(() => ({ rows: [] }))).rows[0];
+        const ex0 = hasExcl(mm.subject, mm.from_name);   // 메일을 열기 전(제목·보낸 이)
+        if (ex0) { cnt.excluded++; done.push({ subject: mm.subject, result: `제외 낱말(${ex0}) — 건너뜀` }); continue; }
+        const have = (await pool.query(`SELECT id, dedup_key, read_status, supplier FROM tax_invoices WHERE (dedup_key = $1 OR (mail_folder = $2 AND mail_uid = $3 AND COALESCE(mail_uidvalidity, 0) = $4)) ORDER BY id LIMIT 1`, [key, mm.folder, mm.uid, mm.uidvalidity || 0]).catch(() => ({ rows: [] }))).rows[0];
         if (!o.force && have && have.read_status === 'read') { cnt.skipped++; done.push({ supplier: mm.parsed.supplier || 'other', subject: mm.subject, result: '이미 읽힘(건너뜀)' }); continue; }
-        const row = { supplier: mm.parsed.supplier || 'other', supplier_name: mm.parsed.supplier_name || mm.from_name || null, mail_folder: mm.folder, mail_uid: Number(mm.uid), mail_uidvalidity: mm.uidvalidity ? Number(mm.uidvalidity) : null,
+        const row = { supplier: mm.parsed.supplier || (have && have.supplier) || 'other', supplier_name: mm.parsed.supplier_name || mm.from_name || null, mail_folder: mm.folder, mail_uid: Number(mm.uid), mail_uidvalidity: mm.uidvalidity ? Number(mm.uidvalidity) : null,
             mail_subject: mm.subject, mail_at: mm.at, read_status: 'check', read_note: null };
-        let parsed = null, pdfBuf = null, pdfName = null, srcText = '';
+        let parsed = null, pdfBuf = null, pdfName = null, srcText = '', mailText = '';
         try {
             const rd = await R.send('read', { uid: Number(mm.uid), folder: mm.folder, order_id: orderId, by }, 180000);
             if (!rd.ok) throw new Error(rd.error || '메일 읽기 실패');
+            mailText = rd.mail.text || '';
             const atts = rd.mail.attachments || [];
             const att = atts.find(a => /\.pdf$/i.test(a.name || '') || /pdf/i.test(a.type || ''));
             const hatt = att ? null : atts.find(a => /\.html?$/i.test(a.name || '') || /text\/html/i.test(a.type || ''));   // 보안메일(홈택스·농협 FirstBill) = HTML 첨부
@@ -151,11 +158,14 @@ async function main(args, deps) {
         } catch (e) { row.read_status = 'error'; row.read_note = String(e.message || e).slice(0, 160); }
         if (parsed) {
             Object.assign(row, parsed);
-            row.supplier = supplierByBiz(parsed.supplier_bizno, cfg.suppliers) || mm.parsed.supplier || 'other';   // 계산서 안 사업자번호가 정본 · 설정 없으면 색인 분류 → 그것도 없으면 기타
+            row.supplier = supplierByBiz(parsed.supplier_bizno, cfg.suppliers) || mm.parsed.supplier || (have && have.supplier) || 'other';   // 계산서 안 사업자번호가 정본 · 설정 없으면 색인 분류 → 그것도 없으면 기타
             row.supplier_name = supplierNameOf(srcText) || row.supplier_name;
             if (row.read_status !== 'error') row.read_status = isRead(parsed) && !row.read_note ? 'read' : 'check';
             if (row.read_status === 'check' && !row.read_note) row.read_note = '일부 칸을 못 읽음 — 원본 확인';
         }
+        const ex1 = hasExcl(mailText, srcText, row.supplier_name);   // 연 뒤(본문·계산서 글 = 받는 쪽 상호 포함)
+        if (ex1) { cnt.excluded++; done.push({ subject: mm.subject, result: `제외 낱말(${ex1}) — 건너뜀` }); continue; }
+        if (!TI.SHOWN.includes(row.supplier)) { cnt.other++; done.push({ subject: mm.subject, result: '기타(시온·효돈·택배비 아님) — 건너뜀' }); continue; }   // 표에 안 넣음(대표 10/21)
         row.pdf_name = pdfName; row.pdf_data = pdfBuf;
         cnt[row.read_status]++;
         let up = null;
@@ -170,7 +180,7 @@ async function main(args, deps) {
     }
     } finally { await closeBrowser(); }   // 보안메일용 크롬은 한 번 열어 다 쓰고 바로 닫음
     return out({ ok: true, month: ym, dry: !!o.dry, counts: cnt, more: more || undefined, rows: done,
-        note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
+        note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + (cnt.other ? `기타 ${cnt.other}통 건너뜀 · ` : '') + (cnt.excluded ? `제외 낱말 ${cnt.excluded}통 건너뜀 · ` : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
 }
 async function closeBrowser() { if (_browser) { const b = _browser; _browser = null; await b.close().catch(() => { }); } }
 module.exports = { main, parseInvoiceText, isRead, supplierByBiz, supplierNameOf, openSecureHtml, closeBrowser };

@@ -86,13 +86,20 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
     const call = async (m, p, body) => { const r = await fetch(`http://127.0.0.1:${PORT}${p}`, { method: m, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const ct = r.headers.get('content-type') || ''; return { s: r.status, ct, j: /json/.test(ct) ? await r.json() : Buffer.from(await r.arrayBuffer()) }; };
     let r = await call('GET', '/api/tax-invoices?month=2026-10');
     const g = (k) => r.j.groups.find(x => x.supplier === k);
-    ok(r.s === 200 && r.j.rows.length === 4 && r.j.groups.map(x => x.supplier).join() === 'cj,sion,hyodon,other' && r.j.days['2026-10-05'] === 1 && r.j.days['2026-10-31'] === 1, '그 달 4줄(9월 줄 빠짐) · 거래처 4개 고정 순서 · 날짜별 건수', r.j && { n: r.j.rows.length, days: r.j.days });
+    ok(r.s === 200 && r.j.rows.length === 4 && r.j.groups.map(x => x.supplier).join() === 'sion,hyodon,cj' && !('days' in r.j) && r.j.from === '2026-10-01' && r.j.to === '2026-10-31' && r.j.totals.check_count === 1, '그 달 4줄(9월 줄 빠짐) · 묶음 = 시온·효돈·택배비 3개 고정 · days 칸 없음 · from/to · 확인 필요 합', r.j && { n: r.j.rows.length, g: r.j.groups.map(x => x.supplier), t: r.j.totals });
     ok(g('sion').issued_total === 1510000 && g('sion').settle_total === 1260000 && g('sion').diff === 250000 && g('sion').confirmed_total === 1250000, '시온 = 발행 1,510,000 · 정산관리 10월 1,260,000(9월 제외) · 차이 +250,000 · 확인분 따로', g('sion'));
-    ok(g('cj').settle_total === 17 * 3100 + 4000 && g('cj').diff === 2200000 - (17 * 3100 + 4000) && g('hyodon').check_count === 1 && g('other').settle_total === null && g('other').diff === null, 'CJ = 박스 17 × 3,100 + 이월 4,000 · 효돈 확인 필요 1 · 기타 = 대조 없음', { cj: g('cj'), hy: g('hyodon') });
+    ok(g('cj').settle_total === 17 * 3100 + 4000 && g('cj').diff === 2200000 - (17 * 3100 + 4000) && g('hyodon').check_count === 1 && r.j.groups.length === 3 && !g('other'), 'CJ = 박스 17 × 3,100 + 이월 4,000 · 효돈 확인 필요 1 · 기타 묶음 없음', { cj: g('cj'), hy: g('hyodon') });
     ok(r.j.rows[0].supplier_label && typeof r.j.rows[0].total_amount === 'number' && r.j.rows.every(x => !('pdf_data' in x)), '줄 = 라벨·숫자 꼴 · PDF 바이트는 목록에 안 실음');
-    r = await call('GET', '/api/tax-invoices?month=2026-10&supplier=sion&date=2026-10-20');
-    ok(r.s === 200 && r.j.rows.length === 1 && r.j.rows[0].issue_date === '2026-10-20' && r.j.groups.length === 4, '거래처·날짜 거름(묶음 머리는 그대로)');
-    ok((await call('GET', '/api/tax-invoices?month=2026-13')).s === 400 && (await call('GET', '/api/tax-invoices?month=2026-10&supplier=x')).s === 400 && (await call('GET', '/api/tax-invoices?month=2026-10&date=2026-11-01')).s === 400, '틀린 값 = 400');
+    r = await call('GET', '/api/tax-invoices?from=2026-10-05&to=2026-10-20');
+    ok(r.s === 200 && r.j.rows.map(x => x.day).join() === '2026-10-05,2026-10-12,2026-10-20' && r.j.months.join() === '2026-10' && g('sion').settle_total === 1260000, '기간 = 시작일·종료일 포함(10/31 빠짐) · 한 달 안 = 그 달 정산 합계', r.j && r.j.rows.map(x => x.day));
+    r = await call('GET', '/api/tax-invoices?from=2026-10-05&to=2026-10-20&supplier=sion');
+    ok(r.s === 200 && r.j.rows.length === 2 && r.j.rows.every(x => x.supplier === 'sion') && r.j.groups.length === 3 && g('hyodon').count === 1, '거래처 거름 = 줄만(묶음 머리 3개는 기간 전체)');
+    r = await call('GET', '/api/tax-invoices?from=2026-09-15&to=2026-10-31');
+    ok(r.s === 200 && r.j.rows.length === 5 && r.j.months.join() === '2026-09,2026-10' && g('sion').issued_total === 1510099 && g('sion').settle_total === 1260099 && g('sion').diff === 250000 && /9월/.test(g('sion').settle_basis) && /10월/.test(g('sion').settle_basis) && g('cj').settle_total === 99 * 3100 + 17 * 3100 + 4000 && r.j.month === null, '달 넘김 = 9/30 줄 포함 · 정산 합계 = 9월 + 10월 · 근거 글에 두 달', r.j && { g: r.j.groups, m: r.j.months });
+    r = await call('GET', '/api/tax-invoices'); ok(r.s === 200 && /^\d{4}-\d{2}-01$/.test(r.j.from) && r.j.groups.length === 3, '아무것도 없으면 = 이번 달');
+    const bad = ['month=2026-13', 'from=2026-10-01', 'to=2026-10-01', 'from=2026-10-20&to=2026-10-05', 'from=2026-02-30&to=2026-03-01', 'from=2025-01-01&to=2026-01-02', 'month=2026-10&supplier=other', 'month=2026-10&supplier=x'];
+    const badS = []; for (const q of bad) badS.push((await call('GET', '/api/tax-invoices?' + q)).s);
+    ok(badS.every(x => x === 400) && (await call('GET', '/api/tax-invoices?from=2025-01-01&to=2026-01-01')).s === 200, '틀린 값 = 400(한쪽만 · 거꾸로 · 없는 날 · 366일 넘음 · 기타·모르는 거래처) · 366일 딱 = 200', badS);
     const hy = (await call('GET', '/api/tax-invoices?month=2026-10&supplier=hyodon')).j.rows[0];
     ok((await call('POST', `/api/tax-invoices/${hy.id}/hold`, {})).s === 400, '보류는 메모 필수');
     r = await call('POST', `/api/tax-invoices/${hy.id}/hold`, { memo: '금액 다름 · 거래처 문의' });
@@ -108,12 +115,16 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
     r = await call('GET', '/api/tax-invoices/search?q=' + encodeURIComponent('조%천')); ok(r.s === 200 && r.j.rows.length === 0, '% 는 글자 그대로(「조%천」 = 0)');
     r = await call('GET', `/api/tax-invoices/${u1.id}/pdf`); ok(r.s === 200 && /application\/pdf/.test(r.ct) && r.j.slice(0, 5).toString() === '%PDF-', 'PDF 열기 = application/pdf');
     ok((await call('GET', `/api/tax-invoices/${hy.id}/pdf`)).s === 404, 'PDF 없는 줄 = 404');
-    await TI.upsertRow(pool, { supplier: 'other', mail_folder: 'INBOX', mail_uid: 506, mail_uidvalidity: 7, mail_subject: '시험 오류 메일', mail_at: '2026-10-07T03:00:00Z', read_status: 'error', read_note: '첨부 받기 실패' });
-    await TI.upsertRow(pool, { supplier: 'other', mail_folder: 'INBOX', mail_uid: 507, mail_uidvalidity: 7, mail_subject: '시험 9월 메일', mail_at: '2026-09-30T16:00:00Z', read_status: 'check' });   // KST 10/1 01시 = 10월
+    await TI.upsertRow(pool, { supplier: 'hyodon', mail_folder: 'INBOX', mail_uid: 506, mail_uidvalidity: 7, mail_subject: '시험 오류 메일', mail_at: '2026-10-07T03:00:00Z', read_status: 'error', read_note: '첨부 받기 실패' });
+    await TI.upsertRow(pool, { supplier: 'hyodon', mail_folder: 'INBOX', mail_uid: 507, mail_uidvalidity: 7, mail_subject: '시험 9월 메일', mail_at: '2026-09-30T16:00:00Z', read_status: 'check' });   // KST 10/1 01시 = 10월
+    await TI.upsertRow(pool, { supplier: 'other', mail_folder: 'INBOX', mail_uid: 508, mail_uidvalidity: 7, mail_subject: '시험 기타 메일', mail_at: '2026-10-07T03:00:00Z', issue_date: '2026-10-07', total_amount: 777, approval_no: '202610074100000000000808', read_status: 'read' });   // 기타 = 표에만
     r = await call('GET', '/api/tax-invoices?month=2026-10');
     { const e = r.j.rows.find(x => x.mail_subject === '시험 오류 메일'), n = r.j.rows.find(x => x.mail_subject === '시험 9월 메일');
-      ok(e && e.issue_date == null && e.day === '2026-10-07' && r.j.days['2026-10-07'] === 1 && n && n.day === '2026-10-01' && g('other').check_count === 2 && g('other').issued_total === 0, '작성일 못 읽은 줄 = 받은 날(KST)의 달·날짜로 목록에 나옴 · 확인 필요 수에 셈 · 합계 0', { e, n, other: g('other') }); }
-    r = await call('GET', '/api/tax-invoices?month=2026-10&date=2026-10-07'); ok(r.j.rows.length === 1 && r.j.rows[0].read_status === 'error', '날짜 거름도 같은 기준(받은 날)');
+      ok(e && e.issue_date == null && e.day === '2026-10-07' && n && n.day === '2026-10-01' && g('hyodon').check_count === 3 && g('hyodon').issued_total === 90000, '작성일 못 읽은 줄 = 받은 날(KST)의 달·날짜로 목록에 나옴 · 확인 필요 수에 셈 · 합계 0', { e, n, hy: g('hyodon') }); }
+    ok(!r.j.rows.some(x => x.supplier === 'other') && r.j.totals.count === 6 && r.j.totals.issued_total === 1510000 + 2200000 + 90000, '기타 줄 = 목록·묶음·합계 어디에도 없음(표엔 남음)', r.j.totals);
+    r = await call('GET', '/api/tax-invoices?from=2026-10-07&to=2026-10-07'); ok(r.j.rows.length === 1 && r.j.rows[0].read_status === 'error', '기간 거름도 같은 기준(받은 날) · 같은 날 기타 줄은 안 나옴');
+    r = await call('GET', '/api/tax-invoices/search?q=' + encodeURIComponent('시험 기타')); const r2 = await call('GET', '/api/tax-invoices/search?q=' + encodeURIComponent('0808'));
+    ok(r.j.rows.length === 0 && r2.j.rows.length === 0 && (await db.query(`SELECT count(*)::int AS n FROM tax_invoices WHERE supplier = 'other'`)).rows[0].n === 1, '찾기도 기타 줄 안 나옴(제목·승인번호) · 표엔 1줄 그대로');
     r = await call('GET', '/api/tax-invoices?month=2026-09'); ok(!r.j.rows.some(x => /^시험 /.test(x.mail_subject || '')), '받은 날 KST 기준이라 9/30 16시(UTC) 메일은 9월에 안 나옴');
     role = 'staff'; ok((await call('GET', '/api/tax-invoices?month=2026-10')).s === 403 && (await call('POST', `/api/tax-invoices/${hy.id}/hold`, { memo: 'x' })).s === 403, '직원 계정 = 403(대표·경리만)'); role = 'admin';
     srv.close();
@@ -196,6 +207,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'v814h-'));
         const hFb = path.join(tmp, 'fb.html'), hHt = path.join(tmp, 'ht.html'), hBad = path.join(tmp, 'bad.html');
         fs.writeFileSync(hFb, secHtml(FB_TXT, OUR)); fs.writeFileSync(hHt, secHtml(HT_TXT, OUR)); fs.writeFileSync(hBad, secHtml(FB_TXT, 'other'));
+        const hOcean = path.join(tmp, 'ocean.html'); fs.writeFileSync(hOcean, secHtml(FB_TXT.replace('2026100841000000AB12CD34', '2026100941000000OC00EA01').replace('상호 (법인명) 제주아꼼이네', '상호 (법인명) 오션라운지'), OUR));   // 받는 쪽 = 오션라운지
         const db3 = new PGlite();
         await db3.exec(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP DEFAULT NOW());
             CREATE TABLE report_files (id SERIAL PRIMARY KEY, filename VARCHAR(200) NOT NULL, run_id INTEGER, data BYTEA NOT NULL, size_bytes INTEGER, created_at TIMESTAMP DEFAULT NOW(), is_deleted BOOLEAN DEFAULT false, purged_at TIMESTAMP);
@@ -204,10 +216,12 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
             INSERT INTO mail_index (folder, uidvalidity, uid, from_name, subject, at, parsed) VALUES
               ('INBOX', 9, 31, 'FirstBill', '[제주감귤농협 조천지점] 전자계산서', '2026-10-08T02:00:00Z', '{"kind":"tax_invoice","supplier":null}'),
               ('INBOX', 9, 32, '홈택스', '(제주조천점->제주아꼼이네)', '2026-10-05T02:00:00Z', '{"kind":"tax_invoice","supplier":"sion"}'),
-              ('INBOX', 9, 33, 'FirstBill', '[효돈] 전자계산서', '2026-10-09T02:00:00Z', '{"kind":"tax_invoice","supplier":"hyodon"}');`);
+              ('INBOX', 9, 33, 'FirstBill', '[효돈] 전자계산서', '2026-10-09T02:00:00Z', '{"kind":"tax_invoice","supplier":"hyodon"}'),
+              ('INBOX', 9, 34, '네이버', '(오션라운지->제주아꼼이네) 키워드 광고', '2026-10-10T02:00:00Z', '{"kind":"tax_invoice","supplier":null}'),
+              ('INBOX', 9, 35, 'FirstBill', '전자계산서 발행 안내', '2026-10-11T02:00:00Z', '{"kind":"tax_invoice","supplier":null}');`);
         await db3.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
         let failRead = false;
-        const MAILS = { 31: { file: hFb, name: 'FirstBill_Tax.html' }, 32: { file: hHt, name: 'NTS_eTaxInvoice.html' }, 33: { file: hBad, name: 'FirstBill_Tax.html' } };
+        const MAILS = { 31: { file: hFb, name: 'FirstBill_Tax.html' }, 32: { file: hHt, name: 'NTS_eTaxInvoice.html' }, 33: { file: hBad, name: 'FirstBill_Tax.html' }, 34: { file: hOcean, name: 'x.html' }, 35: { file: hOcean, name: 'FirstBill_Tax.html' } };
         const reqs = [];
         const hook = async (sql, p) => {
             const m = /INSERT INTO agent_office_config \(key, value\) VALUES \(\$1, \$2::jsonb\)/.test(sql) && /^mail_(read|attach)_request$/.exec(p[0]);
@@ -225,6 +239,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const tv = (await db3.query(`SELECT mail_uid::int AS u, supplier, supplier_name, issue_date::text AS d, total_amount::int AS t, read_status, read_note, pdf_name, substring(pdf_data from 1 for 5) AS head FROM tax_invoices ORDER BY mail_uid`)).rows;
         const [f31, h32, b33] = tv;
         ok(o.ok && o.counts.read === 2 && o.counts.error === 1 && tv.length === 3, 'HTML 첨부 3통 = 읽힘 2 · 비밀번호 틀림 1', { c: o.counts, tv: tv.map(x => ({ ...x, head: undefined })) });
+        ok(o.counts.excluded === 2 && !reqs.some(x => x.uid === 34) && reqs.some(x => x.uid === 35) && /제외 낱말 2통 건너뜀/.test(o.note) && !tv.some(x => x.u === 34 || x.u === 35), '오션라운지 = 제목에 있으면 메일도 안 엶 · 계산서 안(받는 쪽)에 있어도 건너뜀 · 표에 0줄(설정 없어도 기본값)', { c: o.counts, opened: reqs.map(x => x.uid) });
         ok(f31 && f31.supplier === 'sion' && f31.supplier_name === '제주감귤농협 조천지점' && f31.d === '2026-10-08' && f31.t === 1000000 && f31.pdf_name === 'FirstBill_Tax.pdf' && Buffer.from(f31.head || []).toString() === '%PDF-', 'FirstBill = 색인 분류 없어도 사업자번호로 시온 · 상호 · 열람용 PDF 저장', f31 && { ...f31, head: undefined });
         ok(h32 && h32.supplier === 'cj' && h32.read_status === 'read' && h32.t === 330000, '홈택스 「(제주조천점->…)」 = 색인은 시온이어도 계산서 번호로 CJ', h32 && { ...h32, head: undefined });
         ok(b33 && b33.read_status === 'error' && /비밀번호/.test(b33.read_note || '') && b33.supplier === 'hyodon', '안 풀린 보안메일 = 오류 · 숫자 0 · 공급자는 색인 분류', b33 && { ...b33, head: undefined });
@@ -240,9 +255,9 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         // 설정에 suppliers 가 없으면 = 색인 분류로(종전 그대로) → 그것도 없으면 기타
         await db3.query(`UPDATE agent_office_config SET value = $1 WHERE key = 'tax_invoice'`, [JSON.stringify({ pdf_password: OUR })]);
         await db3.query(`DELETE FROM tax_invoices`);
-        await IM.main(['2026-10'], { pool: mkPool(db3, hook), sleep: () => Promise.resolve(), now: () => Date.now() + Math.random(), print: () => { } });
+        const o3 = await IM.main(['2026-10'], { pool: mkPool(db3, hook), sleep: () => Promise.resolve(), now: () => Date.now() + Math.random(), print: () => { } });
         const sv = (await db3.query(`SELECT mail_uid::int AS u, supplier FROM tax_invoices ORDER BY mail_uid`)).rows.map(x => x.supplier).join();
-        ok(sv === 'other,sion,hyodon', '설정 suppliers 없음 = 색인 분류 · 색인도 없으면 기타(other)', sv);
+        ok(sv === 'sion,hyodon' && o3.counts.excluded === 2 && o3.counts.other === 1 && /기타 1통 건너뜀/.test(o3.note), '설정 suppliers 없음 = 색인 분류 · 색인도 없으면 기타 = 표에 안 넣고 「기타 1통 건너뜀」', { sv, c: o3.counts });
         fs.rmSync(tmp, { recursive: true, force: true });
     }
     console.log(`\n결과 ${pass}/${pass + failN}`);
