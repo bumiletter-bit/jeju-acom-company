@@ -259,6 +259,48 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const sv = (await db3.query(`SELECT mail_uid::int AS u, supplier FROM tax_invoices ORDER BY mail_uid`)).rows.map(x => x.supplier).join();
         ok(sv === 'sion,hyodon' && o3.counts.excluded === 2 && o3.counts.other === 1 && /기타 1통 건너뜀/.test(o3.note), '설정 suppliers 없음 = 색인 분류 · 색인도 없으면 기타 = 표에 안 넣고 「기타 1통 건너뜀」', { sv, c: o3.counts });
         fs.rmSync(tmp, { recursive: true, force: true });
+
+        // #818 스마트빌(CJ 정발행) = 첨부 0 · 본문 「비회원 비밀번호 <hex>」 · HTML 링크 「계산서 보기」 → 가짜 스마트빌(127.0.0.1) 비밀번호 칸 → 새 창에 계산서 표
+        const HEX = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+        const SB_TXT = '전자세금계산서\n승인번호 20260930-41000000-00000777\n공급자 등록번호 110-81-05034 상호 씨제이대한통운㈜ 성명 대표\n공급받는자 등록번호 422-81-04127 상호 제주아꼼이네 성명 대표\n작성일자 공급가액 세액 비고\n2026-09-30 3,000,000 300,000\n품목 택배비\n합계금액 3,300,000';
+        const sbSrv = http.createServer((q, s) => {
+            s.setHeader('content-type', 'text/html; charset=utf-8');
+            if (q.url.startsWith('/smartbill/inv')) return s.end(`<!doctype html><meta charset="utf-8"><pre>${SB_TXT}</pre>`);
+            s.end(`<!doctype html><meta charset="utf-8"><p>스마트빌 비회원 조회 · 비밀번호를 넣으세요</p><input type="password" id="p"><div id="o"></div><script>
+document.getElementById('p').addEventListener('keydown', function (e) { if (e.key !== 'Enter') return;
+  if (this.value === ${JSON.stringify(HEX)}) window.open('/smartbill/inv'); else document.getElementById('o').textContent = '비밀번호가 틀렸습니다'; });</script>`);
+        });
+        await new Promise(r => sbSrv.listen(0, '127.0.0.1', r));
+        const sbUrl = `http://127.0.0.1:${sbSrv.address().port}/smartbill/view?k=1`;
+        const sbMail = (hex) => ({ text: `스마트빌\n전자세금계산서가 발행 되었습니다.\n비회원 비밀번호 \n ${hex} \n 세금계산서 정보 \n 작성일자 2026-09-30 \n 거래업체\n(공급자) 씨제이대한통운㈜`, attachments: [], links: [{ href: 'https://www.smartbill.co.kr/', text: '스마트빌' }, { href: sbUrl, text: '계산서 보기' }] });
+        ok(IM.smartbillOf(sbMail(HEX)).url === sbUrl && IM.smartbillOf(sbMail(HEX)).hex === HEX && IM.smartbillOf({ text: '보안메일 안내' }) === null, '스마트빌 알아보기 = 본문 비회원 비밀번호 + 「계산서 보기」 링크(스마트빌 첫 화면 링크 말고)');
+        const db4 = new PGlite();
+        await db4.exec(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP DEFAULT NOW());
+            CREATE TABLE report_files (id SERIAL PRIMARY KEY, filename VARCHAR(200) NOT NULL, run_id INTEGER, data BYTEA NOT NULL, size_bytes INTEGER, created_at TIMESTAMP DEFAULT NOW(), is_deleted BOOLEAN DEFAULT false, purged_at TIMESTAMP);
+            CREATE TABLE pending_orders (id SERIAL PRIMARY KEY, created_by TEXT);
+            CREATE TABLE mail_index (id SERIAL PRIMARY KEY, folder TEXT, folder_name TEXT, uidvalidity BIGINT, uid BIGINT, from_addr TEXT, from_name TEXT, subject TEXT, msg_date TEXT, at TIMESTAMPTZ, has_attach BOOLEAN, attach_names TEXT, size INTEGER, parsed JSONB, indexed_at TIMESTAMPTZ DEFAULT NOW());
+            INSERT INTO mail_index (folder, uidvalidity, uid, from_name, subject, at, parsed) VALUES
+              ('&zK2tbAC3rLDIHA-', 7, 41, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-06T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}'),
+              ('&zK2tbAC3rLDIHA-', 7, 42, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-07T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}');`);
+        await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
+        const reqs4 = [];
+        const hook4 = async (sql, p) => {
+            const m = /INSERT INTO agent_office_config \(key, value\) VALUES \(\$1, \$2::jsonb\)/.test(sql) && /^mail_(read|attach)_request$/.exec(p[0]);
+            if (!m) return null;
+            const req = JSON.parse(p[1]); reqs4.push({ op: m[1], ...req });
+            const res = { id: req.id, ok: true, mail: { uid: req.uid, ...sbMail(req.uid === 41 ? HEX : 'ffffffffffffffffffffffffffffffff') } };
+            await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['mail_' + m[1] + '_result', JSON.stringify(res)]);
+            return { rows: [], rowCount: 1 };
+        };
+        const printed4 = [];
+        const o4 = await IM.main(['2026-10'], { pool: mkPool(db4, hook4), sleep: () => Promise.resolve(), now: () => Date.now() + Math.random(), print: (s) => printed4.push(s) });
+        sbSrv.close();
+        const tv4 = (await db4.query(`SELECT mail_uid::int AS u, supplier, supplier_bizno, approval_no, issue_date::text AS d, supply_amount::int AS sa, vat_amount::int AS va, total_amount::int AS t, read_status, read_note, pdf_name, substring(pdf_data from 1 for 5) AS head FROM tax_invoices ORDER BY mail_uid`)).rows;
+        const [s41, s42] = tv4;
+        ok(s41 && s41.read_status === 'read' && s41.supplier === 'cj' && s41.supplier_bizno === '110-81-05034' && s41.approval_no === '202609304100000000000777' && s41.d === '2026-09-30' && s41.sa === 3000000 && s41.va === 300000 && s41.t === 3300000 && Buffer.from(s41.head || []).toString() === '%PDF-' && !reqs4.some(x => x.op === 'attach'),
+            '스마트빌 = 링크 → 비밀번호 → 새 창 계산서 표 = 승인번호·공급자 번호·공급가액·세액·합계·작성일 · 열람용 PDF · 공급자 = 색인 분류 cj(본사 번호는 설정 밖)', s41 && { ...s41, head: undefined });
+        ok(s42 && s42.read_status === 'check' && /스마트빌/.test(s42.read_note || '') && s42.d === '2026-09-30' && s42.supplier === 'cj' && !s42.pdf_name, '스마트빌 비밀번호가 안 맞으면 = 종전 「원본 확인」 줄(본문의 작성일만)', s42 && { ...s42, head: undefined });
+        ok(!printed4.join('').includes(HEX) && !JSON.stringify(tv4).includes(HEX) && !reqs4.some(x => JSON.stringify(x).includes(HEX)) && !printed4.join('').includes(OUR), '스마트빌 비밀번호(hex)·사업자 비밀번호 = 출력·표·요청 줄에 0', o4.counts);
     }
     console.log(`\n결과 ${pass}/${pass + failN}`);
     process.exit(failN ? 1 : 0);

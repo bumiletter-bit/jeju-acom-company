@@ -97,6 +97,7 @@ async function main(argv, deps) {
         const m = res.mail;
         return out({ ok: true, uid: m.uid, folder: m.folder, folder_name: m.folder_name, date: m.date, from: maskPii(m.from), to: maskPii(m.to), cc: m.cc ? maskPii(m.cc) : undefined, subject: maskPii(m.subject),
             text: maskPii(m.text), text_cut: m.text_cut || undefined, attachments: m.attachments,
+            links: Array.isArray(m.links) && m.links.length ? m.links.map(l => `${l.text || '(글 없음)'} → ${l.href}`) : undefined,   // #818 HTML 본문 링크(스마트빌 「계산서 보기」 등)
             note: (m.text_cut ? '본문이 길어 앞 5천 자만 · ' : '') + (m.attachments.length ? `첨부 받기: attach ${m.uid} <part> --folder "${m.folder}"` : '첨부 없음') + ' · 답할 때 개인정보(주민번호·계좌·카드·주소)는 필요한 만큼만' });
     }
     if (cmd === 'attach') {

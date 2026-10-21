@@ -1,5 +1,5 @@
 // #811 검증 — 메일 색인(naver-mail.js) · 가짜 IMAP 서버(소켓) + 가짜 DB 로만 · 실메일·실DB 0
-//   ① 계산서 분류(CJ · 시온(제주조천점) · 효돈 · 에프씨컨슈머 제외 · 예약) ② 처음 채우기 = 한 번에 1천 통 · 합 5천 통에서 멈춤 · 그 뒤 새 uid 만
+//   ① 계산서 분류(CJ · 시온(제주조천점) · 효돈 · 에프씨컨슈머 제외 · 예약) ② 처음 채우기 = 한 번에 1천 통 · 메일함별 상한(받은메일함 5천 · 그 밖 500 · #818) · 그 뒤 새 uid 만 · 종전에 0통으로 닫힌 메일함 되살리기
 //   ③ UIDVALIDITY 바뀐 메일함 = 버리고 다시 ④ 찾기 = 색인 먼저(한글 부분 일치 · 첨부 이름 · 기간 · 더보기) · 낡거나 덜 찼으면 종전 IMAP 길 ⑤ 보낸 명령 = 읽기 전용만
 //   실행: node scripts/verify-811-mail-index.js
 'use strict';
@@ -160,7 +160,7 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
         ok(T.idxSuppliers({ suppliers: 'x' }).suppliers.length === 3 && T.idxSuppliers(null).exclude.includes('에프씨컨슈머'), '설정이 이상하면 기본 표(3곳 · F.C.C 제외)');
     }
 
-    console.log('② 처음 채우기(1천 통씩 · 합 5천 통) → 새 uid 만');
+    console.log('② 처음 채우기(1천 통씩 · 메일함별 상한) → 새 uid 만');
     const kinds = { 2590: 'cj', 2595: 'sion', 2598: 'fcc', 2599: 'hyodon', 2580: 'booking', 50: 'cj' };
     const state = { list: [['\\HasNoChildren', 'INBOX'], ['\\HasNoChildren \\Junk', 'Junk'], ['\\HasNoChildren \\Trash', 'Deleted Messages'], ['\\HasNoChildren', FOLDER_MINE]],
         box: { INBOX: makeBox(2600, 1, 0, kinds), [FOLDER_MINE]: makeBox(3000, 1, 5, {}), Junk: makeBox(5, 1, 0, {}), 'Deleted Messages': makeBox(5, 1, 0, {}) }, v: { INBOX: 7, [FOLDER_MINE]: 9 } };
@@ -172,10 +172,10 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
     for (let i = 0; i < 5; i++) msgs.push(await RN.collectIndex());
     const ms5 = Date.now() - t0;
     const st = D.cfg.get('mail_index_state');
-    ok(D.idx.size === 5000, '다섯 번 = 5천 통에서 멈춤', { n: D.idx.size, msgs });
-    ok(/새로 1000통 · 합 1000통.*처음 채우기 중/.test(msgs[0]) && /합 5000통/.test(msgs[4]) && !/처음 채우기 중/.test(msgs[4]), '한 번에 1천 통 · 마지막 회차에 「처음 채우기」 끝', msgs);
-    ok(st && st.initial_done === true && st.total === 5000 && st.folders.INBOX.top === 2600 && st.folders.INBOX.done, '상태 = 처음 채우기 끝 · 받은메일함 맨 위 uid 기억', st && { d: st.initial_done, t: st.total, top: st.folders.INBOX.top });
-    ok(D.idx.has('INBOX|2600') && D.idx.has('INBOX|1') && D.idx.has(FOLDER_MINE + '|3000') && !D.idx.has(FOLDER_MINE + '|600') && D.idx.has(FOLDER_MINE + '|601'), '받은메일함 먼저 전부(2,600) → 다른 메일함은 최근 것부터 2,400통');
+    ok(D.idx.size === 3100, '다섯 번 = 받은메일함 2,600 전부 + 다른 메일함 500(메일함별 상한 · 합 상한으로 다른 메일함이 0통 되던 것 #818)', { n: D.idx.size, msgs });
+    ok(/새로 1000통 · 합 1000통.*처음 채우기 중/.test(msgs[0]) && /합 3100통/.test(msgs[3]) && !/처음 채우기 중/.test(msgs[3]) && /새로 0통/.test(msgs[4]), '한 번에 1천 통 · 넷째 회차에 「처음 채우기」 끝 · 다섯째 = 0통', msgs);
+    ok(st && st.initial_done === true && st.total === 3100 && st.folders[FOLDER_MINE].n === 500 && st.folders[FOLDER_MINE].done && st.folders.INBOX.top === 2600 && st.folders.INBOX.done, '상태 = 처음 채우기 끝 · 받은메일함 맨 위 uid 기억', st && { d: st.initial_done, t: st.total, top: st.folders.INBOX.top });
+    ok(D.idx.has('INBOX|2600') && D.idx.has('INBOX|1') && D.idx.has(FOLDER_MINE + '|3000') && !D.idx.has(FOLDER_MINE + '|2500') && D.idx.has(FOLDER_MINE + '|2501'), '받은메일함 먼저 전부(2,600) → 다른 메일함은 최근 것부터 500통');
     ok(![...D.idx.values()].some(r => r.folder === 'Junk' || r.folder === 'Deleted Messages'), '스팸·휴지통은 색인 안 함');
     const r2590 = D.idx.get('INBOX|2590');
     ok(r2590 && r2590.subject === SUBJ.cj && r2590.from_addr === 'jua.kang@cj.net' && r2590.from_name === '강주아' && r2590.has_attach === true && r2590.attach_names === '세금계산서_10월.pdf' && r2590.size === 3590 && r2590.parsed.kind === 'tax_invoice' && r2590.parsed.supplier === 'cj', '머리 = 제목·보낸이(이름·주소)·첨부 이름·크기 · 분류 cj', r2590);
@@ -187,17 +187,40 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
     const before = F.cmds.filter(c => /^UID FETCH/.test(c)).length;
     const m6 = await RN.collectIndex();
     const fetched = F.cmds.filter(c => /^UID FETCH/.test(c)).slice(before);
-    ok(/새로 3통 · 합 5003통/.test(m6) && D.idx.has('INBOX|2603') && D.cfg.get('mail_index_state').folders.INBOX.top === 2603, '그 뒤 = 새 uid 만(3통)', m6);
+    ok(/새로 3통 · 합 3103통/.test(m6) && D.idx.has('INBOX|2603') && D.cfg.get('mail_index_state').folders.INBOX.top === 2603, '그 뒤 = 새 uid 만(3통)', m6);
     ok(fetched.length === 2 && fetched.every(c => /^UID FETCH 2601,2602,2603 /.test(c)), '새 3통만 FETCH 두 번(구조 · 머리말)', fetched);
     const m7 = await RN.collectIndex();
     ok(/새로 0통/.test(m7), '새 메일 없으면 0통', m7);
+
+    {   // #818 되살리기 = 종전 합 5천 상한으로 받은메일함이 몫을 다 써 0통인 채 done 이 된 메일함(실DB 10곳 꼴: n 0 · bottom = top+1) → 다시 거꾸로 채움(메일함마다 500)
+        const BOX2 = enc7('청구·결제');
+        const sR = { list: [['\\HasNoChildren', 'INBOX'], ['\\HasNoChildren', FOLDER_MINE], ['\\HasNoChildren', BOX2], ['\\HasNoChildren \\Junk', 'Junk']],
+            box: { INBOX: makeBox(100, 1, 0, {}), [FOLDER_MINE]: makeBox(800, 1, 5, {}), [BOX2]: makeBox(300, 1, 7, { 250: 'cj' }), Junk: makeBox(5, 1, 0, {}) }, v: { INBOX: 7, [FOLDER_MINE]: 9, [BOX2]: 3 } };
+        const FR = fakeImap(sR), DR = fakePool();
+        DR.cfg.set('mail_index_state', { total: 5000, initial_done: true, last_ok_at: new Date(t).toISOString(), folders: { INBOX: { v: 7, top: 100, bottom: 1, done: true, n: 5000 }, [FOLDER_MINE]: { v: 9, top: 700, bottom: 701, done: true, n: 0 }, [BOX2]: { v: 3, top: 300, bottom: 301, done: true, n: 0 } } });
+        const RR = NM.mountMailRunner({ pool: DR.pool, writeAudit: async () => { }, env: ENV, imapOpen: FR.imapOpenF, noTimers: true, now: () => t });
+        const r1 = await RR.collectIndex(), sr = DR.cfg.get('mail_index_state'), fm = sr.folders[FOLDER_MINE], fb = sr.folders[BOX2];
+        const mine = [...DR.idx.values()].filter(r => r.folder === FOLDER_MINE).map(r => r.uid), b2 = [...DR.idx.values()].filter(r => r.folder === BOX2);
+        ok(/새로 900통/.test(r1) && mine.length === 600 && mine.includes(800) && mine.includes(201) && !mine.includes(200) && fm.n === 500 && fm.done && fm.revived && fm.top === 800 && b2.length === 300 && fb.done && fb.n === 300 && sr.initial_done === true && ![...DR.idx.values()].some(r => r.folder === 'INBOX' || r.folder === 'Junk'),
+            '되살리기 = 0통으로 닫힌 메일함만 다시 · 새 메일 100 + 거꾸로 500(상한) · 작은 메일함은 전부 300 · 받은메일함·스팸 무접촉 · 한 회차에 끝', { r1, n: mine.length, fm, fb, b2: b2.length });
+        ok(b2.find(r => r.uid === 250).parsed.kind === 'tax_invoice' && b2.find(r => r.uid === 250).parsed.supplier === 'cj', '청구·결제 메일함의 CJ 정발행도 색인 → 계산서 분류 cj');
+        const r2 = await RR.collectIndex();
+        ok(/새로 0통/.test(r2) && DR.idx.size === 900 && FR.cmds.every(READONLY), '다음 회차 = 0통(한 번만 되살림) · 읽기 전용 명령만', r2);
+        // #818 한 통 읽기 = HTML 부분의 링크(href · 글자)도 · 찾기 미리보기엔 없음
+        const hm = mail(301, 'cj', 9000); hm.bs = '(("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 5 1 NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "UTF-8") NIL NIL "7BIT" 50 1 NIL NIL NIL) "ALTERNATIVE" ("BOUNDARY" "b") NIL NIL)';
+        hm.text = '<p>스마트빌 비회원 비밀번호</p><a href="https://www.smartbill.co.kr/">스마트빌</a> <a href="https://www.smartbill.co.kr/view?a=1&amp;b=2" target=_blank><b>계산서 보기</b></a> <a href="mailto:x@y.z">메일</a> <a href="https://www.smartbill.co.kr/">겹침</a>';
+        sR.box[BOX2].push(hm);
+        DR.cfg.set('mail_read_request', { id: 'rd1', uid: 301, folder: BOX2 }); await RR.tick();
+        const rd = DR.cfg.get('mail_read_result');
+        ok(rd && rd.ok && JSON.stringify(rd.mail.links) === JSON.stringify([{ href: 'https://www.smartbill.co.kr/', text: '스마트빌' }, { href: 'https://www.smartbill.co.kr/view?a=1&b=2', text: '계산서 보기' }]) && /스마트빌/.test(rd.mail.text), '읽기 = HTML 링크(http(s)만 · 겹침 1번 · &amp; 풂 · 글자) + 본문 글은 종전대로', rd);
+    }
 
     console.log('③ UIDVALIDITY 바뀐 메일함 = 버리고 다시');
     {
         state.v[FOLDER_MINE] = 10; state.box[FOLDER_MINE] = makeBox(50, 1, 30000, {});
         const m = await RN.collectIndex(), s1 = D.cfg.get('mail_index_state');
         const mine = [...D.idx.values()].filter(r => r.folder === FOLDER_MINE);
-        ok(/메일함 1곳 새로 채움/.test(m) && mine.length === 50 && mine.every(r => r.uidvalidity === 10) && s1.total === 2650 && s1.folders[FOLDER_MINE].v === 10, '옛 uid 색인 지우고 새로 50통 · 합계에서 옛 2,400 뺌', { m, n: mine.length, total: s1.total });
+        ok(/메일함 1곳 새로 채움/.test(m) && mine.length === 50 && mine.every(r => r.uidvalidity === 10) && s1.total === 2650 && s1.folders[FOLDER_MINE].v === 10, '옛 uid 색인 지우고 새로 50통 · 합계에서 옛 500 뺌', { m, n: mine.length, total: s1.total });
     }
 
     console.log('④ 찾기 = 색인 먼저');

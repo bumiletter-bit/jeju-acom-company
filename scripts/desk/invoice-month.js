@@ -60,12 +60,53 @@ const supplierByBiz = (biz, map) => { const d = digitsOf(biz); if (!d || !map) r
 // 보안메일 HTML(홈택스 NTS_eTaxInvoice.html · 농협 FirstBill_Tax.html) = 브라우저에서 비밀번호(사업자번호)를 넣어야 풀림 → 화면 없는 크롬으로 열어 글 + 열람용 PDF
 //   홈택스 판은 srtk.hometax.go.kr 의 공식 풀기 스크립트를 내려받아 씀(인터넷 필요) · Playwright 는 저장소 node_modules(--no-save) — 없으면 오류 줄
 let _browser = null;
-async function openSecureHtml(file, pw) {
+const NO_PW = '이 PC 에 Playwright 가 없어 보안메일을 못 열어요(npm install --no-save playwright · 총괄에게)';
+async function getBrowser() {
     if (!_browser) {
-        let pwMod; try { pwMod = require(path.join(__dirname, '..', '..', 'node_modules', 'playwright')); } catch (_) { return { ok: false, error: '이 PC 에 Playwright 가 없어 보안메일을 못 열어요(npm install --no-save playwright · 총괄에게)' }; }
+        let pwMod; try { pwMod = require(path.join(__dirname, '..', '..', 'node_modules', 'playwright')); } catch (_) { return null; }
         _browser = await pwMod.chromium.launch();
     }
-    const ctx = await _browser.newContext(), pg = await ctx.newPage();
+    return _browser;
+}
+// #818 스마트빌(CJ 정발행 · 첨부 0) = 메일 HTML 의 「계산서 보기」 링크 → 비회원 비밀번호(메일 본문의 32자 hex) → 계산서 화면 글 + 열람용 PDF
+//   비밀번호는 칸에만 넣고 로그·결과·오류 글에 안 씀 · 새 창(팝업)으로 뜨는 꼴도 그 창들의 글까지 모음
+const smartbillOf = (mail) => {
+    const t = String((mail && mail.text) || ''), m = /비회원\s*비밀번호\s*[:：]?\s*([0-9a-fA-F]{32})(?![0-9a-fA-F])/.exec(t);
+    if (!/스마트빌|smartbill/i.test(t) || !m) return null;
+    const ls = (mail.links || []).filter(l => /smartbill/i.test(String(l.href || '')));
+    const l = ls.find(x => /계산서|보기|조회/.test(x.text || '')) || ls[0];
+    return { hex: m[1], url: l ? l.href : null };
+};
+async function openSmartbill(url, hex) {
+    const b = await getBrowser(); if (!b) return { ok: false, error: NO_PW };
+    const ctx = await b.newContext();
+    const allText = async () => { let t = ''; for (const p of ctx.pages()) for (const fr of p.frames()) { try { t += '\n' + await fr.evaluate(() => document.body ? document.body.innerText : ''); } catch (_) { } } return t; };
+    try {
+        const pg = await ctx.newPage();
+        try { await pg.goto(url, { waitUntil: 'load', timeout: 30000 }); } catch (_) { return { ok: false, error: '스마트빌 화면을 못 엶(인터넷·링크 확인)' }; }
+        let box = null;
+        for (let i = 0; i < 30 && !box; i++) { for (const fr of pg.frames()) { box = await fr.$('input[type=password]').catch(() => null); if (box) break; } if (!box) await pg.waitForTimeout(500); }
+        if (!box) return { ok: false, error: '스마트빌 비밀번호 칸을 못 찾음' };
+        await box.fill(hex); await box.press('Enter').catch(() => { });
+        let txt = '';
+        for (let i = 0; i < 30; i++) {   // 풀리기를 최대 15초 · 5초째에도 그대로면 「확인」 단추를 한 번 누름
+            await pg.waitForTimeout(500);
+            txt = await allText();
+            if (/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt)) break;
+            if (i === 10) { for (const fr of pg.frames()) { const bt = await fr.$('button:has-text("확인"), input[type=submit], input[type=button][value*="확인"], a:has-text("확인")').catch(() => null); if (bt) { await bt.click().catch(() => { }); break; } } }
+        }
+        if (!(/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt))) return { ok: false, error: /비밀번호/.test(txt) ? '스마트빌이 안 풀림(비밀번호 확인)' : '스마트빌 계산서 글을 못 읽음' };
+        let pdf = null;
+        for (const p of ctx.pages().slice().reverse()) {   // 계산서가 뜬 창(새 창이면 그것)을 PDF 로
+            let has = false; for (const fr of p.frames()) { try { if (/승인\s*번호/.test(await fr.evaluate(() => document.body ? document.body.innerText : ''))) { has = true; break; } } catch (_) { } }
+            if (has) { try { pdf = await p.pdf({ format: 'A4', printBackground: true }); } catch (_) { } break; }
+        }
+        return { ok: true, text: txt.split(hex).join(''), pdf };
+    } finally { await ctx.close().catch(() => { }); }
+}
+async function openSecureHtml(file, pw) {
+    const b = await getBrowser(); if (!b) return { ok: false, error: NO_PW };
+    const ctx = await b.newContext(), pg = await ctx.newPage();
     try {
         await pg.goto('file:///' + file.split(path.sep).join('/'), { waitUntil: 'load', timeout: 30000 });
         const box = await pg.waitForSelector('input[type=password]', { timeout: 15000 }).catch(() => null);
@@ -154,7 +195,14 @@ async function main(args, deps) {
                     if (pj.image_only) { row.read_note = '그림 PDF(글자 없음) — 원본 확인'; parsed = parseInvoiceText(rd.mail.text, our); srcText = rd.mail.text; }
                     else { parsed = parseInvoiceText(pj.text, our); srcText = pj.text; }
                 }
-            } else { parsed = parseInvoiceText(rd.mail.text, our); srcText = rd.mail.text; row.read_note = '첨부 PDF 없음(본문에서 읽음) — 원본 확인'; }
+            } else {
+                const sb = smartbillOf(rd.mail);   // #818 CJ 정발행 = 스마트빌(첨부 0 · 링크 + 비회원 비밀번호)
+                const sr = sb && sb.url ? await openSmartbill(sb.url, sb.hex) : null;
+                if (sr && sr.ok) {
+                    parsed = parseInvoiceText(sr.text, our); srcText = sr.text;
+                    if (sr.pdf) { pdfBuf = Buffer.from(sr.pdf); pdfName = `스마트빌_${mm.uid}.pdf`; }
+                } else { parsed = parseInvoiceText(rd.mail.text, our); srcText = rd.mail.text; row.read_note = sb ? `스마트빌 ${sr ? sr.error : '계산서 보기 링크 없음'} — 원본 확인` : '첨부 PDF 없음(본문에서 읽음) — 원본 확인'; }
+            }
         } catch (e) { row.read_status = 'error'; row.read_note = String(e.message || e).slice(0, 160); }
         if (parsed) {
             Object.assign(row, parsed);
@@ -183,7 +231,7 @@ async function main(args, deps) {
         note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + (cnt.other ? `기타 ${cnt.other}통 건너뜀 · ` : '') + (cnt.excluded ? `제외 낱말 ${cnt.excluded}통 건너뜀 · ` : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
 }
 async function closeBrowser() { if (_browser) { const b = _browser; _browser = null; await b.close().catch(() => { }); } }
-module.exports = { main, parseInvoiceText, isRead, supplierByBiz, supplierNameOf, openSecureHtml, closeBrowser };
+module.exports = { main, parseInvoiceText, isRead, supplierByBiz, supplierNameOf, openSecureHtml, openSmartbill, smartbillOf, closeBrowser };
 if (require.main === module) {
     const { pool } = require('./_db');
     main(process.argv.slice(2), { pool, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(), print: (s) => console.log(s) })

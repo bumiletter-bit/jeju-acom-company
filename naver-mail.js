@@ -234,6 +234,21 @@ function partText(latin, p) {
     const t = decodeBody(body, h);
     return (p.type === 'text/html' ? htmlText(t) : t.replace(/\r/g, '')).replace(/\n{3,}/g, '\n\n').trim();
 }
+// #818 HTML 부분 → [{ href, text }] · http(s) 만 · 20개 · 글자 300자
+function htmlLinks(latin, p) {
+    let body = String(latin || '');
+    if (p.enc === 'base64') { const clean = body.replace(/[^A-Za-z0-9+/=]/g, ''); body = clean.slice(0, clean.length - (clean.length % 4)); }
+    const html = decodeBody(body, { 'content-transfer-encoding': p.enc, 'content-type': p.type + (p.charset ? '; charset=' + p.charset : '') });
+    const out = [], seen = new Set(), re = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+    let m;
+    while ((m = re.exec(html)) && out.length < 20) {
+        const href = String(m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]).replace(/&amp;/g, '&').trim();
+        if (!/^https?:\/\//i.test(href) || seen.has(href)) continue;
+        seen.add(href);
+        out.push({ href: href.slice(0, 1000), text: htmlText(m[4]).replace(/\s+/g, ' ').trim().slice(0, 300) });
+    }
+    return out;
+}
 function partBytes(latin, p) {
     const s = String(latin || '');
     if (p.enc === 'base64') return Buffer.from(s.replace(/[^A-Za-z0-9+/=]/g, ''), 'base64');
@@ -307,7 +322,7 @@ function checkReq(op, r) {
     if (op === 'attach' && !/^\d+(\.\d+){0,9}$/.test(String(r.part || ''))) return 'part 는 찾기·읽기 결과 첨부 목록의 part(예: 2 · 1.2)';
     return null;
 }
-async function describeMail(im, uid, textMax) {
+async function describeMail(im, uid, textMax, withLinks) {
     const st = (await im.fetchItems(uid, 'UID BODYSTRUCTURE'))[0];
     if (!st) return null;
     const parts = bodyParts(fetchFields(st).BODYSTRUCTURE, '', []);
@@ -316,15 +331,19 @@ async function describeMail(im, uid, textMax) {
     const tp = textPart(parts);
     let text = '';
     if (tp) { const want = Math.min(Math.max(textMax * 4, 4096), 200000); const raw = await im.fetch(uid, `BODY.PEEK[${tp.part}]<0.${want}>`); text = partText(raw ? raw.toString('latin1') : '', tp); }
+    // #818 HTML 부분의 링크(스마트빌 「계산서 보기」처럼 HTML 에만 있는 주소) · 한 통 읽기(read)에서만 · text 는 종전 그대로
+    let links;
+    const hp = withLinks ? parts.find(p => p.type === 'text/html' && !isAttach(p)) : null;
+    if (hp) { const raw = await im.fetch(uid, `BODY.PEEK[${hp.part}]<0.200000>`); links = htmlLinks(raw ? raw.toString('latin1') : '', hp); }
     return { uid, date: hh.date || null, from: decodeWords(hh.from || ''), to: decodeWords(hh.to || ''), cc: decodeWords(hh.cc || '') || undefined, subject: decodeWords(hh.subject || ''),
-        text: text.slice(0, textMax), text_cut: text.length > textMax, attachments: attachList(parts) };
+        text: text.slice(0, textMax), text_cut: text.length > textMax, attachments: attachList(parts), ...(links && links.length ? { links } : {}) };
 }
 // ════════ #811 메일 색인(대표 10/21 「공유폴더 송장 색인처럼 먼저 읽어 두면 빨라지는 구조면 넣자」) ════════
 //   표 mail_index = 메일 머리만(보낸이·제목·날짜·첨부 이름·크기 · 본문 X) · 수집기 naver_mail_index(1분 틱 체계 · 기본 10분) · 처음 = 메일함들 최근 5천 통을 한 번에 1천 통씩 · 그 뒤 새 uid 만
 //   찾기 = 색인이 다 찼고(처음 채우기 끝) 30분 안에 갱신됐으면 색인에서(제목·보낸 사람·첨부 이름 · 한글 부분 일치) → 맞은 것만 IMAP 으로 미리보기 · 아니면 종전 IMAP 길
 //   계산서 분류(parsed.kind) = 설정 'mail_invoice_suppliers'(공급자 표 · 대표 10/21: CJ 월 · 조천감귤농협(제주조천점)=시온 · 효돈농협유통 주 · 에프씨컨슈머(F.C.C) 받는 메일 = 다른 회사 몫이라 제외)
 const IDX_STATE_KEY = 'mail_index_state', IDX_SUPPLIER_KEY = 'mail_invoice_suppliers';
-const IDX_INITIAL_MAX = 5000, IDX_PER_RUN = 1000, IDX_BATCH = 100, IDX_QUICK = 200, IDX_FRESH_MS = 30 * 60 * 1000, IDX_TIMEOUT_MS = 240000;
+const IDX_INITIAL_MAX = 5000, IDX_FOLDER_MAX = 500, IDX_PER_RUN = 1000, IDX_BATCH = 100, IDX_QUICK = 200, IDX_FRESH_MS = 30 * 60 * 1000, IDX_TIMEOUT_MS = 240000;
 const IDX_SUPPLIERS_DEFAULT = {
     suppliers: [
         { key: 'cj', name: '씨제이대한통운㈜(택배비)', match: ['씨제이대한통운', 'CJ대한통운', 'cj.net'], cycle: '월' },
@@ -472,7 +491,7 @@ function makeMailOps(creds, deps) {
         return withImap(async (im) => {
             const [f] = await folderOf(im, r.folder || 'INBOX');
             await im.examine(f.raw);
-            const d = await describeMail(im, r.uid, MAIL_TEXT_MAX);
+            const d = await describeMail(im, r.uid, MAIL_TEXT_MAX, true);
             if (!d) { const e = new Error('그 메일이 없어요(uid · 메일함 확인)'); e.user = true; throw e; }
             return { ...d, folder: f.raw, folder_name: f.name };
         });
@@ -513,6 +532,8 @@ function makeMailOps(creds, deps) {
                 let fs1 = st.folders[f.raw];
                 if (!fs1 || (v != null && fs1.v != null && fs1.v !== v)) { if (fs1) { reset.push(f.raw); st.total = Math.max(0, st.total - (fs1.n || 0)); if (opt.onReset) await opt.onReset(f.raw); } fs1 = st.folders[f.raw] = { v, top: 0, bottom: null, done: false, n: 0 }; }   // n = 이 메일함에서 거꾸로 채운 수(번호 바뀌면 합에서 뺌)
                 if (fs1.v == null) fs1.v = v;
+                // #818 되살리기 = 종전(합 5천 상한)에 받은메일함이 몫을 다 써 0통인 채 done 으로 닫힌 메일함 → 한 번만 다시 거꾸로 채움
+                if (fs1.done && !fs1.n && fs1.bottom != null && f.raw !== 'INBOX' && !fs1.revived) { fs1.done = false; fs1.revived = true; }
                 const all = (await im.search('ALL')).filter(Number.isFinite).sort((a, b) => a - b);
                 // ① 새 메일(top 위)
                 if (fs1.top > 0 || fs1.done) {   // done 인데 top 0 = 처음엔 빈 메일함 → 그 뒤 온 메일은 다 새 메일
@@ -522,9 +543,9 @@ function makeMailOps(creds, deps) {
                         fs1.top = Math.max(fs1.top, ...chunk); budget -= chunk.length; await saved();
                     }
                 } else if (all.length) { fs1.top = all[all.length - 1]; fs1.bottom = fs1.top + 1; }   // 처음 = 맨 위부터 거꾸로 채움(아래 ②)
-                // ② 처음 채우기(최근부터 거꾸로 · 합 IDX_INITIAL_MAX)
+                // ② 처음 채우기(최근부터 거꾸로 · #818 상한은 메일함마다 = 받은메일함 IDX_INITIAL_MAX · 그 밖 IDX_FOLDER_MAX)
                 if (!opt.newOnly && !fs1.done && budget > 0) {
-                    const room = Math.min(budget, IDX_INITIAL_MAX - st.total);
+                    const cap = f.raw === 'INBOX' ? IDX_INITIAL_MAX : IDX_FOLDER_MAX, room = Math.min(budget, cap - (fs1.n || 0));
                     const older = all.filter(u => u < (fs1.bottom == null ? Infinity : fs1.bottom));
                     if (room <= 0 || !older.length) fs1.done = true;
                     else {
@@ -532,15 +553,14 @@ function makeMailOps(creds, deps) {
                         for (let i = 0; i < take.length; i += IDX_BATCH) {
                             const chunk = take.slice(i, i + IDX_BATCH); await batch(f, fs1, await readHeads(im, chunk));
                             fs1.bottom = Math.min(...chunk); budget -= chunk.length; st.total += chunk.length; fs1.n = (fs1.n || 0) + chunk.length;
-                            if (i + IDX_BATCH >= take.length && (take.length >= older.length || st.total >= IDX_INITIAL_MAX)) fs1.done = true;
+                            if (i + IDX_BATCH >= take.length && (take.length >= older.length || fs1.n >= cap)) fs1.done = true;
                             await saved();
                         }
                     }
                 }
             }
             // 다 돌지 못한 메일함이 있으면(이번 몫을 다 씀) 처음 채우기 안 끝남
-            st.initial_done = folders.every(f => st.folders[f.raw] && (st.folders[f.raw].done || st.total >= IDX_INITIAL_MAX));
-            if (st.total >= IDX_INITIAL_MAX) for (const f of folders) if (st.folders[f.raw]) st.folders[f.raw].done = true;
+            st.initial_done = folders.every(f => st.folders[f.raw] && st.folders[f.raw].done);   // #818 메일함마다 done 일 때(합 상한으로 다 닫던 줄 삭제)
         }, opt.timeoutMs || IDX_TIMEOUT_MS);
         return { rows, state: st, reset, used: budget0 - budget };
     }
@@ -915,4 +935,4 @@ function mountMailRunner(deps) {
 }
 
 module.exports = { imapOpen, imapDate, imapFromCrit, decodeCharset, decodeWords, splitHead, headers, param, decodeBody, htmlText, mimeText, parseMail, fromAddr,
-    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { classifyMail, idxSuppliers, readHeads, IDX_INITIAL_MAX, IDX_PER_RUN, isTrashFolder, encWord, mergeFetch, imapQuote, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };
+    mountMailRunner, makeMailOps, makeWriteOps, smtpSend, buildMessage, checkDraft, MAIL_DRAFT_MIN, _t: { classifyMail, idxSuppliers, readHeads, IDX_INITIAL_MAX, IDX_FOLDER_MAX, htmlLinks, IDX_PER_RUN, isTrashFolder, encWord, mergeFetch, imapQuote, byRecent, encodeCursor, decodeCursor, listLine, mutf7, pickFolders, sexp, fetchFields, bodyParts, partName, attachList, textPart, partText, partBytes, searchPieces, checkReq, ymdImap } };
