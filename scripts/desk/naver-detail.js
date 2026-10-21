@@ -9,6 +9,7 @@
 //   node scripts/desk/naver-detail.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 재조회해 바뀐 경로 대조 → 결과 카드
 //   node scripts/desk/naver-detail.js revert <backup_id> <지시 id> [--force]   보관해 둔 전체로 되돌림(적용 뒤 또 바뀐 곳이 있으면 멈춤 · 그래도 덮는 --force 는 되묻기 1회 뒤 · 누구든 #727)
 //   node scripts/desk/naver-detail.js upload <지시 id> [지시 id …]              지시에 붙은 그림을 네이버에 올려 주소 목록(상세 HTML 에는 이 주소만)
+//   #815 다른 곳으로 가는 링크(예약·지도·블로그·다른 상품)는 글이 아니라 버튼 그림(#802) — `detail-button.js make` 로 PNG → upload → `detail-button.js tag` 로 <a href><img> 덩이 → plan --detail
 //   #736 plan … --detail <html> 은 미리보기 그림 2장(PC 860 · 폰 390 · 한 장에 「지금 | 새」 좌우 · JPEG)을 만들어 preview[] 로 준다(--no-preview 로 끔) — 창구는 respond attachments 로 붙여 되묻기
 //   node scripts/desk/naver-detail.js draft <backup_id> <지시 id> --img <공유폴더 경로|https 주소> [--link <상품 주소>] … --text "<글>" … [--place replace|top|bottom] [--no-preview]
 //                                                                              #736 상세 초안 — 재료를 적은 순서대로(그림 · 글) HTML 로 · 그림은 네이버에 올림(쓰기 = 그림 올리기뿐 · 같은 파일은 다시 안 올림) · 바로 plan 과 같은 카드 + 미리보기

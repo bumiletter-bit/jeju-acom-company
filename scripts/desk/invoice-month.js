@@ -1,0 +1,182 @@
+// #814 「이번 달 계산서 정리」 — 메일 색인(mail_index · #811)의 세금계산서 메일 → 첨부 PDF → 설정 비밀번호로 풀기 → 숫자 읽기 → tax_invoices 초안
+//   node scripts/desk/invoice-month.js <YYYY-MM> [--dry] [--force] [--limit <n>] [--order <지시 id>]
+//     --dry   = 메일·PDF 는 읽되 표에는 안 씀(무엇이 들어갈지만)   --force = 이미 「읽힘」인 줄도 다시 읽기   --limit = 메일 n통까지(기본 60)
+//   대상 = 그 달 1일 ~ 다음 달 10일에 받은 계산서 메일(공급받는자 다른 회사 = 색인에서 이미 제외) · 줄의 달은 PDF 의 작성일자로 정해짐
+//   읽기 전용: 메일은 찾기 러너(mail_read/attach_request)로만 · 표 쓰기는 tax_invoices upsert 뿐(사람이 누른 확인·보류·메모는 안 덮음)
+//   비밀번호 = 실DB 설정 'tax_invoice'.pdf_password(코드·출력에 안 남김 · 파이썬에는 환경변수로) · 결과 글 = 건수 + 줄마다 공급자·작성일·읽힘 여부
+'use strict';
+const path = require('path'), fs = require('fs'), os = require('os'), { spawnSync } = require('child_process');
+const TI = require(path.join(__dirname, '..', '..', 'tax-invoices.js'));
+const MF = require('./mail-find.js');
+const DIR = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'invoice');
+const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+const digitsOf = (s) => String(s || '').replace(/[^0-9]/g, '');
+const fmtBiz = (d) => d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}` : null;
+const toNum = (s) => { const n = Number(String(s).replace(/[,\s]/g, '')); return Number.isFinite(n) ? n : null; };
+// 계산서 글(PDF 글 또는 메일 본문) → 칸 · 못 읽은 칸은 null · our = 우리 사업자번호(숫자) — 공급자 번호에서 뺌
+function parseInvoiceText(text, our) {
+    const t = String(text || '').normalize('NFC').replace(/ /g, ' ');
+    const out = { approval_no: null, issue_date: null, supplier_bizno: null, supply_amount: null, vat_amount: null, total_amount: null, kind: null, orig_approval_no: null };
+    const ap = [...t.matchAll(/(\d{8})\s*-\s*(\d{8})\s*-\s*(\d{8})/g)].map(m => m[1] + m[2] + m[3]);
+    if (!ap.length) for (const m of t.matchAll(/승인\s*번호\s*[:：]?\s*([0-9A-Za-z]{24})(?![0-9A-Za-z])/g)) ap.push(m[1]);   // FirstBill(농협) 꼴 = 숫자+영문 24자
+    if (ap.length) out.approval_no = ap[0];
+    if (/수정/.test(t) && ap.length > 1) out.orig_approval_no = ap[1];
+    const dre = /(20\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})/;
+    const dm = new RegExp('작성\\s*일\\s*자?[^0-9]{0,20}' + dre.source).exec(t) || dre.exec(t);
+    if (dm) out.issue_date = `${dm[1]}-${String(+dm[2]).padStart(2, '0')}-${String(+dm[3]).padStart(2, '0')}`;
+    const biz = [...t.matchAll(/(\d{3})\s*-\s*(\d{2})\s*-\s*(\d{5})/g)].map(m => m[1] + m[2] + m[3]).filter(d => d !== our);
+    if (biz.length) out.supplier_bizno = fmtBiz(biz[0]);
+    const N = '(-?[0-9][0-9,]{0,15})';
+    // 표 꼴(홈택스·FirstBill 보안메일) = 「작성일자 공급가액 세액 (비고·수정사유) 2026-10-08 1,000,000 0」 — 머리 줄 뒤에 날짜·공급가액·세액이 차례로
+    const tb = new RegExp('작성\\s*일\\s*자\\s*공\\s*급\\s*가\\s*액\\s*세\\s*액[^0-9]{0,40}' + dre.source + '\\s+' + N + '\\s+' + N).exec(t);
+    if (tb) {
+        out.issue_date = `${tb[1]}-${String(+tb[2]).padStart(2, '0')}-${String(+tb[3]).padStart(2, '0')}`;   // 표의 작성일자가 정본(글 위쪽 다른 날짜보다)
+        out.supply_amount = toNum(tb[4]); out.vat_amount = toNum(tb[5]);
+    } else {
+        const after = (label) => { const m = new RegExp(label + '[^0-9\\-]{0,30}' + N).exec(t); return m ? toNum(m[1]) : null; };
+        out.supply_amount = after('공\\s*급\\s*가\\s*액');
+        out.vat_amount = after('(?<!공급가)세\\s*액');
+    }
+    const tot = new RegExp('금액을\\s*\\(\\s*(?:청구|영수)\\s*\\)\\s*함\\s*' + N).exec(t) || new RegExp('합\\s*계\\s*금\\s*액[^0-9\\-]{0,30}' + N).exec(t) || new RegExp('총\\s*금\\s*액[^0-9\\-]{0,30}' + N).exec(t);
+    out.total_amount = tot ? toNum(tot[tot.length - 1]) : null;
+    if (out.total_amount == null && out.supply_amount != null) out.total_amount = out.supply_amount + (out.vat_amount || 0);
+    const first = (re) => { const m = re.exec(t); return m ? m.index : Infinity; };   // 제목(처음 나오는 이름)으로 종류 — 꼬리 안내 글 「전자세금계산서로써」에 안 속게
+    const iMod = first(/수정\s*(세금)?\s*계산서|수정\s*발행/), iTax = first(/세금\s*계산서/), iFree = first(/(?<!세금\s?)계산서/);
+    if (iMod < Infinity && iMod <= Math.min(iTax, iFree) + 20) out.kind = 'modify';
+    else if (iTax < iFree) out.kind = 'tax';
+    else if (iFree < Infinity) out.kind = 'free';
+    if (out.kind === 'free' && out.vat_amount == null) out.vat_amount = 0;
+    return out;
+}
+const isRead = (p) => !!(p.issue_date && p.total_amount != null && (p.approval_no || p.supplier_bizno));
+// 공급자 상호 = 처음 나오는 「상호 (법인명) … 성명」 (위가 공급자 · 아래가 공급받는자)
+const supplierNameOf = (text) => { const m = /상\s*호\s*(?:\(\s*법인명\s*\))?\s*(.{2,40}?)\s*성\s*명/.exec(String(text || '').replace(/\s+/g, ' ')); return m ? m[1].trim() : null; };
+// 공급자 = 계산서 안 사업자번호로 먼저(설정 tax_invoice.suppliers {cj:[번호…], sion:[…], hyodon:[…]}) → 없으면 메일 색인 분류
+//   🔴 메일 제목만으로는 틀릴 수 있음(10/21 실물: 홈택스 「(제주조천점->…)」 = 품목 택배서비스)
+const supplierByBiz = (biz, map) => { const d = digitsOf(biz); if (!d || !map) return null; for (const k of TI.SUPPLIERS) if ((map[k] || []).some(x => digitsOf(x) === d)) return k; return null; };
+
+// 보안메일 HTML(홈택스 NTS_eTaxInvoice.html · 농협 FirstBill_Tax.html) = 브라우저에서 비밀번호(사업자번호)를 넣어야 풀림 → 화면 없는 크롬으로 열어 글 + 열람용 PDF
+//   홈택스 판은 srtk.hometax.go.kr 의 공식 풀기 스크립트를 내려받아 씀(인터넷 필요) · Playwright 는 저장소 node_modules(--no-save) — 없으면 오류 줄
+let _browser = null;
+async function openSecureHtml(file, pw) {
+    if (!_browser) {
+        let pwMod; try { pwMod = require(path.join(__dirname, '..', '..', 'node_modules', 'playwright')); } catch (_) { return { ok: false, error: '이 PC 에 Playwright 가 없어 보안메일을 못 열어요(npm install --no-save playwright · 총괄에게)' }; }
+        _browser = await pwMod.chromium.launch();
+    }
+    const ctx = await _browser.newContext(), pg = await ctx.newPage();
+    try {
+        await pg.goto('file:///' + file.split(path.sep).join('/'), { waitUntil: 'load', timeout: 30000 });
+        const box = await pg.waitForSelector('input[type=password]', { timeout: 15000 }).catch(() => null);
+        if (!box) return { ok: false, error: '보안메일 비밀번호 칸을 못 찾음' };
+        await box.fill(pw); await box.press('Enter');
+        let txt = '';
+        for (let i = 0; i < 20; i++) {   // 풀리기를 최대 10초 기다림
+            await pg.waitForTimeout(500);
+            txt = ''; for (const fr of pg.frames()) { try { txt += '\n' + await fr.evaluate(() => document.body ? document.body.innerText : ''); } catch (_) { } }
+            if (/작성\s*일\s*자/.test(txt) && /승인\s*번호/.test(txt)) break;
+        }
+        if (!/작성\s*일\s*자/.test(txt)) return { ok: false, error: /비밀번호/.test(txt) ? '보안메일이 안 풀림(비밀번호 확인)' : '보안메일 글을 못 읽음' };
+        let pdf = null; try { pdf = await pg.pdf({ format: 'A4', printBackground: true }); } catch (_) { }
+        return { ok: true, text: txt, pdf };
+    } finally { await ctx.close().catch(() => { }); }
+}
+
+async function main(args, deps) {
+    const { pool } = deps, out = (o) => { deps.print(JSON.stringify(o, null, 1)); return o; };
+    const o = {}, rest = [];
+    for (let i = 0; i < args.length; i++) { const a = args[i]; if (['--limit', '--order'].includes(a)) o[a.slice(2)] = args[++i]; else if (a === '--dry') o.dry = true; else if (a === '--force') o.force = true; else rest.push(a); }
+    const ym = rest[0];
+    if (!YM.test(ym || '')) throw new Error('invoice-month.js <YYYY-MM> [--dry] [--force] [--limit n] [--order <지시 id>]');
+    const limit = Math.min(Math.max(parseInt(o.limit || '60', 10) || 60, 1), 200), orderId = o.order ? parseInt(o.order, 10) : null;
+    const cfg = ((await pool.query(`SELECT value FROM agent_office_config WHERE key = 'tax_invoice'`)).rows[0] || {}).value || {};
+    const pw = String(cfg.pdf_password || ''), our = digitsOf(cfg.our_bizno || cfg.pdf_password || '');
+    if (!pw) return out({ ok: false, error: "설정 'tax_invoice'.pdf_password 가 없어요 — 총괄에게(실DB 설정)" });
+    const st = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'mail_index_state'`)).rows[0];
+    if (!st || !st.value || !st.value.initial_done) return out({ ok: false, error: '메일 색인이 아직 다 안 찼어요(처음 채우기 중) — 몇 분 뒤 다시' });
+    const [y, m] = ym.split('-').map(Number), next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7);
+    const mails = (await pool.query(`SELECT folder, folder_name, uidvalidity, uid, subject, from_name, at, parsed FROM mail_index
+        WHERE parsed->>'kind' = 'tax_invoice' AND at >= ($1::date::timestamp AT TIME ZONE 'Asia/Seoul') AND at < (($2::date + 10)::timestamp AT TIME ZONE 'Asia/Seoul')
+        ORDER BY at, uid LIMIT $3`, [ym + '-01', next + '-01', limit + 1])).rows;
+    const more = mails.length > limit; mails.length = Math.min(mails.length, limit);
+    if (!o.dry) await TI.ensureTable(pool);
+    const R = MF.makeRunner({ pool, sleep: deps.sleep, now: deps.now });
+    const by = orderId ? await R.orderBy(orderId) : '창구';
+    fs.mkdirSync(DIR, { recursive: true });
+    const done = [], cnt = { mails: mails.length, read: 0, check: 0, error: 0, inserted: 0, updated: 0, skipped: 0 };
+    try {
+    for (const mm of mails) {
+        const key = `m:${mm.folder}:${mm.uidvalidity || 0}:${mm.uid}`;
+        const have = (await pool.query(`SELECT id, dedup_key, read_status FROM tax_invoices WHERE (dedup_key = $1 OR (mail_folder = $2 AND mail_uid = $3 AND COALESCE(mail_uidvalidity, 0) = $4)) ORDER BY id LIMIT 1`, [key, mm.folder, mm.uid, mm.uidvalidity || 0]).catch(() => ({ rows: [] }))).rows[0];
+        if (!o.force && have && have.read_status === 'read') { cnt.skipped++; done.push({ supplier: mm.parsed.supplier || 'other', subject: mm.subject, result: '이미 읽힘(건너뜀)' }); continue; }
+        const row = { supplier: mm.parsed.supplier || 'other', supplier_name: mm.parsed.supplier_name || mm.from_name || null, mail_folder: mm.folder, mail_uid: Number(mm.uid), mail_uidvalidity: mm.uidvalidity ? Number(mm.uidvalidity) : null,
+            mail_subject: mm.subject, mail_at: mm.at, read_status: 'check', read_note: null };
+        let parsed = null, pdfBuf = null, pdfName = null, srcText = '';
+        try {
+            const rd = await R.send('read', { uid: Number(mm.uid), folder: mm.folder, order_id: orderId, by }, 180000);
+            if (!rd.ok) throw new Error(rd.error || '메일 읽기 실패');
+            const atts = rd.mail.attachments || [];
+            const att = atts.find(a => /\.pdf$/i.test(a.name || '') || /pdf/i.test(a.type || ''));
+            const hatt = att ? null : atts.find(a => /\.html?$/i.test(a.name || '') || /text\/html/i.test(a.type || ''));   // 보안메일(홈택스·농협 FirstBill) = HTML 첨부
+            const fetchAtt = async (a, ext) => {   // 첨부 → 로컬 파일 · 잠긴 원본은 화면 파일함에 안 남김
+                const ar = await R.send('attach', { uid: Number(mm.uid), part: a.part, folder: mm.folder, order_id: orderId, by }, 180000);
+                if (!ar.ok) throw new Error(ar.error || '첨부 받기 실패');
+                const fr = (await pool.query('SELECT data FROM report_files WHERE id = $1', [ar.file_id])).rows[0];
+                if (!fr) throw new Error('받은 첨부를 못 찾음');
+                const src = path.join(DIR, `${mm.uid}-in.${ext}`);
+                fs.writeFileSync(src, Buffer.from(fr.data));
+                await pool.query('UPDATE report_files SET is_deleted = true WHERE id = $1', [ar.file_id]).catch(() => { });
+                return src;
+            };
+            if (hatt) {
+                const src = await fetchAtt(hatt, 'html');
+                let sr; try { sr = await openSecureHtml(src, pw); } finally { try { fs.unlinkSync(src); } catch (_) { } }
+                if (!sr.ok) { row.read_status = 'error'; row.read_note = sr.error; }
+                else {
+                    parsed = parseInvoiceText(sr.text, our); srcText = sr.text;
+                    if (sr.pdf) { pdfBuf = Buffer.from(sr.pdf); pdfName = String(hatt.name || `계산서_${mm.uid}`).replace(/\.html?$/i, '') + '.pdf'; }
+                }
+            } else if (att) {
+                const src = await fetchAtt(att, 'pdf'), dst = path.join(DIR, `${mm.uid}-open.pdf`);
+                const py = spawnSync(process.env.PYTHON || 'python', ['-P', path.join(__dirname, 'pdf-unlock.py'), src, dst], { env: { ...process.env, PDF_PASSWORD: pw, PYTHONIOENCODING: 'utf-8' }, cwd: __dirname, encoding: 'utf8', timeout: 60000 });   // -P = 받은 파일 폴더·현재 폴더의 .py 를 안 읽음(사용자 설치 PyMuPDF 는 씀)
+                let pj = null; try { pj = JSON.parse(String(py.stdout || '').trim().split('\n').pop()); } catch (_) { }
+                try { fs.unlinkSync(src); } catch (_) { }
+                if (!pj || !pj.ok) { row.read_status = 'error'; row.read_note = (pj && pj.error) || 'PDF 풀기 실패'; }
+                else {
+                    pdfBuf = fs.readFileSync(dst); pdfName = att.name || `계산서_${mm.uid}.pdf`; try { fs.unlinkSync(dst); } catch (_) { }
+                    if (pj.image_only) { row.read_note = '그림 PDF(글자 없음) — 원본 확인'; parsed = parseInvoiceText(rd.mail.text, our); srcText = rd.mail.text; }
+                    else { parsed = parseInvoiceText(pj.text, our); srcText = pj.text; }
+                }
+            } else { parsed = parseInvoiceText(rd.mail.text, our); srcText = rd.mail.text; row.read_note = '첨부 PDF 없음(본문에서 읽음) — 원본 확인'; }
+        } catch (e) { row.read_status = 'error'; row.read_note = String(e.message || e).slice(0, 160); }
+        if (parsed) {
+            Object.assign(row, parsed);
+            row.supplier = supplierByBiz(parsed.supplier_bizno, cfg.suppliers) || mm.parsed.supplier || 'other';   // 계산서 안 사업자번호가 정본 · 설정 없으면 색인 분류 → 그것도 없으면 기타
+            row.supplier_name = supplierNameOf(srcText) || row.supplier_name;
+            if (row.read_status !== 'error') row.read_status = isRead(parsed) && !row.read_note ? 'read' : 'check';
+            if (row.read_status === 'check' && !row.read_note) row.read_note = '일부 칸을 못 읽음 — 원본 확인';
+        }
+        row.pdf_name = pdfName; row.pdf_data = pdfBuf;
+        cnt[row.read_status]++;
+        let up = null;
+        // 같은 메일 줄이 이미 다른 키(a: 승인번호)로 있는데 이번엔 승인번호를 못 읽음(읽기·첨부 실패 등) → 새 m: 줄을 만들지 말고 그 줄의 읽기 결과만 고침
+        //   이미 「읽힘」인 줄(--force)은 안 깎음 · 숫자·PDF·확인 정보는 그대로
+        const stray = have && TI.dedupKeyOf(row) !== have.dedup_key && !row.approval_no;
+        if (!o.dry && stray) {
+            if (have.read_status !== 'read') await pool.query(`UPDATE tax_invoices SET read_status = $2, read_note = $3, updated_at = NOW() WHERE id = $1`, [have.id, row.read_status, row.read_note || null]);
+            up = { id: have.id, inserted: false }; cnt.updated++;
+        } else if (!o.dry) { up = await TI.upsertRow(pool, row); cnt[up.inserted ? 'inserted' : 'updated']++; }
+        done.push({ id: up ? up.id : null, supplier: TI.LABEL[row.supplier] || row.supplier, issue_date: row.issue_date, total: row.total_amount, result: row.read_status === 'read' ? '읽힘' : row.read_status === 'check' ? '확인 필요' : '오류', note: row.read_note || undefined });
+    }
+    } finally { await closeBrowser(); }   // 보안메일용 크롬은 한 번 열어 다 쓰고 바로 닫음
+    return out({ ok: true, month: ym, dry: !!o.dry, counts: cnt, more: more || undefined, rows: done,
+        note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
+}
+async function closeBrowser() { if (_browser) { const b = _browser; _browser = null; await b.close().catch(() => { }); } }
+module.exports = { main, parseInvoiceText, isRead, supplierByBiz, supplierNameOf, openSecureHtml, closeBrowser };
+if (require.main === module) {
+    const { pool } = require('./_db');
+    main(process.argv.slice(2), { pool, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(), print: (s) => console.log(s) })
+        .catch(e => { console.log(JSON.stringify({ ok: false, error: e.message }, null, 1)); process.exitCode = 1; })
+        .finally(() => closeBrowser().then(() => pool.end().catch(() => { })));
+}

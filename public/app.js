@@ -9072,6 +9072,7 @@ document.querySelectorAll('.settlement-tab').forEach(tab => {
         tab.classList.add('active');
         document.getElementById(tab.dataset.tab)?.classList.add('active');
         // 정산현황 탭 처음 열 때 초기화
+        if (tab.dataset.tab === 'settlement-invoice' && window.siOpen) window.siOpen();   // #814 계산서 발행현황(처음 열 때 불러옴)
         if (tab.dataset.tab === 'settlement-status' && !window._ssInitialized) {
             ssInit();
             window._ssInitialized = true;
@@ -14764,4 +14765,142 @@ setupNaverTimerCard();
         const on = btn.textContent.indexOf("끄기") === 0;
         if (on) await turnOff(); else await turnOn();
     });
+})();
+
+// ============================================================
+//  #814 정산관리 › 「계산서 발행현황」 탭 — 그 달 세금계산서 목록(월 ‹ ›) · 날짜·거래처별 보기 · 전체 기간 찾기 · [확인]/[보류]/[되돌리기](대표·경리) · [PDF 열기]
+//  거래처 머리 = 「우리 정산 월 합계 · 계산서 합계 · 차이」 표시만(서버 값 그대로 · 자동 맞춤·합계 섞기 0). 서버 계약 = docs/814-api.md(워커2). 접두사 si
+// ============================================================
+(function () {
+    const SI_API = {
+        list: ym => `/api/tax-invoices?month=${ym}`,
+        search: q => `/api/tax-invoices/search?q=${encodeURIComponent(q)}`,
+        act: (id, a) => `/api/tax-invoices/${encodeURIComponent(id)}/${a}`,   // confirm | hold | reset
+        pdf: id => `/api/tax-invoices/${encodeURIComponent(id)}/pdf`,
+    };
+    const GROUPS = [['cj', 'CJ대한통운(택배비)'], ['sion', '시온(조천감귤농협)'], ['hyodon', '효돈농협유통'], ['other', '기타']];
+    const ST = { draft: ['초안', 'pill-wait'], confirmed: ['확인', 'pill-ok'], hold: ['보류', 'pill-off'] };
+    const KIND = { free: '면세', modify: '수정' };
+    const S = { ym: null, rows: [], days: {}, groups: [], totals: {}, group: 'all', day: '', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0 };
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const won = n => (n == null || n === '' || isNaN(Number(n))) ? '—' : Number(n).toLocaleString('ko-KR');
+    const kstYm = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 7);
+    const kstDay = t => { const d = new Date(t); return isNaN(d) ? '' : new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10); };
+    const ymShift = (ym, k) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + k, 1)).toISOString().slice(0, 7); };
+    const md = d => d ? `${+String(d).slice(5, 7)}/${+String(d).slice(8, 10)}` : '';
+    const label = k => (GROUPS.find(g => g[0] === k) || GROUPS[3])[1];
+    const canEdit = () => !!(currentUser && currentUser.role === 'admin');   // 대표·경리(관리자 계정) — 서버도 adminOnly
+    function shell() {
+        const root = $('settlement-invoice'); if (!root || root.dataset.si) return;
+        root.dataset.si = '1';
+        root.innerHTML = `<div class="card si-head">
+            <div class="si-top"><div class="si-tt"><h2 id="si-title">계산서 발행현황</h2><span class="si-sum" id="si-sum"></span></div>
+                <div class="month-nav"><button type="button" class="btn-nav" data-si="prev" aria-label="이전 달">&lt;</button><button type="button" class="btn-nav" data-si="next" aria-label="다음 달">&gt;</button></div></div>
+            <div class="si-search-row"><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
+            <div class="si-chips" id="si-groups" role="group" aria-label="거래처"></div>
+            <div class="si-days" id="si-days" role="group" aria-label="작성일"></div>
+        </div><div id="si-body" aria-live="polite"></div>`;
+        root.addEventListener('click', onClick);
+        let tm = null;
+        $('si-q').addEventListener('input', e => { S.q = e.target.value; clearTimeout(tm); tm = setTimeout(search, 300); });
+    }
+    async function load() {
+        const my = ++S.seq;
+        S.loading = true; S.err = ''; render();
+        try {
+            const r = await api(SI_API.list(S.ym));
+            if (my !== S.seq) return;
+            S.rows = Array.isArray(r.rows) ? r.rows : []; S.days = r.days || {}; S.groups = Array.isArray(r.groups) ? r.groups : []; S.totals = r.totals || {};
+        } catch (e) { if (my !== S.seq) return; S.rows = []; S.days = {}; S.groups = []; S.totals = {}; S.err = e && e.message ? e.message : '불러오지 못했어요'; }
+        S.loading = false; render();
+    }
+    async function search() {
+        const q = S.q.trim();
+        if (!q) { S.found = null; S.more = false; render(); return; }
+        const my = ++S.seq;
+        S.loading = true; render();
+        try { const r = await api(SI_API.search(q)); if (my !== S.seq) return; S.found = Array.isArray(r.rows) ? r.rows : []; S.more = !!r.more; S.err = ''; }
+        catch (e) { if (my !== S.seq) return; S.found = []; S.err = e && e.message ? e.message : '찾지 못했어요'; }
+        S.loading = false; render();
+    }
+    const visible = () => (S.found || S.rows).filter(r => (S.group === 'all' || r.supplier === S.group) && (S.found || !S.day || String(r.day || r.issue_date || '').slice(0, 10) === S.day));
+    function render() {
+        const [y, m] = S.ym.split('-'), finding = S.found !== null;
+        $('si-title').textContent = finding ? '계산서 찾기 · 전체 기간' : `${y}년 ${+m}월 계산서`;
+        const base = finding ? S.found : S.rows;
+        $('si-sum').textContent = S.loading ? '' : finding ? `${base.length}건${S.more ? '+(앞 200건만)' : ''}` : `${S.totals.count != null ? S.totals.count : base.length}건 · 발행 합계 ${won(S.totals.issued_total)}원`;
+        document.querySelectorAll('#settlement-invoice .month-nav .btn-nav').forEach(b => { b.disabled = finding; });
+        const cnt = g => base.filter(x => g === 'all' || x.supplier === g).length;
+        $('si-groups').innerHTML = [['all', '전체'], ...GROUPS].map(([k, l]) => `<button type="button" class="si-chip${S.group === k ? ' on' : ''}" data-si="group" data-v="${k}" aria-pressed="${S.group === k}">${esc(k === 'all' ? l : ((S.groups.find(g => g.supplier === k) || {}).label || l))} <b>${cnt(k)}</b></button>`).join('');
+        const days = finding ? [] : Object.keys(S.days || {}).sort();
+        if (S.day && !days.includes(S.day)) S.day = '';
+        $('si-days').hidden = !days.length;
+        $('si-days').innerHTML = days.length ? [`<button type="button" class="si-day${!S.day ? ' on' : ''}" data-si="day" data-v="" aria-pressed="${!S.day}">전체 날짜</button>`,
+            ...days.map(d => `<button type="button" class="si-day${S.day === d ? ' on' : ''}" data-si="day" data-v="${d}" aria-pressed="${S.day === d}">${md(d)} <b>${S.days[d]}</b></button>`)].join('') : '';
+        const body = $('si-body');
+        if (S.loading) { body.innerHTML = `<div class="card si-group"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>`; return; }
+        if (S.err) { body.innerHTML = `<div class="card si-group"><p class="si-empty">계산서 목록을 불러오지 못했어요 — ${esc(S.err)} <button type="button" class="btn-outline si-btn" data-si="reload">다시 불러오기</button></p></div>`; return; }
+        if (!base.length) { body.innerHTML = `<div class="card si-group"><p class="si-empty">${finding ? '찾는 계산서가 없어요.' : '이 달에 받은 계산서가 없어요.'}</p></div>`; return; }
+        const vis = visible();
+        const keys = S.group === 'all' ? GROUPS.map(g => g[0]) : [S.group];
+        const html = keys.map(k => {
+            const rows = vis.filter(x => x.supplier === k), g = S.groups.find(x => x.supplier === k) || {};
+            if (!rows.length && (finding || S.day || S.group === 'all')) return '';
+            const cmp = finding ? '' : `<span>우리 정산 월 합계 <b>${g.settle_total == null ? '—' : won(g.settle_total) + '원'}</b></span><span>계산서 합계 <b>${won(g.issued_total)}원</b></span>`
+                + (g.diff == null ? '' : `<span class="si-diff${Number(g.diff) === 0 ? ' zero' : ''}">차이 <b>${Number(g.diff) === 0 ? '0' : (g.diff > 0 ? '+' : '−') + won(Math.abs(g.diff))}원</b></span>`)
+                + (g.check_count ? `<span class="si-chk">원본 확인 ${g.check_count}건</span>` : '');
+            return `<section class="card si-group" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><h3>${esc(g.label || label(k))}</h3>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>
+                ${rows.length ? `<div class="table-scroll-wrapper si-tw"><table class="data-table si-table"><thead><tr><th>공급자</th><th>작성일</th><th>승인번호</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>받은 날</th><th>상태</th><th>할 일</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>` : `<p class="si-empty">조건에 맞는 계산서가 없어요.</p>`}</section>`;
+        }).join('');
+        body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
+    }
+    function rowHtml(r) {
+        const [lab, cls] = ST[r.status] || ST.draft, ed = canEdit(), chk = r.read_status === 'check' || r.read_status === 'error';
+        const acts = (ed && r.status !== 'confirmed' ? `<button type="button" class="btn-outline si-btn" data-si="act" data-v="confirm">확인</button>` : '')
+            + (ed && r.status !== 'hold' ? `<button type="button" class="btn-outline si-btn" data-si="act" data-v="hold">보류</button>` : '')
+            + (ed && r.status !== 'draft' ? `<button type="button" class="btn-outline si-btn si-btn-q" data-si="act" data-v="reset">되돌리기</button>` : '')
+            + (r.has_pdf ? `<button type="button" class="btn-outline si-btn" data-si="pdf">PDF 열기</button>` : '');
+        return `<tr data-id="${esc(r.id)}"><td data-label="공급자" class="si-sup">${esc(r.supplier_name || r.supplier_label || label(r.supplier))}${KIND[r.kind] ? ` <span class="si-kind">${KIND[r.kind]}</span>` : ''}${r.memo ? `<div class="si-memo">${esc(r.memo)}</div>` : ''}${chk && r.read_note ? `<div class="si-memo">${esc(r.read_note)}</div>` : ''}</td>
+            <td data-label="작성일">${esc(r.issue_date ? String(r.issue_date).slice(0, 10) : '—')}</td><td data-label="승인번호" class="si-apv">${esc(r.approval_no || '—')}</td>
+            <td data-label="공급가액" class="num">${won(r.supply_amount)}</td><td data-label="세액" class="num">${won(r.vat_amount)}</td><td data-label="합계" class="num si-tot">${won(r.total_amount)}</td>
+            <td data-label="받은 날">${esc(r.mail_at ? kstDay(r.mail_at) : '—')}</td>
+            <td data-label="상태" class="si-st"><span class="pill ${cls}">${lab}</span>${chk ? ` <span class="pill si-pill-chk" title="${esc(r.read_note || '숫자를 다 못 읽었어요 — PDF 원본을 확인해 주세요')}">원본 확인</span>` : ''}</td>
+            <td data-label="할 일" class="si-act">${acts || '<span class="si-none">—</span>'}</td></tr>`;
+    }
+    async function onClick(e) {
+        const b = e.target.closest('[data-si]'); if (!b) return;
+        const k = b.dataset.si;
+        if (k === 'prev' || k === 'next') { S.ym = ymShift(S.ym, k === 'prev' ? -1 : 1); S.day = ''; load(); }
+        else if (k === 'group') { S.group = b.dataset.v; render(); }
+        else if (k === 'day') { S.day = b.dataset.v; render(); }
+        else if (k === 'reload') { if (S.found !== null) search(); else load(); }
+        else if (k === 'pdf') openPdf(b.closest('tr').dataset.id, b);
+        else if (k === 'act') {
+            const id = b.closest('tr').dataset.id, list = S.found || S.rows, r = list.find(x => String(x.id) === id); if (!r || !canEdit()) return;
+            const a = b.dataset.v; let body = {};
+            if (a === 'hold') { const memo = await akmPrompt('보류하는 이유를 적어 주세요(필수 · 500자까지)', r.memo || ''); if (memo == null) return; if (!String(memo).trim()) { showToast('보류는 이유가 있어야 해요', 'error'); return; } body = { memo: String(memo).trim().slice(0, 500) }; }
+            b.disabled = true;
+            try {
+                const res = await api(SI_API.act(id, a), 'POST', body);
+                if (res && res.row) Object.assign(r, res.row); else r.status = a === 'confirm' ? 'confirmed' : a === 'hold' ? 'hold' : 'draft';
+                showToast(`${r.supplier_name || label(r.supplier)} 계산서 「${(ST[r.status] || ST.draft)[0]}」`, 'success');
+                if (S.found === null) load(); else render();   // 달 보기는 합계(발행 합계·차이)를 서버에서 다시
+            } catch (err) { b.disabled = false; showToast('바꾸지 못했어요 — ' + (err && err.message || ''), 'error'); }
+        }
+    }
+    async function openPdf(id, btn) {
+        const w = window.open('', '_blank');   // 팝업 막힘 피하기 — 누른 순간 창부터 열고 파일이 오면 채움
+        try {
+            btn.disabled = true;
+            const res = await fetch(SI_API.pdf(id), { headers: { Authorization: 'Bearer ' + localStorage.getItem('jwt_token') } });
+            if (!res.ok) throw new Error(res.status === 404 ? 'PDF 가 없어요' : '파일을 열지 못했어요(' + res.status + ')');
+            const url = URL.createObjectURL(new Blob([await res.blob()], { type: 'application/pdf' }));
+            if (w) w.location.href = url; else window.open(url, '_blank');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+        } catch (e) { if (w) w.close(); showToast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+    }
+    window.siOpen = function () { shell(); if (!S.inited) { S.inited = true; S.ym = kstYm(); load(); } };
+    window._siState = S;   // 검증용
 })();

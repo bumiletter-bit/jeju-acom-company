@@ -4837,3 +4837,66 @@ body.ps-view-open { overflow: hidden; }
     label:has(> input[id^="botprod-rsvon-"]) { padding: 14px 0 14px 16px; margin: -14px 0 -14px -16px; }   /* 판매현황 예약발송 체크 13px — 감싼 label 위아래·왼쪽 */
     .ps-check { padding-left: 13px; margin-left: -13px; }    /* 내 정보 알림 체크 18px — label 높이는 이미 44 · 왼쪽만 */
 }
+
+/* ============================================================
+   #814 정산관리 › 계산서 발행현황(.si-*) — 이 탭 안에서만 · 색은 토큰·기존 알약(pill) 재사용
+   ============================================================ */
+#settlement-invoice .si-head { display: flex; flex-direction: column; gap: 12px; }
+#settlement-invoice .si-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#settlement-invoice .si-tt { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+#settlement-invoice .si-tt h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+#settlement-invoice .si-sum { font-size: 13px; color: var(--text-mid, #667085); font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-q { width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 14px; border: 1px solid var(--border, #ECEDF1); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-dark, #101828); font: inherit; font-size: 14px; }
+#settlement-invoice .si-q:focus { outline: none; border-color: var(--primary, #4F46E5); box-shadow: 0 0 0 3px var(--primary-ring, rgba(79,70,229,.15)); }
+#settlement-invoice .si-chips, #settlement-invoice .si-days { display: flex; flex-wrap: wrap; gap: 6px; }
+#settlement-invoice .si-days { padding-top: 10px; border-top: 1px solid var(--border, #ECEDF1); }
+#settlement-invoice .si-chip, #settlement-invoice .si-day { min-height: 36px; padding: 0 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 999px; background: var(--card-bg, #fff); color: var(--text-mid, #667085); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+#settlement-invoice .si-chip b, #settlement-invoice .si-day b { font-weight: 700; color: var(--text-dark, #101828); font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-chip:hover, #settlement-invoice .si-day:hover { border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip.on, #settlement-invoice .si-day.on { background: var(--primary-light, #EEF0FF); border-color: var(--primary, #4F46E5); color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip.on b, #settlement-invoice .si-day.on b { color: var(--primary, #4F46E5); }
+#settlement-invoice .si-chip:focus-visible, #settlement-invoice .si-day:focus-visible, #settlement-invoice .si-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
+#settlement-invoice .si-group { margin-top: 12px; }
+#settlement-invoice .month-nav .btn-nav { min-width: 36px; min-height: 36px; }
+#settlement-invoice .si-gh { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; }
+#settlement-invoice .si-gh h3 { margin: 0; font-size: 16px; }
+#settlement-invoice .si-cmp { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-mid, #667085); font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-cmp b { color: var(--text-dark, #101828); font-weight: 700; }
+#settlement-invoice .si-diff b { color: #B54708; }
+#settlement-invoice .si-diff.zero b { color: #067647; }
+#settlement-invoice .si-chk { color: #B54708; font-weight: 600; }
+#settlement-invoice .si-table td, #settlement-invoice .si-table th { white-space: nowrap; padding-left: 10px; padding-right: 10px; }   /* 9칸이 PC 카드 폭(약 950) 안에 들게 */
+#settlement-invoice .si-table td.si-st { white-space: normal; min-width: 64px; }
+#settlement-invoice .si-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-table .si-tot { font-weight: 700; color: var(--text-dark, #101828); }
+#settlement-invoice .si-sup { white-space: normal !important; min-width: 120px; max-width: 240px; font-weight: 600; }
+#settlement-invoice .si-apv { font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 12px; color: var(--text-mid, #667085); }
+#settlement-invoice .si-memo { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--text-mid, #667085); white-space: normal; }
+#settlement-invoice .si-kind { display: inline-block; align-self: flex-start; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: var(--bg, #F5F6F8); color: var(--text-mid, #667085); font-size: 11px; font-weight: 600; }
+#settlement-invoice .si-pill-chk { background: #FEF3F2; color: #B42318; }
+#settlement-invoice .si-table td.si-act { white-space: normal; min-width: 132px; }   /* 표 칸 그대로(flex 를 주면 칸이 표에서 떨어짐) · 단추는 줄바꿈 → 표가 카드 폭 안에 */
+#settlement-invoice .si-table td.si-act .si-btn { margin: 2px 6px 2px 0; }
+#settlement-invoice .si-btn { min-height: 36px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
+#settlement-invoice .si-btn-q { color: var(--text-mid, #667085); }
+#settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
+#settlement-invoice .si-empty { margin: 4px 0; color: var(--text-mid, #667085); font-size: 14px; line-height: 1.6; }
+@media (max-width: 960px), (pointer: coarse) {
+    #settlement-invoice .si-chip, #settlement-invoice .si-day, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav { min-height: 44px; }
+    #settlement-invoice .month-nav .btn-nav { min-width: 44px; }
+}
+/* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */
+@media (max-width: 768px) {
+    #settlement-invoice .si-tw { max-height: none; overflow: visible; border: 0; box-shadow: none; background: none; }
+    #settlement-invoice .si-table, #settlement-invoice .si-table tbody { display: block; width: 100%; }
+    #settlement-invoice .si-table thead { display: none; }
+    #settlement-invoice .si-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; padding: 12px; margin-bottom: 8px; border: 1px solid var(--border, #ECEDF1); border-radius: 12px; background: var(--card-bg, #fff); }
+    #settlement-invoice .si-table td { display: flex; flex-direction: column; gap: 1px; padding: 0 !important; border: 0 !important; white-space: normal; min-width: 0; text-align: left !important; font-size: 13px; }
+    #settlement-invoice .si-table td::before { content: attr(data-label); font-size: 11px; font-weight: 600; color: var(--text-mid, #667085); }
+    #settlement-invoice .si-table td.si-sup, #settlement-invoice .si-table td.si-act, #settlement-invoice .si-table td.si-apv { grid-column: 1 / -1; max-width: none; }
+    #settlement-invoice .si-table td.si-sup::before, #settlement-invoice .si-table td.si-act::before { display: none; }
+    #settlement-invoice .si-table td.si-st { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; }
+    #settlement-invoice .si-table td.si-st::before { flex-basis: 100%; }
+    #settlement-invoice .si-table td.si-act { flex-direction: row; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    #settlement-invoice .si-table td.si-act .si-btn { flex: 1 1 auto; margin: 0; }
+    #settlement-invoice .si-apv { word-break: break-all; }
+}

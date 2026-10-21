@@ -18726,6 +18726,8 @@ require('./rules.js')(app, { pool, authMiddleware, adminOnly, writeAudit, create
 const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, adminOnly, writeAudit, naverCfgGet, naverCfgSet, naverFetchChanges, naverKstIso, naverCall: naverCallWithRetry,
     experienceProductIds, isExperienceOrder, resolveReceiver, isMaskedTel, kakaoNotify, notifyTelegram,
     naverConfirmOrders, naverConfirmIsAlready });   // #780 체험 주문 자동 발주확인 = #92 와 같은 함수·같은 중계
+// #814 계산서 발행현황(정산관리 탭 · 표 tax_invoices · 채우기 = 창구 invoice-month.js · 확인 전 숫자는 어느 합계에도 안 섞음)
+require('./tax-invoices.js').mount(app, { pool, authMiddleware, adminOnly, writeAudit, matchItemToPricing, fetchSettlements: require('./agents/세미.js')._fetchSettlements });
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });

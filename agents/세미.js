@@ -910,6 +910,7 @@ async function filteredReport({ pool, helpers, keyword, partner, period, wantFil
 }
 
 module.exports = {
+    _fetchSettlements: fetchSettlements,   // #814 계산서 발행현황의 「우리 정산 월 합계」가 같은 단가 재계산을 씀(tax-invoices.js)
     live: true, // 실전 연결됨 (2차) — 마루 라우팅 시 실제 실행 대상
     steps: ['정산 데이터 조회 중...', '거래처·품목별 집계 중...', '전년 동기대비 분석 중...'],
     stepDelayMs: 1500,
