@@ -14,6 +14,25 @@
     const addDays = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
     const DOW = '일월화수목금토';
     const dLabel = d => { if (!d) return '날짜 미정'; const [, m, dd] = d.split('-'); const w = DOW[new Date(d + 'T00:00:00Z').getUTCDay()]; const t = today(); return `${+m}월 ${+dd}일(${w})` + (d === t ? ' · 오늘' : d === addDays(t, 1) ? ' · 내일' : ''); };
+    // #806(대표 10/21 「동명이인 · 날짜별로 · 예약번호」) 줄 머리 = 날짜(오늘·내일·11/7(토)) 위 · 시간 아래 / 여러 날짜 판 = 날짜순 + 날짜 구분 줄
+    const whenHtml = b => {
+        if (!b.visit_date) return '<span class="xp-wd">날짜 미정</span><span class="xp-wt">' + esc(b.visit_time || '--:--') + '</span>';
+        const t = today(), d = b.visit_date, [, m, dd] = d.split('-');
+        const day = d === t ? '오늘' : d === addDays(t, 1) ? '내일' : `${+m}/${+dd}(${DOW[new Date(d + 'T00:00:00Z').getUTCDay()]})`;
+        return `<span class="xp-wd${d === t ? ' now' : ''}">${day}</span><span class="xp-wt">${esc(b.visit_time || '--:--')}</span>`;
+    };
+    const byWhen = (a, b) => String(a.visit_date || '9999').localeCompare(String(b.visit_date || '9999')) || String(a.visit_time || '99').localeCompare(String(b.visit_time || '99')) || a.id - b.id;
+    const MULTI = ['need', 'nophone', 'offnodate'];   // 여러 날짜가 섞이는 판
+    function listHtml(list, multi) {
+        if (!multi) return list.map(rowHtml).join('');
+        let last = null, out = '';
+        for (const b of list.slice().sort(byWhen)) {
+            const k = b.visit_date || '';
+            if (k !== last) { out += `<li class="xp-dsep" role="presentation"><span>${esc(dLabel(b.visit_date))}</span></li>`; last = k; }
+            out += rowHtml(b);
+        }
+        return out;
+    }
     const toast = (m) => { if (typeof window.showToast === 'function') window.showToast(m); };
     const ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '메일 확인 필요' };
     const OFF = ['canceled', 'returned'];
@@ -80,8 +99,8 @@
         const sms = (b.source !== 'store' && !b.contact_at && !b.sms_recv_at) ? (noPhone(b) ? '<i class="xp-sms err">번호 미입력</i>' : '') : b.sms_skip === 'refused' ? '<i class="xp-sms err" title="문자봇 수신거부 기억 — 문자 안 보냄">수신거부</i>' : smsFail ? `<i class="xp-sms err" title="${esc(b.sms_error || '')}">문자 실패</i>` : b.sms_recv_at ? '<i class="xp-sms ok" title="접수 문자 보냄">문자✓</i>' : '';
         const editing = X.edit === b.id;
         return `<li class="xp-row${srcCls(b)}${off ? ' off' : ''}${vis ? ' vis' : ''}" data-id="${b.id}">
-            <span class="xp-time">${esc(b.visit_time || '--:--')}</span>
-            <div class="xp-main"><div class="xp-l1">${badge}<b class="xp-name">${esc(b.name || '(이름 없음)')}</b>${telLink(b.phone)}${chk}</div>
+            <span class="xp-time">${whenHtml(b)}</span>
+            <div class="xp-main"><div class="xp-l1">${badge}<b class="xp-name">${esc(b.name || '(이름 없음)')}</b>${b.order_no ? `<span class="xp-ono" title="${b.source === 'place' ? '예약번호(스마트플레이스 예약자관리와 대조)' : '주문번호(스토어)'}"><i>${b.source === 'place' ? '예약' : '주문'}</i>${esc(b.order_no)}</span>` : ''}${telLink(b.phone)}${chk}</div>
                 <div class="xp-l2"><span>${esc(people(b))}</span>${b.amount ? `<span>${Number(b.amount).toLocaleString('ko-KR')}원</span>` : ''}<span class="xp-st s-${esc(b.status)}">${ST[b.status] || esc(b.status)}</span>${cf}${sms}${b.memo ? `<span class="xp-memo">${esc(b.memo)}</span>` : ''}</div></div>
             <div class="xp-acts">${off || b.status === 'unknown' ? '' : `<button type="button" class="xp-btn xp-visit${vis ? ' on' : ''}" data-act="visit" aria-pressed="${vis}">${vis ? '방문함' : '방문'}</button>`}<button type="button" class="xp-btn" data-act="edit" aria-expanded="${editing}">고치기</button></div>
             ${editing ? editHtml(b) : X.day === 'nophone' && noPhone(b) ? quickHtml(b) : ''}</li>`;
@@ -165,10 +184,10 @@
         const live = list.filter(b => !OFF.includes(b.status));
         const tot = k => live.reduce((a, b) => a + (Number(b[k]) || 0), 0);
         const title = X.day === 'need' ? '날짜 확인 필요' : X.day === 'offnodate' ? '날짜 없는 취소·반품' : X.day === 'nophone' ? '번호 미입력(플레이스)' : dLabel(X.day);
-        const sub = X.day === 'nophone' ? `${list.length}건 · 스마트플레이스 예약 화면에서 손님 이름·번호를 보고 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [고치기]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
+        const sub = X.day === 'nophone' ? `${list.length}건 · 스마트플레이스 예약자관리에서 같은 예약번호 줄의 이름·전화번호를 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [고치기]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
         p.hidden = false;
         p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div><button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
-            <div class="xp-panel-b">${list.length ? `<ul>${list.map(rowHtml).join('')}</ul>` : '<div class="xp-empty">이 날은 예약이 없어요.</div>'}</div>`;
+            <div class="xp-panel-b">${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : '<div class="xp-empty">이 날은 예약이 없어요.</div>'}</div>`;
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
     }
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시

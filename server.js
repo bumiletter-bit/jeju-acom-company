@@ -15793,9 +15793,11 @@ async function cafe24OptRun(req, deps) {
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
 //   verify = read_product 1콜 + write_product 확증(테스트 상품 1건 — display:F·selling:F 진열·판매 안함, 실서비스 노출 0).
 setInterval(async () => {
+    // #805 요청 줄 읽기는 try 밖 — 요청 없는 평소 폴링이 DB 연결 지연으로 실패해도 결과 줄을 오류로 덮지 않는다(10/21 06:13~14 실측 · #803 과 같은 꼴)
+    let req;
+    try { req = await naverCfgGet('cafe24_product_request'); } catch (e) { console.error('[cafe24_product] 요청 읽기 실패(다음 주기):', String(e.message || e).slice(0, 200)); return; }
+    if (req == null) return;
     try {
-        const req = await naverCfgGet('cafe24_product_request');
-        if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_product_request'`);   // 선제거 — 반복 실행 방지
         const out = { action: req.action, at: new Date().toISOString(), server_version: VERSION };
         if (req.action === 'status') {
@@ -15989,9 +15991,11 @@ async function pointsMembers(q) {
 }
 setInterval(async () => {
     if (!process.env.RENDER) return;
+    // #805 요청 줄 읽기는 try 밖 — 요청 없는 평소 폴링이 DB 연결 지연으로 실패해도 결과 줄을 오류로 덮지 않는다(10/21 06:13~14 실측 · #803 과 같은 꼴)
+    let req;
+    try { req = await naverCfgGet('cafe24_points_request'); } catch (e) { console.error('[cafe24_points] 요청 읽기 실패(다음 주기):', String(e.message || e).slice(0, 200)); return; }
+    if (req == null) return;
     try {
-        const req = await naverCfgGet('cafe24_points_request');
-        if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_points_request'`);   // 선제거 — 두 번 지급 방지
         const out = { rid: req.rid || null, action: req.action, at: new Date().toISOString(), server_version: VERSION };
         try {
@@ -16083,9 +16087,11 @@ setInterval(async () => {
 //   ②네이버 재조회로 발주확인 미완(NOT_YET)·PAYED·무클레임 재검증 — 발주확인 완료 건은 대표가 이미 수동 안내한 손님(#217)이라 제외.
 //   발송 성공 건은 #92 철칙대로 발주확인 자동 실행. 문면·차단 가드(gift-masked·no-tel)는 수집기와 동일 함수 재사용(파이프라인 무변경).
 setInterval(async () => {
+    // #805 요청 줄 읽기는 try 밖 — 요청 없는 평소 폴링이 DB 연결 지연으로 실패해도 결과 줄을 오류로 덮지 않는다(10/21 06:13~14 실측 · #803 과 같은 꼴)
+    let req;
+    try { req = await naverCfgGet('kakao_backfill_request'); } catch (e) { console.error('[kakao_backfill] 요청 읽기 실패(다음 주기):', String(e.message || e).slice(0, 200)); return; }
+    if (req == null) return;
     try {
-        const req = await naverCfgGet('kakao_backfill_request');
-        if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'kakao_backfill_request'`);   // 선제거 — 반복 실행 방지
         const mode = req.mode === 'send' ? 'send' : 'preview';
         const rows = (await pool.query(`SELECT id, order_key FROM kakao_notify_log
