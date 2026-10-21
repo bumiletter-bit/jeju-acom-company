@@ -1065,6 +1065,7 @@ async function initDB() {
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min, run_at_time) VALUES ('coupon_expire_notify', true, 1440, '10:00') ON CONFLICT (key) DO NOTHING`);
     // #775 감귤체험 예약 관리(experience.js) — 스토어 수집 · 예약 메일 수집 · 손님 문자 = 전부 꺼진 채 시드(켜기는 총괄 · 문자는 설정 experience_notify.enabled 도 따로)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('experience_store', false, 5), ('experience_place', false, 5), ('experience_sms', false, 10) ON CONFLICT (key) DO NOTHING`);
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('naver_mail_index', false, 10) ON CONFLICT (key) DO NOTHING`);   // #811 메일 색인(켜기 = 배포 뒤 총괄)
     // #468(대표 GO 9/24): 네이버 정산 대조 — 회차(정산 예정일)별 「정산현황 넣은 값 ↔ 실입금」 분해 결과. settlement_status는 무접촉(읽기만).
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_settle_recon (
@@ -7422,7 +7423,7 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
 const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)',
     cafe24_notify: '자사몰 주문안내(#401)', cafe24_guide: '자사몰 발송안내(#401)', coupang_notify: '쿠팡 주문안내(#401·LMS)', coupang_guide: '쿠팡 발송안내(#401·LMS)', welcome_notify: '자사몰 가입환영(#401)',
-    coupon_expire_notify: '룰렛 쿠폰 만료 7일 전 안내(#467)',
+    coupon_expire_notify: '룰렛 쿠폰 만료 7일 전 안내(#467)', naver_mail_index: '메일 색인(#811)',
     experience_store: '체험 예약 · 스토어 주문(#775)', experience_place: '체험 예약 · 플레이스 메일(#775)', experience_sms: '체험 예약 · 손님 문자(#775)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
@@ -10077,7 +10078,8 @@ app.get('/api/public/store-snapshot', async (req, res) => {
 const COLLECT_LIMIT_MIN = { default: 5 };   // 키별로 다르게 두려면 { lms_guide: 10 } 처럼 · 0 = 풀어 주지 않음(종전 꼴 · 끝날 때까지 틱을 붙잡음)
 const COLLECT_WARN_MIN = 60;   // 이만큼 지나도 안 끝나면 텔레그램 경고 1번
 const COLLECT_GROUP = { kakao_notify: 'aligo', lms_guide: 'aligo', cafe24_notify: 'aligo', cafe24_guide: 'aligo', coupang_notify: 'aligo', coupang_guide: 'aligo',
-    welcome_notify: 'aligo', coupon_expire_notify: 'aligo', experience_sms: 'aligo' };   // 같은 묶음 = 하나가 뒤에서 도는 동안 나머지도 기다림
+    welcome_notify: 'aligo', coupon_expire_notify: 'aligo', experience_sms: 'aligo',
+    experience_place: 'imap', naver_mail_index: 'imap' };   // #811 'imap' = 같은 네이버 메일 계정 · 수집기끼리 동시 접속 1(메일 찾기 러너 포함 ≤2)   // 같은 묶음 = 하나가 뒤에서 도는 동안 나머지도 기다림
 const _collectRunning = new Map();   // key → 시작 시각(ms) — 뒤에서 도는 동안 같은 키(와 같은 묶음) 건너뜀
 function collectLimitMs(key) { const m = Object.prototype.hasOwnProperty.call(COLLECT_LIMIT_MIN, key) ? COLLECT_LIMIT_MIN[key] : COLLECT_LIMIT_MIN.default; return m > 0 ? m * 60000 : 0; }
 function collectBlocked(key) {
@@ -10152,7 +10154,7 @@ async function naverAutoCollectTick() {
         const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync,
             cafe24_notify: collectCafe24Notify, cafe24_guide: collectCafe24Guide, coupang_notify: collectCoupangNotify, coupang_guide: collectCoupangGuide, welcome_notify: collectWelcomeNotify,
             coupon_expire_notify: collectCouponExpireNotify,
-            experience_store: () => EXPERIENCE.collectStore(), experience_place: () => EXPERIENCE.collectPlace(), experience_sms: () => EXPERIENCE.collectSms() }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내 · #775 체험 예약
+            experience_store: () => EXPERIENCE.collectStore(), experience_place: () => EXPERIENCE.collectPlace(), experience_sms: () => EXPERIENCE.collectSms(), naver_mail_index: () => MAIL_RUNNER.collectIndex() }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내 · #775 체험 예약
         if (typeof fn !== 'function') return;   // #775 모르는 키(새 키를 옛 코드가 만났을 때 · #467 함정)는 건너뜀
         const label = NAVER_TIMER_LABELS[r.key] || r.key;
         const limitMs = collectLimitMs(r.key), t0 = Date.now();   // #796
@@ -10177,9 +10179,9 @@ setInterval(naverAutoCollectTick, 60 * 1000);
 //   🔴 enabled 가 true 가 아니면(설정 행이 없을 때 포함) 아무것도 지우지 않는다 — 하루 한 번 「지울 대상 건수·용량」만 'db_retention_last' 에 적는다(텔레그램 없음).
 //   켜면 한 틱(1분)에 한 가지만: ⓐ report_files 본문 비우기(행·이름·크기는 남김 · purged_at) ⓑ 끝난 지시의 첨부 그림 비우기 ⓒ 알림 이력 2종을 보관표(_archive)로 옮김(지우는 게 아니라 이사).
 //   DB 크기는 켜짐·꺼짐과 무관하게 매일 'db_size_log' 에 한 줄(월요일 아침 브리핑의 「DB ○MB · 이번 주 +○MB」 재료).
-const DB_RET_DEFAULT = { enabled: false, report_days: 90, image_days: 30, log_days: 365, image_statuses: ['완료', '취소', '질문종결', '응답됨', '대체됨', '반려'] };   // 끝난 상태 전부(총괄 10/8) — 「승인됨」(실행 전)·「오류확인」([다시 맡기기]에 그림이 필요)은 넣지 않는다
+const DB_RET_DEFAULT = { enabled: false, report_days: 90, image_days: 30, log_days: 365, mail_days: 365, image_statuses: ['완료', '취소', '질문종결', '응답됨', '대체됨', '반려'] };   // 끝난 상태 전부(총괄 10/8) — 「승인됨」(실행 전)·「오류확인」([다시 맡기기]에 그림이 필요)은 넣지 않는다
 const DB_RET_LOG_TABLES = ['kakao_notify_log', 'lms_guide_log'];
-const DB_RET_BATCH = { report: 50, image: 200, log: 5000 };   // 한 번에 손대는 행 수(오래 잠그지 않게) — 남으면 같은 날 다음 틱에 이어서(하루 최대 DB_RET_ROUNDS 번)
+const DB_RET_BATCH = { report: 50, image: 200, log: 5000, mail: 5000 };   // #811 mail = mail_index(메일 머리 색인) 받은 지 mail_days 지난 줄 지움(계산서 대조는 1년 안)   // 한 번에 손대는 행 수(오래 잠그지 않게) — 남으면 같은 날 다음 틱에 이어서(하루 최대 DB_RET_ROUNDS 번)
 const DB_RET_ROUNDS = 20;
 const DB_RET_AT = '03:40';   // KST · 상품 스냅샷(04:30)·자사몰 점검(05:10) 앞
 function dbRetentionCfg(raw) {
@@ -10187,7 +10189,7 @@ function dbRetentionCfg(raw) {
     const num = (x, d, min) => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= min ? n : d; };   // 하한보다 작으면 기본값(실수로 「1일」을 넣어도 안 지워지게)
     const st = Array.isArray(v.image_statuses) ? v.image_statuses.map(s => String(s).slice(0, 20)).filter(Boolean).slice(0, 12) : [];
     return { enabled: v.enabled === true, report_days: num(v.report_days, DB_RET_DEFAULT.report_days, 30), image_days: num(v.image_days, DB_RET_DEFAULT.image_days, 7),
-        log_days: num(v.log_days, DB_RET_DEFAULT.log_days, 180), image_statuses: st.length ? st : DB_RET_DEFAULT.image_statuses.slice() };
+        log_days: num(v.log_days, DB_RET_DEFAULT.log_days, 180), mail_days: num(v.mail_days, DB_RET_DEFAULT.mail_days, 180), image_statuses: st.length ? st : DB_RET_DEFAULT.image_statuses.slice() };
 }
 // 지울 대상 세기 — 읽기만
 async function dbRetentionCount(cfg) {
@@ -10199,8 +10201,10 @@ async function dbRetentionCount(cfg) {
                              AND COALESCE(processed_at, created_at) < NOW() - make_interval(days => $1::int)`, [cfg.image_days, cfg.image_statuses]);
     const logs = {};
     for (const t of DB_RET_LOG_TABLES) logs[t] = (await one(`SELECT count(*)::int AS n FROM ${t} WHERE created_at < NOW() - make_interval(days => $1::int)`, [cfg.log_days])).n;
+    const mail = (await one(`SELECT to_regclass('public.mail_index') IS NOT NULL AS ok`)).ok
+        ? (await one(`SELECT count(*)::int AS n FROM mail_index WHERE at < NOW() - make_interval(days => $1::int)`, [cfg.mail_days])).n : 0;   // #811 표가 아직 없으면(첫 색인 전) 0
     const db = await one(`SELECT pg_database_size(current_database())::bigint AS b`);
-    return { report: { n: rf.n, bytes: Number(rf.bytes) }, image: { n: im.n, bytes: Number(im.bytes) }, logs, db_bytes: Number(db.b) };
+    return { report: { n: rf.n, bytes: Number(rf.bytes) }, image: { n: im.n, bytes: Number(im.bytes) }, logs, mail, db_bytes: Number(db.b) };
 }
 // 알림 이력 → 보관표로 이사(한 문장 = 옮긴 만큼만 원표에서 빠진다). 보관표는 처음 쓸 때 만들고, 원표에 칸이 늘었으면 보관표에도 같은 칸을 더한다
 async function dbRetentionArchive(t, days) {
@@ -10241,9 +10245,13 @@ async function dbRetentionRunJob(job, cfg) {
         return r.rowCount || 0;
     }
     if (job.indexOf('log:') === 0) return dbRetentionArchive(job.slice(4), cfg.log_days);
+    if (job === 'mail') {   // #811 메일 머리 색인 = 메일함에 원본이 그대로라 이사 없이 지움(필요하면 다시 색인)
+        const r = await pool.query(`DELETE FROM mail_index WHERE id IN (SELECT id FROM mail_index WHERE at < NOW() - make_interval(days => $1::int) ORDER BY id LIMIT ${DB_RET_BATCH.mail})`, [cfg.mail_days]);
+        return r.rowCount || 0;
+    }
     return 0;
 }
-const DB_RET_LIMIT_OF = job => job === 'report' ? DB_RET_BATCH.report : job === 'image' ? DB_RET_BATCH.image : DB_RET_BATCH.log;
+const DB_RET_LIMIT_OF = job => job === 'report' ? DB_RET_BATCH.report : job === 'image' ? DB_RET_BATCH.image : job === 'mail' ? DB_RET_BATCH.mail : DB_RET_BATCH.log;
 let _dbRetBusy = false, _dbRetDoneDay = '', _dbRetQueue = [];
 async function dbRetentionTick(nowMs) {
     if (_dbRetBusy) return null;
@@ -10259,7 +10267,7 @@ async function dbRetentionTick(nowMs) {
                 const last = (await naverCfgGet('db_retention_last')) || {};
                 const done = Object.assign({}, last.done); done[item.job] = (Number(done[item.job]) || 0) + n;
                 await naverCfgSet('db_retention_last', Object.assign({}, last, { done }));
-                await writeAudit({ action: 'purge', targetType: 'db_retention', changes: { after: { job: item.job, rows: n, days: item.job === 'report' ? cfg.report_days : item.job === 'image' ? cfg.image_days : cfg.log_days } }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
+                await writeAudit({ action: 'purge', targetType: 'db_retention', changes: { after: { job: item.job, rows: n, days: item.job === 'report' ? cfg.report_days : item.job === 'image' ? cfg.image_days : item.job === 'mail' ? cfg.mail_days : cfg.log_days } }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
                 console.log(`[보관 정리] ${item.job}: ${n}행`);
             }
             if (n >= DB_RET_LIMIT_OF(item.job) && item.round + 1 < DB_RET_ROUNDS) _dbRetQueue.push({ job: item.job, round: item.round + 1 });
@@ -10275,7 +10283,7 @@ async function dbRetentionTick(nowMs) {
         const cfg = dbRetentionCfg(await naverCfgGet('db_retention'));
         const targets = await dbRetentionCount(cfg);
         await naverCfgSet('db_retention_last', { date: today, at: new Date(nowMs || Date.now()).toISOString(), enabled: cfg.enabled,
-            days: { report: cfg.report_days, image: cfg.image_days, log: cfg.log_days }, image_statuses: cfg.image_statuses, targets, done: {} });
+            days: { report: cfg.report_days, image: cfg.image_days, log: cfg.log_days, mail: cfg.mail_days }, image_statuses: cfg.image_statuses, targets, done: {} });
         const sizeLog = ((await naverCfgGet('db_size_log')) || []).filter(x => x && x.d && x.d !== today).slice(-119);
         sizeLog.push({ d: today, b: targets.db_bytes });
         await naverCfgSet('db_size_log', sizeLog);
@@ -10284,8 +10292,9 @@ async function dbRetentionTick(nowMs) {
             if (targets.report.n > 0) _dbRetQueue.push({ job: 'report', round: 0 });
             if (targets.image.n > 0) _dbRetQueue.push({ job: 'image', round: 0 });
             for (const t of DB_RET_LOG_TABLES) if (targets.logs[t] > 0) _dbRetQueue.push({ job: 'log:' + t, round: 0 });
+            if (targets.mail > 0) _dbRetQueue.push({ job: 'mail', round: 0 });
         }
-        console.log(`[보관 정리] 대상 — 보고서 파일 ${targets.report.n}건 · 지시 첨부 ${targets.image.n}건 · 알림 이력 ${DB_RET_LOG_TABLES.map(t => targets.logs[t]).join('+')}행 · DB ${Math.round(targets.db_bytes / 1048576)}MB · ${cfg.enabled ? '정리 켜짐' : '세기만(꺼짐)'}`);
+        console.log(`[보관 정리] 대상 — 보고서 파일 ${targets.report.n}건 · 지시 첨부 ${targets.image.n}건 · 알림 이력 ${DB_RET_LOG_TABLES.map(t => targets.logs[t]).join('+')}행 · 메일 색인 ${targets.mail}줄 · DB ${Math.round(targets.db_bytes / 1048576)}MB · ${cfg.enabled ? '정리 켜짐' : '세기만(꺼짐)'}`);
         return { counted: true, enabled: cfg.enabled, targets, queued: _dbRetQueue.map(q => q.job) };
     } catch (e) { console.error('[보관 정리] 틱 오류:', e.message); return { error: e.message }; }
     finally { _dbRetBusy = false; }
@@ -15319,6 +15328,16 @@ setInterval(async () => {
         try { await naverCfgSet('aligo_selftest_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
+// ── #813 창구 로그인 만료 알림 시작 — 창구(launcher)가 'desk_login_expired' {at, done, notified, …} 를 쓰면 텔레그램 1번(쿨다운은 창구가 6시간)
+async function deskLoginExpiredTick() {
+    let v; try { v = await naverCfgGet('desk_login_expired'); } catch (e) { console.error('[#813 창구 로그인 만료] 읽기 실패:', String(e.message || e).slice(0, 120)); return 0; }
+    if (!v || typeof v !== 'object' || v.done || v.notified) return 0;
+    await notifyTelegram('🔑 창구 대표 요금제 로그인 만료 — 대표 PC 터미널에서 /login · 그동안 대표 지시는 콘솔 키로 대신 처리 중');
+    await naverCfgSet('desk_login_expired', Object.assign({}, v, { notified: true, notified_at: new Date().toISOString() }));
+    return 1;
+}
+setInterval(() => { deskLoginExpiredTick().catch(e => console.error('[#813 창구 로그인 만료] 알림 실패:', String(e.message || e).slice(0, 120))); }, 60000);
+// ── #813 창구 로그인 만료 알림 끝
 
 // ══════════════ 지시 #395: 주문 정리기 (현금·단체주문 주소 정리 → CJ 발송 엑셀) ══════════════
 //   juso 프록시: 승인키 = env JUSO_API_KEY만 (코드·화면·브라우저 노출 0). 같은 검색어 5분 캐시 + 과호출 가드(대표 조건 4).
@@ -18708,7 +18727,7 @@ const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, admin
     experienceProductIds, isExperienceOrder, resolveReceiver, isMaskedTel, kakaoNotify, notifyTelegram,
     naverConfirmOrders, naverConfirmIsAlready });   // #780 체험 주문 자동 발주확인 = #92 와 같은 함수·같은 중계
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
-require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });
+const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답

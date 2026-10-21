@@ -27,7 +27,7 @@ const trust = require('./trust-desk');
 const DESK_DIR = path.join(ROOT, '★에이전트오피스');
 const KEY_FILE = path.join(os.homedir(), '.akkome', 'desk-api-key.txt');
 const LOG_DIR = path.join(os.homedir(), '.akkome', 'logs');
-const LOG = path.join(os.homedir(), '.akkome', 'launcher.log');
+const LOG = process.env.DESK_LOG || path.join(os.homedir(), '.akkome', 'launcher.log');   // #813 시험은 DESK_LOG 로 다른 파일(없으면 종전 그대로)
 const LOCK_PORT = 47469;
 const TICK_MS = 10000;                   // 상태 기록·화면 신호 확인 주기(종전 그대로)
 const POLL_MS = 2000;                    // #498 새 지시 확인 주기
@@ -88,8 +88,8 @@ async function cfgGet(key) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [key]);
     return r.rows[0] ? r.rows[0].value : null;
 }
-async function cfgSet(key, value) {
-    await pool.query(
+async function cfgSet(key, value, p) {   // p = 시험용 pool(#813 · 없으면 종전 그대로)
+    await (p || pool).query(
         `INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify(value)]);
 }
@@ -172,6 +172,47 @@ const SUB_RETRY_MS = 30 * 60 * 1000;
 const SUB_LOGIN_NOTE = '대표 요금제 로그인이 만료됐습니다 — 대표 지시는 당분간 콘솔 키로 처리합니다. PC 의 Claude Code 터미널에서 /login 을 해 주세요';
 const subAuthDown = () => st.subAuthFailAt && Date.now() - st.subAuthFailAt < SUB_RETRY_MS;
 const isAuthFail = r => !!(r && r.info && (r.info.error === 'authentication_failed' || /Failed to authenticate|OAuth session expired/i.test(r.info.result_text || '')));
+
+// #813 ③(대표 10/21 「고」) 로그인 만료를 사람이 알게 — 10/21 새벽엔 로그 한 줄뿐이라 7시간 뒤에야 알았다(#2980).
+//   만료를 보면 ①설정 'desk_login_expired' {at, done:false, todo_n, notified:false}(서버 1분 틱이 텔레그램 1회를 보내고 notified 를 켬 · 서버 쪽 몫)
+//   ②대표 할 일(owner_todo · 「지금 챙길 일」 대표 칸) 한 줄 — 같은 글이 열려 있으면 더 안 넣음 ③LOGIN_COOL_MS 안 재발은 건너뜀.
+//   대표 요금제가 다시 성공하면(= /login 함) 둘 다 내림(done). 창구에 텔레그램 시크릿이 없어 창구는 DB 에만 적는다.
+//   deps = 시험용 주입(가짜 pool·log·now) · 돌려주는 값 = 한 일.
+const LOGIN_FLAG = 'desk_login_expired', LOGIN_COOL_MS = 6 * 3600000;
+const LOGIN_TODO_TEXT = '창구 대표 요금제 로그인 만료 — PC 터미널에서 /login (그동안 대표 지시는 콘솔 키로 대신 처리 중)';
+async function loginTodoLoad(p) { const r = await p.query(`SELECT value FROM agent_office_config WHERE key = 'owner_todo'`); const v = r.rows.length ? r.rows[0].value : null; return v && Array.isArray(v.items) ? v : { items: [] }; }
+const loginTodoSave = (p, v) => p.query(`INSERT INTO agent_office_config(key, value) VALUES('owner_todo', $1::jsonb) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(v)]);
+const loginAudit = (p, action, n, changes) => p.query(`INSERT INTO audit_logs(action, target_type, target_id, changes, source, actor_name) VALUES($1, 'owner_todo', $2, $3::jsonb, 'desk', '창구 대기 프로그램')`, [action, String(n), JSON.stringify(changes)]).catch(() => { });
+async function loginExpiredNote(why, deps) {
+    const d = Object.assign({ pool, log, now: Date.now }, deps || {});
+    const cur = ((await d.pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [LOGIN_FLAG])).rows[0] || {}).value || null;
+    if (cur && !cur.done && Number.isFinite(Date.parse(cur.at)) && d.now() - Date.parse(cur.at) < LOGIN_COOL_MS) return { skipped: 'cool' };
+    const v = await loginTodoLoad(d.pool);
+    let it = v.items.find(x => !x.done && x.text === LOGIN_TODO_TEXT);
+    if (!it) {
+        const n = v.items.reduce((m, x) => Math.max(m, x.n || 0), 0) + 1;
+        it = { n, text: LOGIN_TODO_TEXT, when: '지금', where: '대표 PC · 창구 대기 프로그램(#813)', at: new Date(d.now() + 9 * 3600000).toISOString().slice(0, 10) };
+        v.items.push(it); await loginTodoSave(d.pool, v); await loginAudit(d.pool, 'create', n, { text: it.text, why: '#813 로그인 만료 감지' });
+    }
+    const flag = { at: new Date(d.now()).toISOString(), done: false, todo_n: it.n, notified: false, why: String(why || '').slice(0, 120), host: os.hostname() };
+    await cfgSet(LOGIN_FLAG, flag, d.pool);
+    st.loginOpen = true;
+    d.log(`대표 요금제 로그인 만료 표시 — 설정 ${LOGIN_FLAG} · 대표 할 일 ${it.n}번(서버가 텔레그램 1회)`);
+    return { flagged: true, todo_n: it.n };
+}
+async function loginRecovered(deps) {
+    const d = Object.assign({ pool, log, now: Date.now }, deps || {});
+    if (st.loginOpen === false && !(deps && deps.force)) return { skipped: 'closed' };
+    const cur = ((await d.pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [LOGIN_FLAG])).rows[0] || {}).value || null;
+    if (!cur || cur.done) { st.loginOpen = false; return { skipped: 'none' }; }
+    const v = await loginTodoLoad(d.pool);
+    const it = v.items.find(x => !x.done && (x.n === cur.todo_n || x.text === LOGIN_TODO_TEXT));
+    if (it) { it.done = true; it.done_at = new Date(d.now() + 9 * 3600000).toISOString().slice(0, 10); await loginTodoSave(d.pool, v); await loginAudit(d.pool, 'update', it.n, { done: true, text: it.text, why: '#813 대표 요금제 다시 성공(/login)' }); }
+    await cfgSet(LOGIN_FLAG, Object.assign({}, cur, { done: true, done_at: new Date(d.now()).toISOString() }), d.pool);
+    st.loginOpen = false;
+    d.log(`대표 요금제 다시 성공 — 로그인 만료 표시 내림${it ? ` · 대표 할 일 ${it.n}번 done` : ''}`);
+    return { cleared: true, todo_n: it ? it.n : null };
+}
 
 function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 · opt = { model, prompt, stream, runId, live }
     opt = opt || {};
@@ -458,6 +499,48 @@ async function subscriptionUsers() {
     return subIds;
 }
 
+// #813 ④(대표 10/21 「고」) 같은 지시 묶기 — 같은 사람이 DUP_SEC 안에 같은 지시를 또 보내면(아침 정산 이미지 2번 등 · 같은 질문이 두 번 나가던 것)
+//   둘째는 첫째가 끝날 때까지 집지 않는다. 첫째가 질문 → 둘째 = 「앞 지시(#n)에서 같은 내용을 묻고 있어요」 질문종결 · 완료 → 「앞 지시 #n 결과와 같음」 완료
+//   · 판독완료·확인표작성·승인대기·안내 → 안내(정산 두 번 저장 막기) · 오류·취소·반려·질문종결 → 묶지 않고 둘째를 그대로 처리.
+//   같음 = 글(공백 빼고) · 이어서 지시 대상(reply_to) · 첨부 이름 · 첨부 자료(payload) · 그림(md5) 전부 같을 때만(보수적 — 하나라도 다르면 안 묶음).
+//   집어 주는 --id/--ids 시험 길은 묶지 않는다(번호를 사람이 고름) · 시험 번호 계정(#638)은 nextOrder 가 원래 안 집음.
+const DUP_SEC = parseInt(process.env.DESK_DUP_SEC, 10) || 120;
+const DUP_WAIT = ['대기', '처리중', '승인됨'], DUP_ROUTE = ['판독완료', '확인표작성', '승인대기', '안내'];
+const dupGo = new Set();   // 묶지 않기로 정한 지시(앞 = 더 작은 번호라 나중에 앞 지시가 새로 생길 일은 없다)
+async function dupParent(o, p) {
+    if (o.created_by_id == null) return null;
+    const r = await p.query(
+        `SELECT a.id, a.status, a.result->>'dup_of' AS dup_of
+           FROM pending_orders a JOIN pending_orders b ON b.id = $1
+          WHERE a.is_deleted = false AND a.id < b.id AND a.created_by_id = b.created_by_id
+            AND b.payload IS NULL AND COALESCE(b.content, '') NOT LIKE '[%'   -- 사람이 친 지시만 · 화면이 만든 지시(「[최종발주 메모 읽기]」·「[아침 정리]」 등 = 자기 번호 결과를 기다림)는 안 묶음
+            AND a.created_at >= b.created_at - make_interval(secs => $2::int) AND a.created_at <= b.created_at
+            AND regexp_replace(COALESCE(a.content, ''), '\\s', '', 'g') = regexp_replace(COALESCE(b.content, ''), '\\s', '', 'g')   -- 템플릿 글자라 \\ 두 번(SQL 에는 \s 하나)
+            AND a.reply_to IS NOT DISTINCT FROM b.reply_to AND COALESCE(a.file_name, '') = COALESCE(b.file_name, '')
+            AND md5(COALESCE(a.payload::text, '')) = md5(COALESCE(b.payload::text, ''))
+            AND ((a.image_data IS NULL AND b.image_data IS NULL) OR md5(a.image_data::text) = md5(b.image_data::text))
+          ORDER BY a.id DESC LIMIT 1`, [o.id, DUP_SEC]);
+    return r.rows[0] || null;
+}
+async function dupDecide(o, deps) {   // → 'go'(그대로 처리) | 'wait'(앞 지시 끝날 때까지 안 집음) | 'resolved'(둘째를 닫음)
+    const d = Object.assign({ pool, log, audit: require('./_db').audit }, deps || {});
+    if (dupGo.has(o.id)) return 'go';
+    const a = await dupParent(o, d.pool);
+    if (!a) { dupGo.add(o.id); return 'go'; }
+    if (DUP_WAIT.includes(a.status)) return 'wait';
+    const first = a.dup_of ? Number(a.dup_of) : a.id;
+    let status, result;
+    if (a.status === '질문') { status = '질문종결'; result = { type: 'clarify', question: `앞 지시(#${first})에서 같은 내용을 묻고 있어요 — 그쪽에 답해 주세요.`, summary: '같은 지시', by: 'desk', dup_of: first }; }
+    else if (a.status === '완료') { status = '완료'; result = { type: 'desk_answer', title: '앞 지시와 같음', answer: `앞 지시 #${first} 와 같은 내용이라 다시 처리하지 않았어요 — #${first} 결과를 봐 주세요.`, by: 'desk', dup_of: first }; }
+    else if (DUP_ROUTE.includes(a.status)) { status = '안내'; result = { type: 'route', notice: `같은 내용(같은 그림)을 앞 지시 #${first} 에서 처리하고 있어요 — 두 번 올리지 않도록 이 지시는 닫았어요.`, summary: '같은 지시', dup_of: first }; }
+    else { dupGo.add(o.id); return 'go'; }
+    const u = await d.pool.query(`UPDATE pending_orders SET status = $2, result = $3::jsonb, processed_at = NOW() WHERE id = $1 AND status IN ('대기', '승인됨') RETURNING id`, [o.id, status, JSON.stringify(result)]);
+    if (!u.rows.length) return 'wait';
+    d.log(`#${o.id} 같은 지시 묶음 — 앞 지시 #${first}(${a.status}) → ${status}`);
+    try { await d.audit('desk_dup', o.id, { status, dup_of: first, parent_status: a.status }); } catch (e) { /* 기록 실패는 무시 */ }
+    return 'resolved';
+}
+
 const ORDER_COLS = `o.id, o.status, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image, o.content, o.reply_to, o.file_name,
                     (SELECT p.content FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content`;
 async function nextOrder(onlyId) {
@@ -481,7 +564,12 @@ async function nextOrder(onlyId) {
            AND COALESCE(o.created_by_id, 0) < 990000   -- #638: 시험 번호 계정 지시는 스스로 집지 않는다(번호를 집어 주는 --ids 길은 그대로)
          ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 20`);
     // #503 같은 사람의 지시는 한 번에 하나(이어서 지시가 앞 답을 받아야 하므로 차례를 지킨다) · 돌고 있는 건 제외 · 중간발주(바로 처리)는 조회 통로가 하나라 한 번에 하나
-    for (const o of r.rows) if (!blocked(o)) return o;
+    for (const o of r.rows) {
+        if (blocked(o)) continue;
+        let dd = 'go';
+        if (typeof dupDecide === 'function') { try { dd = await dupDecide(o); } catch (e) { dd = 'go'; try { log(`#${o.id} 같은 지시 확인 실패(무시 · 그대로 처리): ${e.message}`); } catch (_) { /* 무시 */ } } }   // #813 ④ (구간만 떼어 도는 검증에선 함수가 없음 = 종전대로)
+        if (dd === 'go') return o;
+    }
     return null;
 }
 
@@ -550,10 +638,11 @@ async function handle(order, key) {
                 // #798 대표 요금제 로그인 만료 → 같은 지시를 콘솔 키로 바로 다시(횟수 안 씀)
                 if (!key && st.key && isAuthFail(r) && !ender.fired) {   /* #799 사람이 종료했으면 다시 돌리지 않음 */
                     st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
+                    loginExpiredNote(`#${order.id}`).catch(e => log(`로그인 만료 표시 실패(무시): ${e.message}`));   // #813
                     log(`#${order.id} 대표 요금제 로그인 만료(${(r.info.result_text || r.info.error || '').slice(0, 80)}) → 콘솔 키로 다시 돌림`);
                     if (got.run_id) await appendStep(got.run_id, 'lane', '🔑 대표 요금제 만료 → 콘솔 키').catch(() => { });
                     r = await run(order, st.key, ropt);
-                } else if (!key && !isAuthFail(r) && r.code === 0) { st.subAuthFailAt = 0; if (st.note === SUB_LOGIN_NOTE) st.note = ''; }
+                } else if (!key && !isAuthFail(r) && r.code === 0) { st.subAuthFailAt = 0; if (st.note === SUB_LOGIN_NOTE) st.note = ''; loginRecovered().catch(e => log(`로그인 만료 내림 실패(무시): ${e.message}`)); }   // #813
             }
             // 미리 넣은 경우 자료 파일은 여기서 지운다(창구에게 「지우지 말라」고 했으므로) — 다시 시도하게 되면 받기(claim)가 파일을 새로 쓴다
             if (inl && inl.cleanup) { try { fs.unlinkSync(inl.cleanup); } catch (e) { /* 이미 없음 */ } }
@@ -566,9 +655,10 @@ async function handle(order, key) {
             r = await runDesk(order, key, ropt);
             if (!key && st.key && isAuthFail(r) && !ender.fired) {   /* #799 사람이 종료했으면 다시 돌리지 않음 */   // #798
                 st.subAuthFailAt = Date.now(); st.note = SUB_LOGIN_NOTE;
+                loginExpiredNote(`#${order.id}`).catch(e => log(`로그인 만료 표시 실패(무시): ${e.message}`));   // #813
                 log(`#${order.id} 대표 요금제 로그인 만료 → 콘솔 키로 다시 돌림`);
                 r = await runDesk(order, st.key, ropt);
-            }
+            } else if (!key && !isAuthFail(r) && r.code === 0) { st.subAuthFailAt = 0; if (st.note === SUB_LOGIN_NOTE) st.note = ''; loginRecovered().catch(e => log(`로그인 만료 내림 실패(무시): ${e.message}`)); }   // #813 (미리 받기 끈 길도 같게)
         }
     } catch (e) { log(`#${order.id} 처리 중 오류: ${e.message}`); }
     finally { clearInterval(keep); ender.stop(); try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* respond.js 가 이미 치웠거나 없음(#598 A) */ } }
@@ -730,4 +820,4 @@ async function main() {
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans, _t799: { killTree, endWatcher, kids, nextOrder } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t799: { killTree, endWatcher, kids, nextOrder }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
