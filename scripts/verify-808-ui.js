@@ -107,6 +107,7 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v808-')); const page = path.j
             await tap(pg.locator('#xp-panel .xp-row[data-id="2"] [data-act="edit"]')); await pg.waitForTimeout(200);
             ok(await pg.locator('[data-act="del"]').count() === 0 && await pg.locator('#xp-e-amount').count() === 0, `[${tag}] 플레이스 수정 = 삭제·금액 칸 없음`);
             // Esc 순서: 달력 → 수정 칸
+            await pg.locator('#xp-e-date').scrollIntoViewIfNeeded(); await pg.waitForTimeout(150);   // #822 판 위에 현장 판매 칸이 생겨 칸이 화면 밖일 수 있음 — 스크롤을 먼저 끝내야 공통 달력이 scroll 로 안 닫힘(실제 탭은 이미 초점이 있어 스크롤 0)
             await pg.locator('#xp-e-date').click(); await pg.waitForTimeout(150);
             await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
             ok(!(await pg.locator('.akm-cal').isVisible()) && await pg.locator('#xp-e-date').count() === 1, `[${tag}] Esc 1 = 달력만 닫힘(수정 칸 그대로)`);

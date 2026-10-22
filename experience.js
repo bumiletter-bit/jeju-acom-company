@@ -7,7 +7,8 @@
 //     GET   /api/agent-office/experience?from=YYYY-MM-DD&to=YYYY-MM-DD   { items, summary:{today,tomorrow,need_check,teams,…}, settings_view }
 //     PATCH /api/agent-office/experience/:id     { visit_date?, visit_time?, exp_count?, entry_count?, infant_count?, memo?, status? }  (직원이 날짜를 고치면 date_fixed · 수집이 다시 덮지 않음)
 //     POST  /api/agent-office/experience/:id/visit  { on }  방문 체크
-//     GET   /api/agent-office/experience/export.xlsx?from&to   엑셀
+//     GET   /api/agent-office/experience/export.xlsx?from&to   엑셀(#822 시트 ① 체험 예약 디자인 · 시트 ② 현장 판매(귤))
+//     PUT   /api/agent-office/experience/sales/:day {amount, memo}   #822 현장 판매(귤) 적기(전 직원 · 0·빈 메모 = 줄 지움) · 목록 GET 응답의 sales:[{day,amount,memo,updated_by,updated_at}]
 //     GET   /api/agent-office/experience/:id/sms-preview      접수·전날 문자 미리보기(보내지 않음)
 //     GET/PUT /api/agent-office/experience/settings            문구·켜기·하루 상한(PUT = 관리자)
 //   요청 줄(창구·총괄용 · 토큰 없이): agent_office_config 'experience_mail_probe_request' → 'experience_mail_probe_result'(메일 수·낱말별 건수·최근 1통의 보낸 주소와 제목 꼴만 · 본문·손님 정보 0)
@@ -46,6 +47,51 @@ const pad2 = n => String(n).padStart(2, '0');
 const validYmd = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
 const DOW = '일월화수목금토';
 const dowOf = ymd => DOW[new Date(ymd + 'T00:00:00Z').getUTCDay()];
+// #822(대표 10/22 「엑셀 디자인 테두리부터 이쁘게 · 취소·반품 색 · 번호 010-0000-0000」) 엑셀 = 시트 ① 체험 예약(머리 인디고·흰 글 · 전체 테두리 · 틀 고정 · 필터 · 금액 #,##0
+//   · 취소·반품 줄 = 연빨강 바탕 + 회색 글 + 이름 취소선 · 방문 = 연초록 · 날짜 확인 필요 칸 = 호박 · 맨 아래 합계(취소·반품 뺀 것) · 접수 안내 = 알림톡/문자) · 시트 ② 현장 판매(귤)(날짜·요일·금액·메모·적은 사람 + 합계)
+const XL = { head: 'FF4F46E5', line: 'FFD0D5DD', off: 'FFFEF3F2', offInk: 'FF98A2B3', vis: 'FFECFDF3', warn: 'FFFFFAEB', sum: 'FFF2F4F7', sale: 'FFFFF4E6' };
+const fmtTelXl = p => { const s = String(p || ''), d = s.replace(/\D/g, ''); return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? (d.startsWith('02') ? `${d.slice(0, 2)}-${d.slice(2, 6)}-${d.slice(6)}` : `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`) : s; };   // 10·11자리만 하이픈(02 = 2-4-4) · 그 밖은 원래 값 그대로
+function buildXlsx(rows, sales, from, to) {
+    const ExcelJS = require('exceljs'); const wb = new ExcelJS.Workbook();
+    wb.creator = '제주아꼼이네 회사프로그램';
+    const thin = { style: 'thin', color: { argb: XL.line } }, border = { top: thin, left: thin, bottom: thin, right: thin };
+    const fill = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+    const head = (ws, n, lastRow) => { const h = ws.getRow(1); h.height = 24; h.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }; h.alignment = { vertical: 'middle', horizontal: 'center' }; for (let i = 1; i <= n; i++) { const c = h.getCell(i); c.fill = fill(XL.head); c.border = border; } ws.views = [{ state: 'frozen', ySplit: 1 }]; ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, lastRow || 1), column: n } }; };   // 필터 범위 = 머리 ~ 마지막 자료 줄(합계 줄은 밖 · 정렬해도 안 섞임)
+    const body = (row, n, extra) => { row.height = 20; for (let i = 1; i <= n; i++) { const c = row.getCell(i); c.border = border; c.alignment = Object.assign({ vertical: 'middle' }, c.alignment || {}); if (extra) extra(c, i); } };
+    // ① 체험 예약
+    const ws = wb.addWorksheet('체험 예약', { properties: { defaultRowHeight: 20 } });
+    ws.columns = [{ header: '방문일', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '시간', key: 't', width: 7 }, { header: '구분', key: 's', width: 9 }, { header: '이름', key: 'n', width: 11 }, { header: '연락처', key: 'p', width: 15 },
+        { header: '체험', key: 'e', width: 6 }, { header: '입장', key: 'en', width: 6 }, { header: '유아', key: 'i', width: 6 }, { header: '금액', key: 'a', width: 11 }, { header: '상태', key: 'st', width: 9 }, { header: '접수 안내', key: 'sm', width: 9 }, { header: '날짜 확인', key: 'dk', width: 14 }, { header: '메모', key: 'm', width: 28 }, { header: '번호', key: 'no', width: 19 }];
+    const N = ws.columns.length, ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '확인 필요' };
+    const live = { e: 0, en: 0, i: 0, a: 0, n: 0 };
+    for (const r of rows) {
+        const off = r.status === 'canceled' || r.status === 'returned', vis = r.status === 'visited';
+        const row = ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || '', s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: fmtTelXl(r.phone),
+            e: r.exp_count == null ? null : Number(r.exp_count), en: r.entry_count == null ? null : Number(r.entry_count), i: r.infant_count == null ? null : Number(r.infant_count), a: r.amount == null ? null : Number(r.amount), st: ST[r.status] || r.status, sm: r.sms_recv_at ? (r.sms_recv_via === 'alimtalk' ? '알림톡' : '문자') : '', dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
+        if (!off) { live.e += Number(r.exp_count) || 0; live.en += Number(r.entry_count) || 0; live.i += Number(r.infant_count) || 0; live.a += Number(r.amount) || 0; live.n++; }
+        body(row, N, (c, i) => {
+            if ([1, 2, 3, 4, 7, 8, 9, 11, 12].includes(i)) c.alignment = { vertical: 'middle', horizontal: 'center' };
+            if (i === 10) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; }
+            if (off) { c.fill = fill(XL.off); c.font = { color: { argb: XL.offInk }, strike: i === 5 }; }
+            else if (vis) c.fill = fill(XL.vis);
+            if (i === 11) c.font = Object.assign({}, c.font || {}, { bold: true, color: { argb: off ? 'FFB42318' : vis ? 'FF067647' : 'FF101828' } });
+            if (i === 13 && !r.date_ok) { c.fill = fill(XL.warn); c.font = { color: { argb: 'FFB54708' }, bold: true }; }
+        });
+    }
+    const lastWs = ws.rowCount;
+    const tot = ws.addRow({ d: '합계', w: '', t: '', s: `${live.n}팀`, n: '(취소·반품 제외)', p: '', e: live.e, en: live.en, i: live.i, a: live.a, st: '', sm: '', dk: '', m: '', no: '' });
+    body(tot, N, (c, i) => { c.fill = fill(XL.sum); c.font = { bold: true }; c.border = Object.assign({}, border, { top: { style: 'double', color: { argb: XL.line } } }); if ([1, 4, 7, 8, 9].includes(i)) c.alignment = { vertical: 'middle', horizontal: 'center' }; if (i === 10) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; } });
+    // ② 현장 판매(귤)
+    const w2 = wb.addWorksheet('현장 판매(귤)', { properties: { defaultRowHeight: 20 } });
+    w2.columns = [{ header: '날짜', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '현장 판매 금액', key: 'a', width: 15 }, { header: '메모', key: 'm', width: 40 }, { header: '적은 사람', key: 'by', width: 11 }, { header: '적은 때', key: 'at', width: 17 }];
+    let sum = 0;
+    for (const s of sales || []) { const row = w2.addRow({ d: s.day, w: dowOf(s.day), a: Number(s.amount) || 0, m: s.memo || '', by: s.updated_by || '', at: s.updated_at || '' }); sum += Number(s.amount) || 0; body(row, 6, (c, i) => { if ([1, 2, 5, 6].includes(i)) c.alignment = { vertical: 'middle', horizontal: 'center' }; if (i === 3) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; c.fill = fill(XL.sale); } }); }
+    const lastW2 = w2.rowCount;
+    const t2 = w2.addRow({ d: '합계', w: '', a: sum, m: `${(sales || []).length}일 · ${from} ~ ${to}`, by: '', at: '' });
+    body(t2, 6, (c, i) => { c.fill = fill(XL.sum); c.font = { bold: true }; c.border = Object.assign({}, border, { top: { style: 'double', color: { argb: XL.line } } }); if (i === 1) c.alignment = { vertical: 'middle', horizontal: 'center' }; if (i === 3) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; } });
+    head(ws, N, lastWs); head(w2, 6, lastW2);
+    return wb;
+}
 const digits = s => String(s || '').replace(/\D/g, '');
 
 // 시각 글자 → 'HH:MM' (손님이 자유롭게 쓴 값 · 못 읽으면 null)
@@ -202,6 +248,8 @@ module.exports = function mountExperience(app, deps) {
         for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)', 'confirm_state VARCHAR(12)', 'confirm_tries INTEGER NOT NULL DEFAULT 0', 'confirm_at TIMESTAMPTZ', 'confirm_error TEXT', 'dispatch_tries INTEGER NOT NULL DEFAULT 0', 'dispatch_at TIMESTAMPTZ', 'dispatch_error TEXT', 'contact_at TIMESTAMPTZ', 'contact_by VARCHAR(60)', 'sms_recv_via VARCHAR(10)', 'sms_eve_via VARCHAR(10)'])   // #808 *_via = 실제로 나간 길(alimtalk = 알림톡(실패 땐 알리고가 문자로 대체) | lms = 문자)   // #804 contact_* = 사람이 플레이스 손님 이름·번호를 넣은 때·사람(메일 재수집이 덮지 않음 · 문자 대상)
             await pool.query(`ALTER TABLE experience_bookings ADD COLUMN IF NOT EXISTS ${c}`);
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_mail_seen (message_id VARCHAR(200) PRIMARY KEY, uid BIGINT, booking_id INTEGER, state VARCHAR(16), seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+        // #822(대표 10/22) 현장 판매(귤) = 그날 체험장에서 직접 판 귤 매출 — 날짜당 한 줄(합계 + 자유 메모) · 체험 예약 결제(네이버·플레이스)와 섞지 않음 · 이 창과 엑셀 둘째 시트에만 보임(정산·통계 무관)
+        await pool.query(`CREATE TABLE IF NOT EXISTS experience_daily_sales (day DATE PRIMARY KEY, amount INTEGER NOT NULL DEFAULT 0, memo VARCHAR(200), updated_by VARCHAR(60), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     })().catch(e => console.error('[#775] 표 준비 실패:', e.message)));
 
     // ── 스토어 수집 ─────────────────────────────────────────────────────
@@ -572,26 +620,49 @@ module.exports = function mountExperience(app, deps) {
             WHERE (visit_date BETWEEN $1::date AND $2::date) OR (visit_date IS NULL AND created_at > NOW() - interval '60 days') OR (NOT date_ok AND status IN ('confirmed','unknown') AND created_at > NOW() - interval '60 days')
             ORDER BY visit_date NULLS FIRST, visit_time NULLS LAST, id LIMIT 2000`, [from, to])).rows;
     }
+    // #822 현장 판매(귤) 줄 — 기간 안 날짜별(없는 날은 줄 없음) · 표가 아직 없으면 빈 목록(옛 가짜 pool·기동 직후)
+    const SALES_COLS = `to_char(day,'YYYY-MM-DD') AS day, amount, memo, updated_by, to_char(updated_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS updated_at`;
+    const listSales = async (from, to) => (await pool.query(`SELECT ${SALES_COLS} FROM experience_daily_sales WHERE day BETWEEN $1::date AND $2::date ORDER BY day`, [from, to]).catch(() => ({ rows: [] }))).rows;
     app.get('/api/agent-office/experience', authMiddleware, async (req, res) => {
         try {
             await ready;
             const today = kstDay();
             const from = ymdOk(req.query.from) ? req.query.from : today, to = ymdOk(req.query.to) ? req.query.to : addDays(from, 13);
-            const [items, sum, c] = await Promise.all([listRows(from, to), summary(), notifyCfg()]);
-            res.json({ from, to, items, summary: sum, settings_view: { sms_enabled: c.enabled, daily_cap: c.daily_cap, alimtalk: !!(c.alimtalk && c.alimtalk.enabled) } });   // #804 alimtalk = 화면 발송 표시 글(✓ 알림톡 / ✓ 문자)
+            const [items, sum, c, sales] = await Promise.all([listRows(from, to), summary(), notifyCfg(), listSales(from, to)]);
+            res.json({ from, to, items, sales, summary: sum, settings_view: { sms_enabled: c.enabled, daily_cap: c.daily_cap, alimtalk: !!(c.alimtalk && c.alimtalk.enabled) } });   // #804 alimtalk = 화면 발송 표시 글(✓ 알림톡 / ✓ 문자)
         } catch (e) { console.error('[#775] 목록:', e.message); res.status(500).json({ error: '체험 예약을 읽지 못했어요' }); }
+    });
+    // #822 현장 판매(귤) 적기 = 날짜당 한 줄 덮어쓰기(전 직원) · 금액 0 이고 메모도 비면 그 줄 지움 · audit experience_sales(before/after · 날짜는 changes 에)
+    app.put('/api/agent-office/experience/sales/:day', authMiddleware, async (req, res) => {
+        try {
+            await ready;
+            const day = String(req.params.day || '');
+            if (!ymdOk(day) || !validYmd(+day.slice(0, 4), +day.slice(5, 7), +day.slice(8, 10))) return res.status(400).json({ error: '날짜가 이상해요' });
+            const b = req.body || {};
+            const rawAmt = String(b.amount == null ? '' : b.amount).replace(/[,\s원]/g, '');   // 「120,000원」은 받고 「1e9」「12.5」 같은 꼴은 거절(숫자만 · 9자리 = 1억)
+            if (rawAmt && !/^\d{1,9}$/.test(rawAmt)) return res.status(400).json({ error: '금액은 숫자만 0~1억 원' });
+            const amount = Number(rawAmt || 0);
+            if (!(amount >= 0 && amount <= 100000000)) return res.status(400).json({ error: '금액은 0~1억 원' });
+            const memo = String(b.memo || '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+            const who = String(actor(req).name || '').slice(0, 60) || null;
+            const before = (await pool.query(`SELECT ${SALES_COLS} FROM experience_daily_sales WHERE day=$1::date`, [day])).rows[0] || null;
+            let after = null;
+            if (!amount && !memo) { if (before) await pool.query(`DELETE FROM experience_daily_sales WHERE day=$1::date`, [day]); }
+            else {
+                await pool.query(`INSERT INTO experience_daily_sales (day, amount, memo, updated_by, updated_at) VALUES ($1::date, $2, $3, $4, NOW())
+                    ON CONFLICT (day) DO UPDATE SET amount=EXCLUDED.amount, memo=EXCLUDED.memo, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, [day, amount, memo, who]);
+                after = (await pool.query(`SELECT ${SALES_COLS} FROM experience_daily_sales WHERE day=$1::date`, [day])).rows[0] || null;
+            }
+            if ((before && before.amount) !== (after && after.amount) || (before && before.memo) !== (after && after.memo)) await audit('experience_sales', null, { day, before: before && { amount: before.amount, memo: before.memo }, after: after && { amount: after.amount, memo: after.memo } }, actor(req));
+            res.json({ ok: true, day, item: after });
+        } catch (e) { console.error('[#822] 현장 판매:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
     });
     app.get('/api/agent-office/experience/export.xlsx', authMiddleware, async (req, res) => {
         try {
             await ready;
             const today = kstDay(); const from = ymdOk(req.query.from) ? req.query.from : today, to = ymdOk(req.query.to) ? req.query.to : addDays(from, 13);
-            const rows = await listRows(from, to);
-            const ExcelJS = require('exceljs'); const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('체험 예약');
-            ws.columns = [{ header: '방문일', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '시간', key: 't', width: 7 }, { header: '구분', key: 's', width: 8 }, { header: '이름', key: 'n', width: 10 }, { header: '연락처', key: 'p', width: 14 },
-                { header: '체험', key: 'e', width: 6 }, { header: '입장', key: 'en', width: 6 }, { header: '유아', key: 'i', width: 6 }, { header: '금액', key: 'a', width: 10 }, { header: '상태', key: 'st', width: 8 }, { header: '날짜 확인', key: 'dk', width: 14 }, { header: '메모', key: 'm', width: 24 }, { header: '번호', key: 'no', width: 18 }];
-            const ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '확인 필요' };
-            for (const r of rows) ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || '', s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: r.phone || '', e: r.exp_count, en: r.entry_count, i: r.infant_count, a: r.amount, st: ST[r.status] || r.status, dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
-            ws.getRow(1).font = { bold: true };
+            const [rows, sales] = await Promise.all([listRows(from, to), listSales(from, to)]);
+            const wb = buildXlsx(rows, sales, from, to);
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('체험예약_' + from + '_' + to + '.xlsx')}`);
             await wb.xlsx.write(res); res.end();
@@ -734,4 +805,4 @@ module.exports = function mountExperience(app, deps) {
 
     return { collectStore, collectPlace, collectSms, todoLine, summary, mailProbe, probeTick, ready, sendRecvNow, _t: { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, upsertStore, tplFor } };
 };
-module.exports._t = { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, maskSubject, imapOpen, imapDate, alimVars, fillAlim, EXP_ALIMTALK, tplFor };
+module.exports._t = { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, maskSubject, imapOpen, imapDate, alimVars, fillAlim, EXP_ALIMTALK, tplFor, buildXlsx, fmtTelXl };

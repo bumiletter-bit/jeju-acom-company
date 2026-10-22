@@ -8,6 +8,7 @@
 //   #808(대표 10/21): 날짜 판 [+ 예약 추가] = 수기(현금) 예약(source manual · 남색 띠 · 「수기」 · 번호 넣으면 그 자리에서 접수 안내) · 「고치기」 → 「수정」 · 방문일 = 공통 달력(akm-date) · 시간 = 30분 알약 + 직접 입력
 //     번호 칸 = 치는 대로 010-0000-0000 · 「✓」 배지 = 실제로 나간 길(알림톡/문자) · 수기 건만 「삭제(취소)」·「되돌리기」
 //     달력 머리 「번호 미입력 n건」 알약 → 그 묶음 판(줄마다 이름·번호 바로 넣기) · 「메일 원문」·「예약 취소로」·「확정으로 되돌리기」 단추 뺌(취소는 플레이스·스토어에서 → 수집이 반영)
+//   #822(대표 10/22): [문자 설정] 단추 숨김(기능·서버 그대로) · 현장 판매(귤) = 날짜 판 머리 아래 칸(금액·메모 · 전 직원 · PUT …/sales/:day) · 달력 칸 「현장 120,000」(폰 = ₩ 표식) · 달력 위 「이달 현장 판매(귤) 합계」 띠 · 엑셀 둘째 시트
 (function () {
     'use strict';
     const $ = id => document.getElementById(id);
@@ -69,7 +70,7 @@
         el.addEventListener('change', e => { if (e.target.id === 'xp-off') { X.showOff = e.target.checked; render(); } });
         el.addEventListener('input', onInput);   // #808
         el.addEventListener('focusout', e => { if (e.target.classList && e.target.classList.contains('xp-ph')) telCheck(e.target); });
-        if (isAdmin()) $('xp-set-btn').hidden = false;
+        // #822(대표 10/22 「문자 설정은 기능 그대로 두고 노출만 없애」): 단추는 늘 숨김 · 설정 창·저장 길(toggleSet/saveSet · 서버 PUT)은 그대로 — 필요하면 콘솔 AkmExp.settings()
         return el;
     }
     async function load(quiet) {
@@ -102,6 +103,17 @@
     const sentLabel = () => (X.data && X.data.settings_view && X.data.settings_view.alimtalk) ? '✓ 알림톡' : '✓ 문자';
     const sentMsg = v => v === 'sent' ? (sentLabel() === '✓ 알림톡' ? '저장 · 접수 알림톡 보냈어요 ✓' : '저장 · 접수 문자 보냈어요 ✓') : /^skip:/.test(String(v || '')) ? '저장 · 접수 안내는 이미 보냈어요 ✓' : v === 'refused' ? '저장했어요 · 이 번호는 문자 수신거부라 안 보냈어요' : v === 'failed' ? '저장했어요 · 보내기 실패 — 30분 뒤 다시 보내요' : /^later:/.test(String(v || '')) ? '저장했어요 · 지금은 안 보냄(' + String(v).slice(6) + ') — 조건이 되면 저절로 보내요' : '저장했어요';
     const telLink = p => p ? `<a class="xp-tel" href="tel:${esc(p)}">${esc(String(p).replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3'))}</a>` : '<span class="xp-dim">연락처 없음</span>';
+    // #822 현장 판매(귤) — 서버 sales 줄(날짜당 하나) · 금액 글자 = 1,234,567 · 이달 합계
+    const won = n => Number(n || 0).toLocaleString('ko-KR');
+    const saleOf = day => ((X.data && X.data.sales) || []).find(s => s.day === day) || null;
+    const saleMonth = ym => { const l = ((X.data && X.data.sales) || []).filter(s => s.day.startsWith(ym + '-') && Number(s.amount) > 0); return { sum: l.reduce((a, s) => a + Number(s.amount), 0), days: l.length }; };
+    function saleHtml(day) {
+        const s = saleOf(day), past = day <= today();
+        return `<div class="xp-sale-box" id="xp-sale-box" data-day="${day}"><div class="xp-sale-h"><b>현장 판매(귤)</b><small class="${s ? 'who' : ''}">${s ? `${esc(s.updated_by || '')} · ${esc(s.updated_at || '')}` : (past ? '그날 체험장에서 직접 판 귤 매출 — 금액과 메모를 적어 두세요' : '방문일이 되면 그날 판 귤 매출을 적어 두세요')}</small></div>
+            <label>금액(원)<input type="text" inputmode="numeric" class="xp-won" id="xp-sl-amount" value="${s && s.amount ? esc(won(s.amount)) : ''}" placeholder="0" maxlength="11" autocomplete="off"></label>
+            <label class="g">메모<input type="text" id="xp-sl-memo" maxlength="200" value="${esc(s && s.memo || '')}" placeholder="예: 5kg 12박스 · 현금 8 / 카드 4" autocomplete="off"></label>
+            <button type="button" class="xp-btn pri" data-act="sale-save">저장</button></div>`;
+    }
     function rowHtml(b) {
         const off = OFF.includes(b.status), vis = b.status === 'visited';
         const badge = `<i class="xp-src ${srcOf(b)[0]}">${srcOf(b)[1]}</i>`;
@@ -182,6 +194,8 @@
         if (X.jumpFrom) html += `<div class="xp-jump">${+X.jumpFrom.slice(5)}월엔 남은 예약이 없어 ${+X.ym.slice(5)}월을 보여 드려요 · <button type="button" class="xp-link" data-nav="0">‹ 이번 달</button></div>`;
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
         if (offNoDate.length) html += `<button type="button" class="xp-needbar off" data-day="offnodate"><b>날짜 없는 취소·반품 ${offNoDate.length}건</b><span>${esc(offNoDate.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${offNoDate.length > 3 ? ' 외' : ''} — 눌러서 보기</span></button>`;
+        const sm = saleMonth(X.ym);   // #822 이달 현장 판매 합계(0이면 안 보임)
+        if (sm.sum) html += `<div class="xp-sales-sum" id="xp-sales-sum"><b>이달 현장 판매(귤)</b><span>${won(sm.sum)}원</span><em>· ${sm.days}일 · 날짜 칸을 눌러 적어요</em></div>`;
         html += '<div class="xp-cal" role="grid" aria-label="체험 예약 달력"><div class="xp-cal-h" role="row">' + [...DOW].map((w, i) => `<span role="columnheader" class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + '</div><div class="xp-cal-g">';
         const lead = new Date(Date.UTC(mr.y, mr.m - 1, 1)).getUTCDay();
         for (let i = 0; i < lead; i++) html += '<span class="xp-cell out" aria-hidden="true"></span>';
@@ -192,8 +206,9 @@
             const cls = ['xp-cell', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', ds === t ? 'today' : '', ds < t ? 'past' : '', list.length ? 'has' : ''].filter(Boolean).join(' ');
             const names = list.slice(0, 3).map(b => `<span class="xp-nm${srcCls(b)}${OFF.includes(b.status) ? ' off' : ''}">${esc(b.visit_time || '')} ${esc(b.name || '(이름 없음)')}</span>`).join('');
             const more = list.length > 3 ? `<span class="xp-more">+${list.length - 3} 더보기</span>` : '';
-            const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}`;
-            html += `<button type="button" class="${cls}" data-day="${ds}" aria-label="${esc(aria)}"><span class="xp-dn">${ds === t ? '오늘' : day}</span>${live.length ? `<span class="xp-cnt"><b>${live.length}팀</b><em> · ${ppl}명</em></span>` : (list.length ? '<span class="xp-cnt off">취소만</span>' : '')}<span class="xp-nms">${names}${more}</span>${live.length ? `<span class="xp-dots" aria-hidden="true">${live.slice(0, 5).map(b => `<i class="xp-dot${srcCls(b)}"></i>`).join('')}</span>` : ''}</button>`;
+            const sl = saleOf(ds), sale = sl && Number(sl.amount) > 0 ? `<span class="xp-sale" title="현장 판매(귤) ${won(sl.amount)}원"><i>₩</i><em>현장 ${won(sl.amount)}</em></span>` : '';   // #822
+            const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}${sale ? ` · 현장 판매 ${won(sl.amount)}원` : ''}`;
+            html += `<button type="button" class="${cls}" data-day="${ds}" aria-label="${esc(aria)}"><span class="xp-dn">${ds === t ? '오늘' : day}</span>${live.length ? `<span class="xp-cnt"><b>${live.length}팀</b><em> · ${ppl}명</em></span>` : (list.length ? '<span class="xp-cnt off">취소만</span>' : '')}<span class="xp-nms">${names}${more}</span>${live.length ? `<span class="xp-dots" aria-hidden="true">${live.slice(0, 5).map(b => `<i class="xp-dot${srcCls(b)}"></i>`).join('')}</span>` : ''}${sale}</button>`;
         }
         const tail = (7 - (lead + mr.last) % 7) % 7;
         for (let i = 0; i < tail; i++) html += '<span class="xp-cell out" aria-hidden="true"></span>';
@@ -219,7 +234,8 @@
         p.hidden = false;
         const isDay = /^\d{4}-\d{2}-\d{2}$/.test(X.day || '');   // #808 날짜 판에만 [+ 예약 추가]
         p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
-            <div class="xp-panel-b">${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
+            <div class="xp-panel-b">${isDay ? saleHtml(X.day) : ''}${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
+        X.saleDirty = false;   // #822 판을 새로 그리면 적던 값은 없어진 것
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
     }
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시
@@ -239,6 +255,11 @@
                 try { t.setSelectionRange(i, i); } catch (_) { }
             } const er = $(t.id + '-err'); if (er && !er.hidden && telOk(t.value) && t.value.replace(/[^0-9]/g, '').length >= 10) { er.hidden = true; t.removeAttribute('aria-invalid'); } return; }
         if (t.id === 'xp-a-amount') { t.dataset.touched = '1'; return; }
+        if (t.id === 'xp-sl-amount' || t.id === 'xp-sl-memo') {   // #822 금액 = 숫자만 · 1,234,567 꼴 · 적는 중엔 60초 새로고침이 판을 다시 안 그림
+            X.saleDirty = true;
+            if (t.id === 'xp-sl-amount') { const d = t.value.replace(/[^0-9]/g, '').slice(0, 9); const f = d ? Number(d).toLocaleString('ko-KR') : ''; if (f !== t.value) { t.value = f; try { t.setSelectionRange(f.length, f.length); } catch (_) { } } }
+            return;
+        }
         if (/^xp-a-(exp|entry)$/.test(t.id)) { const a = $('xp-a-amount'); if (a && !a.dataset.touched) a.value = (Number(($('xp-a-exp') || {}).value) || 0) * PRICE.exp + (Number(($('xp-a-entry') || {}).value) || 0) * PRICE.entry; }
         if (t.id === 'xp-e-time' || t.id === 'xp-a-time') markTp(t);
     }
@@ -259,6 +280,15 @@
         const btn = e.target.closest('[data-act]'); if (!btn) return;
         const act = btn.dataset.act;
         if (act === 'close-panel') return closeDay();
+        if (act === 'sale-save') {   // #822 현장 판매(귤) 저장 — 날짜당 한 줄 덮어쓰기 · 0·빈 메모 = 지움
+            const box = btn.closest('.xp-sale-box'), day = box && box.dataset.day; if (!day) return;
+            const amount = Number(String(($('xp-sl-amount') || {}).value || '').replace(/[^0-9]/g, '')) || 0, memo = String(($('xp-sl-memo') || {}).value || '').trim();
+            btn.disabled = true; const r = await call(`/api/agent-office/experience/sales/${day}`, 'PUT', { amount, memo });
+            if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
+            const list = (X.data.sales = (X.data.sales || []).filter(s => s.day !== day)); if (r.body.item) list.push(r.body.item);
+            X.saleDirty = false; toast(r.body.item ? `현장 판매 ${won(r.body.item.amount)}원 저장했어요` : '현장 판매 줄을 지웠어요');
+            render(); return;
+        }
         if (act === 'add') { X.adding = X.adding === X.day ? null : X.day; X.edit = 0; renderPanel(); const n = $('xp-a-name'); if (n) n.focus({ preventScroll: false }); return; }
         if (act === 'add-cancel') { X.adding = null; return renderPanel(); }
         if (act === 'add-save') {
@@ -376,7 +406,7 @@
         // 뒤로가기 칸 = 지금 기록(ao-desk 의 aoDesk 깊이 값 포함) 위에 한 칸 — 깊이 값을 이어 붙여야 ao-desk 가 제 칸을 잘못 닫지 않는다
         try { history.pushState(Object.assign({}, history.state || {}, { xpExp: 1 }), ''); X.pushed = true; window.addEventListener('popstate', onPop); } catch (e) { X.pushed = false; }
         X.ym = ymOf(today()); X.day = null; X.edit = 0; X.auto = true; X.jumpFrom = null; load();
-        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !document.activeElement.closest('#xp-set')) load(true); }, 60000);
+        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.saleDirty && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼
         setTimeout(() => { const c = $('xp-close'); if (c) c.focus({ preventScroll: true }); }, 0);
     }
     function close(fromPop) {
@@ -395,5 +425,5 @@
         if (e.target.closest('#desk-exp-now') || e.target.closest('#desk-todo-box .exp-go')) openSoon();
     });
     document.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('#desk-todo-box .exp-go')) { e.preventDefault(); openSoon(); } });
-    window.AkmExp = { open, close, isOpen: () => !!X.layer };
+    window.AkmExp = { open, close, isOpen: () => !!X.layer, settings: () => { if (X.layer && isAdmin()) toggleSet(); } };   // #822 settings = 숨긴 문자 설정 창(관리자 · 콘솔용)
 })();

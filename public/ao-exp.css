@@ -218,3 +218,34 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
     .xp-tpick { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .xp-panel-h { flex-wrap: wrap; }
 }
+/* #822(대표 10/22) 현장 판매(귤) = 날짜 칸 아래 귤색 한 줄(폰 = ₩ 표식) · 달력 위 이달 합계 띠 · 날짜 판 머리 아래 적는 칸 · [문자 설정] 단추는 숨김(기능 그대로) */
+.xp-sale { display: inline-flex; align-items: center; gap: 3px; margin-top: auto; padding: 1px 6px; border-radius: 999px; background: #FFF4E6; color: var(--x-pl); font-size: 11.5px; font-weight: 700; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.xp-sale i { font-style: normal; display: none; }
+html[data-ao-theme="dark"] .xp-sale { background: rgba(255, 146, 43, .18); }
+.xp-sales-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 10px 0 0; padding: 8px 14px; border: 1px solid #FFD8A8; border-radius: 12px; background: #FFF4E6; color: var(--x-ink); font-size: 13px; }
+.xp-sales-sum b { color: var(--x-pl); }
+.xp-sales-sum span { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.xp-sales-sum em { font-style: normal; color: var(--x-sub); font-size: 12px; }
+html[data-ao-theme="dark"] .xp-sales-sum { background: rgba(255, 146, 43, .14); border-color: rgba(255, 146, 43, .4); }
+.xp-sale-box { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; margin: 12px 0 4px; padding: 10px 12px 12px; border: 1px solid #FFD8A8; border-radius: 12px; background: #FFF9F2; }
+html[data-ao-theme="dark"] .xp-sale-box { background: rgba(255, 146, 43, .10); border-color: rgba(255, 146, 43, .4); }
+.xp-sale-h { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.xp-sale-h b { font-size: 14px; color: var(--x-pl); }
+.xp-sale-h small { font-size: 12px; color: var(--x-sub); }
+.xp-sale-box label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--x-sub); }
+.xp-sale-box label.g { flex: 1 1 180px; }
+.xp-sale-box input { min-height: 40px; padding: 6px 10px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 14px; }
+.xp-sale-box input.xp-won { width: 130px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.xp-sale-box label.g input { width: 100%; box-sizing: border-box; }
+.xp-sale-box .xp-btn { min-height: 40px; }
+@media (max-width: 960px) {
+    .xp-sale { padding: 0; background: transparent; margin-top: 0; align-self: center; }
+    .xp-sale i { display: inline; } .xp-sale em { display: none; }
+    .xp-sale-box .xp-btn { min-height: 44px; }
+}
+@media (max-width: 720px) {   /* 폰 = 한 줄(금액 · 메모 · 저장)로 낮게 — 아래 예약 줄이 가려지지 않게 · 안내 글은 숨김 */
+    .xp-sale-box { gap: 6px 8px; padding: 8px 10px 10px; }
+    .xp-sale-box input.xp-won { width: 96px; }
+    .xp-sale-box label.g { flex: 1 1 110px; }
+    .xp-sale-h small:not(.who) { display: none; }
+}
