@@ -14866,16 +14866,49 @@ setupNaverTimerCard();
         if (finding && !base.length) { body.innerHTML = `<div class="card si-group"><p class="si-empty">찾는 계산서가 없어요.</p></div>`; return; }
         const vis = visible();
         const keys = S.group === 'all' ? (S.groups.length && !finding ? S.groups.map(g => g.supplier) : GROUPS.map(g => g[0])) : [S.group];   // 서버 groups 순서 그대로
-        const monthNote = finding || wholeMonths() ? '' : `<p class="si-month-note">우리 정산 합계는 달 단위 — ${esc((S.months.length ? S.months : [S.from.slice(0, 7), S.to.slice(0, 7)].filter((v, i, a) => a.indexOf(v) === i)).map(x => +x.slice(5, 7) + '월').join('·'))} 통째로 더한 값이에요.</p>`;
+        const mList = esc((S.months.length ? S.months : [S.from.slice(0, 7), S.to.slice(0, 7)].filter((v, i, a) => a.indexOf(v) === i)).map(x => +x.slice(5, 7) + '월').join('·'));
+        const monthNote = finding || wholeMonths() ? '' : `<p class="si-month-note">우리 정산 합계는 달 단위 — ${mList} 통째로 더한 값이에요.</p>`;   // 옛 서버(stats 없음)일 때만
+        const boxN = n => Number(n).toLocaleString('ko-KR', { maximumFractionDigits: 1 });
         if (finding && S.group === 'all') vis.forEach(r => { if (!keys.includes(r.supplier)) keys.push(r.supplier); });   // 찾기에 3곳 밖 공급자가 나오면 그 묶음도
         const html = keys.map(k => {
             const rows = vis.filter(x => x.supplier === k), g = S.groups.find(x => x.supplier === k) || {};
             if (!rows.length && finding) return '';   // 기간 보기 = 3곳 늘 보임(0건이면 「아직 없음」 · 정산 합계는 그대로)
-            const stat = (l, v, c) => `<div class="si-stat${c ? ' ' + c : ''}"><span class="si-sl">${l}</span><span class="si-sv">${v}</span></div>`;
-            const cmp = finding ? '' : stat(`우리 정산 ${month ? '월 ' : ''}합계`, g.settle_total == null ? '—' : won(g.settle_total) + '원') + stat('계산서 합계', won(g.issued_total) + '원')
-                + stat('차이', g.diff == null ? '—' : Number(g.diff) === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="si-diffv">${g.diff > 0 ? '+' : '−'}${won(Math.abs(g.diff))}원</span>`, 'si-diff');
+            const stat = (l, v, c, sub) => `<div class="si-stat${c ? ' ' + c : ''}"><span class="si-sl">${l}</span><span class="si-sv">${v}</span>${sub ? `<span class="si-ss">${sub}</span>` : ''}</div>`;
+            const st = !finding && g.stats && typeof g.stats === 'object' ? g.stats : null;   // #823 새 머리 · 없으면(옛 서버) 종전 3칸
+            let cmp = '', note = '', ttl = g.settle_basis || '', mrows = '';
+            const boxDiff = (d, okv) => d === 0 ? '<span class="pill pill-ok si-match">일치</span>'   // 0 = 일치 · 허용 안(ok) = 회색 · 넘으면 호박
+                : `<span class="${okv ? 'si-ahead' : 'si-diffv'}">${d > 0 ? '+' : '−'}${boxN(Math.abs(d))}박스</span>`;
+            const okWord = (d, okv) => d === 0 ? '' : okv ? '대략 일치' : '확인 필요';
+            if (finding) { /* 찾기 = 머리 숫자 없음 */ }
+            else if (st && st.mode === 'balance') {
+                const bal = Number(st.balance) || 0, carry = Number(st.carry) || 0;
+                const base = st.start_date ? `기준 ${md(st.start_date)}${st.start_date === '2026-03-29' ? '(법인)' : ''} · ${carry ? `이월 ${carry < 0 ? '−' : ''}${won(Math.abs(carry))}원 포함` : '이월 없음'}` : '';
+                cmp = stat('누적 정산', won(st.cum_settle) + '원') + stat('누적 계산서', won(st.cum_invoice) + '원')
+                    + stat('미발행 잔액', bal === 0 ? '<span class="pill pill-ok si-match">없음</span>' : bal > 0 ? `<span class="si-diffv">${won(bal)}원</span>` : `<span class="si-ahead">계산서 앞섬 ${won(-bal)}원</span>`, 'si-diff', esc(base));
+                ttl = base;
+            } else if (st && st.mode === 'boxes') {
+                const d = Number(st.diff_boxes) || 0, okv = st.ok !== false;
+                cmp = stat('우리 박스', boxN(st.our_boxes) + '박스') + stat('계산서 박스', boxN(st.invoice_boxes) + '박스') + stat('차이', boxDiff(d, okv), 'si-diff', okv ? okWord(d, okv) : '<b class="si-diffv">' + okWord(d, okv) + '</b>');
+                ttl = `계산서 합계 ÷ ${won(st.unit)}원 = 박스${st.tolerance != null ? ` · ±${boxN(st.tolerance)}박스까지 대략 일치` : ''}`;
+                note = `<p class="si-month-note">${won(st.unit)}원/박스${st.vat_included === false ? '' : ' · 부가세 포함'}</p>`;
+                const mr = Array.isArray(st.month_rows) ? st.month_rows.filter(x => x && /^\d{4}-\d{2}$/.test(x.month || '')) : [];
+                const whole = ym => S.from <= ym + '-01' && S.to >= lastDay(ym);   // 그 달을 통째로 보는 조회에서만 [대조 확인]
+                const done = c => `<span class="si-cjok">✓ ${esc(c.by || '')} · ${esc(md(kstDay(c.at)))} 대조 확인</span>`;
+                const chkHtml = (ym, c) => !canEdit() ? (c ? done(c) : '')
+                    : c ? done(c) + `<button type="button" class="si-undo" data-si="cjcheck" data-v="${ym}" data-undo="1">되돌리기</button>`
+                    : !whole(ym) ? '<span class="si-cjnote">월 단위에서 확인</span>'
+                    : `<button type="button" class="btn-outline si-btn" data-si="cjcheck" data-v="${ym}">${+ym.slice(5, 7)}월 대조 확인</button>`;
+                if (mr.length) mrows = `<p class="si-mrcap">달 전체 기준</p><ul class="si-mrows" aria-label="달마다 박스 대조">${mr.map(x => {
+                    const dd = Number(x.diff_boxes) || 0, ok2 = x.ok !== false, none = Number(x.invoice_boxes) === 0 && !x.check, w = none ? '' : okWord(dd, ok2);   // 계산서 0 = 대조할 것 없음
+                    return `<li class="si-mr" data-m="${esc(x.month)}"><span class="si-mm">${+x.month.slice(5, 7)}월</span><span class="si-mn">우리 <b>${boxN(x.our_boxes)}</b></span><span class="si-mn">계산서 <b>${boxN(x.invoice_boxes)}</b></span><span class="si-md">${none ? '—' : boxDiff(dd, ok2)}${w ? ` <span class="si-ss${ok2 ? '' : ' si-diffv'}">${w}</span>` : ''}</span><span class="si-mc">${none ? '<span class="si-cjnote">계산서 아직 없음</span>' : chkHtml(x.month, x.check)}</span></li>`;
+                }).join('')}</ul>`;
+            } else {
+                cmp = stat(`우리 정산 ${month ? '월 ' : ''}합계`, g.settle_total == null ? '—' : won(g.settle_total) + '원') + stat('계산서 합계', won(g.issued_total) + '원')
+                    + stat('차이', g.diff == null ? '—' : Number(g.diff) === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="si-diffv">${g.diff > 0 ? '+' : '−'}${won(Math.abs(g.diff))}원</span>`, 'si-diff');
+                note = monthNote;
+            }
             const gchk = !finding && g.check_count ? `<span class="pill si-pill-chk si-gchk">원본 확인 ${g.check_count}건</span>` : '';
-            return `<section class="card si-group si-g-${esc(k)}" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><div class="si-gn"><h3><i class="si-dot" aria-hidden="true"></i>${esc(g.label || label(k))}</h3>${gchk}</div>${cmp ? `<div class="si-cmp"${g.settle_basis ? ` title="${esc(g.settle_basis)}"` : ''}>${cmp}</div>` : ''}</div>${cmp ? monthNote : ''}
+            return `<section class="card si-group si-g-${esc(k)}" aria-label="${esc(g.label || label(k))}"><div class="si-gh"><div class="si-gn"><h3><i class="si-dot" aria-hidden="true"></i>${esc(g.label || label(k))}</h3>${gchk}</div>${cmp ? `<div class="si-cmp"${ttl ? ` title="${esc(ttl)}"` : ''}>${cmp}</div>` : ''}</div>${cmp ? note + mrows : ''}
                 ${rows.length ? `<div class="table-scroll-wrapper si-tw"><table class="data-table si-table"><thead><tr><th>공급자</th><th>작성일</th><th>승인번호</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>받은 날</th><th>상태</th><th>할 일</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>` : `<p class="si-empty si-none-yet">${month ? '이 달' : '이 기간'} 계산서 아직 없음</p>`}</section>`;
         }).join('');
         body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
@@ -14899,6 +14932,15 @@ setupNaverTimerCard();
         if (k === 'prev' || k === 'next') { setMonth(ymShift((S.from || kstYm() + '-01').slice(0, 7), k === 'prev' ? -1 : 1)); load(); }   // 시작일의 달 기준 앞뒤 달 1일~말일
         else if (k === 'go') { if (!S.loading) query(); }
         else if (k === 'group') { S.group = b.dataset.v; render(); }
+        else if (k === 'cjcheck') {   // #823 CJ 달 단위 대조 확인 / 되돌리기
+            if (!canEdit() || !/^\d{4}-\d{2}$/.test(b.dataset.v || '')) return;
+            const undo = !!b.dataset.undo; b.disabled = true;
+            try {
+                await api('/api/tax-invoices/check', 'POST', undo ? { supplier: 'cj', month: b.dataset.v, undo: true } : { supplier: 'cj', month: b.dataset.v });
+                showToast(`CJ ${+b.dataset.v.slice(5, 7)}월 ${undo ? '대조 확인 되돌림' : '대조 확인'}`, 'success');
+                load();
+            } catch (err) { b.disabled = false; showToast('저장하지 못했어요 — ' + (err && err.message || ''), 'error'); }
+        }
         else if (k === 'reload') { if (S.found !== null) search(); else load(); }
         else if (k === 'pdf') openPdf(b.closest('tr').dataset.id, b);
         else if (k === 'act') {

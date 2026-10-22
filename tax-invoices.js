@@ -7,6 +7,9 @@ const SUPPLIERS = ['cj', 'sion', 'hyodon', 'other'];
 const LABEL = { cj: 'CJ대한통운(택배비)', sion: '시온(조천감귤농협)', hyodon: '효돈농협유통', other: '기타' };
 const SETTLE_PARTNER = { sion: '대성(시온)', hyodon: '효돈농협' };
 const CJ_PARTNERS = ['대성(시온)', '효돈농협', '기타거래처'], CJ_BOX_FEE = 3100;   // 정산관리와 같은 계산(agents/세미.js)
+// #823 CJ 계산서 박스 = 합계(부가세 포함 total_amount) ÷ 3,100(워커3 7달 대조 · 공급가 기준은 매달 수백 박스 모자람)
+// 시온·효돈 누적 잔액 기준일 기본 = 법인 첫 계산서(settlements 는 3/3 부터) · 기준일 이월(carry)·허용 박스 차이는 설정 tax_invoice
+const BALANCE_START_DEFAULT = '2026-03-29', CJ_BOX_TOLERANCE_DEFAULT = 30;
 const SHOWN = ['sion', 'hyodon', 'cj'];   // #816 대표 10/21 = 화면·검색은 이 셋만(순서 = 묶음 순서) · 'other' 줄은 표에 남고 안 보임
 const SHOWN_SQL = SHOWN.map(s => `'${s}'`).join(', ');   // 고정 글자(손님 값 아님)
 const YM = /^\d{4}-(0[1-9]|1[0-2])$/, YMD = /^\d{4}-\d{2}-\d{2}$/, MAX_DAYS = 366;
@@ -24,6 +27,9 @@ async function ensureTable(pool) {
         dedup_key TEXT NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS tax_invoices_approval ON tax_invoices (approval_no) WHERE approval_no IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS tax_invoices_issue ON tax_invoices (issue_date, supplier)`);
+    // #823 달 단위 [대조 확인](CJ 박스 대조 · 시온·효돈도 같은 길) · 한 거래처·한 달 = 한 줄
+    await pool.query(`CREATE TABLE IF NOT EXISTS tax_invoice_checks (supplier TEXT NOT NULL, month TEXT NOT NULL, checked_by INTEGER, checked_name TEXT,
+        checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (supplier, month))`);
 }
 const dedupKeyOf = (r) => r.approval_no ? 'a:' + r.approval_no : `m:${r.mail_folder || ''}:${r.mail_uidvalidity || 0}:${r.mail_uid || 0}`;
 // 창구 도구가 부름 — 같은 dedup_key 면 숫자·PDF·읽기 결과만 갱신(status·memo·확인 정보 = 사람이 누른 것 보존) · 돌려줌 { id, inserted }
@@ -70,8 +76,21 @@ async function settleTotals(pool, helpers, ym) {
     }
     const carry = Number(((await pool.query(`SELECT amount FROM cj_carryover WHERE month = $1 LIMIT 1`, [ym])).rows[0] || {}).amount) || 0;
     out.cj = boxes * CJ_BOX_FEE + carry;
-    return { totals: out, basis: { sion: `정산관리 대성(시온) ${Number(ym.slice(5))}월 합계`, hyodon: `정산관리 효돈농협 ${Number(ym.slice(5))}월 합계`, cj: `정산관리 택배비 ${Number(ym.slice(5))}월(박스 ${boxes} × 3,100 + 이월 ${carry.toLocaleString('ko-KR')})`, other: null } };
+    return { boxes, carry, totals: out, basis: { sion: `정산관리 대성(시온) ${Number(ym.slice(5))}월 합계`, hyodon: `정산관리 효돈농협 ${Number(ym.slice(5))}월 합계`, cj: `정산관리 택배비 ${Number(ym.slice(5))}월(박스 ${boxes} × 3,100 + 이월 ${carry.toLocaleString('ko-KR')})`, other: null } };
 }
+
+// #823 설정 tax_invoice = balance_start {date, sion:{carry}, hyodon:{carry}} · cj_box_tolerance · 없거나 틀리면 기본(3/29 · 이월 0 · 30박스)
+async function balanceStart(pool) {
+    let v = null;
+    try { v = ((await pool.query(`SELECT value FROM agent_office_config WHERE key = 'tax_invoice'`)).rows[0] || {}).value; } catch (_) { }
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = null; } }
+    const b = v && typeof v === 'object' && v.balance_start && typeof v.balance_start === 'object' ? v.balance_start : {};
+    const amt = (k) => { const a = Number(b[k] && b[k].carry); return Number.isFinite(a) ? Math.round(a) : 0; };
+    const tol = v && typeof v === 'object' ? v.cj_box_tolerance : null;   // 숫자일 때만(null·true·글자 = 기본)
+    return { date: typeof b.date === 'string' && !Number.isNaN(Date.parse(b.date + 'T00:00:00Z')) && isDay(b.date) ? b.date : BALANCE_START_DEFAULT, sion: amt('sion'), hyodon: amt('hyodon'),
+        tolerance: typeof tol === 'number' && Number.isFinite(tol) && tol >= 0 ? tol : CJ_BOX_TOLERANCE_DEFAULT };
+}
+const round1 = (x) => Math.round(x * 10) / 10;
 
 function mount(app, deps) {
     const { pool, authMiddleware, adminOnly, writeAudit } = deps;
@@ -104,14 +123,42 @@ function mount(app, deps) {
                 WHERE supplier IN (${SHOWN_SQL}) AND ${DAY} >= $1::date AND ${DAY} <= $2::date ORDER BY ${DAY}, id`, [from, to])).rows.map(shape);
             // 우리 정산 = 기간이 걸치는 달마다 월 합계를 더함(한 달 안이면 그 달 합계 그대로)
             const months = monthsOf(from, to), settle = { sion: 0, hyodon: 0, cj: 0 }, basis = { sion: [], hyodon: [], cj: [] };
-            for (const m of months) { const st = await settleTotals(pool, helpers, m); for (const s of SHOWN) { settle[s] += st.totals[s]; basis[s].push(st.basis[s]); } }
+            const ourBoxM = {};   // #823 달마다 CJ 우리 박스 = 박스 수 + 이월 금액 ÷ 3,100
+            for (const m of months) { const st = await settleTotals(pool, helpers, m); ourBoxM[m] = st.boxes + st.carry / CJ_BOX_FEE; for (const s of SHOWN) { settle[s] += st.totals[s]; basis[s].push(st.basis[s]); } }
             const checkOf = (g) => g.filter(r => r.read_status !== 'read' || r.total_amount == null).length;
+            // #823 묶음 머리 자료 — 시온·효돈 = 누적 잔액(기준일 ~ to · 정산·계산서 같은 끝) · CJ = 박스 대조(달마다 달 전체 · 머리 = 달 줄 합) + 달 [대조 확인]
+            const bs = await balanceStart(pool), before = to < bs.date;
+            const cum = { sion: { settle: 0, invoice: 0 }, hyodon: { settle: 0, invoice: 0 } };
+            if (!before) {
+                for (const r of await helpers.fetchSettlements(pool, helpers, bs.date, to)) {
+                    if (r.partner === SETTLE_PARTNER.sion) cum.sion.settle += r.amount; else if (r.partner === SETTLE_PARTNER.hyodon) cum.hyodon.settle += r.amount;
+                }
+                for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
+                    WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY supplier`, [bs.date, to])).rows) cum[r.supplier].invoice = Number(r.t) || 0;
+            }
+            const cjCheck = {};
+            for (const r of (await pool.query(`SELECT month, checked_name, checked_at FROM tax_invoice_checks WHERE supplier = 'cj' AND month >= $1 AND month <= $2`, [months[0], months[months.length - 1]])).rows)
+                cjCheck[r.month] = { by: r.checked_name, at: r.checked_at };
+            // CJ 계산서 = 걸린 달마다 그 달 전체(작성일 기준 · 보류 뺌) — 달 중간 조회여도 달 대조가 맞게
+            const cjInvM = {};
+            for (const r of (await pool.query(`SELECT to_char(${DAY}, 'YYYY-MM') AS m, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
+                WHERE supplier = 'cj' AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY 1`, [months[0] + '-01', monthEnd(months[months.length - 1])])).rows) cjInvM[r.m] = Number(r.t) || 0;
+            const boxRow = (ob, ib) => { const d = round1(ib - ob); return { our_boxes: ob, invoice_boxes: ib, diff_boxes: d, ok: Math.abs(d) <= bs.tolerance }; };
+            const statsOf = (s, live) => {
+                if (s === 'cj') {
+                    const month_rows = months.map(m => ({ month: m, ...boxRow(round1(ourBoxM[m]), round1((cjInvM[m] || 0) / CJ_BOX_FEE)), check: cjCheck[m] || null }));
+                    return { mode: 'boxes', unit: CJ_BOX_FEE, vat_included: true, tolerance: bs.tolerance,
+                        ...boxRow(round1(month_rows.reduce((a, x) => a + x.our_boxes, 0)), round1(month_rows.reduce((a, x) => a + x.invoice_boxes, 0))), month_rows };
+                }
+                const c = cum[s];
+                return { mode: 'balance', start_date: bs.date, carry: bs[s], cum_settle: c.settle, cum_invoice: c.invoice, balance: bs[s] + c.settle - c.invoice };
+            };
             const groups = SHOWN.map(s => {
                 const g = all.filter(r => r.supplier === s), live = g.filter(r => r.status !== 'hold');
                 const issued = live.reduce((a, r) => a + (r.total_amount || 0), 0);
                 return { supplier: s, label: LABEL[s], count: g.length, check_count: checkOf(g),
                     issued_total: issued, confirmed_total: g.filter(r => r.status === 'confirmed').reduce((a, r) => a + (r.total_amount || 0), 0),
-                    settle_total: settle[s], settle_basis: basis[s].join(' + '), diff: issued - settle[s] };
+                    settle_total: settle[s], settle_basis: basis[s].join(' + '), diff: issued - settle[s], stats: statsOf(s, live) };
             });
             const rows = all.filter(r => !sup || r.supplier === sup);
             const live = all.filter(r => r.status !== 'hold');
@@ -157,6 +204,29 @@ function mount(app, deps) {
     app.post('/api/tax-invoices/:id/hold', authMiddleware, adminOnly, setStatus('hold'));
     app.post('/api/tax-invoices/:id/reset', authMiddleware, adminOnly, setStatus('draft'));
 
+    // #823 달 단위 [대조 확인] / 되돌리기 — 계약 docs/823-api.md · 두 번 눌러도 1줄 · 바뀐 때만 감사 1줄
+    app.post('/api/tax-invoices/check', authMiddleware, adminOnly, async (req, res) => {
+        try {
+            await ready;
+            const b = req.body || {}, sup = String(b.supplier || ''), ym = String(b.month || ''), undo = b.undo === true;
+            if (!SHOWN.includes(sup)) return res.status(400).json({ error: 'supplier 는 sion · hyodon · cj' });
+            if (!YM.test(ym)) return res.status(400).json({ error: 'month 는 YYYY-MM' });
+            const who = actorOf(req), whoName = String(who.name || '').slice(0, 60) || null;
+            const asCheck = (r) => r ? { supplier: r.supplier, month: r.month, by: r.checked_name, at: r.checked_at } : null;
+            let changed, check;
+            if (undo) {
+                changed = (await pool.query(`DELETE FROM tax_invoice_checks WHERE supplier = $1 AND month = $2 RETURNING supplier`, [sup, ym])).rows.length > 0; check = null;
+            } else {
+                const ins = (await pool.query(`INSERT INTO tax_invoice_checks (supplier, month, checked_by, checked_name) VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (supplier, month) DO NOTHING RETURNING supplier, month, checked_name, checked_at`, [sup, ym, Number.isInteger(who.id) ? who.id : null, whoName])).rows[0];
+                changed = !!ins;
+                check = asCheck(ins || (await pool.query(`SELECT supplier, month, checked_name, checked_at FROM tax_invoice_checks WHERE supplier = $1 AND month = $2`, [sup, ym])).rows[0]);
+            }
+            if (changed) { try { await writeAudit({ action: undo ? 'invoice_check_undo' : 'invoice_check', targetType: 'tax_invoice_check', targetId: null, changes: { supplier: sup, month: ym }, source: 'tax_invoice', actor: who }); } catch (_) { } }
+            res.json({ ok: true, changed, check });
+        } catch (e) { console.error('[#823 계산서] 대조 확인:', String(e && e.message || e).slice(0, 200)); res.status(500).json({ error: '대조 확인을 저장하지 못했어요 — 잠시 뒤 다시' }); }
+    });
+
     app.get('/api/tax-invoices/:id/pdf', authMiddleware, adminOnly, async (req, res) => {
         try {
             await ready;
@@ -173,4 +243,4 @@ function mount(app, deps) {
     });
     return { ready, settleTotals: (ym) => settleTotals(pool, helpers, ym) };
 }
-module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, SUPPLIERS, SHOWN, LABEL };
+module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, balanceStart, SUPPLIERS, SHOWN, LABEL };
