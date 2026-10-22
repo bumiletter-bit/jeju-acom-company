@@ -4,6 +4,8 @@
 //   대상 = 그 달 1일 ~ 다음 달 10일에 받은 계산서 메일(공급받는자 다른 회사 = 색인에서 이미 제외) · 줄의 달은 PDF 의 작성일자로 정해짐
 //   읽기 전용: 메일은 찾기 러너(mail_read/attach_request)로만 · 표 쓰기는 tax_invoices upsert 뿐(사람이 누른 확인·보류·메모는 안 덮음)
 //   비밀번호 = 실DB 설정 'tax_invoice'.pdf_password(코드·출력에 안 남김 · 파이썬에는 환경변수로) · 결과 글 = 건수 + 줄마다 공급자·작성일·읽힘 여부
+//   #821 본 메일 표 tax_invoice_seen = 기타·제외로 건너뛴 메일(설정 지문 sig 와 함께) → 다음 실행은 안 엶 · --limit 은 안 본 메일 기준 · 설정(suppliers·exclude_words)이 바뀌면 다시 봄 · --force = 무시
+//      기타는 계산서 안 사업자번호를 실제 읽었을 때만 적음 · 읽힌 메일은 seen 에 안 적음(tax_invoices 의 「읽힘」 줄이 이미 막음) · 건너뛴 수는 종전처럼 counts.other·excluded 에 더함(seen = 그중 안 연 수)
 'use strict';
 const path = require('path'), fs = require('fs'), os = require('os'), { spawnSync } = require('child_process');
 const TI = require(path.join(__dirname, '..', '..', 'tax-invoices.js'));
@@ -11,6 +13,9 @@ const MF = require('./mail-find.js');
 const DEFAULT_EXCLUDE = ['오션라운지'];   // 설정 tax_invoice.exclude_words 가 없을 때
 const DIR = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'invoice');
 const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
+const crypto = require('crypto');
+const ensureSeen = (pool) => pool.query(`CREATE TABLE IF NOT EXISTS tax_invoice_seen (dedup_key TEXT PRIMARY KEY, why TEXT NOT NULL, sig TEXT, at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+const seenSig = (cfg, excl) => crypto.createHash('sha1').update(JSON.stringify({ s: cfg.suppliers || null, e: excl })).digest('hex').slice(0, 12);
 
 const digitsOf = (s) => String(s || '').replace(/[^0-9]/g, '');
 const fmtBiz = (d) => d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}` : null;
@@ -152,20 +157,27 @@ async function main(args, deps) {
     const st = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'mail_index_state'`)).rows[0];
     if (!st || !st.value || !st.value.initial_done) return out({ ok: false, error: '메일 색인이 아직 다 안 찼어요(처음 채우기 중) — 몇 분 뒤 다시' });
     const [y, m] = ym.split('-').map(Number), next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7);
-    const mails = (await pool.query(`SELECT folder, folder_name, uidvalidity, uid, subject, from_name, at, parsed FROM mail_index
-        WHERE parsed->>'kind' = 'tax_invoice' AND at >= ($1::date::timestamp AT TIME ZONE 'Asia/Seoul') AND at < (($2::date + 10)::timestamp AT TIME ZONE 'Asia/Seoul')
-        ORDER BY at, uid LIMIT $3`, [ym + '-01', next + '-01', limit + 1])).rows;
+    if (!o.dry) { await TI.ensureTable(pool); await ensureSeen(pool); }
+    const useSeen = !o.force && (await pool.query(`SELECT to_regclass('public.tax_invoice_seen') IS NOT NULL AS ok`)).rows[0].ok, sig = seenSig(cfg, EXCL);
+    const MKEY = `'m:' || mi.folder || ':' || COALESCE(mi.uidvalidity, 0) || ':' || mi.uid`;
+    const RANGE = `mi.parsed->>'kind' = 'tax_invoice' AND mi.at >= ($1::date::timestamp AT TIME ZONE 'Asia/Seoul') AND mi.at < (($2::date + 10)::timestamp AT TIME ZONE 'Asia/Seoul')`;
+    const SEEN = `EXISTS (SELECT 1 FROM tax_invoice_seen s WHERE s.dedup_key = ${MKEY} AND s.sig = $3 AND s.why IN ('other', 'excluded'))`;
+    const seenN = { other: 0, excluded: 0 };
+    if (useSeen) for (const r of (await pool.query(`SELECT s.why, count(*)::int AS n FROM mail_index mi JOIN tax_invoice_seen s ON s.dedup_key = ${MKEY} AND s.sig = $3 AND s.why IN ('other', 'excluded') WHERE ${RANGE} GROUP BY s.why`, [ym + '-01', next + '-01', sig])).rows) seenN[r.why] = r.n;
+    const mails = (await pool.query(`SELECT mi.folder, mi.folder_name, mi.uidvalidity, mi.uid, mi.subject, mi.from_name, mi.at, mi.parsed FROM mail_index mi
+        WHERE ${RANGE}${useSeen ? ` AND NOT ${SEEN}` : ''}
+        ORDER BY mi.at, mi.uid LIMIT ${useSeen ? '$4' : '$3'}`, useSeen ? [ym + '-01', next + '-01', sig, limit + 1] : [ym + '-01', next + '-01', limit + 1])).rows;
     const more = mails.length > limit; mails.length = Math.min(mails.length, limit);
-    if (!o.dry) await TI.ensureTable(pool);
+    const markSeen = async (key, why) => { if (!o.dry) await pool.query(`INSERT INTO tax_invoice_seen (dedup_key, why, sig) VALUES ($1, $2, $3) ON CONFLICT (dedup_key) DO UPDATE SET why = EXCLUDED.why, sig = EXCLUDED.sig, at = NOW()`, [key, why, sig]); };
     const R = MF.makeRunner({ pool, sleep: deps.sleep, now: deps.now });
     const by = orderId ? await R.orderBy(orderId) : '창구';
     fs.mkdirSync(DIR, { recursive: true });
-    const done = [], cnt = { mails: mails.length, read: 0, check: 0, error: 0, inserted: 0, updated: 0, skipped: 0, other: 0, excluded: 0 };
+    const done = [], cnt = { mails: mails.length + seenN.other + seenN.excluded, read: 0, check: 0, error: 0, inserted: 0, updated: 0, skipped: 0, other: seenN.other, excluded: seenN.excluded, seen: seenN.other + seenN.excluded };
     try {
     for (const mm of mails) {
         const key = `m:${mm.folder}:${mm.uidvalidity || 0}:${mm.uid}`;
         const ex0 = hasExcl(mm.subject, mm.from_name);   // 메일을 열기 전(제목·보낸 이)
-        if (ex0) { cnt.excluded++; done.push({ subject: mm.subject, result: `제외 낱말(${ex0}) — 건너뜀` }); continue; }
+        if (ex0) { cnt.excluded++; await markSeen(key, 'excluded'); done.push({ subject: mm.subject, result: `제외 낱말(${ex0}) — 건너뜀` }); continue; }
         const have = (await pool.query(`SELECT id, dedup_key, read_status, supplier FROM tax_invoices WHERE (dedup_key = $1 OR (mail_folder = $2 AND mail_uid = $3 AND COALESCE(mail_uidvalidity, 0) = $4)) ORDER BY id LIMIT 1`, [key, mm.folder, mm.uid, mm.uidvalidity || 0]).catch(() => ({ rows: [] }))).rows[0];
         if (!o.force && have && have.read_status === 'read') { cnt.skipped++; done.push({ supplier: mm.parsed.supplier || 'other', subject: mm.subject, result: '이미 읽힘(건너뜀)' }); continue; }
         const row = { supplier: mm.parsed.supplier || (have && have.supplier) || 'other', supplier_name: mm.parsed.supplier_name || mm.from_name || null, mail_folder: mm.folder, mail_uid: Number(mm.uid), mail_uidvalidity: mm.uidvalidity ? Number(mm.uidvalidity) : null,
@@ -224,8 +236,8 @@ async function main(args, deps) {
             if (row.read_status === 'check' && !row.read_note) row.read_note = '일부 칸을 못 읽음 — 원본 확인';
         }
         const ex1 = hasExcl(mailText, srcText, row.supplier_name);   // 연 뒤(본문·계산서 글 = 받는 쪽 상호 포함)
-        if (ex1) { cnt.excluded++; done.push({ subject: mm.subject, result: `제외 낱말(${ex1}) — 건너뜀` }); continue; }
-        if (!TI.SHOWN.includes(row.supplier)) { cnt.other++; done.push({ subject: mm.subject, result: '기타(시온·효돈·택배비 아님) — 건너뜀' }); continue; }   // 표에 안 넣음(대표 10/21)
+        if (ex1) { cnt.excluded++; if (row.read_status !== 'error') await markSeen(key, 'excluded'); done.push({ subject: mm.subject, result: `제외 낱말(${ex1}) — 건너뜀` }); continue; }
+        if (!TI.SHOWN.includes(row.supplier)) { cnt.other++; if (parsed && parsed.supplier_bizno) await markSeen(key, 'other');   /* 계산서 안 사업자번호를 실제 읽고 기타일 때만(번호를 못 읽은 메일은 다음에 다시) */ done.push({ subject: mm.subject, result: '기타(시온·효돈·택배비 아님) — 건너뜀' }); continue; }   // 표에 안 넣음(대표 10/21)
         row.pdf_name = pdfName; row.pdf_data = pdfBuf;
         cnt[row.read_status]++;
         let up = null;
@@ -240,7 +252,7 @@ async function main(args, deps) {
     }
     } finally { await closeBrowser(); }   // 보안메일용 크롬은 한 번 열어 다 쓰고 바로 닫음
     return out({ ok: true, month: ym, dry: !!o.dry, counts: cnt, more: more || undefined, rows: done,
-        note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + (cnt.other ? `기타 ${cnt.other}통 건너뜀 · ` : '') + (cnt.excluded ? `제외 낱말 ${cnt.excluded}통 건너뜀 · ` : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
+        note: (o.dry ? '시험(--dry) — 표에 안 씀 · ' : '') + (cnt.other ? `기타 ${cnt.other}통 건너뜀 · ` : '') + (cnt.excluded ? `제외 낱말 ${cnt.excluded}통 건너뜀 · ` : '') + (cnt.seen ? `그중 ${cnt.seen}통은 지난번에 봐서 안 엶 · ` : '') + '정산관리 › 계산서 발행현황에서 줄마다 [확인]/[보류] · 「확인 필요」·「오류」 줄은 PDF·메일 원본을 보고 사람이 · 확인 전 숫자는 어느 합계에도 안 섞임' });
 }
 async function closeBrowser() { if (_browser) { const b = _browser; _browser = null; await b.close().catch(() => { }); } }
 module.exports = { main, parseInvoiceText, isRead, supplierByBiz, supplierNameOf, openSecureHtml, openSmartbill, smartbillOf, closeBrowser };
