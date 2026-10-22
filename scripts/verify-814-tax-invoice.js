@@ -130,9 +130,9 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
     {
         const st = (k) => g(k).stats;
         const setCfg = (v) => pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [v]);
-        const KEYS_B = 'carry,cum_invoice,cum_paid,cum_settle,mode,month_rows,paid_count,payments,start_date,unissued,unpaid', KEYS_C = 'diff_boxes,invoice_boxes,mode,month_rows,ok,our_boxes,tolerance,unit,vat_included', KEYS_M = 'check,diff_boxes,invoice_boxes,month,ok,our_boxes';
+        const KEYS_B = 'carry,cum_invoice,cum_paid,cum_settle,mode,month_rows,paid_count,payments,pre_issued,start_date,unissued,unpaid', KEYS_BM = 'balance,diff,invoice,month,paid,pre_issued_amt,pre_issued_cnt', KEYS_C = 'diff_boxes,invoice_boxes,mode,month_rows,ok,our_boxes,tolerance,unit,vat_included', KEYS_M = 'check,diff_boxes,invoice_boxes,month,ok,our_boxes';
         r = await call('GET', '/api/tax-invoices?month=2026-10');
-        ok(r.s === 200 && Object.keys(st('sion')).sort().join() === KEYS_B && Object.keys(st('cj')).sort().join() === KEYS_C && Object.keys(st('cj').month_rows[0]).sort().join() === KEYS_M, '칸 이름 = 계약 그대로(시온·효돈 11칸 · CJ 9칸 · 달 줄 6칸)', { s: Object.keys(st('sion')), c: Object.keys(st('cj')) });
+        ok(r.s === 200 && Object.keys(st('sion')).sort().join() === KEYS_B && Object.keys(st('sion').month_rows[0]).sort().join() === KEYS_BM && Object.keys(st('cj')).sort().join() === KEYS_C && Object.keys(st('cj').month_rows[0]).sort().join() === KEYS_M, '칸 이름 = 계약 그대로(시온·효돈 12칸 = #825 pre_issued 더함 · 달 줄 7칸 · CJ 9칸 · 달 줄 6칸)', { s: Object.keys(st('sion')), c: Object.keys(st('cj')) });
         ok(st('sion').mode === 'paid' && st('sion').start_date === '2026-03-29' && st('sion').carry === 0 && st('sion').cum_settle === 1260099 && st('sion').cum_invoice === 1510099 && st('sion').cum_paid === 0 && st('sion').unissued === -1510099 && st('sion').unpaid === 1260099,
             '설정 없음 = 기준일 3/29 · 이월 0 · 입금 0 → 미발행 = 0 + 0 − 계산서 · 미입금 = 정산 − 0', st('sion'));
         ok(st('hyodon').cum_settle === 100000 && st('hyodon').cum_invoice === 90000 && st('hyodon').unissued === -90000 && st('hyodon').unpaid === 100000 && g('sion').settle_total === 1260000 && g('sion').diff === 250000 && 'settle_basis' in g('sion') && 'issued_total' in g('cj'), '효돈 미발행·미입금 · 종전 칸(월 정산 합계·차이·근거·발행 합계) 그대로 남음', { hy: st('hyodon') });
@@ -199,7 +199,7 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         const pn = async () => (await db.query(`SELECT count(*)::int AS n FROM tax_invoice_payments`)).rows[0].n;
         const a0 = audits.length;
         r = await call('GET', '/api/tax-invoices?month=2026-10');
-        ok(st('sion').paid_count === 0 && st('sion').payments.length === 0 && JSON.stringify(st('sion').month_rows) === JSON.stringify([{ month: '2026-10', paid: 0, invoice: 1510000, diff: -1510000, balance: -1510099 }]) && !('stats' in g('cj') && 'paid_count' in st('cj')), '입금 0 = 목록 빈칸 · 달 줄 {month, paid, invoice, diff, balance(월말 누적 = 기준일 3/29 ~ 10/31 · 9/30 계산서 포함)} · CJ 엔 입금 칸 없음', st('sion'));
+        ok(st('sion').paid_count === 0 && st('sion').payments.length === 0 && JSON.stringify(st('sion').month_rows) === JSON.stringify([{ month: '2026-10', paid: 0, invoice: 1510000, diff: -1510000, balance: -1510099, pre_issued_cnt: 0, pre_issued_amt: 0 }]) && !('stats' in g('cj') && 'paid_count' in st('cj')), '입금 0 = 목록 빈칸 · 달 줄 {month, paid, invoice, diff, balance(월말 누적 = 기준일 3/29 ~ 10/31 · 9/30 계산서 포함)} · CJ 엔 입금 칸 없음', st('sion'));
         const p1 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-10-02', amount: 1000000, memo: ' 시험 입금 ' });
         const p2 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-09-30', amount: 500000 });
         const p3 = await call('POST', '/api/tax-invoices/payments', { supplier: 'hyodon', paid_on: '2026-10-10', amount: '90000' });
@@ -303,8 +303,9 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         ok(x.s === 200 && x.j.inserted === 0 && x.j.new.length === 0 && x.j.dup === 4 && await pn() === 3 && audits.length === a0 + 1, '같은 파일 다시 = 새 줄 0 · 중복 4 · 감사 0', x.j);
         r = await call('GET', '/api/tax-invoices?from=2026-09-01&to=2026-10-31');
         const sm = st('sion').month_rows;
-        ok(sm[1].diff === 260000 - 1510000 && sm[1].diff !== 0 && sm[1].balance === 0 && sm[0].balance === 1250000 && st('sion').unissued === 0 && st('hyodon').month_rows[1].balance === 0,
-            '달 차 ≠ 0(10월 −1,250,000 · 9월 말 입금이 10월 계산서 몫) 인데 월말 잔액 0 · 머리 미발행 0 · 효돈 0', sm);
+        ok(sm[0].diff === 0 && sm[1].diff === 0 && sm[0].invoice === 99 + 1250000 && sm[1].invoice === 260000 && sm[1].balance === 0 && sm[0].balance === 0 && sm[1].pre_issued_cnt === 1 && sm[1].pre_issued_amt === 1250000
+            && JSON.stringify(st('sion').pre_issued) === JSON.stringify([{ issue_date: '2026-10-05', amount: 1250000, paid_on: '2026-09-28' }]) && st('sion').unissued === 0 && st('hyodon').month_rows[1].balance === 0,
+            '#825 짝 맞추기 = 9/28 입금이 갚은 10/5 계산서는 9월에 붙음 → 9월·10월 달 차 0 · 월말 잔액 0 · 10월 「옮겨진 계산서」 1건 · 머리 미발행 0 · 효돈 0', { sm, pre: st('sion').pre_issued });
         const empty = await mkXlsx((wb) => { wb.addWorksheet('대성'); wb.addWorksheet('효돈').addRow(['결제날짜', '입금금액']); });
         x = await call('POST', '/api/tax-invoices/payments/import', { data: empty, dry: false });
         ok(x.s === 200 && x.j.new.length === 0 && x.j.inserted === 0 && x.j.sheets.join() === '대성,효돈' && audits.length === a0 + 1, '빈 시트 = 200 · 0줄 · 감사 0', x.j);
@@ -315,6 +316,46 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         role = 'staff'; const f1 = await call('POST', '/api/tax-invoices/payments/import', { data: full, dry: true }); role = 'admin';
         ok(f1.s === 403 && await pn() === 3, '직원 계정 엑셀 가져오기 = 403');
         await db.query(`DELETE FROM tax_invoice_payments`); audits.splice(a0);
+    }
+    console.log('③-e #825 짝 맞추기 = 계산서는 그 계산서를 다 갚은 입금의 달에 붙음(선행 · 선입금 · 부분 입금 · 안 갚음 · 보류 · 지운 입금 · 기준일 앞 · 달 중간 to)');
+    {
+        const st = (k) => g(k).stats;
+        // 앞 절 자료(시온·효돈 계산서)는 잠시 다른 거래처 이름으로 비켜 둠 · 끝에 되돌림
+        await db.query(`UPDATE tax_invoices SET supplier = 'zz_' || supplier WHERE supplier IN ('sion', 'hyodon')`);
+        let uid = 900; const inv = async (sup, day, amt) => (await TI.upsertRow(pool, { supplier: sup, mail_folder: 'INBOX', mail_uid: ++uid, mail_uidvalidity: 7, approval_no: '20260000825' + String(uid).padStart(13, '0'), issue_date: day, total_amount: amt, read_status: 'read' })).id;
+        const pay = async (sup, d, a) => { const q = await call('POST', '/api/tax-invoices/payments', { supplier: sup, paid_on: d, amount: a }); if (q.s !== 200) throw new Error('입금 넣기 실패 ' + q.s); return q.j.id; };
+        const a0 = audits.length;
+        await inv('sion', '2026-03-20', 500);                                   // 기준일 앞 계산서 = 짝 밖(3월 줄에만)
+        await db.query(`INSERT INTO tax_invoice_payments (supplier, paid_on, amount, source) VALUES ('sion', '2026-03-25', 30000, 'manual')`);   // 기준일 앞 입금 = 짝 밖(셌다면 4/10 계산서가 3월로 감)
+        await inv('sion', '2026-04-10', 30000); await pay('sion', '2026-04-12', 30000);
+        await inv('sion', '2026-04-29', 20000); await pay('sion', '2026-05-03', 20000);     // 4/29 계산서 → 5/3 입금 = 5월로
+        await inv('sion', '2026-05-20', 40000); await pay('sion', '2026-05-22', 40000);
+        await pay('sion', '2026-06-28', 15000); await inv('sion', '2026-07-02', 15000);     // 선입금 = 6/28 이 7/2 계산서를 갚음 → 6월로
+        await inv('sion', '2026-07-29', 10000); await pay('sion', '2026-08-01', 4000); await pay('sion', '2026-08-02', 6000);   // 부분 입금 2번 → 마지막 8/2 = 8월로
+        await inv('sion', '2026-09-10', 7000);                                  // 안 갚음 = open → 9월에 남음(−)
+        const hid = await inv('sion', '2026-09-15', 3000); await db.query(`UPDATE tax_invoices SET status = 'hold' WHERE id = $1`, [hid]);   // 보류 = 짝 밖
+        const did = await pay('sion', '2026-09-20', 7000); await call('DELETE', `/api/tax-invoices/payments/${did}`);        // 지운 입금 = 짝 밖
+        await inv('hyodon', '2026-04-15', 50000); await pay('hyodon', '2026-04-16', 50000);   // 효돈은 따로(시온 입금이 효돈 계산서를 안 갚음)
+        r = await call('GET', '/api/tax-invoices?from=2026-03-01&to=2026-09-30');
+        const sm = st('sion').month_rows.map(x => [x.month.slice(5), x.paid, x.invoice, x.diff, x.balance, x.pre_issued_cnt, x.pre_issued_amt].join(':')).join(' ');
+        ok(sm === '03:30000:500:29500:0:0:0 04:30000:30000:0:0:1:20000 05:60000:60000:0:0:0:0 06:15000:15000:0:0:0:0 07:0:0:0:0:2:25000 08:10000:10000:0:0:0:0 09:0:7000:-7000:-7000:0:0',
+            '달 줄 = 4/29 → 5월 · 선입금 7/2 → 6월 · 부분 입금 7/29 → 8월 · 안 갚은 9/10 은 9월 −(보류·지운 입금 빠짐) · 3월 = 기준일 앞 자료는 표시만(잔액 0) · 「옮겨진 계산서」 4월 1 · 7월 2', sm);
+        ok(st('sion').cum_paid === 115000 && st('sion').cum_invoice === 122000 && st('sion').unissued === -7000
+            && JSON.stringify(st('sion').pre_issued) === JSON.stringify([{ issue_date: '2026-04-29', amount: 20000, paid_on: '2026-05-03' }, { issue_date: '2026-07-02', amount: 15000, paid_on: '2026-06-28' }, { issue_date: '2026-07-29', amount: 10000, paid_on: '2026-08-02' }]),
+            '머리 = 미발행 −7,000(안 갚은 계산서만) · pre_issued = 작성일 달 ≠ 갚은 달 3건(작성일순 · 갚은 날)', st('sion'));
+        ok(st('hyodon').month_rows.find(x => x.month === '2026-04').diff === 0 && st('hyodon').unissued === 0, '효돈 = 따로 짝(4월 0)', st('hyodon').month_rows);
+        r = await call('GET', '/api/tax-invoices?from=2026-04-01&to=2026-04-30');
+        ok(st('sion').month_rows.length === 1 && st('sion').month_rows[0].invoice === 30000 && st('sion').month_rows[0].diff === 0 && st('sion').cum_invoice === 30000 && st('sion').cum_paid === 30000 && st('sion').unissued === 0 && st('sion').pre_issued.length === 1 && st('sion').pre_issued[0].paid_on === '2026-05-03',
+            '4월만 조회해도 짝은 기준일~오늘 전부로 = 4/29 는 5월 몫이라 4월 0 · 머리 0 · 목록엔 4/29(갚은 날 5/3)', st('sion'));
+        r = await call('GET', '/api/tax-invoices?from=2026-07-01&to=2026-08-01');
+        const s8 = st('sion');
+        ok(s8.cum_paid === 109000 && s8.cum_invoice === 105000 && s8.unissued === 4000 && s8.month_rows.map(x => x.month + ':' + x.diff).join() === '2026-07:0,2026-08:0' && s8.pre_issued.map(x => x.issue_date).join() === '2026-07-02,2026-07-29',
+            'to 달 중간(8/1) = 7/29 계산서는 8/2 에 다 갚혀 to 까지 안 붙음 → 미발행 +4,000(8/1 부분 입금) · 달 줄은 달 전체(8월 0)', s8);
+        await db.query(`DELETE FROM tax_invoices WHERE mail_uid > 900 AND mail_uid <= $1`, [uid]);
+        await db.query(`DELETE FROM tax_invoice_payments`); audits.splice(a0);
+        await db.query(`UPDATE tax_invoices SET supplier = substr(supplier, 4) WHERE supplier LIKE 'zz\\_%'`);
+        r = await call('GET', '/api/tax-invoices?month=2026-10');
+        ok(st('sion').cum_invoice === 1510099 && g('sion').issued_total === 1510000, '시험 자료 치움 · 앞 절 자료 되돌림');
     }
     role = 'staff'; ok((await call('GET', '/api/tax-invoices?month=2026-10')).s === 403 && (await call('POST', `/api/tax-invoices/${hy.id}/hold`, { memo: 'x' })).s === 403, '직원 계정 = 403(대표·경리만)'); role = 'admin';
     srv.close();

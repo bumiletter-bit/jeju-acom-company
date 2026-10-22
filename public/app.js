@@ -14902,10 +14902,17 @@ setupNaverTimerCard();
                 const sgn = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${won(Math.abs(d))}`;
                 const judge = d => d === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="${d > 0 ? 'si-diffv' : 'si-ahead'}">${sgn(d)}</span>`;   // 0 = 일치 · + 호박 · − 회색
                 const hasBal = mr.some(x => x.balance != null);   // 월말 누적 잔액이 오면 판정 = 월말 잔액 · 달 차는 숫자만
-                if (mr.length) mrows = `<p class="si-mrcap">달 전체 기준</p><ul class="si-mrows" aria-label="달마다 입금 · 계산서">${mr.map(x => `<li class="si-mr" data-m="${esc(x.month)}"><span class="si-mm">${+x.month.slice(5, 7)}월</span><span class="si-mn">입금 <b>${won(x.paid)}</b></span><span class="si-mn">계산서 <b>${won(x.invoice)}</b></span>`
+                const preNote = pl => {   // #825 작성일 달 ≠ 갚은 달 계산서 = 「월말 선발행 n건 m원 = 다음 달 입금과 짝 맞춤(작성일 → 입금 · 첫 3건 · 외 k건)」
+                    const a = Array.isArray(pl) ? pl.filter(x => x && x.issue_date && x.paid_on) : [];
+                    if (!a.length) return '';
+                    const late = a.every(x => String(x.paid_on) > String(x.issue_date)), sum = a.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+                    const ex = a.slice(0, 3).map(x => `작성일 ${md(x.issue_date)} → 입금 ${md(x.paid_on)}`).join(' · ') + (a.length > 3 ? ` 외 ${a.length - 3}건` : '');
+                    return `<p class="si-month-note si-prenote">${late ? '월말 선발행' : '달 넘긴 계산서'} ${a.length}건 ${won(sum)}원 = ${late ? '다음 달' : '갚은 달'} 입금과 짝 맞춤(${esc(ex)})</p>`;
+                };
+                if (mr.length) mrows = `<p class="si-mrcap">달 전체 기준</p><ul class="si-mrows" aria-label="달마다 입금 · 계산서">${mr.map(x => `<li class="si-mr" data-m="${esc(x.month)}"><span class="si-mm">${+x.month.slice(5, 7)}월${(Number(x.pre_issued_cnt) || 0) > 0 ? `<span class="si-kind si-prek">선발행 ${Number(x.pre_issued_cnt)}</span>` : ''}</span><span class="si-mn">입금 <b>${won(x.paid)}</b></span><span class="si-mn">계산서 <b>${won(x.invoice)}</b></span>`
                     + (hasBal ? `<span class="si-mn">달 차 <b>${sgn(Number(x.diff) || 0)}</b></span><span class="si-md si-mbal"><span class="si-mn">월말 잔액</span> ${x.balance == null ? '—' : judge(Number(x.balance) || 0)}</span>`
                         : `<span class="si-md">${(Number(x.diff) || 0) === 0 ? judge(0) : `<span class="si-mn">차</span> ${judge(Number(x.diff))}`}</span>`) + '</li>').join('')}</ul>`
-                    + (hasBal && mr.some(x => (Number(x.diff) || 0) !== 0) ? '<p class="si-month-note si-mbnote">입금이 주 단위라 달 경계에 걸릴 수 있어요 · 다음 달 월말 잔액이 0 으로 돌아오면 정상</p>' : '');
+                    + preNote(st.pre_issued);   // #825 계산서는 갚은 입금의 달에 붙음 · 옮긴 계산서 안내 한 줄(옛 서버 = 없음)
                 if (canEdit()) mrows += payHtml(k, st);
             }
             else if (st && st.mode === 'balance') {

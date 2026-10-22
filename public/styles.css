@@ -4997,7 +4997,7 @@ body.ps-view-open { overflow: hidden; }
     #settlement-invoice .si-payf .si-rl { flex: 1 1 calc(50% - 4px); min-width: 0; }   /* #824 폰 = 입금일·금액 반씩 · 메모·단추 한 줄씩 */
     #settlement-invoice .si-payf .si-pmemo, #settlement-invoice .si-payfb { flex: 1 0 100%; }
     #settlement-invoice .si-payfb .si-btn { flex: 1 1 0; }
-    #settlement-invoice .si-mr .si-mbal { order: -1; flex: 1 0 calc(100% - 60px); } #settlement-invoice .si-mr .si-mm { order: -2; }   /* #824 폰 = 월말 잔액 먼저 */
+    #settlement-invoice .si-mr .si-mbal { order: -1; flex: 1 0 calc(100% - 60px); } #settlement-invoice .si-mr .si-mm { order: -2; }   /* #824 폰 = 월말 잔액 먼저 */ #settlement-invoice .si-mr:has(.si-prek) .si-mbal { flex-basis: calc(100% - 130px); }   /* #825 선발행 알약 있는 달 = 달 이름 옆 한 줄 유지 */
     #settlement-invoice .si-date { padding-left: 10px; padding-right: 30px; background-position: right 8px center; }
 }
 /* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */

@@ -163,8 +163,6 @@ function mount(app, deps) {
                 for (const r of await helpers.fetchSettlements(pool, helpers, bs.date, to)) {
                     if (r.partner === SETTLE_PARTNER.sion) cum.sion.settle += r.amount; else if (r.partner === SETTLE_PARTNER.hyodon) cum.hyodon.settle += r.amount;
                 }
-                for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
-                    WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY supplier`, [bs.date, to])).rows) cum[r.supplier].invoice = Number(r.t) || 0;
                 for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(amount), 0)::bigint AS t, count(*)::int AS n FROM tax_invoice_payments
                     WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY supplier`, [bs.date, to])).rows) { cum[r.supplier].paid = Number(r.t) || 0; cum[r.supplier].n = Number(r.n) || 0; }
             }
@@ -173,17 +171,40 @@ function mount(app, deps) {
             const payM = { sion: {}, hyodon: {} }, invM = { sion: {}, hyodon: {} }, payList = { sion: [], hyodon: [] };
             for (const r of (await pool.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM') AS m, COALESCE(SUM(amount), 0)::bigint AS t FROM tax_invoice_payments
                 WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY 1, 2`, [mFrom, mTo])).rows) payM[r.supplier][r.m] = Number(r.t) || 0;
+            // 기준일 앞 계산서(기준일이 든 달·그 앞 달 표시용) = 짝 맞추기 밖 · 작성일 달에 그대로
             for (const r of (await pool.query(`SELECT supplier, to_char(${DAY}, 'YYYY-MM') AS m, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
-                WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY 1, 2`, [mFrom, mTo])).rows) invM[r.supplier][r.m] = Number(r.t) || 0;
-            // 달 줄 balance = 월말 누적 잔액(이월 + 기준일~그 달 말일 입금 − 계산서) — 대성은 입금이 주 단위라 달 차가 흔들려도 누적은 맞음을 보이려고
-            const cumM = { sion: [], hyodon: [] };   // [{m, d}] 기준일~마지막 달 말일 · 달마다 (입금 − 계산서)
-            if (mTo >= bs.date) {
-                for (const r of (await pool.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM') AS m, COALESCE(SUM(amount), 0)::bigint AS t FROM tax_invoice_payments
-                    WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY 1, 2`, [bs.date, mTo])).rows) cumM[r.supplier].push({ m: r.m, d: Number(r.t) || 0 });
-                for (const r of (await pool.query(`SELECT supplier, to_char(${DAY}, 'YYYY-MM') AS m, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
-                    WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY 1, 2`, [bs.date, mTo])).rows) cumM[r.supplier].push({ m: r.m, d: -(Number(r.t) || 0) });
+                WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date AND ${DAY} < $3::date GROUP BY 1, 2`, [mFrom, mTo, bs.date])).rows) invM[r.supplier][r.m] = Number(r.t) || 0;
+            // #825 짝 맞추기 — 계산서는 「그 계산서를 다 갚은 입금의 달」에 붙인다(입금 날은 그대로) · supplier 마다 · 보류·지운 입금 뺌
+            //   기간(from~to)과 무관하게 기준일 뒤 전부로 짝을 맞추고 표시만 기간으로 자름 · 계산서 = 작성일 오름차순 · 입금 = paid_on 오름차순
+            //   입금을 차례로 돌며 가장 오래된 안 갚은 계산서부터 깎음 · 0 이 되는 순간 그 입금 날 = settled_on · 남은 입금(선입금)은 다음 계산서로 이어짐
+            //   끝까지 남은 계산서 = open(settled_on null) → 작성일 달에 남음 · 0원 이하 계산서(수정 계산서 등)는 짝 밖 · 작성일 달
+            const mat = { sion: [], hyodon: [] }, payAll = { sion: [], hyodon: [] };
+            {
+                const invs = (await pool.query(`SELECT supplier, to_char(${DAY}, 'YYYY-MM-DD') AS day, total_amount FROM tax_invoices
+                    WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND total_amount IS NOT NULL AND ${DAY} >= $1::date ORDER BY ${DAY}, id`, [bs.date])).rows;
+                for (const r of invs) { const a = Number(r.total_amount) || 0; mat[r.supplier].push({ day: r.day, amount: a, remain: a > 0 ? a : 0, settled_on: null }); }
+                for (const r of (await pool.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM-DD') AS d, amount FROM tax_invoice_payments
+                    WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date ORDER BY paid_on, id`, [bs.date])).rows) payAll[r.supplier].push({ d: r.d, a: Number(r.amount) || 0 });
+                for (const s of PAY_SUP) {
+                    const q = mat[s].filter(v => v.remain > 0); let k = 0;
+                    for (const p of payAll[s]) {
+                        let left = p.a;
+                        while (left > 0 && k < q.length) { const v = q[k], take = Math.min(left, v.remain); v.remain -= take; left -= take; if (v.remain === 0) { v.settled_on = p.d; k++; } }
+                    }
+                }
             }
-            const monthBal = (s, m) => bs[s] + cumM[s].reduce((a, x) => a + (x.m <= m ? x.d : 0), 0);
+            const effM = (v) => (v.settled_on || v.day).slice(0, 7);   // 계산서가 붙는 달
+            const preM = { sion: {}, hyodon: {} };   // 작성일 달 → 다른 달로 옮겨진 계산서 {n, a}
+            for (const s of PAY_SUP) for (const v of mat[s]) {
+                invM[s][effM(v)] = (invM[s][effM(v)] || 0) + v.amount;
+                const im = v.day.slice(0, 7);
+                if (v.settled_on && effM(v) !== im) { const x = preM[s][im] || (preM[s][im] = { n: 0, a: 0 }); x.n++; x.a += v.amount; }
+            }
+            if (!before) for (const s of PAY_SUP) cum[s].invoice = mat[s].reduce((a, v) => a + ((v.settled_on || v.day) <= to ? v.amount : 0), 0);
+            // 달 줄 balance = 월말 누적 잔액(이월 + 기준일~그 달 말일 입금 − 그 달까지 붙은 계산서)
+            const monthBal = (s, m) => bs[s] + payAll[s].reduce((a, p) => a + (p.d.slice(0, 7) <= m ? p.a : 0), 0) - mat[s].reduce((a, v) => a + (effM(v) <= m ? v.amount : 0), 0);
+            const preList = (s) => mat[s].filter(v => v.day >= from && v.day <= to && v.settled_on && effM(v) !== v.day.slice(0, 7)).slice(0, 50)
+                .map(v => ({ issue_date: v.day, amount: v.amount, paid_on: v.settled_on }));
             for (const s of PAY_SUP) payList[s] = (await pool.query(`SELECT id, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, amount, memo, source, created_name, created_at FROM tax_invoice_payments
                 WHERE supplier = $1 AND deleted_at IS NULL AND paid_on >= $2::date AND paid_on <= $3::date ORDER BY paid_on DESC, id DESC LIMIT ${PAY_LIST_MAX}`, [s, from, to])).rows
                 .map(r => ({ id: r.id, paid_on: r.paid_on, amount: Number(r.amount), memo: r.memo || '', source: r.source, by: r.created_name, at: r.created_at }));
@@ -204,8 +225,9 @@ function mount(app, deps) {
                 const c = cum[s];
                 return { mode: 'paid', start_date: bs.date, carry: bs[s], cum_paid: c.paid, cum_invoice: c.invoice, cum_settle: c.settle,
                     unissued: bs[s] + c.paid - c.invoice, unpaid: c.settle - c.paid, paid_count: c.n,
-                    month_rows: months.map(m => { const p = payM[s][m] || 0, i = invM[s][m] || 0; return { month: m, paid: p, invoice: i, diff: p - i, balance: monthBal(s, m) }; }),
-                    payments: payList[s] };
+                    month_rows: months.map(m => { const p = payM[s][m] || 0, i = invM[s][m] || 0; const x = preM[s][m] || { n: 0, a: 0 };
+                        return { month: m, paid: p, invoice: i, diff: p - i, balance: monthBal(s, m), pre_issued_cnt: x.n, pre_issued_amt: x.a }; }),
+                    pre_issued: preList(s), payments: payList[s] };
             };
             const groups = SHOWN.map(s => {
                 const g = all.filter(r => r.supplier === s), live = g.filter(r => r.status !== 'hold');
