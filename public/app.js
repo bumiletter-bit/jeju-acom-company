@@ -14905,7 +14905,7 @@ setupNaverTimerCard();
                 if (mr.length) mrows = `<p class="si-mrcap">달 전체 기준</p><ul class="si-mrows" aria-label="달마다 입금 · 계산서">${mr.map(x => `<li class="si-mr" data-m="${esc(x.month)}"><span class="si-mm">${+x.month.slice(5, 7)}월</span><span class="si-mn">입금 <b>${won(x.paid)}</b></span><span class="si-mn">계산서 <b>${won(x.invoice)}</b></span>`
                     + (hasBal ? `<span class="si-mn">달 차 <b>${sgn(Number(x.diff) || 0)}</b></span><span class="si-md si-mbal"><span class="si-mn">월말 잔액</span> ${x.balance == null ? '—' : judge(Number(x.balance) || 0)}</span>`
                         : `<span class="si-md">${(Number(x.diff) || 0) === 0 ? judge(0) : `<span class="si-mn">차</span> ${judge(Number(x.diff))}`}</span>`) + '</li>').join('')}</ul>`
-                    + (hasBal && mr.some(x => (Number(x.diff) || 0) !== 0 && x.balance != null && Number(x.balance) === 0) ? '<p class="si-month-note si-mbnote">입금이 주 단위라 달 경계에 걸릴 수 있어요 · 월말 잔액 0 = 정상</p>' : '');
+                    + (hasBal && mr.some(x => (Number(x.diff) || 0) !== 0) ? '<p class="si-month-note si-mbnote">입금이 주 단위라 달 경계에 걸릴 수 있어요 · 다음 달 월말 잔액이 0 으로 돌아오면 정상</p>' : '');
                 if (canEdit()) mrows += payHtml(k, st);
             }
             else if (st && st.mode === 'balance') {
