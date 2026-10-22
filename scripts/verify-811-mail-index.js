@@ -38,7 +38,7 @@ function makeBox(n, startUid, offStart, kinds) {
 
 // ── 가짜 IMAP(소켓) ─────────────
 function fakeImap(state) {
-    const cmds = [];
+    const cmds = [], bodyFetches = [];
     const connect = () => {
         const toClient = new PassThrough(), sock = new PassThrough();
         let inbuf = Buffer.alloc(0), lineAcc = [], needLit = 0, cur = null;
@@ -76,7 +76,13 @@ function fakeImap(state) {
                     else if (what === 'UID INTERNALDATE') parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}")\r\n`));
                     else if (what === 'UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)]') { const h = Buffer.from(`From: ${x.from}\r\nSubject: ${x.subject}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} INTERNALDATE "${x.date}" BODY[HEADER.FIELDS (FROM SUBJECT)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
                     else if (what === 'BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)]') { const h = Buffer.from(`From: ${x.from}\r\nTo: bumiletter@naver.com\r\nSubject: ${x.subject}\r\nDate: ${x.date}\r\n\r\n`, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE)] {${h.length}}\r\n`), h, Buffer.from(')\r\n')); }
-                    else if ((m = /^BODY\.PEEK\[([\d.]+)\](?:<0\.(\d+)>)?$/.exec(what))) { const body = Buffer.from(x.partBody && x.partBody[m[1]] != null ? x.partBody[m[1]] : x.text, 'utf8'); parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[${m[1]}]${m[2] ? '<0>' : ''} {${body.length}}\r\n`), body, Buffer.from(')\r\n')); }
+                    else if ((m = /^(UID )?BODY\.PEEK\[([\d.]+)\](?:<0\.(\d+)>)?$/.exec(what))) {   // #820 「UID BODY.PEEK[n]<0.N>」 여러 통 = 본문 조각(N 바이트로 자름 · splitFetch 면 UID 줄 따로)
+                        if (m[1] && state.bodyFail && state.bodyFail(uids)) return say(`${tag} NO fetch failed\r\n`);
+                        let body = Buffer.from(x.partBody && x.partBody[m[2]] != null ? x.partBody[m[2]] : x.text, 'utf8'); if (m[3]) body = body.slice(0, +m[3]);
+                        if (m[1]) bodyFetches.push({ uids: uids.length, n: +m[3] });
+                        if (m[1] && state.splitFetch) parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid})\r\n* ${sq} FETCH (BODY[${m[2]}]<0> {${body.length}}\r\n`), body, Buffer.from(')\r\n'));
+                        else parts.push(Buffer.from(`* ${sq} FETCH (UID ${uid} BODY[${m[2]}]${m[3] ? '<0>' : ''} {${body.length}}\r\n`), body, Buffer.from(')\r\n'));
+                    }
                 }
                 return say(Buffer.concat(parts.concat([Buffer.from(`${tag} OK FETCH\r\n`)])));
             }
@@ -101,17 +107,27 @@ function fakeImap(state) {
         setImmediate(() => toClient.emit('data', Buffer.from('* OK IMAP ready\r\n')));
         return sock;
     };
-    return { cmds, imapOpenF: (o) => NM.imapOpen({ ...o, connect, timeoutMs: 20000 }) };
+    return { cmds, bodyFetches, imapOpenF: (o) => NM.imapOpen({ ...o, connect, timeoutMs: 20000 }) };
 }
 const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID FETCH [\d,]+ \(|LOGOUT$)/.test(c) && !/^(SELECT|STORE|UID STORE|UID MOVE|UID COPY|EXPUNGE|UID EXPUNGE|APPEND|DELETE)/.test(c);
 
 // ── 가짜 DB ─────────────
 function fakePool() {
-    const cfg = new Map(), idx = new Map(), sqls = [];
+    const cfg = new Map(), idx = new Map(), sqls = []; let alters = 0, updates = 0;
     const KST0 = (ymd) => Date.parse(ymd + 'T00:00:00+09:00');
     const pool = { async query(sql, p = []) {
         sqls.push(sql);
         if (/^CREATE (TABLE|INDEX) IF NOT EXISTS mail_index/.test(sql.trim())) return { rows: [] };
+        if (/^ALTER TABLE mail_index ADD COLUMN IF NOT EXISTS snippet TEXT$/.test(sql.trim())) { alters++; return { rows: [] }; }
+        if (/^SELECT folder, uid, uidvalidity, subject FROM mail_index WHERE snippet IS NULL ORDER BY at DESC NULLS LAST, folder, uid DESC LIMIT (\d+)$/.test(sql.trim())) {
+            const lim = Number(/LIMIT (\d+)/.exec(sql)[1]);
+            const rows = [...idx.values()].filter(r => r.snippet == null).sort((a, b) => (Date.parse(b.at) - Date.parse(a.at)) || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0) || (b.uid - a.uid));
+            return { rows: rows.slice(0, lim).map(r => ({ folder: r.folder, uid: String(r.uid), uidvalidity: r.uidvalidity == null ? null : String(r.uidvalidity), subject: r.subject })) };
+        }
+        if (/^UPDATE mail_index m SET snippet = v\.s FROM \(SELECT unnest\(\$1::text\[\]\) AS f, unnest\(\$2::bigint\[\]\) AS u, unnest\(\$3::text\[\]\) AS s\) v WHERE m\.folder = v\.f AND m\.uid = v\.u AND m\.snippet IS NULL$/.test(sql.trim())) {
+            p[0].forEach((f, i) => { const r = idx.get(f + '|' + p[1][i]); if (r && r.snippet == null) { r.snippet = p[2][i]; updates++; } }); return { rows: [] };
+        }
+        if (/^SELECT count\(\*\)::int AS n FROM mail_index WHERE snippet IS NULL$/.test(sql.trim())) return { rows: [{ n: [...idx.values()].filter(r => r.snippet == null).length }] };
         if (/SELECT value FROM agent_office_config WHERE key = \$1/.test(sql)) return { rows: cfg.has(p[0]) ? [{ value: JSON.parse(JSON.stringify(cfg.get(p[0]))) }] : [] };
         if (/INSERT INTO agent_office_config/.test(sql)) { cfg.set(p[0], JSON.parse(p[1])); return { rows: [] }; }
         if (/DELETE FROM agent_office_config WHERE key = ANY/.test(sql)) return { rows: [] };
@@ -119,7 +135,8 @@ function fakePool() {
         if (/DELETE FROM agent_office_config WHERE key = \$1 RETURNING value/.test(sql)) { const v = cfg.get(p[0]); const had = cfg.has(p[0]); cfg.delete(p[0]); return { rows: had ? [{ value: v }] : [] }; }
         if (/^INSERT INTO mail_index/.test(sql.trim())) {
             if (!/ON CONFLICT \(folder, uid\) DO UPDATE/.test(sql)) throw new Error('색인 넣기는 ON CONFLICT 갱신이어야');
-            for (let i = 0; i < p.length; i += 13) { const r = { folder: p[i], folder_name: p[i + 1], uidvalidity: p[i + 2], uid: p[i + 3], from_addr: p[i + 4], from_name: p[i + 5], subject: p[i + 6], msg_date: p[i + 7], at: p[i + 8], has_attach: p[i + 9], attach_names: p[i + 10], size: p[i + 11], parsed: JSON.parse(p[i + 12]) }; idx.set(r.folder + '|' + r.uid, r); }
+            if (!/snippet=COALESCE\(EXCLUDED\.snippet, mail_index\.snippet\)/.test(sql)) throw new Error('snippet 은 COALESCE(빈 값이 있던 본문을 안 지움)');
+            for (let i = 0; i < p.length; i += 14) { const old = idx.get(p[i] + '|' + p[i + 3]); const r = { folder: p[i], folder_name: p[i + 1], uidvalidity: p[i + 2], uid: p[i + 3], from_addr: p[i + 4], from_name: p[i + 5], subject: p[i + 6], msg_date: p[i + 7], at: p[i + 8], has_attach: p[i + 9], attach_names: p[i + 10], size: p[i + 11], parsed: JSON.parse(p[i + 12]), snippet: p[i + 13] != null ? p[i + 13] : old ? old.snippet : null }; idx.set(r.folder + '|' + r.uid, r); }
             return { rows: [] };
         }
         if (/^DELETE FROM mail_index WHERE folder = \$1$/.test(sql.trim())) { for (const k of [...idx.keys()]) if (idx.get(k).folder === p[0]) idx.delete(k); return { rows: [] }; }
@@ -141,7 +158,7 @@ function fakePool() {
         }
         throw new Error('모르는 SQL ' + sql.slice(0, 100));
     } };
-    return { pool, cfg, idx, sqls };
+    return { pool, cfg, idx, sqls, get alters() { return alters; }, get updates() { return updates; } };
 }
 const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
 
@@ -180,7 +197,7 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
     const r2590 = D.idx.get('INBOX|2590');
     ok(r2590 && r2590.subject === SUBJ.cj && r2590.from_addr === 'jua.kang@cj.net' && r2590.from_name === '강주아' && r2590.has_attach === true && r2590.attach_names === '세금계산서_10월.pdf' && r2590.size === 3590 && r2590.parsed.kind === 'tax_invoice' && r2590.parsed.supplier === 'cj', '머리 = 제목·보낸이(이름·주소)·첨부 이름·크기 · 분류 cj', r2590);
     ok(D.idx.get('INBOX|2598').parsed.kind === 'tax_invoice_other' && D.idx.get('INBOX|2580').parsed.kind === 'booking', 'F.C.C 계산서 = 제외 꼴 · 예약 = booking');
-    ok(!F.cmds.some(c => /BODY\.PEEK\[[\d.]+\]|BODY\.PEEK\[\]|RFC822\)|BODY\[\]/.test(c) && !/HEADER\.FIELDS/.test(c)), '색인은 본문을 안 받음(머리말·구조만)', F.cmds.filter(c => /BODY\.PEEK\[[\d.]/.test(c)).slice(0, 3));
+    ok(!F.cmds.some(c => /BODY\.PEEK\[\]|RFC822\)|BODY\[\]/.test(c) || (/BODY\.PEEK\[[\d.]+\]/.test(c) && !/^UID FETCH [\d,]+ \(UID BODY\.PEEK\[[\d.]+\]<0\.(2048|8192)>\)$/.test(c))), '#820 색인 본문 = 글 부분 앞쪽 조각만(<0.2048> · html <0.8192>) · 통째 본문·첨부 0', F.cmds.filter(c => /BODY\.PEEK\[[\d.]/.test(c)).slice(0, 3).map(c => c.slice(-40)));
     ok(F.cmds.every(READONLY), '보낸 명령 = 읽기 전용만(SELECT·STORE·MOVE·EXPUNGE 0)', F.cmds.filter(c => !READONLY(c)).slice(0, 5));
     // 새 메일 3통 → 그것만
     state.box.INBOX.push(mail(2601, 'cj', 26100), mail(2602, 'other', 26110), mail(2603, 'hyodon', 26120));
@@ -188,7 +205,7 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
     const m6 = await RN.collectIndex();
     const fetched = F.cmds.filter(c => /^UID FETCH/.test(c)).slice(before);
     ok(/새로 3통 · 합 3103통/.test(m6) && D.idx.has('INBOX|2603') && D.cfg.get('mail_index_state').folders.INBOX.top === 2603, '그 뒤 = 새 uid 만(3통)', m6);
-    ok(fetched.length === 2 && fetched.every(c => /^UID FETCH 2601,2602,2603 /.test(c)), '새 3통만 FETCH 두 번(구조 · 머리말)', fetched);
+    ok(fetched.length === 3 && fetched.every(c => /^UID FETCH 2601,2602,2603 /.test(c)) && /BODY\.PEEK\[1\]<0\.2048>/.test(fetched[2]), '새 3통만 FETCH 세 번(구조 · 머리말 · #820 본문 조각 한 번에)', fetched);
     const m7 = await RN.collectIndex();
     ok(/새로 0통/.test(m7), '새 메일 없으면 0통', m7);
 
@@ -253,6 +270,10 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
         ok(res.ok && res.page_from === 21 && res.mails.length === 20 && !res.mails.some(m => first.includes(m.uid)), '더보기 = 이어서(겹침 0)', res && res.page_from);
         ({ res } = await search({ q: '대한통운', folder: FOLDER_MINE }));
         ok(res.ok && res.found === 0, '메일함 고르기', res && res.found);
+        ({ res } = await search({ q: '본문 2603' }));
+        ok(res.ok && res.index && res.found === 1 && res.mails[0].uid === 2603 && res.mails[0].preview === '본문 2603' && /본문 첫 200자/.test(res.index.note) && !/아직/.test(res.index.note), '#820 본문 낱말(제목·보낸이에 없음)도 색인에서 찾음 · 결과 꼴(미리보기 300자)은 종전 그대로 · 안내 글', res && { f: res.found, note: res.index && res.index.note });
+        ({ res } = await search({ subject: '본문 2603' }));
+        ok(res.ok && res.found === 0, '#820 제목 전용(subject) 조건은 본문을 안 봄(종전 그대로)', res && res.found);
     }
     {   // 찾기 직전 새 메일 = 짧은 갱신으로 바로 보임
         state.box.INBOX.push(mail(2604, 'sion', 27000));
@@ -325,6 +346,80 @@ const ENV = { NAVER_MAIL_USER: 'u@naver.com', NAVER_MAIL_APP_PW: 's3cret' };
         ok(err && D7.idx.size === 200 && st7 && st7.folders.INBOX.bottom === 301 && st7.total === 200 && !st7.last_ok_at, '끊겨도 앞 200통 + 상태(bottom 301) 남음 · last_ok_at 은 안 찍음', { err: err && err.message, n: D7.idx.size, st: st7 && st7.folders.INBOX });
         calls = -99; const m = await RN7.collectIndex();
         ok(D7.idx.size === 500 && D7.idx.has('INBOX|1') && /새로 300통/.test(m), '다음 회차 = 남은 300통만', { n: D7.idx.size, m });
+    }
+
+    console.log('⑧ #820 본문 첫 200자(snippet) — 새 메일 · 본문 없음 · html · 거름 · 빈 칸 채우기 · 네이버 꼴');
+    {
+        const r2590 = D.idx.get('INBOX|2590'), r50 = D.idx.get('INBOX|50');
+        ok(D.alters >= 1 && r2590 && r2590.snippet === '본문 2590' && r50 && r50.snippet === '본문 50' && [...D.idx.values()].every(r => typeof r.snippet === 'string'), '새로 색인한 메일 = 본문 첫 글(첨부 있는 메일은 글 부분) · 칸 추가(ALTER) · 빈(NULL) 줄 0', { alt: D.alters, s: r2590 && r2590.snippet });
+        const PLAIN = '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 5 1 NIL NIL NIL)';
+        const mk = (uid, o) => Object.assign(mail(uid, 'other', 40000 + uid), o);
+        const longKo = '안녕하세요 제주아꼼이네입니다 '.repeat(40);
+        const css = '<html><head><style>' + '.a{color:red;margin:0 auto;padding:4px}'.repeat(120) + '</style></head><body><p>계산서&nbsp;안내</p><div>이번 달 <b>택배비</b> 청구서입니다</div></body></html>';
+        const boxS = [
+            mk(1, { bs: '("APPLICATION" "PDF" ("NAME" "a.pdf") NIL NIL "BASE64" 100 NIL ("ATTACHMENT" NIL) NIL)' }),   // 첨부만(보안메일 꼴) = ''
+            mk(2, { bs: PLAIN, text: longKo }),   // 긴 한글 = 200자 · 공백 하나로
+            mk(3, { bs: '("TEXT" "HTML" ("CHARSET" "UTF-8") NIL NIL "7BIT" 6000 1 NIL NIL NIL)', text: css }),   // html 만 · 머리 style 이 2KB 넘음
+            mk(4, { bs: PLAIN, text: '[네이버] 인증번호 [123456] 를 입력해 주세요' }),   // 거름
+            mk(5, { bs: PLAIN, subject: 'Your OTP', text: '코드 안내' }),   // 제목 거름
+            mk(6, { bs: '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "BASE64" 100 2 NIL NIL NIL)', partBody: { 1: Buffer.from('베이스64 본문 한글 '.repeat(200), 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n') } }),   // base64 · 2KB 에서 잘림
+            mk(7, { bs: PLAIN, text: '비회원 비밀번호 0123abcd 로 확인' }),   // 스마트빌 꼴 = 거름
+        ];
+        const sS = { list: [['\\HasNoChildren', 'INBOX']], box: { INBOX: boxS }, v: { INBOX: 4 } };
+        const FS = fakeImap(sS), DS = fakePool();
+        const RS = NM.mountMailRunner({ pool: DS.pool, writeAudit: async () => { }, env: ENV, imapOpen: FS.imapOpenF, noTimers: true, now: () => t });
+        await RS.collectIndex();
+        const g = (u) => DS.idx.get('INBOX|' + u).snippet;
+        ok(g(1) === '', '본문 부분 없음(첨부만) = \'\'(채움 표시 · NULL 아님)', g(1));
+        ok(g(2).length === 200 && !/\s{2}/.test(g(2)) && g(2).startsWith('안녕하세요 제주아꼼이네입니다 안녕'), '긴 글 = 200자 · 공백 정리', g(2).length);
+        ok(g(3) === '계산서 안내 이번 달 택배비 청구서입니다' && FS.bodyFetches.some(b => b.n === 8192), 'html 만 = 태그·style 벗김(<0.8192>) · &nbsp; 풂', g(3));
+        ok(g(4) === '' && g(5) === '' && g(7) === '', '거름 = 본문 인증번호 · 제목 OTP · 비밀번호 → \'\'(DB 에 안 남김)', [g(4), g(5), g(7)]);
+        ok(g(6).startsWith('베이스64 본문 한글') && g(6).length === 200 && !/�/.test(g(6)), 'base64 글 = 잘린 끝 버리고 200자(깨진 글자 0)', g(6).slice(-20));
+        ok(FS.bodyFetches.filter(b => b.n === 2048).length === 5 && FS.cmds.filter(c => /BODY\.PEEK\[1\]<0\.2048>/.test(c)).length === 1, '같은 부분 번호끼리 FETCH 한 번(5통 = 명령 1)', FS.cmds.filter(c => /BODY\.PEEK\[1\]/.test(c)));
+        ok(T.snipOf('x', { type: 'text/plain', enc: '7bit' }, 'verification code 안내') === '' && T.snipOf('Verification Code: 99', { type: 'text/plain', enc: '7bit' }, '') === '' && T.snipOf(Buffer.from('HOTPOT 메뉴', 'utf8').toString('latin1'), { type: 'text/plain', enc: '8bit', charset: 'utf-8' }, '') === 'HOTPOT 메뉴', '거름 낱말 = verification code(대소문자) · OTP 는 낱말일 때만');
+        const P7 = { type: 'text/plain', enc: '7bit' }, u8 = (s) => Buffer.from(s, 'utf8').toString('latin1'), P8 = { type: 'text/plain', enc: '8bit', charset: 'utf-8' };
+        ok(['인증 코드 1234', '확인코드 안내', '보안 코드를 넣어', 'Security Code: 1', 'your passcode'].every(s => T.snipOf(u8(s), P8, '') === '') && T.snipOf(u8('주문 확인 안내'), P8, '') === '주문 확인 안내', '#820 거름 넓힘 = 인증/확인/보안 코드 · security code · passcode → \'\' · 「확인 안내」는 그대로');
+        ok(T.snipOf('a\u0000b\u0007c\u001Fd\te', P7, '') === 'abcd e', '#820 제어 글자(NUL 등) 제거 · 탭은 공백(묶음 INSERT 거절 방지)', T.snipOf('a\u0000b\u0007c\u001Fd\te', P7, ''));
+    }
+    {   // 빈 칸 채우기 = 종전(#820 전) 색인 줄(snippet NULL) 350통 → 회차마다 최근 300통 · 그다음 50 · 없어진 메일 = ''
+        const sF = { list: [['\\HasNoChildren', 'INBOX'], ['\\HasNoChildren', FOLDER_MINE]], box: { INBOX: makeBox(300, 1, 0, {}), [FOLDER_MINE]: makeBox(60, 1, 3, {}) }, v: { INBOX: 7, [FOLDER_MINE]: 9 } };
+        sF.box.INBOX = sF.box.INBOX.filter(x => x.uid !== 10);   // uid 10 = 그 뒤 지워진 메일
+        const FF = fakeImap(sF), DF = fakePool();
+        for (const [folder, n, v] of [['INBOX', 300, 7], [FOLDER_MINE, 60, 9]]) for (let u = 1; u <= n; u++) { const m0 = mail(u, 'other', (folder === 'INBOX' ? 0 : 3) + (u - 1) * 10); DF.idx.set(folder + '|' + u, { folder, folder_name: folder, uidvalidity: v, uid: u, subject: '일반 안내 ' + u, at: new Date(m0.at).toISOString(), parsed: { kind: 'other' }, snippet: null }); }
+        DF.cfg.set('mail_index_state', { total: 360, initial_done: true, last_ok_at: new Date(t).toISOString(), folders: { INBOX: { v: 7, top: 300, bottom: 1, done: true, n: 300 }, [FOLDER_MINE]: { v: 9, top: 60, bottom: 1, done: true, n: 60 } } });
+        const RF = NM.mountMailRunner({ pool: DF.pool, writeAudit: async () => { }, env: ENV, imapOpen: FF.imapOpenF, noTimers: true, now: () => t });
+        const m1 = await RF.collectIndex(), s1 = DF.cfg.get('mail_index_state');
+        const filled = [...DF.idx.values()].filter(r => r.snippet != null), left = [...DF.idx.values()].filter(r => r.snippet == null);
+        const oldestFilled = Math.min(...filled.map(r => Date.parse(r.at))), newestLeft = Math.max(...left.map(r => Date.parse(r.at)));
+        ok(filled.length === 300 && left.length === 60 && oldestFilled > newestLeft && s1.snippet_left === 60 && /새로 0통.*본문 채우는 중 60통 남음/.test(m1), '1회차 = 최근 300통 채움(두 메일함 섞여도 받은 시각순) · 60통 남음 = 상태·결과 글', { m1, f: filled.length, l: left.length });
+        ok(DF.idx.get('INBOX|300').snippet === '본문 300' && DF.idx.get(FOLDER_MINE + '|60').snippet === '본문 60', '채운 값 = 그 메일 본문');
+        DF.cfg.set('mail_search_request', { id: 'f1', q: '본문 1' }); await RF.tick();
+        const fr = DF.cfg.get('mail_search_result');
+        ok(fr && fr.ok && fr.index && /본문 60통 아직/.test(fr.index.note), '덜 찬 동안 찾기 안내 = 「본문 n통 아직」', fr && fr.index);
+        const up0 = DF.updates;
+        const m2 = await RF.collectIndex(), s2 = DF.cfg.get('mail_index_state');
+        ok(![...DF.idx.values()].some(r => r.snippet == null) && DF.idx.get('INBOX|10').snippet === '' && s2.snippet_left === 0 && !/본문 채우는 중/.test(m2) && DF.updates - up0 === 60, '2회차 = 남은 60통(이미 찬 줄 다시 안 씀) · 지워진 메일 = \'\' · 다 차면 글 없음', { m2, up: DF.updates - up0, left: s2.snippet_left });
+        const bf0 = FF.cmds.filter(c => /BODY\.PEEK\[1\]/.test(c)).length; await RF.collectIndex();
+        ok(FF.cmds.filter(c => /BODY\.PEEK\[1\]/.test(c)).length === bf0 && FF.cmds.every(READONLY), '3회차 = 채울 것 없음(본문 FETCH 0) · 읽기 전용 명령만');
+    }
+    {   // 네이버 꼴 = UID 줄·본문 줄 따로 · 묶음 FETCH 실패 = 한 통씩 · 잇따라 끊김 = NULL(다음 회차)
+        const sP = { list: [['\\HasNoChildren', 'INBOX']], box: { INBOX: makeBox(12, 1, 0, {}) }, v: { INBOX: 1 }, splitFetch: true };
+        const FP = fakeImap(sP), DP = fakePool();
+        const RP = NM.mountMailRunner({ pool: DP.pool, writeAudit: async () => { }, env: ENV, imapOpen: FP.imapOpenF, noTimers: true, now: () => t });
+        await RP.collectIndex();
+        ok([...DP.idx.values()].every(r => r.snippet === '본문 ' + r.uid), 'UID 줄 · 본문 줄 따로 와도 메일 번호로 맞춤');
+        const sQ = { list: [['\\HasNoChildren', 'INBOX']], box: { INBOX: makeBox(5, 1, 0, {}) }, v: { INBOX: 1 }, bodyFail: (uids) => uids.length > 1 || uids[0] === 3 };
+        const FQ = fakeImap(sQ), DQ = fakePool();
+        const RQ = NM.mountMailRunner({ pool: DQ.pool, writeAudit: async () => { }, env: ENV, imapOpen: FQ.imapOpenF, noTimers: true, now: () => t });
+        const mq = await RQ.collectIndex();
+        ok(DQ.idx.size === 5 && DQ.idx.get('INBOX|3').snippet === '' && [1, 2, 4, 5].every(u => DQ.idx.get('INBOX|' + u).snippet === '본문 ' + u) && /새로 5통/.test(mq), '묶음 FETCH 실패 = 한 통씩 · 한 통 실패 = 그 통만 \'\' · 색인은 그대로', { mq, s: [...DQ.idx.values()].map(r => r.snippet) });
+        const sR2 = { list: [['\\HasNoChildren', 'INBOX']], box: { INBOX: makeBox(6, 1, 0, {}) }, v: { INBOX: 1 }, bodyFail: () => true };
+        const FR2 = fakeImap(sR2), DR2 = fakePool();
+        const RR2 = NM.mountMailRunner({ pool: DR2.pool, writeAudit: async () => { }, env: ENV, imapOpen: FR2.imapOpenF, noTimers: true, now: () => t });
+        const mr = await RR2.collectIndex(), sv = [...DR2.idx.values()].map(r => r.snippet);
+        ok(DR2.idx.size === 6 && sv.filter(s => s === '').length === 3 && sv.filter(s => s == null).length === 3 && /새로 6통.*본문 채우는 중 3통 남음/.test(mr), '잇따라 3통 실패(끊김 꼴 · 최근 6·5·4) = 남은 통은 NULL → 다음 회차 채우기 · 머리 색인은 6통 다', { mr, sv });
+        sR2.bodyFail = null; const mr2 = await RR2.collectIndex();
+        ok([1, 2, 3].every(u => DR2.idx.get('INBOX|' + u).snippet === '본문 ' + u) && !/본문 채우는 중/.test(mr2), '서버가 돌아오면 다음 회차에 NULL 3통 채움', { mr2, sv: [...DR2.idx.values()].map(r => r.snippet) });
     }
 
     console.log('⑦ server.js — 보관 정리 mail_index 365일 · #813 로그인 만료 알림 · imap 묶음(실코드 구간을 떼어 가짜 DB 로)');
