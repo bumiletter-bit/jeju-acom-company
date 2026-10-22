@@ -14781,7 +14781,7 @@ setupNaverTimerCard();
     const GROUPS = [['sion', '시온(조천감귤농협)'], ['hyodon', '효돈농협유통'], ['cj', 'CJ대한통운(택배비)']];   // #816 대표: 기타 없음 · 서버 groups 순서와 같게
     const ST = { draft: ['초안', 'pill-wait'], confirmed: ['확인', 'si-pill-done'], hold: ['보류', 'pill-off'] };
     const KIND = { free: '면세', modify: '수정' };
-    const S = { from: '', to: '', months: [], rows: [], groups: [], totals: {}, group: 'all', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0 };
+    const S = { from: '', to: '', months: [], rows: [], groups: [], totals: {}, group: 'all', q: '', found: null, more: false, loading: false, err: '', inited: false, seq: 0, payForm: null, payDraft: { day: '', amt: '', memo: '' }, payOpen: {}, delArm: '', imp: null, impK: '' };   // #824 입금(관리자)
     const $ = id => document.getElementById(id);
     const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const won = n => (n == null || n === '' || isNaN(Number(n))) ? '—' : Number(n).toLocaleString('ko-KR');
@@ -14806,12 +14806,21 @@ setupNaverTimerCard();
             <p class="si-range-err" id="si-range-err" role="alert" hidden>시작일이 종료일보다 늦어요 — 날짜를 다시 골라 주세요.</p>
             <div class="si-search-row"><svg class="si-qi" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.5 13.5 17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input type="search" id="si-q" class="si-q" placeholder="공급자 · 승인번호 · 금액 · 메모 찾기(전체 기간)" aria-label="계산서 찾기(전체 기간)" autocomplete="off"></div>
             <div class="si-chips" id="si-groups" role="group" aria-label="거래처"></div>
-        </div><div id="si-body" aria-live="polite"></div>`;
+        </div><div id="si-body" aria-live="polite"></div><input type="file" id="si-xl" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`;
         root.addEventListener('click', onClick);
         let tm = null;
         $('si-q').addEventListener('input', e => { S.q = e.target.value; clearTimeout(tm); tm = setTimeout(search, 300); });
         root.addEventListener('change', e => {   // akm-date 는 날짜를 고르면 change(bubbles)를 쏜다 → 바로 조회
             if (e.target.id === 'si-from' || e.target.id === 'si-to') query();
+            else if (e.target.id === 'si-pd') S.payDraft.day = e.target.value;   // #824 입금일
+            else if (e.target.id === 'si-xl' && e.target.files && e.target.files[0]) readImport(e.target.files[0]);
+        });
+        root.addEventListener('input', e => {   // #824 금액 = 숫자만 · 콤마
+            if (e.target.id === 'si-pa') { const v = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 10) /* 10억 = 10자리까지(서버 상한) */; e.target.value = v ? Number(v).toLocaleString('ko-KR') : ''; S.payDraft.amt = e.target.value; }
+            else if (e.target.id === 'si-pm') S.payDraft.memo = e.target.value;
+        });
+        root.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'si-pa' || e.target.id === 'si-pm')) { e.preventDefault(); const sv = root.querySelector('[data-si="paysave"]'); if (sv) sv.click(); }
         });
     }
     function query() {   // 기간 칸 값으로 조회 — 달력 고를 때 · [조회] 단추(#817) 같은 길
@@ -14880,6 +14889,25 @@ setupNaverTimerCard();
                 : `<span class="${okv ? 'si-ahead' : 'si-diffv'}">${d > 0 ? '+' : '−'}${boxN(Math.abs(d))}박스</span>`;
             const okWord = (d, okv) => d === 0 ? '' : okv ? '대략 일치' : '확인 필요';
             if (finding) { /* 찾기 = 머리 숫자 없음 */ }
+            else if (st && st.mode === 'paid') {   // #824 시온·효돈 = 입금 기준(엑셀 「미발행」 = 이월 + 입금 − 계산서)
+                const un = Number(st.unissued) || 0, carry = Number(st.carry) || 0, up = Number(st.unpaid) || 0;
+                const base = st.start_date ? `기준 ${md(st.start_date)}${st.start_date === '2026-03-29' ? '(법인)' : ''} · ${carry ? `이월 ${carry < 0 ? '−' : ''}${won(Math.abs(carry))}원 포함` : '이월 없음'}` : '';
+                cmp = stat('누적 입금', won(st.cum_paid) + '원') + stat('누적 계산서', won(st.cum_invoice) + '원')
+                    + stat('미발행 잔액', un === 0 ? '<span class="pill pill-ok si-match">일치</span>' : un > 0 ? `<span class="si-diffv">${won(un)}원</span>` : `<span class="si-ahead">${won(-un)}원</span>`, 'si-diff',
+                        un === 0 ? '' : un > 0 ? '<b class="si-diffv">계산서 아직 안 옴</b>' : '입금보다 계산서 많음');
+                ttl = '미발행 잔액 = 이월 + 누적 입금 − 누적 계산서';
+                const upw = up > 0 ? '아직 안 보낸 돈' : up < 0 ? '입금이 정산보다 많음' : '정산과 입금 같음';
+                note = `<p class="si-month-note si-paynote">${esc(base)}${base ? ' · ' : ''}우리 정산 ${won(st.cum_settle)}원 · 입금과 차 ${won(Math.abs(up))}원(${upw})</p>`;
+                const mr = Array.isArray(st.month_rows) ? st.month_rows.filter(x => x && /^\d{4}-\d{2}$/.test(x.month || '')) : [];
+                const sgn = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${won(Math.abs(d))}`;
+                const judge = d => d === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="${d > 0 ? 'si-diffv' : 'si-ahead'}">${sgn(d)}</span>`;   // 0 = 일치 · + 호박 · − 회색
+                const hasBal = mr.some(x => x.balance != null);   // 월말 누적 잔액이 오면 판정 = 월말 잔액 · 달 차는 숫자만
+                if (mr.length) mrows = `<p class="si-mrcap">달 전체 기준</p><ul class="si-mrows" aria-label="달마다 입금 · 계산서">${mr.map(x => `<li class="si-mr" data-m="${esc(x.month)}"><span class="si-mm">${+x.month.slice(5, 7)}월</span><span class="si-mn">입금 <b>${won(x.paid)}</b></span><span class="si-mn">계산서 <b>${won(x.invoice)}</b></span>`
+                    + (hasBal ? `<span class="si-mn">달 차 <b>${sgn(Number(x.diff) || 0)}</b></span><span class="si-md si-mbal"><span class="si-mn">월말 잔액</span> ${x.balance == null ? '—' : judge(Number(x.balance) || 0)}</span>`
+                        : `<span class="si-md">${(Number(x.diff) || 0) === 0 ? judge(0) : `<span class="si-mn">차</span> ${judge(Number(x.diff))}`}</span>`) + '</li>').join('')}</ul>`
+                    + (hasBal && mr.some(x => (Number(x.diff) || 0) !== 0 && x.balance != null && Number(x.balance) === 0) ? '<p class="si-month-note si-mbnote">입금이 주 단위라 달 경계에 걸릴 수 있어요 · 월말 잔액 0 = 정상</p>' : '');
+                if (canEdit()) mrows += payHtml(k, st);
+            }
             else if (st && st.mode === 'balance') {
                 const bal = Number(st.balance) || 0, carry = Number(st.carry) || 0;
                 const base = st.start_date ? `기준 ${md(st.start_date)}${st.start_date === '2026-03-29' ? '(법인)' : ''} · ${carry ? `이월 ${carry < 0 ? '−' : ''}${won(Math.abs(carry))}원 포함` : '이월 없음'}` : '';
@@ -14913,6 +14941,38 @@ setupNaverTimerCard();
         }).join('');
         body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
     }
+    function payHtml(k, st) {   // #824 관리자만 — [+ 입금] · [엑셀 올리기] · 기간 안 입금 목록([삭제] 두 번 누름)
+        const pays = Array.isArray(st.payments) ? st.payments : [], open = !!S.payOpen[k], d = S.payDraft;
+        const bar = `<div class="si-paybar"><button type="button" class="btn-outline si-btn" data-si="payadd" data-v="${k}" aria-expanded="${S.payForm === k}">+ 입금</button><button type="button" class="btn-outline si-btn" data-si="payxl" data-v="${k}">엑셀 올리기</button>`
+            + (pays.length ? `<button type="button" class="si-undo" data-si="paylist" data-v="${k}" aria-expanded="${open}">입금 ${pays.length}건 ${open ? '접기' : '보기'}</button>` : '<span class="si-cjnote">이 기간 입금 기록 없음</span>') + '</div>';
+        const form = S.payForm !== k ? '' : `<div class="si-payf" role="group" aria-label="입금 넣기"><label class="si-rl"><span>입금일</span><input type="text" id="si-pd" class="form-input akm-date si-date" readonly autocomplete="off" value="${esc(d.day)}"></label>`
+            + `<label class="si-rl si-pamt"><span>금액(원)</span><input type="text" id="si-pa" class="form-input si-pin" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amt)}"></label>`
+            + `<label class="si-rl si-pmemo"><span>메모</span><input type="text" id="si-pm" class="form-input si-pin" maxlength="200" autocomplete="off" placeholder="선택" value="${esc(d.memo)}"></label>`
+            + `<div class="si-payfb"><button type="button" class="btn-primary si-btn" data-si="paysave" data-v="${k}">저장</button><button type="button" class="btn-outline si-btn" data-si="paycancel">취소</button></div></div>`;
+        const n = v => Array.isArray(v) ? v.length : (Number(v) || 0);
+        let imp = '';
+        if (S.imp && S.imp.k === k) {
+            const r = S.imp.res || {}, nw = Array.isArray(r.new) ? r.new : [];
+            const by = [['sion', '시온'], ['hyodon', '효돈']].map(([g, l]) => [l, nw.filter(x => x.supplier === g).length]).filter(x => x[1]).map(x => `${esc(x[0])} ${x[1]}`).join(' · ');
+            imp = `<div class="si-imp" role="status"><p class="si-impt"><b>${esc(S.imp.name)}</b> 미리보기</p><p class="si-impn">새 줄 <b>${n(r.new)}</b> · 이미 있음 <b>${n(r.dup)}</b> · 기준일 앞 <b>${n(r.before_start)}</b> · 못 읽음 <b>${n(r.unreadable)}</b>${by ? ` <span class="si-cjnote">(${by})</span>` : ''}</p>`
+                + `<div class="si-payfb"><button type="button" class="btn-primary si-btn" data-si="payimp"${n(r.new) ? '' : ' disabled'}>넣기</button><button type="button" class="btn-outline si-btn" data-si="payimpx">취소</button></div></div>`;
+        }
+        const list = !open || !pays.length ? '' : `<ul class="si-payl" aria-label="입금 목록">${pays.map(p => `<li class="si-pi" data-pid="${esc(p.id)}"><span class="si-mm">${esc(md(p.paid_on))}</span><span class="si-pv">${won(p.amount)}원</span><span class="si-kind">${p.source === 'excel' ? '엑셀' : '직접'}</span><span class="si-pmeta">${esc(p.memo || '')}${p.memo && p.by ? ' · ' : ''}${esc(p.by || '')}</span><button type="button" class="si-undo si-pdel${S.delArm === String(p.id) ? ' on' : ''}" data-si="paydel" data-v="${esc(p.id)}">${S.delArm === String(p.id) ? '<span class="si-diffv">정말 삭제</span>' : '삭제'}</button></li>`).join('')}</ul>`;
+        return `<div class="si-pay">${bar}${form}${imp}${list}</div>`;
+    }
+    function readImport(file) {   // #824 엑셀 → base64 → dry 미리보기
+        const k = S.impK || 'sion';
+        if (!/\.xlsx$/i.test(file.name)) { showToast('.xlsx 파일만 올릴 수 있어요', 'error'); return; }
+        if (file.size > 5 * 1024 * 1024) { showToast('파일이 너무 커요(5MB까지)', 'error'); return; }
+        const fr = new FileReader();
+        fr.onload = async () => {
+            const data = String(fr.result).split(',')[1] || '';
+            try { const res = await api('/api/tax-invoices/payments/import', 'POST', { data, dry: true }); S.imp = { k, name: file.name, data, res }; render(); }
+            catch (err) { showToast('엑셀을 읽지 못했어요 — ' + (err && err.message || ''), 'error'); }
+        };
+        fr.onerror = () => showToast('파일을 읽지 못했어요', 'error');
+        fr.readAsDataURL(file);
+    }
     function rowHtml(r) {
         const [lab, cls] = ST[r.status] || ST.draft, ed = canEdit(), chk = r.read_status === 'check' || r.read_status === 'error';
         const acts = (ed && r.status !== 'confirmed' ? `<button type="button" class="btn-primary si-btn" data-si="act" data-v="confirm">확인</button>` : '')
@@ -14940,6 +15000,48 @@ setupNaverTimerCard();
                 showToast(`CJ ${+b.dataset.v.slice(5, 7)}월 ${undo ? '대조 확인 되돌림' : '대조 확인'}`, 'success');
                 load();
             } catch (err) { b.disabled = false; showToast('저장하지 못했어요 — ' + (err && err.message || ''), 'error'); }
+        }
+        else if (k === 'payadd') {   // #824 입금 넣기 칸 열고 닫기
+            if (!canEdit()) return;
+            S.payForm = S.payForm === b.dataset.v ? null : b.dataset.v;
+            if (S.payForm) S.payDraft = { day: kstDay(Date.now()), amt: '', memo: '' };
+            render(); const a = $('si-pa'); if (a) a.focus();
+        }
+        else if (k === 'paycancel') { S.payForm = null; render(); }
+        else if (k === 'paylist') { S.payOpen[b.dataset.v] = !S.payOpen[b.dataset.v]; render(); }
+        else if (k === 'paysave') {
+            if (!canEdit()) return;
+            const day = ($('si-pd') || {}).value || '', amount = Number(String(($('si-pa') || {}).value || '').replace(/\D/g, '')), memo = String(($('si-pm') || {}).value || '').trim();
+            if (!okDay(day)) { showToast('입금일을 골라 주세요', 'error'); return; }
+            if (!(amount > 0)) { showToast('금액을 넣어 주세요', 'error'); const a = $('si-pa'); if (a) a.focus(); return; }
+            b.disabled = true;
+            try {
+                await api('/api/tax-invoices/payments', 'POST', memo ? { supplier: b.dataset.v, paid_on: day, amount, memo } : { supplier: b.dataset.v, paid_on: day, amount });
+                showToast(`${b.dataset.v === 'hyodon' ? '효돈' : '시온'} ${md(day)} 입금 ${won(amount)}원 넣음`, 'success');
+                S.payForm = null; load();
+            } catch (err) { b.disabled = false; showToast(err && err.message || '저장하지 못했어요', 'error'); }   // 409(같은 입금) = 서버 글 그대로
+        }
+        else if (k === 'paydel') {   // 한 번 = 「정말 삭제」 · 4초 안 한 번 더 = 삭제
+            if (!canEdit()) return;
+            const id = b.dataset.v;
+            if (S.delArm !== id) { S.delArm = id; render(); clearTimeout(S.delTm); S.delTm = setTimeout(() => {   // 그 단추 글만 되돌림(통째 render 면 입금 칸에 치던 초점이 빠짐)
+                if (S.delArm !== id) return; S.delArm = '';
+                const x = document.querySelector(`#settlement-invoice .si-pdel[data-v="${CSS.escape(id)}"]`); if (x) { x.classList.remove('on'); x.textContent = '삭제'; }
+            }, 4000); return; }
+            S.delArm = ''; clearTimeout(S.delTm); b.disabled = true;
+            try { await api('/api/tax-invoices/payments/' + encodeURIComponent(id), 'DELETE'); showToast('입금 기록을 지웠어요', 'success'); load(); }
+            catch (err) { b.disabled = false; showToast('지우지 못했어요 — ' + (err && err.message || ''), 'error'); }
+        }
+        else if (k === 'payxl') { if (!canEdit()) return; S.impK = b.dataset.v; const x = $('si-xl'); x.value = ''; x.click(); }
+        else if (k === 'payimpx') { S.imp = null; render(); }
+        else if (k === 'payimp') {
+            if (!canEdit() || !S.imp) return;
+            b.disabled = true;
+            try {
+                const res = await api('/api/tax-invoices/payments/import', 'POST', { data: S.imp.data, dry: false });
+                const nIns = res && res.inserted != null ? (Array.isArray(res.inserted) ? res.inserted.length : Number(res.inserted) || 0) : (Array.isArray(res && res.new) ? res.new.length : 0);
+                showToast(`엑셀 입금 ${nIns}줄 넣음`, 'success'); S.imp = null; load();
+            } catch (err) { b.disabled = false; showToast('넣지 못했어요 — ' + (err && err.message || ''), 'error'); }
         }
         else if (k === 'reload') { if (S.found !== null) search(); else load(); }
         else if (k === 'pdf') openPdf(b.closest('tr').dataset.id, b);

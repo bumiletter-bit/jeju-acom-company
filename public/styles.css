@@ -4928,6 +4928,26 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-mn { color: var(--text-mid, #667085); } #settlement-invoice .si-mn b { color: var(--text-dark, #101828); font-weight: 600; }
 #settlement-invoice .si-md { font-weight: 700; }
 #settlement-invoice .si-mc { display: inline-flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-left: auto; }
+/* #824 시온·효돈 입금(관리자) — [+ 입금] · [엑셀 올리기] · 입금 넣기 칸 · 엑셀 미리보기 · 입금 목록(달 줄과 같은 꼴) */
+#settlement-invoice .si-pay { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; }
+#settlement-invoice .si-paybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#settlement-invoice .si-payf { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 12px; border-radius: 12px; background: var(--bg, #F5F6F8); }
+#settlement-invoice .si-payf .si-rl { flex: 0 1 160px; }
+#settlement-invoice .si-payf .si-pamt { flex: 0 1 180px; }
+#settlement-invoice .si-payf .si-pmemo { flex: 1 1 200px; min-width: 160px; }
+#settlement-invoice .si-pin { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; }
+#settlement-invoice .si-pamt .si-pin { text-align: right; font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-payfb { display: flex; gap: 8px; }
+#settlement-invoice .si-imp { padding: 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 12px; font-size: 13px; color: var(--text-dark, #101828); }
+#settlement-invoice .si-impt, #settlement-invoice .si-impn { margin: 0 0 8px; }
+#settlement-invoice .si-impn b { font-variant-numeric: tabular-nums; }
+#settlement-invoice .si-payl { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border, #ECEDF1); }
+#settlement-invoice .si-pi { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; min-height: 48px; padding: 4px 0; border-bottom: 1px solid var(--border, #ECEDF1); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-dark, #101828); }
+#settlement-invoice .si-pv { font-weight: 700; }
+#settlement-invoice .si-pi .si-kind { margin: 0; align-self: center; }
+#settlement-invoice .si-pmeta { flex: 1 1 120px; min-width: 0; color: var(--text-mid, #667085); overflow-wrap: anywhere; }
+#settlement-invoice .si-pdel { margin-left: auto; }
+#settlement-invoice .si-pdel.on { font-weight: 700; }   /* 「정말 삭제」 글 = span.si-diffv(호박 · 야간 색 있음) */
 #settlement-invoice .si-table td, #settlement-invoice .si-table th { white-space: nowrap; padding-left: 10px; padding-right: 10px; }   /* 9칸이 PC 카드 폭(약 950) 안에 들게 */
 #settlement-invoice .si-table td.si-st { white-space: normal; min-width: 64px; }
 #settlement-invoice .si-table .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -4955,7 +4975,7 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-none { color: var(--text-light, #98A0AE); }
 #settlement-invoice .si-empty { margin: 4px 0; color: var(--text-mid, #667085); font-size: 14px; line-height: 1.6; }
 @media (max-width: 960px), (pointer: coarse) {
-    #settlement-invoice .si-chip, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav, #settlement-invoice .si-date, #settlement-invoice .si-go, #settlement-invoice .si-undo { min-height: 44px; }
+    #settlement-invoice .si-chip, #settlement-invoice .si-btn, #settlement-invoice .month-nav .btn-nav, #settlement-invoice .si-date, #settlement-invoice .si-go, #settlement-invoice .si-undo, #settlement-invoice .si-pin { min-height: 44px; }
     #settlement-invoice .si-tilde { padding-bottom: 12px; }
     #settlement-invoice .month-nav .btn-nav { min-width: 44px; }
 }
@@ -4974,6 +4994,10 @@ body.ps-view-open { overflow: hidden; }
     #settlement-invoice .si-sv { font-size: 14px; white-space: normal; word-break: keep-all; }
     #settlement-invoice .si-ss { white-space: normal; word-break: keep-all; }
     #settlement-invoice .si-mc { margin-left: 0; flex: 1 0 100%; }   /* 폰 = 숫자 한 줄 · 대조 확인 다음 줄 */
+    #settlement-invoice .si-payf .si-rl { flex: 1 1 calc(50% - 4px); min-width: 0; }   /* #824 폰 = 입금일·금액 반씩 · 메모·단추 한 줄씩 */
+    #settlement-invoice .si-payf .si-pmemo, #settlement-invoice .si-payfb { flex: 1 0 100%; }
+    #settlement-invoice .si-payfb .si-btn { flex: 1 1 0; }
+    #settlement-invoice .si-mr .si-mbal { order: -1; flex: 1 0 calc(100% - 60px); } #settlement-invoice .si-mr .si-mm { order: -2; }   /* #824 폰 = 월말 잔액 먼저 */
     #settlement-invoice .si-date { padding-left: 10px; padding-right: 30px; background-position: right 8px center; }
 }
 /* 폰(≤768) = 표 → 줄마다 카드(머리 칸은 숨기고 data-label 로 이름 붙임) · 가로 넘침 0 */

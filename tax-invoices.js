@@ -30,6 +30,36 @@ async function ensureTable(pool) {
     // #823 달 단위 [대조 확인](CJ 박스 대조 · 시온·효돈도 같은 길) · 한 거래처·한 달 = 한 줄
     await pool.query(`CREATE TABLE IF NOT EXISTS tax_invoice_checks (supplier TEXT NOT NULL, month TEXT NOT NULL, checked_by INTEGER, checked_name TEXT,
         checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (supplier, month))`);
+    // #824 시온·효돈 입금(우리가 보낸 돈) — 미발행 = 입금했는데 계산서 안 온 돈 · 지우기 = deleted_at(줄은 남김)
+    await pool.query(`CREATE TABLE IF NOT EXISTS tax_invoice_payments (id SERIAL PRIMARY KEY, supplier TEXT NOT NULL, paid_on DATE NOT NULL, amount BIGINT NOT NULL,
+        memo TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'manual', created_by INTEGER, created_name TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS tax_invoice_payments_sup ON tax_invoice_payments (supplier, paid_on)`);
+}
+const PAY_SUP = ['sion', 'hyodon'], PAY_MAX = 1000000000, PAY_LIST_MAX = 200, IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+// #824 미발행계산서 엑셀(대표 바탕화면) 입금 줄 읽기 — 규격 = 워커3 #824-A · 시트 이름 「대성」 → sion · 「효돈」 → hyodon · 나머지 시트 안 읽음
+//   열 고정 A = 결제날짜(날짜 칸) · B = 입금금액 · C~ = 메모(원문 ' / ' 로 이음 · 안의 날짜·금액은 안 읽음) · 머리줄 위치가 시트마다 달라 열 이름은 안 찾음
+//   읽는 줄 = A 가 날짜 AND B 가 숫자(수식 아님) AND 0 < B ≤ 10억 정수 · 합계줄(A 글자·B 수식)·계산서 음수 줄·빈 줄은 저절로 빠짐
+//   unreadable = B 는 입금처럼 보이는데(양수) A 가 날짜 칸이 아닌 줄(글자로 친 날짜 등) · A 는 날짜인데 B 가 글자인 줄(글자로 친 금액) — 건수만 알림(수식·빈칸은 조용히 빠짐)
+async function readPaymentsXlsx(buf) {
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+    const out = [], sheets = []; let unreadable = 0;
+    wb.eachSheet((ws) => {
+        const sup = /대성/.test(ws.name) ? 'sion' : /효돈/.test(ws.name) ? 'hyodon' : null;
+        if (!sup) return;
+        sheets.push(ws.name);
+        ws.eachRow({ includeEmpty: false }, (row) => {
+            const a = row.getCell(1).value, b = row.getCell(2).value;
+            if (a instanceof Date && ((typeof b === 'string' && b.trim()) || (b && typeof b === 'object' && Array.isArray(b.richText)))) { unreadable++; return; }   // 날짜는 있는데 금액이 글자(「1,000,000」 등) = 알림
+            if (typeof b !== 'number' || !Number.isFinite(b) || b <= 0) return;
+            const d = a instanceof Date && !Number.isNaN(a.getTime()) ? a.toISOString().slice(0, 10) : null;
+            if (!d || !isDay(d) || !Number.isInteger(b) || b > PAY_MAX) { unreadable++; return; }
+            const memo = [];
+            for (let c = 3; c <= row.cellCount; c++) { const t = String(row.getCell(c).text || '').replace(/\s+/g, ' ').trim(); if (t) memo.push(t); }
+            out.push({ supplier: sup, paid_on: d, amount: b, memo: memo.join(' / ').slice(0, 500) });
+        });
+    });
+    return { rows: out, sheets, unreadable };
 }
 const dedupKeyOf = (r) => r.approval_no ? 'a:' + r.approval_no : `m:${r.mail_folder || ''}:${r.mail_uidvalidity || 0}:${r.mail_uid || 0}`;
 // 창구 도구가 부름 — 같은 dedup_key 면 숫자·PDF·읽기 결과만 갱신(status·memo·확인 정보 = 사람이 누른 것 보존) · 돌려줌 { id, inserted }
@@ -126,16 +156,37 @@ function mount(app, deps) {
             const ourBoxM = {};   // #823 달마다 CJ 우리 박스 = 박스 수 + 이월 금액 ÷ 3,100
             for (const m of months) { const st = await settleTotals(pool, helpers, m); ourBoxM[m] = st.boxes + st.carry / CJ_BOX_FEE; for (const s of SHOWN) { settle[s] += st.totals[s]; basis[s].push(st.basis[s]); } }
             const checkOf = (g) => g.filter(r => r.read_status !== 'read' || r.total_amount == null).length;
-            // #823 묶음 머리 자료 — 시온·효돈 = 누적 잔액(기준일 ~ to · 정산·계산서 같은 끝) · CJ = 박스 대조(달마다 달 전체 · 머리 = 달 줄 합) + 달 [대조 확인]
+            // #823·#824 묶음 머리 자료 — 시온·효돈 = 입금 기준 미발행(기준일 ~ to · 입금·계산서·정산 같은 끝 · 달 줄 = 달 전체) · CJ = 박스 대조(달마다 달 전체 · 머리 = 달 줄 합) + 달 [대조 확인]
             const bs = await balanceStart(pool), before = to < bs.date;
-            const cum = { sion: { settle: 0, invoice: 0 }, hyodon: { settle: 0, invoice: 0 } };
+            const cum = { sion: { settle: 0, invoice: 0, paid: 0, n: 0 }, hyodon: { settle: 0, invoice: 0, paid: 0, n: 0 } };
             if (!before) {
                 for (const r of await helpers.fetchSettlements(pool, helpers, bs.date, to)) {
                     if (r.partner === SETTLE_PARTNER.sion) cum.sion.settle += r.amount; else if (r.partner === SETTLE_PARTNER.hyodon) cum.hyodon.settle += r.amount;
                 }
                 for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
                     WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY supplier`, [bs.date, to])).rows) cum[r.supplier].invoice = Number(r.t) || 0;
+                for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(amount), 0)::bigint AS t, count(*)::int AS n FROM tax_invoice_payments
+                    WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY supplier`, [bs.date, to])).rows) { cum[r.supplier].paid = Number(r.t) || 0; cum[r.supplier].n = Number(r.n) || 0; }
             }
+            // #824 달 줄(시온·효돈) = 걸린 달마다 그 달 전체 입금·계산서(보류 뺌) · 입금 목록 = from~to 안(지운 것 뺌 · 날짜 내림차순 · 200)
+            const mFrom = months[0] + '-01', mTo = monthEnd(months[months.length - 1]);
+            const payM = { sion: {}, hyodon: {} }, invM = { sion: {}, hyodon: {} }, payList = { sion: [], hyodon: [] };
+            for (const r of (await pool.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM') AS m, COALESCE(SUM(amount), 0)::bigint AS t FROM tax_invoice_payments
+                WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY 1, 2`, [mFrom, mTo])).rows) payM[r.supplier][r.m] = Number(r.t) || 0;
+            for (const r of (await pool.query(`SELECT supplier, to_char(${DAY}, 'YYYY-MM') AS m, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
+                WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY 1, 2`, [mFrom, mTo])).rows) invM[r.supplier][r.m] = Number(r.t) || 0;
+            // 달 줄 balance = 월말 누적 잔액(이월 + 기준일~그 달 말일 입금 − 계산서) — 대성은 입금이 주 단위라 달 차가 흔들려도 누적은 맞음을 보이려고
+            const cumM = { sion: [], hyodon: [] };   // [{m, d}] 기준일~마지막 달 말일 · 달마다 (입금 − 계산서)
+            if (mTo >= bs.date) {
+                for (const r of (await pool.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM') AS m, COALESCE(SUM(amount), 0)::bigint AS t FROM tax_invoice_payments
+                    WHERE supplier IN ('sion', 'hyodon') AND deleted_at IS NULL AND paid_on >= $1::date AND paid_on <= $2::date GROUP BY 1, 2`, [bs.date, mTo])).rows) cumM[r.supplier].push({ m: r.m, d: Number(r.t) || 0 });
+                for (const r of (await pool.query(`SELECT supplier, to_char(${DAY}, 'YYYY-MM') AS m, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
+                    WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date GROUP BY 1, 2`, [bs.date, mTo])).rows) cumM[r.supplier].push({ m: r.m, d: -(Number(r.t) || 0) });
+            }
+            const monthBal = (s, m) => bs[s] + cumM[s].reduce((a, x) => a + (x.m <= m ? x.d : 0), 0);
+            for (const s of PAY_SUP) payList[s] = (await pool.query(`SELECT id, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, amount, memo, source, created_name, created_at FROM tax_invoice_payments
+                WHERE supplier = $1 AND deleted_at IS NULL AND paid_on >= $2::date AND paid_on <= $3::date ORDER BY paid_on DESC, id DESC LIMIT ${PAY_LIST_MAX}`, [s, from, to])).rows
+                .map(r => ({ id: r.id, paid_on: r.paid_on, amount: Number(r.amount), memo: r.memo || '', source: r.source, by: r.created_name, at: r.created_at }));
             const cjCheck = {};
             for (const r of (await pool.query(`SELECT month, checked_name, checked_at FROM tax_invoice_checks WHERE supplier = 'cj' AND month >= $1 AND month <= $2`, [months[0], months[months.length - 1]])).rows)
                 cjCheck[r.month] = { by: r.checked_name, at: r.checked_at };
@@ -151,7 +202,10 @@ function mount(app, deps) {
                         ...boxRow(round1(month_rows.reduce((a, x) => a + x.our_boxes, 0)), round1(month_rows.reduce((a, x) => a + x.invoice_boxes, 0))), month_rows };
                 }
                 const c = cum[s];
-                return { mode: 'balance', start_date: bs.date, carry: bs[s], cum_settle: c.settle, cum_invoice: c.invoice, balance: bs[s] + c.settle - c.invoice };
+                return { mode: 'paid', start_date: bs.date, carry: bs[s], cum_paid: c.paid, cum_invoice: c.invoice, cum_settle: c.settle,
+                    unissued: bs[s] + c.paid - c.invoice, unpaid: c.settle - c.paid, paid_count: c.n,
+                    month_rows: months.map(m => { const p = payM[s][m] || 0, i = invM[s][m] || 0; return { month: m, paid: p, invoice: i, diff: p - i, balance: monthBal(s, m) }; }),
+                    payments: payList[s] };
             };
             const groups = SHOWN.map(s => {
                 const g = all.filter(r => r.supplier === s), live = g.filter(r => r.status !== 'hold');
@@ -227,6 +281,75 @@ function mount(app, deps) {
         } catch (e) { console.error('[#823 계산서] 대조 확인:', String(e && e.message || e).slice(0, 200)); res.status(500).json({ error: '대조 확인을 저장하지 못했어요 — 잠시 뒤 다시' }); }
     });
 
+    // #824 입금 넣기 / 지우기(시온·효돈) — 계약 docs/824-api.md · 관리자 · 감사 source tax_invoice
+    const payErr = (res, e, where) => { console.error(`[#824 입금] ${where}:`, String(e && e.message || e).slice(0, 200)); res.status(500).json({ error: '입금을 저장하지 못했어요 — 잠시 뒤 다시' }); };
+    app.post('/api/tax-invoices/payments', authMiddleware, adminOnly, async (req, res) => {
+        try {
+            await ready;
+            const b = req.body || {}, sup = String(b.supplier || ''), day = String(b.paid_on || '');
+            const amount = (typeof b.amount === 'number' || (typeof b.amount === 'string' && /^\d+$/.test(b.amount.trim()))) ? Number(b.amount) : NaN;
+            const memo = b.memo == null ? '' : String(b.memo).trim();
+            if (!PAY_SUP.includes(sup)) return res.status(400).json({ error: 'supplier 는 sion · hyodon' });
+            if (!isDay(day)) return res.status(400).json({ error: 'paid_on 은 YYYY-MM-DD' });
+            const bs = await balanceStart(pool);
+            if (day < bs.date) return res.status(400).json({ error: `기준일(${bs.date}) 앞 입금은 넣지 않아요 — 이월(carry)에 들어 있어요` });
+            if (!Number.isInteger(amount) || amount < 1 || amount > PAY_MAX) return res.status(400).json({ error: '금액은 1원 ~ 10억 원 정수' });
+            if (memo.length > 200) return res.status(400).json({ error: '메모는 200자까지' });
+            if ((await pool.query(`SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL LIMIT 1`, [sup, day, amount])).rows.length)
+                return res.status(409).json({ error: '같은 입금이 이미 있어요' });
+            const who = actorOf(req), whoName = String(who.name || '').slice(0, 60) || null;
+            const id = (await pool.query(`INSERT INTO tax_invoice_payments (supplier, paid_on, amount, memo, source, created_by, created_name) VALUES ($1, $2::date, $3, $4, 'manual', $5, $6) RETURNING id`,
+                [sup, day, amount, memo, Number.isInteger(who.id) ? who.id : null, whoName])).rows[0].id;
+            try { await writeAudit({ action: 'payment_add', targetType: 'tax_invoice_payment', targetId: id, changes: { supplier: sup, paid_on: day, amount, source: 'manual' }, source: 'tax_invoice', actor: who }); } catch (_) { }
+            res.json({ ok: true, id });
+        } catch (e) { payErr(res, e, '넣기'); }
+    });
+    // #824 엑셀 가져오기 — dry = 무엇이 들어갈지만 · 기준일 앞·이미 있는 줄(같은 거래처+날짜+금액) 건너뜀 · 파일·금액은 로그에 안 찍음
+    app.post('/api/tax-invoices/payments/import', authMiddleware, adminOnly, async (req, res) => {
+        try {
+            await ready;
+            const b = req.body || {}, dry = b.dry !== false;
+            const b64 = typeof b.data === 'string' ? b.data.replace(/^data:[^,]*,/, '').replace(/\s+/g, '') : '';
+            if (!b64 || !/^[A-Za-z0-9+/]+=*$/.test(b64)) return res.status(400).json({ error: 'data 는 base64 엑셀 파일' });
+            if (Math.floor(b64.length * 3 / 4) > IMPORT_MAX_BYTES + 3) return res.status(400).json({ error: '파일은 5MB 까지' });
+            const buf = Buffer.from(b64, 'base64');
+            if (buf.length > IMPORT_MAX_BYTES) return res.status(400).json({ error: '파일은 5MB 까지' });
+            let x;
+            try { x = await readPaymentsXlsx(buf); } catch (_) { return res.status(400).json({ error: '엑셀을 읽지 못했어요 — xlsx 파일인지 확인해 주세요' }); }
+            if (!x.sheets.length) return res.status(400).json({ error: '「대성」·「효돈」 시트가 없어요' });
+            const bs = await balanceStart(pool);
+            const fresh = [], seen = new Set(); let dup = 0, beforeStart = 0;
+            for (const r of x.rows) {
+                if (r.paid_on < bs.date) { beforeStart++; continue; }
+                const k = r.supplier + '|' + r.paid_on + '|' + r.amount;
+                if (seen.has(k) || (await pool.query(`SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL LIMIT 1`, [r.supplier, r.paid_on, r.amount])).rows.length) { dup++; continue; }
+                seen.add(k); fresh.push(r);
+            }
+            const out = { ok: true, dry, new: fresh.map(r => ({ supplier: r.supplier, paid_on: r.paid_on, amount: r.amount })), dup, before_start: beforeStart, unreadable: x.unreadable, sheets: x.sheets };
+            if (dry) return res.json(out);
+            const who = actorOf(req), whoName = String(who.name || '').slice(0, 60) || null, uid = Number.isInteger(who.id) ? who.id : null;
+            let inserted = 0;
+            for (const r of fresh) {
+                inserted += (await pool.query(`INSERT INTO tax_invoice_payments (supplier, paid_on, amount, memo, source, created_by, created_name)
+                    SELECT $1, $2::date, $3, $4, 'excel', $5, $6 WHERE NOT EXISTS (SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL) RETURNING id`,
+                    [r.supplier, r.paid_on, r.amount, r.memo, uid, whoName])).rows.length;
+            }
+            if (inserted) { try { await writeAudit({ action: 'payment_import', targetType: 'tax_invoice_payment', targetId: null, changes: { inserted, dup, before_start: beforeStart, unreadable: x.unreadable }, source: 'tax_invoice', actor: who }); } catch (_) { } }
+            res.json({ ...out, inserted });
+        } catch (e) { payErr(res, e, '엑셀 가져오기'); }
+    });
+    app.delete('/api/tax-invoices/payments/:id', authMiddleware, adminOnly, async (req, res) => {
+        try {
+            await ready;
+            const id = Number(req.params.id);
+            if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'id 가 이상해요' });
+            const r = (await pool.query(`UPDATE tax_invoice_payments SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id, supplier, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, amount`, [id])).rows[0];
+            if (!r) return res.status(404).json({ error: '그 입금이 없어요(이미 지웠거나 없는 번호)' });
+            try { await writeAudit({ action: 'payment_del', targetType: 'tax_invoice_payment', targetId: id, changes: { supplier: r.supplier, paid_on: r.paid_on, amount: Number(r.amount) }, source: 'tax_invoice', actor: actorOf(req) }); } catch (_) { }
+            res.json({ ok: true });
+        } catch (e) { payErr(res, e, '지우기'); }
+    });
+
     app.get('/api/tax-invoices/:id/pdf', authMiddleware, adminOnly, async (req, res) => {
         try {
             await ready;
@@ -243,4 +366,4 @@ function mount(app, deps) {
     });
     return { ready, settleTotals: (ym) => settleTotals(pool, helpers, ym) };
 }
-module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, balanceStart, SUPPLIERS, SHOWN, LABEL };
+module.exports = { mount, ensureTable, upsertRow, dedupKeyOf, settleTotals, balanceStart, readPaymentsXlsx, SUPPLIERS, SHOWN, LABEL };
