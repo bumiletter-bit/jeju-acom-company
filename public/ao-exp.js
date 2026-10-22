@@ -8,7 +8,7 @@
 //   #808(대표 10/21): 날짜 판 [+ 예약 추가] = 수기(현금) 예약(source manual · 남색 띠 · 「수기」 · 번호 넣으면 그 자리에서 접수 안내) · 「고치기」 → 「수정」 · 방문일 = 공통 달력(akm-date) · 시간 = 30분 알약 + 직접 입력
 //     번호 칸 = 치는 대로 010-0000-0000 · 「✓」 배지 = 실제로 나간 길(알림톡/문자) · 수기 건만 「삭제(취소)」·「되돌리기」
 //     달력 머리 「번호 미입력 n건」 알약 → 그 묶음 판(줄마다 이름·번호 바로 넣기) · 「메일 원문」·「예약 취소로」·「확정으로 되돌리기」 단추 뺌(취소는 플레이스·스토어에서 → 수집이 반영)
-//   #822(대표 10/22): [문자 설정] 단추 숨김(기능·서버 그대로) · 현장 판매(귤) = 날짜 판 머리 아래 칸(금액·메모 · 전 직원 · PUT …/sales/:day) · 달력 칸 「현장 120,000」(폰 = ₩ 표식) · 달력 위 「이달 현장 판매(귤) 합계」 띠 · 엑셀 둘째 시트
+//   #822(대표 10/22): [문자 설정] 단추 숨김(기능·서버 그대로) · 현장 판매(귤) = 날짜 판 머리 [+ 현장 판매] → 금액·메모 칸(#822-b · 값 있으면 한 줄 + 수정·삭제 · 전 직원 · PUT …/sales/:day) · 달력 칸 「현장 120,000」(폰 = ₩ 표식) · 달력 위 「이달 현장 판매(귤) 합계」 띠 · 엑셀 둘째 시트
 (function () {
     'use strict';
     const $ = id => document.getElementById(id);
@@ -107,12 +107,16 @@
     const won = n => Number(n || 0).toLocaleString('ko-KR');
     const saleOf = day => ((X.data && X.data.sales) || []).find(s => s.day === day) || null;
     const saleMonth = ym => { const l = ((X.data && X.data.sales) || []).filter(s => s.day.startsWith(ym + '-') && Number(s.amount) > 0); return { sum: l.reduce((a, s) => a + Number(s.amount), 0), days: l.length }; };
+    // #822-b(대표 10/22 라이브 「늘 펼쳐진 칸 빼고 [추가] 를 누르도록 · 삭제도」): 값 없음 = 아무것도 안 그림(판 머리 [+ 현장 판매] 단추) · 값 있음 = 한 줄 요약 + [수정]·[삭제] · 적는 중(X.saleEdit) = 금액·메모 칸 + [저장]·[취소]
     function saleHtml(day) {
-        const s = saleOf(day), past = day <= today();
-        return `<div class="xp-sale-box" id="xp-sale-box" data-day="${day}"><div class="xp-sale-h"><b>현장 판매(귤)</b><small class="${s ? 'who' : ''}">${s ? `${esc(s.updated_by || '')} · ${esc(s.updated_at || '')}` : (past ? '그날 체험장에서 직접 판 귤 매출 — 금액과 메모를 적어 두세요' : '방문일이 되면 그날 판 귤 매출을 적어 두세요')}</small></div>
+        const s = saleOf(day), editing = X.saleEdit === day;
+        if (editing) return `<div class="xp-sale-box" id="xp-sale-box" data-day="${day}"><div class="xp-sale-h"><b>현장 판매(귤)</b><small>${s ? '고치기 · 금액을 0 으로 비우고 저장하면 지워져요' : '그날 체험장에서 직접 판 귤 매출 — 금액과 메모'}</small></div>
             <label>금액(원)<input type="text" inputmode="numeric" class="xp-won" id="xp-sl-amount" value="${s && s.amount ? esc(won(s.amount)) : ''}" placeholder="0" maxlength="11" autocomplete="off"></label>
             <label class="g">메모<input type="text" id="xp-sl-memo" maxlength="200" value="${esc(s && s.memo || '')}" placeholder="예: 5kg 12박스 · 현금 8 / 카드 4" autocomplete="off"></label>
-            <button type="button" class="xp-btn pri" data-act="sale-save">저장</button></div>`;
+            <span class="xp-sale-acts"><button type="button" class="xp-btn pri" data-act="sale-save">저장</button><button type="button" class="xp-btn" data-act="sale-cancel">취소</button></span></div>`;
+        if (!s) return '';
+        return `<div class="xp-sale-line" id="xp-sale-line" data-day="${day}"><b>현장 판매(귤)</b><span class="xp-sale-amt">${won(s.amount)}원</span>${s.memo ? `<em>${esc(s.memo)}</em>` : ''}<small>${esc(s.updated_by || '')} · ${esc(s.updated_at || '')}</small>
+            <span class="xp-sale-acts"><button type="button" class="xp-btn" data-act="sale-edit">수정</button><button type="button" class="xp-btn warn" data-act="sale-del">삭제</button></span></div>`;
     }
     function rowHtml(b) {
         const off = OFF.includes(b.status), vis = b.status === 'visited';
@@ -233,7 +237,7 @@
         const sub = X.day === 'nophone' ? `${list.length}건 · 플레이스는 스마트플레이스 예약자관리에서 같은 예약번호 줄의 이름·전화번호를, 수기는 받아 둔 번호를 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [수정]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
         p.hidden = false;
         const isDay = /^\d{4}-\d{2}-\d{2}$/.test(X.day || '');   // #808 날짜 판에만 [+ 예약 추가]
-        p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
+        p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>${!saleOf(X.day) && X.saleEdit !== X.day ? '<button type="button" class="xp-btn xp-salebtn" data-act="sale-edit" aria-expanded="false">+ 현장 판매</button>' : ''}` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
             <div class="xp-panel-b">${isDay ? saleHtml(X.day) : ''}${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
         X.saleDirty = false;   // #822 판을 새로 그리면 적던 값은 없어진 것
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
@@ -241,8 +245,8 @@
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시
     function pushDayHist() { if (X.dayPushed || !X.pushed) return; try { history.pushState(Object.assign({}, history.state || {}, { xpDay: 1 }), ''); X.dayPushed = true; } catch (e) { X.dayPushed = false; } }
     function dropDayHist() { if (!X.dayPushed) return; X.dayPushed = false; X.ignorePop = true; try { history.back(); } catch (e) { X.ignorePop = false; } }
-    function openDay(day) { X.day = day; X.edit = 0; X.adding = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
-    function closeDay(fromPop) { const was = X.day; X.day = null; X.edit = 0; X.adding = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
+    function openDay(day) { X.day = day; X.edit = 0; X.adding = null; X.saleEdit = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
+    function closeDay(fromPop) { const was = X.day; X.day = null; X.edit = 0; X.adding = null; X.saleEdit = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
     // #808 번호 = 치는 대로 하이픈(숫자만 남겨 3-4-4 · 10자리 3-3-4) · 커서는 끝 · 수기 금액 = 인원으로 셈(금액을 손으로 고치면 그 뒤론 안 셈)
     function onInput(e) {
         const t = e.target;
@@ -280,13 +284,22 @@
         const btn = e.target.closest('[data-act]'); if (!btn) return;
         const act = btn.dataset.act;
         if (act === 'close-panel') return closeDay();
+        if (act === 'sale-edit') { X.saleEdit = X.day; renderPanel(); const a = $('xp-sl-amount'); if (a) a.focus({ preventScroll: false }); return; }   // #822-b
+        if (act === 'sale-cancel') { X.saleEdit = null; X.saleDirty = false; return renderPanel(); }
+        if (act === 'sale-del') {   // #822-b 지우기 = 한 번 더 눌러 확인 → 금액 0·빈 메모 PUT(서버가 줄을 지움)
+            if (btn.dataset.ask !== '1') { btn.dataset.ask = '1'; btn.textContent = '정말 삭제(한 번 더)'; return; }
+            const line = btn.closest('.xp-sale-line'), day = line && line.dataset.day; if (!day) return;
+            btn.disabled = true; const r = await call(`/api/agent-office/experience/sales/${day}`, 'PUT', { amount: 0, memo: '' });
+            if (!r.ok) { toast(r.body.error || '지우지 못했어요'); btn.disabled = false; return; }
+            X.data.sales = (X.data.sales || []).filter(s => s.day !== day); X.saleEdit = null; toast('현장 판매 줄을 지웠어요'); render(); return;
+        }
         if (act === 'sale-save') {   // #822 현장 판매(귤) 저장 — 날짜당 한 줄 덮어쓰기 · 0·빈 메모 = 지움
             const box = btn.closest('.xp-sale-box'), day = box && box.dataset.day; if (!day) return;
             const amount = Number(String(($('xp-sl-amount') || {}).value || '').replace(/[^0-9]/g, '')) || 0, memo = String(($('xp-sl-memo') || {}).value || '').trim();
             btn.disabled = true; const r = await call(`/api/agent-office/experience/sales/${day}`, 'PUT', { amount, memo });
             if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
             const list = (X.data.sales = (X.data.sales || []).filter(s => s.day !== day)); if (r.body.item) list.push(r.body.item);
-            X.saleDirty = false; toast(r.body.item ? `현장 판매 ${won(r.body.item.amount)}원 저장했어요` : '현장 판매 줄을 지웠어요');
+            X.saleDirty = false; X.saleEdit = null; toast(r.body.item ? `현장 판매 ${won(r.body.item.amount)}원 저장했어요` : '현장 판매 줄을 지웠어요');
             render(); return;
         }
         if (act === 'add') { X.adding = X.adding === X.day ? null : X.day; X.edit = 0; renderPanel(); const n = $('xp-a-name'); if (n) n.focus({ preventScroll: false }); return; }
@@ -398,7 +411,7 @@
     function onKey(e) {
         if (e.key !== 'Escape' || !X.layer) return; e.preventDefault(); e.stopPropagation();
         const cal = document.querySelector('.akm-cal'); if (cal && cal.style.display !== 'none') { if (typeof AkmCal !== 'undefined' && AkmCal.close) AkmCal.close(); else cal.style.display = 'none'; return; }   // #808 달력부터
-        if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
+        if (X.saleEdit) { X.saleEdit = null; X.saleDirty = false; renderPanel(); } else if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
     }
     function open() {
         if (X.layer) { load(); return; }

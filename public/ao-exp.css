@@ -218,7 +218,7 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
     .xp-tpick { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .xp-panel-h { flex-wrap: wrap; }
 }
-/* #822(대표 10/22) 현장 판매(귤) = 날짜 칸 아래 귤색 한 줄(폰 = ₩ 표식) · 달력 위 이달 합계 띠 · 날짜 판 머리 아래 적는 칸 · [문자 설정] 단추는 숨김(기능 그대로) */
+/* #822(대표 10/22) 현장 판매(귤) = 날짜 칸 아래 귤색 한 줄(폰 = ₩ 표식) · 달력 위 이달 합계 띠 · 날짜 판 머리 [+ 현장 판매] → 적는 칸 · 값 있으면 한 줄 + 수정·삭제(#822-b) · [문자 설정] 단추는 숨김(기능 그대로) */
 .xp-sale { display: inline-flex; align-items: center; gap: 3px; margin-top: auto; padding: 1px 6px; border-radius: 999px; background: #FFF4E6; color: var(--x-pl); font-size: 11.5px; font-weight: 700; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .xp-sale i { font-style: normal; display: none; }
 html[data-ao-theme="dark"] .xp-sale { background: rgba(255, 146, 43, .18); }
@@ -249,3 +249,16 @@ html[data-ao-theme="dark"] .xp-sale-box { background: rgba(255, 146, 43, .10); b
     .xp-sale-box label.g { flex: 1 1 110px; }
     .xp-sale-h small:not(.who) { display: none; }
 }
+/* #822-b 한 줄 요약 + 수정·삭제 · 머리 [+ 현장 판매] 단추 */
+.xp-panel-h .xp-salebtn { flex: none; align-self: center; white-space: nowrap; color: var(--x-pl); border-color: #FFD8A8; }
+.xp-panel-h .xp-salebtn:hover { background: #FFF4E6; border-color: var(--x-pl); }
+.xp-sale-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 12px 0 4px; padding: 8px 12px; border: 1px solid #FFD8A8; border-radius: 12px; background: #FFF9F2; font-size: 13px; }
+html[data-ao-theme="dark"] .xp-sale-line { background: rgba(255, 146, 43, .10); border-color: rgba(255, 146, 43, .4); }
+.xp-sale-line b { color: var(--x-pl); font-size: 13px; }
+.xp-sale-line .xp-sale-amt { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--x-ink); }
+.xp-sale-line em { font-style: normal; color: var(--x-ink); min-width: 0; overflow-wrap: anywhere; }
+.xp-sale-line small { color: var(--x-sub); font-size: 12px; }
+.xp-sale-acts { display: inline-flex; gap: 6px; margin-left: auto; }
+.xp-sale-box .xp-sale-acts { align-self: flex-end; margin-left: 0; }
+@media (max-width: 960px), (pointer: coarse) { .xp-panel-h .xp-salebtn { min-height: 44px; } }
+@media (max-width: 720px) { .xp-sale-line { padding: 8px 10px; } .xp-sale-line small { flex-basis: 100%; } }

@@ -173,16 +173,25 @@ window.fetch = async (url, o) => {
                 const aria = await pg.locator(`.xp-cell[data-day="${D1}"]`).getAttribute('aria-label');
                 ok(/현장 판매 120,000원/.test(aria), `[${tag}] 칸 aria-label 에 현장 판매`, aria);
                 let o = await ov(); ok(o.page <= 0 && o.cal <= 0 && o.bar <= 0, `[${tag}] 가로 넘침 0(페이지·달력·도구 줄)`, o);
-                // 날짜 판 → 현장 판매 칸(기존 값 채워짐)
-                await tap(pg.locator(`.xp-cell[data-day="${D1}"]`)); await pg.waitForSelector('#xp-panel:not([hidden]) #xp-sale-box', { timeout: 5000 });
+                // #822-b 날짜 판(값 있는 날) = 한 줄 요약 + [수정]·[삭제] · 입력 칸은 안 펼쳐짐 · 머리에 [+ 현장 판매] 없음
+                await tap(pg.locator(`.xp-cell[data-day="${D1}"]`)); await pg.waitForSelector('#xp-panel:not([hidden]) #xp-sale-line', { timeout: 5000 });
+                const line = pg.locator('#xp-sale-line');
+                ok(await line.isVisible() && /현장 판매\(귤\)/.test(await line.textContent()) && /120,000원/.test(await line.textContent()) && /5kg 12박스/.test(await line.textContent()) && /직원 · 2026-10-22 10:00/.test(await line.textContent()), `[${tag}] 값 있는 날 = 한 줄 요약(금액·메모·적은 사람)`, await line.textContent());
+                ok((await pg.locator('#xp-sale-box').count()) === 0 && (await pg.locator('.xp-panel-h .xp-salebtn').count()) === 0 && (await line.locator('[data-act="sale-edit"]').count()) === 1 && (await line.locator('[data-act="sale-del"]').count()) === 1, `[${tag}] 입력 칸 안 펼쳐짐 · 머리 단추 없음 · [수정]·[삭제]`);
+                const lb = await line.boundingBox(), ph = await pg.locator('.xp-panel-h').first().boundingBox();
+                ok(lb && ph && lb.y >= ph.y + ph.height - 1 && lb.y < ph.y + ph.height + 40, `[${tag}] 요약 줄이 판 머리 바로 아래`, { lb, ph });
+                const db = await line.locator('[data-act="sale-del"]').boundingBox();
+                ok(db.height >= (mob ? 44 : 36) && await line.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `[${tag}] 삭제 단추 ${Math.round(db.height)}px · 줄 가로 넘침 0`);
+                // [수정] → 입력 칸(값 채워짐) · Esc = 입력 칸만 닫힘
+                await tap(line.locator('[data-act="sale-edit"]')); await pg.waitForSelector('#xp-sale-box', { timeout: 3000 });
                 const box = pg.locator('#xp-sale-box');
-                ok(await box.isVisible() && /현장 판매\(귤\)/.test(await box.textContent()) && await pg.locator('#xp-sl-amount').inputValue() === '120,000' && await pg.locator('#xp-sl-memo').inputValue() === '5kg 12박스' && /직원 · 2026-10-22 10:00/.test(await box.textContent()), `[${tag}] 날짜 판 머리 아래 현장 판매 칸 = 금액 120,000 · 메모 · 적은 사람·시각`);
-                const bb = await box.boundingBox(), ph = await pg.locator('#xp-panel-h, .xp-panel-h').first().boundingBox();
-                ok(bb && ph && bb.y >= ph.y + ph.height - 1 && bb.y < ph.y + ph.height + 40, `[${tag}] 현장 판매 칸이 판 머리 바로 아래(첫 줄 위)`, { bb, ph });
+                ok(await pg.locator('#xp-sl-amount').inputValue() === '120,000' && await pg.locator('#xp-sl-memo').inputValue() === '5kg 12박스' && (await pg.locator('#xp-sale-line').count()) === 0 && (await box.locator('[data-act="sale-cancel"]').count()) === 1, `[${tag}] [수정] = 입력 칸(값 채워짐 · 저장·취소) · 요약 줄 대신`);
+                await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
+                ok((await pg.locator('#xp-sale-box').count()) === 0 && (await pg.locator('#xp-sale-line').count()) === 1 && await pg.locator('#xp-panel').isVisible(), `[${tag}] Esc = 입력 칸만 닫힘(판·요약 줄 그대로)`);
+                await tap(line.locator('[data-act="sale-edit"]')); await pg.waitForSelector('#xp-sale-box', { timeout: 3000 });
                 const sb = await pg.locator('#xp-sale-box [data-act="sale-save"]').boundingBox();
-                ok(sb.height >= (mob ? 44 : 36), `[${tag}] 저장 단추 ${Math.round(sb.height)}px`);
-                ok(await box.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `[${tag}] 현장 판매 칸 가로 넘침 0`);
-                // 금액 치면 1,234,567 꼴 · 저장 → PUT · 달력·띠 갱신
+                ok(sb.height >= (mob ? 44 : 36) && await box.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `[${tag}] 저장 단추 ${Math.round(sb.height)}px · 입력 칸 가로 넘침 0`);
+                // 금액 치면 1,234,567 꼴 · 저장 → PUT · 달력·띠·요약 줄 갱신
                 await pg.fill('#xp-sl-amount', ''); await pg.locator('#xp-sl-amount').type('250000');
                 ok(await pg.locator('#xp-sl-amount').inputValue() === '250,000', `[${tag}] 금액 치면 250,000 꼴`);
                 await pg.fill('#xp-sl-amount', ''); await pg.locator('#xp-sl-amount').type('1234567890123');
@@ -193,14 +202,27 @@ window.fetch = async (url, o) => {
                 const put = await pg.evaluate(() => window.__calls.filter(c => /^PUT .*\/sales\//.test(c)));
                 ok(put.length === 1 && put[0] === `PUT /api/agent-office/experience/sales/${D1} {"amount":250000,"memo":"5kg 20박스 · 카드"}`, `[${tag}] 저장 = PUT …/sales/날짜 {amount:250000, memo}`, put);
                 ok(/현장 판매 250,000원 저장했어요/.test((await pg.evaluate(() => window.__toasts)).join()), `[${tag}] 저장 알림 글`);
-                ok(/250,000원/.test(await sum.textContent()) && (mob || /현장 250,000/.test(await cellSale.textContent())) && await pg.locator('#xp-sl-amount').inputValue() === '250,000' && /대표 · 2026-10-22 11:00/.test(await box.textContent()), `[${tag}] 저장 뒤 띠·칸·입력 칸 갱신(판은 열린 채)`);
-                // 다른 날(매출 없음) → 빈 칸 · 0 저장 = 줄 지움
-                await tap(pg.locator('[data-act="close-panel"]')); await pg.waitForTimeout(150);
-                await tap(pg.locator(`.xp-cell[data-day="${D2}"]`)); await pg.waitForSelector('#xp-panel:not([hidden]) #xp-sale-box', { timeout: 5000 });
-                ok(await pg.locator('#xp-sl-amount').inputValue() === '' && await pg.locator('#xp-sl-memo').inputValue() === '' && /방문일이 되면/.test(await pg.locator('#xp-sale-box').textContent()), `[${tag}] 매출 없는 날 = 빈 칸 + 안내 글`);
-                await pg.locator('#xp-sl-amount').type('9000'); await pg.fill('#xp-sl-amount', ''); await tap(pg.locator('#xp-sale-box [data-act="sale-save"]')); await pg.waitForTimeout(250);
+                ok(/250,000원/.test(await sum.textContent()) && (mob || /현장 250,000/.test(await cellSale.textContent())) && (await pg.locator('#xp-sale-box').count()) === 0 && /250,000원/.test(await pg.locator('#xp-sale-line').textContent()) && /5kg 20박스 · 카드/.test(await pg.locator('#xp-sale-line').textContent()) && /대표 · 2026-10-22 11:00/.test(await pg.locator('#xp-sale-line').textContent()), `[${tag}] 저장 뒤 = 입력 칸 닫히고 요약 줄·띠·칸 갱신(판은 열린 채)`);
+                // [삭제] = 한 번 더 눌러 확인 → PUT 0 → 줄 없어지고 머리에 [+ 현장 판매]
+                const del = pg.locator('#xp-sale-line [data-act="sale-del"]');
+                await tap(del); ok(/한 번 더/.test(await del.textContent()) && (await pg.locator('#xp-sale-line').count()) === 1, `[${tag}] 삭제 = 한 번 더 눌러 확인(아직 안 지움)`);
+                await tap(del); await pg.waitForTimeout(300);
                 const put2 = await pg.evaluate(() => window.__calls.filter(c => /^PUT .*\/sales\//.test(c)).pop());
-                ok(put2 === `PUT /api/agent-office/experience/sales/${D2} {"amount":0,"memo":""}` && (await pg.locator(`.xp-cell[data-day="${D2}"] .xp-sale`).count()) === 0 && /지웠어요/.test((await pg.evaluate(() => window.__toasts)).pop()), `[${tag}] 0·빈 메모 저장 = 지움 PUT · 칸에 줄 없음`);
+                ok(put2 === `PUT /api/agent-office/experience/sales/${D1} {"amount":0,"memo":""}` && (await pg.locator('#xp-sale-line').count()) === 0 && (await pg.locator(`.xp-cell[data-day="${D1}"] .xp-sale`).count()) === 0 && (await pg.locator('#xp-sales-sum').count()) === 0 && /지웠어요/.test((await pg.evaluate(() => window.__toasts)).pop()), `[${tag}] 두 번째 = PUT 0 → 요약 줄·칸 표시·이달 띠 없어짐`);
+                const addBtn2 = pg.locator('.xp-panel-h .xp-salebtn');
+                ok(await addBtn2.isVisible() && /\+ 현장 판매/.test(await addBtn2.textContent()) && (await pg.locator('.xp-panel-h [data-act="add"]').count()) === 1 && (await addBtn2.boundingBox()).height >= (mob ? 44 : 36), `[${tag}] 지운 뒤 머리 = [+ 예약 추가] 옆 [+ 현장 판매]`);
+                // 값 없는 날 = 머리 [+ 현장 판매] → 입력 칸(빈 칸) → [취소] · 다시 열어 저장
+                await tap(pg.locator('[data-act="close-panel"]')); await pg.waitForTimeout(150);
+                await tap(pg.locator(`.xp-cell[data-day="${D2}"]`)); await pg.waitForSelector('#xp-panel:not([hidden]) .xp-salebtn', { timeout: 5000 });
+                ok((await pg.locator('#xp-sale-line').count()) === 0 && (await pg.locator('#xp-sale-box').count()) === 0, `[${tag}] 값 없는 날 = 요약 줄·입력 칸 없음(머리 단추만)`);
+                await tap(pg.locator('.xp-panel-h .xp-salebtn')); await pg.waitForSelector('#xp-sale-box', { timeout: 3000 });
+                ok(await pg.locator('#xp-sl-amount').inputValue() === '' && await pg.locator('#xp-sl-memo').inputValue() === '' && (await pg.locator('.xp-panel-h .xp-salebtn').count()) === 0, `[${tag}] [+ 현장 판매] = 빈 입력 칸 · 머리 단추는 숨김`);
+                await tap(pg.locator('#xp-sale-box [data-act="sale-cancel"]')); await pg.waitForTimeout(150);
+                ok((await pg.locator('#xp-sale-box').count()) === 0 && (await pg.locator('.xp-panel-h .xp-salebtn').count()) === 1, `[${tag}] [취소] = 입력 칸 닫힘 · 머리 단추 다시`);
+                await tap(pg.locator('.xp-panel-h .xp-salebtn')); await pg.waitForSelector('#xp-sale-box', { timeout: 3000 });
+                await pg.locator('#xp-sl-amount').type('9000'); await tap(pg.locator('#xp-sale-box [data-act="sale-save"]')); await pg.waitForTimeout(250);
+                const put3 = await pg.evaluate(() => window.__calls.filter(c => /^PUT .*\/sales\//.test(c)).pop());
+                ok(put3 === `PUT /api/agent-office/experience/sales/${D2} {"amount":9000,"memo":""}` && /9,000원/.test(await pg.locator('#xp-sale-line').textContent()) && (await pg.locator(`.xp-cell[data-day="${D2}"] .xp-sale`).count()) === 1, `[${tag}] 저장 9,000 = 요약 줄 + 달력 칸 표시`);
                 // 예약 줄은 그대로(수정·방문 단추) · Esc 로 판 닫힘
                 ok((await pg.locator('#xp-panel .xp-row[data-id="2"] [data-act="edit"]').count()) === 1 && (await pg.locator('#xp-panel .xp-row[data-id="2"] [data-act="visit"]').count()) === 1, `[${tag}] 예약 줄 단추 그대로`);
                 await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);

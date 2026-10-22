@@ -14,9 +14,16 @@ const BLOCK = cut('// ===== #581 아침 정리 — 시작', '// ===== #581 아�
 const KST = (d, h, m) => Date.UTC(2026, 9, d, h - 9, m);   // KST 2026-10-d h:m (d 가 31 넘으면 11월로 넘어감)
 const iso = (ms) => new Date(ms).toISOString();
 
+// 글자 시각 → µs 정수('2026-10-22 04:38:58.965534+00' · ISO 'Z' 둘 다)
+function us(t) {
+    const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d(?::?\d\d)?)?$/.exec(String(t));
+    if (!m) throw new Error('시각 글자 꼴 아님: ' + t);
+    let tz = m[4] || 'Z'; if (/^[+-]\d\d$/.test(tz)) tz += ':00';
+    return Date.parse(`${m[1]}T${m[2]}${tz}`) * 1000 + Number(((m[3] || '') + '000000').slice(0, 6));
+}
 // 가짜 세상: 설정 store · 메일 색인 mails[{at, idx(색인이 적은 시각 · 없으면 at)}] · 지시 orders[{id,content,status}] · 감사 audits
 function world(opt = {}) {
-    const W = { store: opt.store || {}, mails: opt.mails || [], orders: [], audits: [], sql: [], engine: opt.engine || 'desk', hasIdx: opt.hasIdx !== false, owner: opt.owner === undefined ? { id: 1, name: '전대표', position: '대표' } : opt.owner };
+    const W = { dbNow: opt.dbNow || '2026-10-22 05:00:00.123456+00', store: opt.store || {}, mails: opt.mails || [], orders: [], audits: [], sql: [], engine: opt.engine || 'desk', hasIdx: opt.hasIdx !== false, owner: opt.owner === undefined ? { id: 1, name: '전대표', position: '대표' } : opt.owner };
     const pool = { query: async (sql, p = []) => {
         const s = String(sql).replace(/\s+/g, ' ').trim(); W.sql.push(s);
         if (/^SELECT id, name, position FROM users/.test(s)) return { rows: W.owner ? [W.owner] : [] };
@@ -25,14 +32,18 @@ function world(opt = {}) {
             if (W.race) { W.orders.push({ id: 9000, content: W.race, status: '대기' }); W.race = null; return { rows: [] }; }   // 다른 인스턴스가 이 검사 직후 같은 지시를 넣음
             return { rows: busyOf(p[0]).slice(0, 1) };
         }
-        if (/^SELECT max\(indexed_at\) AS m FROM mail_index WHERE parsed->>'kind' = 'tax_invoice'$/.test(s)) {
-            const xs = W.mails.filter(x => (x.kind || 'tax_invoice') === 'tax_invoice').map(x => Date.parse(x.idx || x.at));
-            return { rows: [{ m: xs.length ? new Date(Math.max(...xs)) : null }] };
+        // 시각은 DB 처럼 µs 까지(글자 ↔ µs 정수) — ms 로 자르면 같은 메일이 다시 「새 메일」로 잡히던 라이브 사고(#3011)를 재현할 수 있게
+        const tax = () => W.mails.filter(x => (x.kind || 'tax_invoice') === 'tax_invoice'), ixs = (x) => x.idx || x.at;
+        if (/^SELECT now\(\)::text AS m$/.test(s)) return { rows: [{ m: W.dbNow }] };
+        if (/^SELECT COALESCE\(max\(indexed_at\), now\(\)\)::text AS m FROM mail_index WHERE parsed->>'kind' = 'tax_invoice'$/.test(s)) {
+            const xs = tax().map(ixs).sort((a, b) => us(a) - us(b));
+            return { rows: [{ m: xs.length ? xs[xs.length - 1] : W.dbNow }] };
         }
         if (/^SELECT to_regclass\('public\.mail_index'\)/.test(s)) return { rows: [{ ok: W.hasIdx }] };
-        if (/^SELECT COALESCE\(at, indexed_at\) AS at, indexed_at FROM mail_index WHERE parsed->>'kind' = 'tax_invoice' AND indexed_at > COALESCE\(\$1::timestamptz, '-infinity'::timestamptz\) ORDER BY indexed_at$/.test(s)) {
-            const since = p[0] ? Date.parse(p[0]) : -Infinity, ix = (x) => Date.parse(x.idx || x.at);
-            return { rows: W.mails.filter(x => (x.kind || 'tax_invoice') === 'tax_invoice' && ix(x) > since).sort((a, b) => ix(a) - ix(b)).map(x => ({ at: new Date(x.at), indexed_at: new Date(ix(x)) })) };
+        if (/^SELECT COALESCE\(at, indexed_at\) AS at, indexed_at::text AS ix FROM mail_index WHERE parsed->>'kind' = 'tax_invoice' AND indexed_at > COALESCE\(\$1::timestamptz, '-infinity'::timestamptz\) ORDER BY indexed_at$/.test(s)) {
+            if (p[0] != null && typeof p[0] !== 'string') throw new Error('기준 시각이 글자가 아님: ' + typeof p[0]);
+            const since = p[0] ? us(p[0]) : -Infinity;
+            return { rows: tax().filter(x => us(ixs(x)) > since).sort((a, b) => us(ixs(a)) - us(ixs(b))).map(x => ({ at: new Date(x.at), ix: ixs(x) })) };
         }
         if (/^INSERT INTO pending_orders \(content, status, created_by, created_by_id, mine_hidden\) SELECT \$1, '대기', \$2, \$3, false WHERE NOT EXISTS \(SELECT 1 FROM pending_orders WHERE content LIKE \$4 AND status IN \('대기', '처리중'\) AND is_deleted IS NOT TRUE\) RETURNING id$/.test(s)) {
             if (busyOf(p[3]).length) return { rows: [] };
@@ -90,6 +101,25 @@ function world(opt = {}) {
         const r3 = await W.tick(KST(22, 9, 32));
         ok(r3 && r3.ok && W.orders.length === 3, '30분 지나면 1건');
         ok((await W.tick(KST(22, 10, 30))) === null && W.orders.length === 3, '새 메일 없으면 0건(같은 메일 두 번 안 셈)');
+    }
+    {   // µs 보존(10/22 12:41 라이브 #3011): 첫 가동 기준 = 색인 시각 글자 그대로 → 같은 메일 2통(.965534)이 다음 틱에 「새 메일」로 안 잡힘
+        const mk = () => [{ at: iso(Date.UTC(2026, 0, 20, 3, 0)), idx: '2026-10-22 04:38:58.965534+00' }, { at: iso(Date.UTC(2026, 1, 10, 3, 0)), idx: '2026-10-22 04:38:58.965534+00' }];
+        const W = world({ mails: mk() });
+        const r0 = await W.tick(KST(22, 12, 39));
+        ok(r0 && r0.skipped === 'first_run' && W.store.desk_invoice_last.mail_at === '2026-10-22 04:38:58.965534+00', '첫 가동 기준 = DB 글자 그대로(µs 6자리 · JS 시각 변환 0)', W.store.desk_invoice_last);
+        for (const mm of [41, 42, 50]) await W.tick(KST(22, 12, mm));
+        await W.tick(KST(22, 13, 30));
+        ok(W.orders.length === 0, 'µs 차이 메일(.965534 vs 종전 저장 .965) = 두 번째 틱부터도 0건(종전 = 「2026-01, 2026-02」 지시가 30분마다 반복)', W.orders.map(o => o.content));
+        // 등록 뒤 기준도 글자 그대로 → 같은 메일로 다시 안 넣음
+        const W2 = world({ store: { desk_invoice_last: { date: '2026-10-21', mail_at: '2026-10-22 04:00:00.000001+00', month1: '2026-10' } }, mails: mk() });
+        const r1 = await W2.tick(KST(22, 13, 0));
+        ok(r1 && r1.ok && W2.store.desk_invoice_last.mail_at === '2026-10-22 04:38:58.965534+00', '등록 뒤 mail_at = 가장 늦은 색인 시각 글자(µs)', W2.store.desk_invoice_last);
+        W2.orders[0].status = '완료';
+        await W2.tick(KST(22, 13, 40)); await W2.tick(KST(22, 15, 0));
+        ok(W2.orders.length === 1, '→ debounce 지나도 같은 메일로 다시 안 넣음(1건뿐)');
+        const W3 = world({ hasIdx: false });
+        await W3.tick(KST(22, 12, 39));
+        ok(W3.store.desk_invoice_last.mail_at === '2026-10-22 05:00:00.123456+00', '색인 표 없으면 기준 = DB now() 글자');
     }
     {   // 색인이 늦게 적은 옛 메일(메일 날짜 = 7월 · 색인 시각 = 지금) = 잡힘 · 달은 메일 날짜로 · 기준은 색인 시각
         const W = world({ store: { desk_invoice_last: { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' } }, mails: [{ at: iso(Date.UTC(2026, 6, 15, 3, 0)), idx: iso(KST(22, 7, 0)) }] });

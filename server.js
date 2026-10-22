@@ -10376,6 +10376,7 @@ setInterval(() => { deskMorningTick(); }, 60 * 1000);
 //   → 창구가 달마다 scripts/desk/invoice-month.js <달> --order <id> (★에이전트오피스/업무지식.md 「계산서 정리」 절) · 아침 정리(#581)와 같은 꼴
 //   설정 = agent_office_config 'desk_invoice' { enabled(기본 true), time '08:10', debounce_min 30 } · 기록 'desk_invoice_last' { date, at, id, mail_at, month1 }
 //   🔴 기록의 mail_at = 메일 날짜(at)가 아니라 색인이 그 줄을 적은 시각(indexed_at · 늦게 색인된 옛 메일도 잡힘 · 키 이름만 종전 그대로) · 달은 메일 날짜(at)로
+//   🔴 mail_at 은 DB 글자(indexed_at::text · µs)로 저장·비교 — JS Date(ms)로 바꾸면 µs 가 잘려 같은 메일이 늘 「새 메일」(10/22 12:41 라이브 #3011 · v5.9.606)
 //   ⓐ 새 메일 = mail_index kind tax_invoice 이고 indexed_at > last.mail_at · time 뒤(밤에 온 메일은 아침에) · 마지막 등록 뒤 debounce_min 지남 · 같은 머리말 지시가 대기·처리중이면 안 넣음(mail_at 그대로 → 끝난 뒤 다시)
 //      달 = 그 메일들의 받은 달과 그 전달(작성월 후보 · invoice-month 는 그 달 1일 ~ 다음 달 10일 메일을 봄)
 //   ⓑ 안전망 = 매달 1일 time 에 「지난달, 이번 달」 1건(그날 ⓐ 로 이미 넣었으면 생략) · 엔진 desk 일 때만 · 첫 가동 날은 기준(mail_at = 계산서 메일의 마지막 indexed_at · 없으면 지금)만 적고 안 넣음
@@ -10415,8 +10416,8 @@ async function deskInvoiceTick(nowMs) {
         const last = await naverCfgGet('desk_invoice_last');
         if (!last) {
             const hasIdx0 = (await pool.query(`SELECT to_regclass('public.mail_index') IS NOT NULL AS ok`)).rows[0].ok;
-            const mx = hasIdx0 ? (await pool.query(`SELECT max(indexed_at) AS m FROM mail_index WHERE parsed->>'kind' = 'tax_invoice'`)).rows[0].m : null;
-            await naverCfgSet('desk_invoice_last', { date: today, mail_at: new Date(mx ? new Date(mx).getTime() : now).toISOString(), month1: ym, skipped: 'first_run' });
+            const mx = (await pool.query(hasIdx0 ? `SELECT COALESCE(max(indexed_at), now())::text AS m FROM mail_index WHERE parsed->>'kind' = 'tax_invoice'` : `SELECT now()::text AS m`)).rows[0].m;
+            await naverCfgSet('desk_invoice_last', { date: today, mail_at: mx, month1: ym, skipped: 'first_run' });
             return { skipped: 'first_run' };
         }
         if (!cfg.enabled || hhmm < cfg.time) return null;
@@ -10426,12 +10427,12 @@ async function deskInvoiceTick(nowMs) {
         const hasIdx = (await pool.query(`SELECT to_regclass('public.mail_index') IS NOT NULL AS ok`)).rows[0].ok;
         if (hasIdx) {
             const since = last.at ? Date.parse(last.at) : 0;
-            const fresh = (await pool.query(`SELECT COALESCE(at, indexed_at) AS at, indexed_at FROM mail_index WHERE parsed->>'kind' = 'tax_invoice' AND indexed_at > COALESCE($1::timestamptz, '-infinity'::timestamptz) ORDER BY indexed_at`, [last.mail_at || null])).rows;
+            const fresh = (await pool.query(`SELECT COALESCE(at, indexed_at) AS at, indexed_at::text AS ix FROM mail_index WHERE parsed->>'kind' = 'tax_invoice' AND indexed_at > COALESCE($1::timestamptz, '-infinity'::timestamptz) ORDER BY indexed_at`, [last.mail_at || null])).rows;
             if (fresh.length && (!since || now - since >= cfg.debounce_min * 60 * 1000)) {
                 const set = new Set();
                 for (const r of fresh) { const m = deskInvoiceYm(new Date(r.at).getTime()); set.add(deskInvoicePrevYm(m)); set.add(m); }
                 months = [...set].sort().slice(-6);
-                mailAt = new Date(Math.max(...fresh.map(r => new Date(r.indexed_at).getTime()))).toISOString();
+                mailAt = fresh[fresh.length - 1].ix;   // ORDER BY indexed_at 의 마지막 = 가장 늦은 색인 시각 · DB 글자 그대로(µs 보존)
                 why = 'mail';
             }
         }
