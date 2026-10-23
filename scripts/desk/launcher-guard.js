@@ -4,6 +4,7 @@
 //   · 한 번만 돈다 = 포트 47470(감시자) — 두 번째 감시자는 「이미 실행 중」 한 줄 적고 바로 끝
 //   · 창구(47469)가 감시자 밖에서 이미 돌고 있으면 띄우지 않고 15초마다 보다가 자리가 비면 이어받는다(두 창구가 같은 지시를 집지 않게 · 교체 때 옛 창구를 내리면 저절로 넘어옴)
 //   · 텔레그램 없음(로그만 · 대표 보류 건) · [창구 깨우기]는 DB 신호(desk_wake_request)라 이 프로그램과 무관
+//   · #829 상한 = 10분 안에 6번 죽으면 멈추고 로그 한 줄 → 30분 뒤 한 번 더(시험용 env GUARD_CAP_N · GUARD_CAP_WINDOW_MS · GUARD_CAP_PAUSE_MS)
 // 사용: node scripts/desk/launcher-guard.js        (상주 · 설치 = install-launcher.js 가 시작프로그램 vbs 로 이걸 띄움)
 //       node scripts/desk/launcher.js --once …      (시험은 종전처럼 launcher 를 직접)
 // 시험용 env: GUARD_CHILD(자식 스크립트) · GUARD_LOCK_PORT · GUARD_LOG · GUARD_CHILD_LOG · GUARD_RESTART_MS
@@ -25,6 +26,9 @@ const CHILD_LOG = process.env.GUARD_CHILD_LOG || path.join(AK, 'launcher-child.l
 const PID_FILE = path.join(AK, 'launcher-guard.pid');
 const RESTART_MS = parseInt(process.env.GUARD_RESTART_MS, 10) || 5000;
 const MAX_BACKOFF_MS = 60000, STABLE_MS = 60000, WAIT_OTHER_MS = 15000;
+// #829 무한 재시작 상한 — 10분 안에 6번 죽으면 다시 켜기를 멈추고 로그 한 줄 · 30분 쉰 뒤 한 번 더 시도(그때도 반복이면 또 30분) · 텔레그램은 없음(이 프로그램엔 DB·토큰이 없다 · 창구가 안 뜨면 화면 「자리 비움」·서버 1분 틱이 알림)
+const CAP_N = parseInt(process.env.GUARD_CAP_N, 10) || 6, CAP_WINDOW_MS = parseInt(process.env.GUARD_CAP_WINDOW_MS, 10) || 10 * 60000, CAP_PAUSE_MS = parseInt(process.env.GUARD_CAP_PAUSE_MS, 10) || 30 * 60000;
+const deaths = [];   // 최근 죽은 시각
 
 function log(msg) {
     const line = new Date().toISOString() + ' [감시자] ' + msg;
@@ -47,6 +51,14 @@ let child = null, restarts = 0, backoff = RESTART_MS, startedAt = 0, stopping = 
 // 다시 켜기 예약 한 곳 — 'error'(띄우기 실패)와 'exit'(죽음)가 둘 다 와도 한 번만(#701 보완)
 function scheduleRestart(lived) {
     if (stopping || restartTimer) return;
+    const now = Date.now(); deaths.push(now);
+    while (deaths.length && now - deaths[0] > CAP_WINDOW_MS) deaths.shift();
+    if (deaths.length >= CAP_N) {   // #829 상한
+        deaths.length = 0;
+        log(`창구가 ${CAP_WINDOW_MS / 60000}분 안에 ${CAP_N}번 죽어 다시 켜기를 멈춤 — ~/.akkome/launcher-child.log 확인 필요 · ${Math.round(CAP_PAUSE_MS / 6000) / 10}분 뒤 한 번 더 시도`);
+        restartTimer = setTimeout(() => { restartTimer = null; backoff = RESTART_MS; restarts++; log('쉰 뒤 다시 켬(' + restarts + '회)'); start(); }, CAP_PAUSE_MS);
+        return;
+    }
     backoff = (lived < STABLE_MS && restarts > 0) ? Math.min(MAX_BACKOFF_MS, backoff * 2) : RESTART_MS;
     restarts++;
     log(`창구 다시 켬(${restarts}회) ${backoff / 1000}초 뒤`);
@@ -74,7 +86,7 @@ async function start() {
         closeOut();
         const lived = Date.now() - startedAt;
         child = null;
-        log(`창구 종료 code=${code === null ? '' : code} signal=${signal || ''} (${Math.round(lived / 1000)}초 살았음)`);
+        log(`창구 종료 code=${code === null ? '' : code} signal=${signal || ''} (${Math.round(lived / 1000)}초 살았음)${code === 0 && lived < 10000 ? ' · 0 으로 바로 끝남 = 다른 창구가 포트 47469 를 들고 있을 수 있음(창구 로그의 「점유자 pid」 줄)' : ''}`);   // #829
         scheduleRestart(lived);
     });
 }

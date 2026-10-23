@@ -278,7 +278,12 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
             if (/key LIKE 'mail\\_draft\\_%'/.test(sql)) return { rows: [] };   // #779 초안 정리(여기선 초안 없음)
             if (/DELETE FROM agent_office_config WHERE key = \$1 RETURNING value/.test(sql)) { const v = cfg.get(p[0]); const had = cfg.has(p[0]); cfg.delete(p[0]); return { rows: had ? [{ value: v }] : [] }; }
             if (/INSERT INTO agent_office_config/.test(sql)) { cfg.set(p[0], JSON.parse(p[1])); age.set(p[0], 0); return { rows: [] }; }
-            if (/INSERT INTO report_files/.test(sql)) { files.push({ id: files.length + 1, filename: p[0], data: p[1], size: p[2] }); return { rows: [{ id: files.length }] }; }
+            if (/INSERT INTO report_files/.test(sql)) { files.push({ id: files.length + 1, filename: p[0], data: p[1], size: p[2], del: false, purged: false }); return { rows: [{ id: files.length }] }; }
+            if (/UPDATE report_files rf SET is_deleted = false WHERE rf\.purged_at IS NULL AND rf\.id = \(SELECT f\.id FROM report_files f WHERE f\.run_id IS NULL AND f\.is_deleted = true AND f\.purged_at IS NULL AND f\.filename = \$1 AND f\.size_bytes = \$2 AND md5\(f\.data\) = md5\(\$3::bytea\)/.test(sql)) {   // #829 같은 첨부 재사용(러너가 만든 줄만 = audit mail_attach)
+                const mine = new Set(audits.filter(a => a.action === 'mail_attach' && a.source === 'naver-mail').map(a => a.changes.file_id));
+                const hit = files.filter(x => x.del && !x.purged && x.filename === p[0] && x.size === p[1] && Buffer.compare(x.data, p[2]) === 0 && mine.has(x.id)).pop();
+                if (!hit) return { rows: [] }; hit.del = false; return { rows: [{ id: hit.id }] };
+            }
             throw new Error('모르는 SQL ' + sql.slice(0, 80));
         } };
         let t = 1000000;
@@ -300,8 +305,18 @@ const READONLY = (c) => /^(LOGIN \*\*\*|LIST "" "\*"|EXAMINE "|UID SEARCH |UID F
         cfg.set('mail_attach_request', { id: 'p1', uid: 101, folder: 'INBOX', part: '2' }); await RN.tick();
         const ar = cfg.get('mail_attach_result');
         ok(ar.ok && ar.file_id === 1 && files[0].filename === '정산서.pdf' && Buffer.compare(files[0].data, PDF) === 0 && ar.size === PDF.length, '첨부 요청 → report_files 1행(원래 바이트)', ar);
+        cfg.set('mail_attach_request', { id: 'p1b', uid: 101, folder: 'INBOX', part: '2' }); await RN.tick();
+        const at2 = audits.filter(a => a.action === 'mail_attach');
+        ok(cfg.get('mail_attach_result').ok && cfg.get('mail_attach_result').file_id === 2 && files.length === 2 && at2.length === 2 && !('reused' in at2[1].changes) && !('reused' in at2[0].changes), '#829 살아 있는(숨기지 않은) 같은 첨부 = 재사용 안 함 · 새 줄(창구가 들고 있는 줄을 건드리지 않게)', at2.map(a => a.changes));
+        files[1].del = true; cfg.set('mail_attach_request', { id: 'p1c', uid: 101, folder: 'INBOX', part: '2' }); await RN.tick();
+        const at3 = audits.filter(a => a.action === 'mail_attach');
+        ok(cfg.get('mail_attach_result').file_id === 2 && files.length === 2 && files[1].del === false && at3[2].changes.reused === true && at3[2].changes.file_id === 2, '#829 계산서 정리가 숨긴(is_deleted) 같은 첨부 = 되살려 씀(새 줄 0 · 감사 reused · 가장 새 줄)', files.map(x => ({ id: x.id, del: x.del })));
+        files[0].del = true; files[1].del = true; files[1].purged = true; cfg.set('mail_attach_request', { id: 'p1d', uid: 101, folder: 'INBOX', part: '2' }); await RN.tick();
+        ok(cfg.get('mail_attach_result').file_id === 1 && files.length === 2 && files[0].del === false, '#829 비운 줄(purged)은 건너뛰고 숨긴 앞 줄을 씀', files.map(x => ({ id: x.id, del: x.del, purged: x.purged })));
+        files[0].purged = true; cfg.set('mail_attach_request', { id: 'p1e', uid: 101, folder: 'INBOX', part: '2' }); await RN.tick();
+        ok(cfg.get('mail_attach_result').file_id === 3 && files.length === 3 && Buffer.compare(files[2].data, PDF) === 0, '#829 숨긴 줄이 전부 비워졌으면(purged) = 새 줄', files.map(x => ({ id: x.id, purged: x.purged })));
         cfg.set('mail_attach_request', { id: 'p2', uid: 101, folder: 'INBOX', part: '9' }); await RN.tick();
-        ok(cfg.get('mail_attach_result').ok === false && /첨부\(part\)/.test(cfg.get('mail_attach_result').error) && files.length === 1, '없는 첨부 = 거절 · 파일 안 만듦');
+        ok(cfg.get('mail_attach_result').ok === false && /첨부\(part\)/.test(cfg.get('mail_attach_result').error) && files.length === 3, '없는 첨부 = 거절 · 파일 안 만듦');
         const RN2 = NM.mountMailRunner({ pool, env: {}, imapOpen: F.imapOpenF, noTimers: true, now: () => t + 99999 });
         cfg.set('mail_search_request', { id: 'n1', q: 'x' }); await RN2.tick();
         ok(cfg.get('mail_search_result').ok === false && /메일 설정이 없어요/.test(cfg.get('mail_search_result').error), '설정 없음 = 고정 문구');

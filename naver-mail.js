@@ -1002,9 +1002,12 @@ function mountMailRunner(deps) {
                         } else {
                             const a = await ops.attach({ uid: q.uid, folder: q.folder || null, part: String(q.part) });
                             if (ctx.dead) return;   // #792 시간 초과 뒤 늦게 온 첨부는 저장하지 않음
-                            const ins = await pool.query(`INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, NULL, $2, $3) RETURNING id`, [a.name, a.buf, a.buf.length]);
-                            await put(resK, { ok: true, id, op, at: new Date().toISOString(), file_id: ins.rows[0].id, filename: a.name, size: a.buf.length, type: a.type });
-                            await audit('mail_attach', { uid: q.uid, folder: q.folder || null, part: String(q.part), file_id: ins.rows[0].id, size: a.buf.length, order_id: q.order_id || null }, q.by);
+                            // #829 같은 첨부(이름·크기·md5 같고 전에 이 러너가 만든 줄 · 계산서 정리가 숨긴(is_deleted) 줄만 · 아직 안 비움)를 다시 받으면 새 줄 대신 그 줄을 살려 씀 — 계산서 정리가 같은 메일을 다시 읽을 때마다 쌓이던 것(10/23 456줄 중 고유 165)
+                            const old = (await pool.query(`UPDATE report_files rf SET is_deleted = false WHERE rf.purged_at IS NULL AND rf.id = (SELECT f.id FROM report_files f WHERE f.run_id IS NULL AND f.is_deleted = true AND f.purged_at IS NULL AND f.filename = $1 AND f.size_bytes = $2 AND md5(f.data) = md5($3::bytea)
+                                AND EXISTS (SELECT 1 FROM audit_logs al WHERE al.action = 'mail_attach' AND al.source = 'naver-mail' AND al.changes->>'file_id' = f.id::text) ORDER BY f.id DESC LIMIT 1) RETURNING rf.id`, [a.name, a.buf.length, a.buf])).rows[0];
+                            const fileId = old ? old.id : (await pool.query(`INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, NULL, $2, $3) RETURNING id`, [a.name, a.buf, a.buf.length])).rows[0].id;
+                            await put(resK, { ok: true, id, op, at: new Date().toISOString(), file_id: fileId, filename: a.name, size: a.buf.length, type: a.type });
+                            await audit('mail_attach', { uid: q.uid, folder: q.folder || null, part: String(q.part), file_id: fileId, size: a.buf.length, order_id: q.order_id || null, ...(old ? { reused: true } : {}) }, q.by);
                         }
                     } catch (e) {
                         if (op === 'send' && e.unreserve) await e.unreserve().catch(() => { });   // 확실히 안 나간 보내기 = 오늘 수 되돌림

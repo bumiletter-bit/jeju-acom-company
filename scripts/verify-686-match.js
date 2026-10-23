@@ -1,5 +1,5 @@
 /* #686 검증 — 그린레몬 못난이 5kg(네이버 전용 신규 옵션 · 「제주 그린레몬 못난이5kg(랜덤과)」) 송장변환·중간발주 매칭 (2026-10-14)
-   app.js 실코드를 떼어 실행(#406·#534 방법) · git HEAD(구코드)와 같은 입력으로 비교 — 달라지는 것은 못난이 옵션뿐이어야 한다.
+   app.js 실코드를 떼어 실행(#406·#534 방법) · #686 앞 커밋 deec612~1(구코드 · #829 고정 · Windows cmd 는 ^ 를 지워 ~1 로 — HEAD 는 이미 새 코드)와 같은 입력으로 비교 — 달라지는 것은 못난이 옵션뿐이어야 한다.
    단가표는 실DB 를 읽지 않고 두 가지 가짜 목록으로 돈다(① 못난이 이름이 있는 날 ② 빠진 날). 쓰기 0 · 서버 0. */
 const fs = require('fs'); const path = require('path'); const { execSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
@@ -11,7 +11,7 @@ function buildMatcher(src) {
     return new Function(src.slice(a, b) + '\nreturn { matchProduct, matchProductRaw, setPricing: (arr) => { aoInvoicePricingNames = arr; }, catalogHas: (n) => PRODUCT_CATALOG.has(n) };')();
 }
 const NEW = buildMatcher(fs.readFileSync(path.join(ROOT, 'public/app.js'), 'utf8'));
-const OLD = buildMatcher(execSync('git show HEAD:public/app.js', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+const OLD = buildMatcher(execSync('git show deec612~1:public/app.js', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
 const UG = '과수 및 크기: 제주 그린레몬 못난이5kg(랜덤과)';   // 네이버 옵션 글자 그대로(워커1 지도 · 품목별 금액에도 이 글자로)
 const G3 = '과수 및 크기: 제주 그린레몬3kg(중소과)', G5 = '과수 및 크기: 제주 그린레몬5kg(중소과)', G10 = '과수 및 크기: 제주 그린레몬10kg(중소과)';
 const BASE = [G3, G5, G10, '과수 및 크기: 제주산 레드키위 5kg(로얄과)', '고당도 하우스감귤 / 상품 및 과수: 가정용 - 2.5kg(로얄과)'];
@@ -28,7 +28,7 @@ console.log('② 단가표에 못난이 이름이 빠진 날 — 옛 코드는 �
 {
     NEW.setPricing(BASE); OLD.setPricing(BASE);
     const n = NEW.matchProduct(N(UG)), o = OLD.matchProduct(N(UG));
-    ok(o === G5, '옛 코드(HEAD): 못난이 5kg → 그린레몬5kg(중소과) 로 오매칭(고치는 이유)', o);
+    ok(o === G5, '옛 코드(deec612~1): 못난이 5kg → 그린레몬5kg(중소과) 로 오매칭(고치는 이유)', o);
     ok(typeof n === 'string' && n.startsWith('[미매칭]'), '새 코드: 못난이 5kg → [미매칭](사람이 봄)', n);
     ok(NEW.matchProductRaw(N(UG)) === UG && NEW.catalogHas(UG) && !OLD.catalogHas(UG), '새 코드 표준명 = 네이버 글자 그대로 · PRODUCT_CATALOG 에 등록(옛 코드엔 없음)', NEW.matchProductRaw(N(UG)));
     for (const [label, input, want] of [['그린레몬 3kg', N(G3), G3], ['그린레몬 5kg', N(G5), G5], ['그린레몬 10kg', N(G10), G10], ['옛 이름 레몬 못난이', N('과수 및 크기: 제주 못난이 레몬5kg(랜덤과)'), null], ['옛 이름 레몬 혼합과', N('과수 및 크기: 제주 레몬3kg(혼합과)'), null]]) {

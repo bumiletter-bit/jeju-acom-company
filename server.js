@@ -78,6 +78,28 @@ async function sessionIdleInfo() {
     return _idleCache;
 }
 
+// #829(위험 7): 토큰(7일) 안의 role·position 을 그대로 믿지 않는다 — users 표를 60초 캐시로 재조회해 퇴사(deleted_at)·권한이 바뀐 계정을 즉시 반영한다.
+//   · 캐시 = 사용자 id 열쇠(최대 500) · 사용자 수정·퇴사 라우트가 그 id 를 지워 바로 반영 · 시험 번호 계정(≥990000 · users 표에 없음)은 토큰 그대로(종전 검증 흐름 유지)
+//   · DB 조회가 실패하면 그때만 토큰 값으로 통과 + 로그(앞 캐시가 남아 있으면 그 값) — 서비스가 통째로 막히지 않게
+const _authUserCache = new Map();
+const AUTH_USER_CACHE_MS = 60_000;
+function authUserCacheDrop(id) { _authUserCache.delete(Number(id)); }
+async function authUserLookup(id) {
+    const key = Number(id);
+    const hit = _authUserCache.get(key);
+    if (hit && Date.now() - hit.at < AUTH_USER_CACHE_MS) return hit;
+    try {
+        const r = await pool.query('SELECT id, username, name, position, color, role, deleted_at FROM users WHERE id = $1', [key]);
+        const row = r.rows[0] || null;
+        const ent = { at: Date.now(), u: row && !row.deleted_at ? { id: row.id, username: row.username, name: row.name, position: row.position, color: row.color, role: row.role } : null };
+        if (_authUserCache.size >= 500 && !_authUserCache.has(key)) _authUserCache.delete(_authUserCache.keys().next().value);
+        _authUserCache.set(key, ent);
+        return ent;
+    } catch (e) {
+        console.error('[auth] users 재조회 실패(토큰 값으로 통과):', e.message);
+        return hit || null;   // 낡은 캐시라도 있으면 그것 · 없으면 null = 토큰 그대로
+    }
+}
 async function authMiddleware(req, res, next) {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) return res.status(401).json({ error: '인증이 필요합니다' });
@@ -85,6 +107,13 @@ async function authMiddleware(req, res, next) {
         req.user = jwt.verify(token, JWT_SECRET);
     } catch (err) {
         return res.status(401).json({ error: '토큰이 만료되었거나 유효하지 않습니다' });
+    }
+    if (req.user && req.user.id != null && !deskIsTestUid(req.user.id)) {   // #829
+        const ent = await authUserLookup(req.user.id);
+        if (ent) {
+            if (!ent.u) return res.status(401).json({ error: '계정이 퇴사 처리됐거나 없습니다. 다시 로그인해주세요' });
+            req.user = Object.assign({}, req.user, ent.u);   // role·position·name·color 는 지금 DB 값(토큰이 7일 낡아도 권한은 즉시)
+        }
     }
     try {
         const sig = token.slice(-40);
@@ -1502,7 +1531,7 @@ app.post('/api/auth/login', async (req, res) => {
         });
     } catch (err) {
         console.error('POST /api/auth/login error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: '로그인 처리 중 오류가 났습니다. 잠시 뒤 다시 시도해주세요' });   // #829 공개 라우트 — 원문은 로그만
     }
 });
 
@@ -1529,12 +1558,16 @@ app.post('/api/invoice/decrypt', authMiddleware, async (req, res) => {
     try {
         const { fileBase64 } = req.body || {};
         if (!fileBase64) return res.status(400).json({ error: '파일 데이터가 없습니다' });
-        const password = process.env.SMARTSTORE_FILE_PASSWORD || '4031';
+        // #829 공개 리포에 비밀번호 기본값을 두지 않는다 — Render env SMARTSTORE_FILE_PASSWORD 또는 설정 agent_office_config 'smartstore_file_password'({"value":"…"} 또는 글자) · 둘 다 없으면 거절
+        let password = process.env.SMARTSTORE_FILE_PASSWORD || '';
+        if (!password) { try { const c = await naverCfgGet('smartstore_file_password'); password = String((c && typeof c === 'object') ? (c.value || c.password || '') : (c || '')).trim(); } catch (_) { password = ''; } }
+        if (!password) return res.status(400).json({ error: '발주 파일 비밀번호가 설정되지 않았습니다 — 관리자에게 알려주세요(Render env SMARTSTORE_FILE_PASSWORD)' });
         const input = Buffer.from(fileBase64, 'base64');
         const decrypted = await officeCrypto.decrypt(input, { password });
         res.json({ fileBase64: decrypted.toString('base64') });
     } catch (err) {
-        res.status(400).json({ error: '복호화 실패: ' + err.message });
+        console.error('invoice/decrypt error:', err && err.message);
+        res.status(400).json({ error: '복호화 실패 — 비밀번호가 다르거나 파일이 손상됐습니다' });   // #829 원문(라이브러리 영어 글)은 로그만
     }
 });
 
@@ -1732,6 +1765,7 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 
         values.push(req.params.id);
         await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`, values);
+        authUserCacheDrop(req.params.id);   // #829 권한·직위 변경 즉시 반영
 
         const result = await pool.query('SELECT id, username, name, position, color, role, annual_leave FROM users WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
@@ -1755,6 +1789,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
         }
         if (check.rows[0].deleted_at) return res.status(400).json({ error: '이미 퇴사 처리된 계정입니다' });
         await pool.query('UPDATE users SET deleted_at = NOW() WHERE id = $1', [req.params.id]);
+        authUserCacheDrop(req.params.id);   // #829 퇴사 즉시 토큰 거절
         await writeAudit({ action: 'retire', targetType: 'user', targetId: Number(req.params.id),
             changes: { after: { name: check.rows[0].name, retired: true } }, source: 'admin_api', actor: adminActor(req) });
         res.json({ success: true, message: `${check.rows[0].name} 님을 퇴사 처리했습니다 (기록 보존·복구 가능)` });
@@ -1769,6 +1804,7 @@ app.post('/api/users/:id/restore', authMiddleware, adminOnly, async (req, res) =
         const r = await pool.query(
             'UPDATE users SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING name', [req.params.id]);
         if (r.rows.length === 0) return res.status(400).json({ error: '퇴사 상태인 계정만 복구할 수 있습니다' });
+        authUserCacheDrop(req.params.id);   // #829 복구 즉시 로그인 허용(캐시 60초 기다리지 않게)
         await writeAudit({ action: 'restore', targetType: 'user', targetId: Number(req.params.id),
             changes: { after: { name: r.rows[0].name, retired: false } }, source: 'admin_api', actor: adminActor(req) });
         res.json({ success: true, message: `${r.rows[0].name} 님을 재입사 처리했습니다 (다시 로그인 가능)` });
@@ -4060,7 +4096,8 @@ app.get('/api/settlements/debug-pricing', authMiddleware, adminOnly, async (req,
             productMappings: mappings.rows
         });
     } catch (err) {
-        res.status(500).json({ error: err.message, stack: err.stack });
+        console.error('settlements debug error:', err);
+        res.status(500).json({ error: '조회 중 오류가 났습니다' });   // #829 stack 노출 제거 — 원문은 로그만
     }
 });
 
@@ -7519,6 +7556,7 @@ async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
 }
+kakaoNotify.setCfgReader(naverCfgGet);   // #829 알림톡 시험 발송 허용 번호(설정 aligo_test_send_allow) — kakao-notify 엔 pool 이 없어 읽기 함수를 넘겨준다
 // #775-A 체험(배송 없는) 상품 — 택배 흐름(주문안내 알림톡·자동 발주확인·문자 봇 발송 전 주문·송장변환/발주 수집)에서 뺀다 · 발주확인은 사람이(작년과 같게)
 //   판정 = 상품 번호가 설정 agent_office_config 'experience_products'(배열 또는 {ids:[…]} · 없으면 기본 ["7673020911"]) 안
 //   🔵 주문의 expectedDeliveryMethod('NOTHING' = 배송 없음)로도 볼 수 있으나 택배 주문의 실제 값을 아직 못 봐서(10/20 · 읽기 러너가 그 칸을 안 줌) 안 쓴다
@@ -9799,7 +9837,7 @@ app.get('/api/public/shipping-eta', async (req, res) => {
             cutoffAt: new Date(cutoffUtcMs).toISOString(),   // 다음 발송 마감(오전 8시)
             holdWindow: hh === 8,               // 08:00~08:59 = 발주 확인 후 안내 구간
         });
-    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+    } catch (e) { console.error('shipping-eta error:', e && e.message); res.status(500).json({ error: '발송 안내를 계산하지 못했습니다' }); }   // #829 공개 라우트 — 원문은 로그만
 });
 
 // ══════ #340: 룰렛 실물 당첨 지급 관리 (문의 관리 > 🎁 당첨 지급) ══════
@@ -10285,9 +10323,12 @@ async function dbRetentionTick(nowMs) {
         await naverCfgSet('db_retention_last', { date: today, at: new Date(nowMs || Date.now()).toISOString(), enabled: cfg.enabled,
             days: { report: cfg.report_days, image: cfg.image_days, log: cfg.log_days, mail: cfg.mail_days }, image_statuses: cfg.image_statuses, targets, done: {} });
         const sizeLog = ((await naverCfgGet('db_size_log')) || []).filter(x => x && x.d && x.d !== today).slice(-119);
-        sizeLog.push({ d: today, b: targets.db_bytes });
+        let top = [];
+        try { top = await dbSizeTopTables(10); } catch (e) { console.error('[보관 정리] 표별 크기 조회 실패(무시):', e.message); }
+        sizeLog.push({ d: today, b: targets.db_bytes, top });   // #829 top = [{t: 표 이름, b: 바이트}] 상위 10(인덱스·TOAST 포함)
         await naverCfgSet('db_size_log', sizeLog);
         _dbRetDoneDay = today;
+        try { await dbSizeAlertMaybe(targets.db_bytes, top, today); } catch (e) { console.error('[보관 정리] 용량 알림 실패(무시):', e.message); }   // #829
         if (cfg.enabled) {
             if (targets.report.n > 0) _dbRetQueue.push({ job: 'report', round: 0 });
             if (targets.image.n > 0) _dbRetQueue.push({ job: 'image', round: 0 });
@@ -10298,6 +10339,50 @@ async function dbRetentionTick(nowMs) {
         return { counted: true, enabled: cfg.enabled, targets, queued: _dbRetQueue.map(q => q.job) };
     } catch (e) { console.error('[보관 정리] 틱 오류:', e.message); return { error: e.message }; }
     finally { _dbRetBusy = false; }
+}
+// #829(위험 8 · 서버 몫): 표별 크기 상위 n(인덱스·TOAST 포함) — 읽기만
+async function dbSizeTopTables(limit) {
+    const r = await pool.query(
+        `SELECT c.relname AS t, pg_total_relation_size(c.oid)::bigint AS b
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'm')
+          ORDER BY pg_total_relation_size(c.oid) DESC LIMIT $1`, [Math.max(1, Math.min(50, Number(limit) || 10))]);
+    return r.rows.map(x => ({ t: String(x.t), b: Number(x.b) }));
+}
+// 보관 정리(#579)가 손대지 않는 표 — 알림 글에 「보관 정리 밖」으로 표시만(삭제 코드 없음)
+const DB_SIZE_UNMANAGED = ['lucky_assets', 'payslips', 'company_rules', 'tax_invoices', 'naver_product_backups', 'coupang_item_backups', 'report_files_archive'];
+// 총 용량이 설정 'db_size_alert_mb'(숫자 또는 {mb}) · 기본 700MB 를 넘으면 하루 1회(기록 'db_size_alert_last' {date, mb}) 텔레그램 + 대표 할 일(owner_todo) 1건(같은 글이 열려 있으면 더 안 넣음)
+const DB_SIZE_ALERT_MB_DEFAULT = 700;
+async function dbSizeAlertMaybe(dbBytes, top, today) {
+    const raw = await naverCfgGet('db_size_alert_mb');
+    const lim = Math.floor(Number(raw && typeof raw === 'object' ? raw.mb : raw));
+    const limitMb = Number.isFinite(lim) && lim >= 100 ? lim : DB_SIZE_ALERT_MB_DEFAULT;
+    const mb = Math.round(Number(dbBytes) / 1048576);
+    if (!(mb > limitMb)) return { alerted: false, mb, limitMb };
+    const last = await naverCfgGet('db_size_alert_last');
+    if (last && last.date === today) return { alerted: false, mb, limitMb, already: true };
+    const fmt = x => `${x.t} ${Math.round(x.b / 1048576)}MB${DB_SIZE_UNMANAGED.includes(x.t) ? '(보관 정리 밖)' : ''}`;
+    const lines = (Array.isArray(top) ? top : []).slice(0, 5).map(fmt);
+    const text = `💾 DB 용량 ${mb}MB — 상한 ${limitMb}MB 넘음\n큰 표: ${lines.join(' · ') || '-'}\n→ 보관 정리(db_retention)·보관 정리 밖 표(그림·PDF·보관본) 점검 필요`;
+    await naverCfgSet('db_size_alert_last', { date: today, mb, limitMb });   // 먼저 적어 같은 날 두 번 안 보낸다(알림이 실패해도 내일 다시)
+    let tg = 'skip';
+    try { tg = await notifyTelegram(text); } catch (e) { tg = 'fail:' + e.message; }
+    // 대표 할 일 — 같은 머리글의 열린 항목이 있으면 더 안 넣는다(scripts/owner-todo.js 와 같은 꼴 · n = 최대 + 1)
+    const head = 'DB 용량 상한 넘음';
+    let todoN = null;
+    try {
+        const ot = (await naverCfgGet('owner_todo')) || {};
+        const items = Array.isArray(ot.items) ? ot.items : [];
+        if (!items.some(it => it && !it.done && String(it.text || '').startsWith(head))) {
+            const nn = items.reduce((m, x) => Math.max(m, Number(x && x.n) || 0), 0) + 1;
+            items.push({ n: nn, text: `${head} — ${mb}MB(상한 ${limitMb}MB) · 큰 표: ${lines.slice(0, 3).join(' · ') || '-'}`, when: today, where: '데이터관리 · 보관 정리 설정', at: today });
+            await naverCfgSet('owner_todo', Object.assign({}, ot, { items }));
+            todoN = nn;
+        }
+    } catch (e) { console.error('[보관 정리] 대표 할 일 추가 실패(무시):', e.message); }
+    try { await writeAudit({ action: 'db_size_alert', targetType: 'db_size', changes: { after: { mb, limitMb, top: (top || []).slice(0, 5), telegram: tg, owner_todo_n: todoN } }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } }); } catch (_) { /* 기록 실패는 무시 */ }
+    console.log(`[보관 정리] DB ${mb}MB > ${limitMb}MB — 텔레그램 ${tg} · 대표 할 일 ${todoN == null ? '이미 있음' : '#' + todoN}`);
+    return { alerted: true, mb, limitMb, telegram: tg, owner_todo_n: todoN };
 }
 // 월요일 아침 브리핑에 붙는 한 줄 — 「💾 DB 145MB · 이번 주 +20MB」(7일 전 기록이 없으면 크기만)
 async function dbSizeWeeklyLine(todayKst) {
@@ -18817,6 +18902,21 @@ app.all(/^\/\.well-known\/.*/, (req, res) => res.status(404).json({ error: 'Not 
 // SPA fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+// #829(#692 ③): Express 마지막 오류 처리 — 없으면 Express 기본 처리기가 오류 원문(개발 모드면 stack 까지)을 HTML 로 내보낸다.
+//   · 본문 JSON 깨짐(express.json 의 entity.parse.failed) = 400 · 본문 너무 큼 = 413 · 그 밖 = 500 · 응답 꼴은 화면 api() 가 읽는 {error} 그대로 · 원문·stack 은 서버 로그만
+//   · NODE_ENV 에 의존하지 않는다(Render env 를 못 보므로) · 이미 응답을 보낸 뒤 난 오류는 Express 기본(연결 끊기)으로
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    const type = err && err.type;
+    if (type === 'entity.parse.failed') return res.status(400).json({ error: '요청 본문이 잘못됐습니다' });
+    if (type === 'entity.too.large') return res.status(413).json({ error: '요청이 너무 큽니다' });
+    if (type === 'encoding.unsupported' || type === 'charset.unsupported') return res.status(415).json({ error: '지원하지 않는 요청 형식입니다' });
+    const code = Number(err && (err.status || err.statusCode));
+    try { console.error(`[서버] 처리되지 않은 오류 ${req.method} ${req.originalUrl}:`, (err && err.stack) || err); } catch (_) { /* 로그 실패는 무시 */ }
+    if (code >= 400 && code < 500) return res.status(code).json({ error: '요청을 처리할 수 없습니다' });
+    res.status(500).json({ error: '서버 오류가 났습니다. 잠시 뒤 다시 시도해주세요' });
 });
 
 // #652: 받지 않은 약속 거부 하나로 서버가 통째로 죽지 않게(Node 15+ 기본 = 프로세스 종료 → 그 순간 처리 중이던 문자·발송이 끊긴다) — 로그만 남기고 계속 돈다

@@ -3840,6 +3840,10 @@ textarea.form-input {
 .ss-empty .ss-ico { font-size: 52px; margin-bottom: 14px; }
 
 /* 모바일 */
+/* #829 메뉴(사이드바)가 보이는 769~879폭은 본문이 489~540px 라 4칸 요약 카드(금액 글자 폭 ≈ 559px)가 넘쳤다 → 그 구간만 2칸(680 이하와 같은 꼴) · 880 이상은 종전 4칸 */
+@media (min-width: 769px) and (max-width: 879px) {
+    .ss-sg { grid-template-columns: 1fr 1fr; }
+}
 @media(max-width:680px) {
     .ss-wrap { padding: 14px 12px 40px; }
     .ss-sg { grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -4836,6 +4840,20 @@ body.ps-view-open { overflow: hidden; }
     #inquiry-auto-reply-wrap { padding-top: 14px; padding-bottom: 14px; margin-top: -14px; margin-bottom: -14px; }   /* 전체 자동응답 체크 13px — 감싼 label 위아래(오른쪽은 [+ 추가] 단추라 넓히지 않음) */
     label:has(> input[id^="botprod-rsvon-"]) { padding: 14px 0 14px 16px; margin: -14px 0 -14px -16px; }   /* 판매현황 예약발송 체크 13px — 감싼 label 위아래·왼쪽 */
     .ps-check { padding-left: 13px; margin-left: -13px; }    /* 내 정보 알림 체크 18px — label 높이는 이미 44 · 왼쪽만 */
+    /* #829(#828 점검 남은 것) 같은 방식 — 실측 390 기준 · 이웃 단추와의 틈 절반을 넘지 않게 */
+    .month-nav > .btn-nav, #page-planner .btn-nav, .sch-flt-btn, .expense-item-remove, button[onclick="openCjCarryoverModal()"], #page-data .btn-toggle { position: relative; }
+    .month-nav > .btn-nav::before, #page-planner .btn-nav::before, .sch-flt-btn::before, .expense-item-remove::before, .sidebar-close-btn::before, button[onclick="openCjCarryoverModal()"]::before, #page-data .btn-toggle::before,
+    .worklog-write-btn::before, .worklog-view-btn::before { content: ''; position: absolute; }
+    .month-nav > .btn-nav::before, #page-planner .btn-nav::before { top: -3px; bottom: -3px; left: -3px; right: -3px; }   /* 월 ‹ › 30×40 — ::before 는 테두리(1px) 안쪽 기준 · 두 단추 틈 4px 라 안쪽은 테두리 밖 2px 만(맞닿음 · 안 겹침) */
+    .month-nav > .btn-nav:first-child::before, #page-planner .btn-nav:first-child::before { left: -13px; }   /* 바깥쪽으로 → 30+12+2 = 44 */
+    .month-nav > .btn-nav:last-child::before, #page-planner .btn-nav:last-child::before { right: -13px; }  /* 플래너 ‹ › ? 의 가운데 › 는 양옆이 붙어 34 까지만 */
+    .sch-flt-btn::before { inset: -6px; }                    /* 일정 거르기 칩 23~25 → 33~35(테두리 밖 5px · 칩 줄 사이 11px · 옆 12px 라 그 절반까지 — 44 는 칩 줄 간격을 넓혀야 함) */
+    .expense-item-remove::before { inset: -6px; }            /* 지출 항목 × 32 → 44(왼쪽 비고 칸과 틈 11px → 5px 남음) */
+    .sidebar-close-btn::before { inset: -6px; }              /* 메뉴 닫기 × 32 → 44(이미 absolute) */
+    button[onclick="openCjCarryoverModal()"]::before { inset: -14px -12px; }   /* 정산 CJ 카드 「이월 ✏️」 20×16 → 44×44(둘레에 다른 단추 없음) */
+    #page-data .btn-toggle::before { inset: -6px 0; }        /* 데이터관리 당일·일주일·한달 34 → 44(테두리 1px 안쪽 기준이라 -6 · 옆 단추와 붙어 있어 옆으로는 안 넓힘) */
+    #worklog-calendar-body td { position: relative; }
+    .worklog-write-btn::before, .worklog-view-btn::before { inset: 0; }   /* 업무일지 「작성」 41×16 → 그 날짜 칸 전체(48×43 · 칸 안 단추는 하나뿐 · 칸 밖으로는 안 넓힘) */
 }
 
 /* ============================================================
@@ -4938,6 +4956,9 @@ body.ps-view-open { overflow: hidden; }
 #settlement-invoice .si-pin { width: 100%; box-sizing: border-box; min-height: 40px; font-size: 14px; }
 #settlement-invoice .si-pamt .si-pin { text-align: right; font-variant-numeric: tabular-nums; }
 #settlement-invoice .si-payfb { display: flex; gap: 8px; }
+#settlement-invoice .si-payfb[hidden] { display: none; }   /* #829 같은 입금 되묻는 동안 저장·취소 숨김 */
+#settlement-invoice .si-pdup { flex: 1 0 100%; display: flex; flex-direction: column; gap: 8px; }   /* #829 「같은 날 같은 금액」 되묻기 — 글색은 기존 .si-diffv(호박 · 야간 생성물에 이미 있음) */
+#settlement-invoice .si-pdupt { margin: 0; font-size: 13px; font-weight: 600; }
 #settlement-invoice .si-imp { padding: 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 12px; font-size: 13px; color: var(--text-dark, #101828); }
 #settlement-invoice .si-impt, #settlement-invoice .si-impn { margin: 0 0 8px; }
 #settlement-invoice .si-impn b { font-variant-numeric: tabular-nums; }

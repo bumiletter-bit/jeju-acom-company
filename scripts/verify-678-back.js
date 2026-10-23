@@ -95,7 +95,7 @@ async function tabs(H, page, sels, label) {
 
             console.log('  · 공통 창');
             { // 알림 종 판
-                const before = await H.at(); const bell = w < 769 ? '#mobile-noti-btn' : '#notification-bell';
+                const before = await H.at(); const bell = '#mobile-noti-btn';   // #712 뒤 = 모든 폭 떠 있는 종 하나(메인 인사말 줄 #notification-bell 은 PC 숨김)
                 await H.pg.locator(bell).click(); await sleep(600); const o = await H.layers();
                 await H.back(); const c = await H.layers();
                 ok(o.noti && o.m === 1 && !c.noti && (await H.at()) === before, L + ' 알림 종 판 열고 뒤로가기 = 판만 닫힘(화면 그대로)', JSON.stringify({ o, c, at: await H.at() }));
@@ -143,8 +143,8 @@ async function tabs(H, page, sels, label) {
             console.log('  · 에이전트 오피스(ao-desk 겹과 같이)');
             {
                 await H.nav('schedule'); await H.nav('agent-office'); await H.pg.waitForSelector('#desk-tabs .desk-tab', { timeout: 30000 }).catch(() => { }); await sleep(1200);
-                const bell = w < 769 ? '#mobile-noti-btn' : '#notification-bell';
-                const bellOk = await H.pg.locator(bell).isVisible().catch(() => false);   // PC 폭의 에이전트 오피스에는 알림 종이 없다(일정표 머리에만) → 그 폭에서는 종 항목을 건너뛴다
+                const bell = '#mobile-noti-btn';   // #712 뒤 = PC 에이전트 오피스에도 떠 있는 종
+                const bellOk = await H.pg.locator(bell).isVisible().catch(() => false);   // 종이 안 보이는 화면이면 종 항목을 건너뛴다
                 if (bellOk) { await H.pg.locator(bell).click(); await sleep(600); const o = await H.layers(); await H.back(); const c = await H.layers();
                     ok(o.noti && !c.noti && (await H.page()) === 'agent-office', L + ' 에이전트 오피스에서 알림 종 판 뒤로가기 = 판만 닫힘', JSON.stringify({ o, c, p: await H.page() })); }
                 const hasHb = await H.pg.evaluate(() => !!(window.AkmAoDesk && window.AkmAoDesk.histDepth));

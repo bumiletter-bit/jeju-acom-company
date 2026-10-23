@@ -204,7 +204,7 @@ function world(opt = {}) {
     else {
         const { PGlite } = require(path.join(PGL, 'node_modules', '@electric-sql', 'pglite'));
         const IM = require(path.join(__dirname, 'desk', 'invoice-month.js'));
-        const OUR = '4228104127';
+        const OUR = 'test-pw-829';   // 시험 비밀번호 — 실제 값은 설정 tax_invoice.pdf_password(코드·리포에 안 둠)
         const conv = (v) => (v && typeof v === 'object' && !(v instanceof Date) && !(v instanceof Uint8Array)) ? JSON.stringify(v) : v;
         const db = new PGlite();
         await db.exec(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP DEFAULT NOW());
@@ -266,6 +266,26 @@ function world(opt = {}) {
         ok(/「\[계산서 정리\] YYYY-MM\[, YYYY-MM\]」/.test(know) && /invoice-month\.js <달> --order <지시 id>/.test(know) && /새 줄 n · 이미 있던 n · 못 읽음 n · 기타 n 건너뜀/.test(know), '업무지식 = 「[계산서 정리]」 지시 → 달마다 invoice-month --order · 답 꼴');
         ok(/계산서 메일\(FirstBill·홈택스·스마트빌\)은 지우거나 받은메일함·「청구·결제」 밖으로 옮기지 않는다/.test(know) && /tax_invoice_seen/.test(know), '업무지식 = 계산서 메일 지우기·옮기기 금지 줄 · 본 메일 표');
         ok(/「\[계산서 정리\] …」로 시작하는 지시\*\*\(#821/.test(rule), '창구 CLAUDE.md 4-1 표에 [계산서 정리] 한 줄');
+    }
+    console.log('⑥ #829 알림톡 시험 발송 허용 번호 = env → 실DB 설정 aligo_test_send_allow(가짜 읽기 · 실발송 0)');
+    {
+        for (const k of ['ALIGO_API_KEY', 'ALIGO_USER_ID', 'ALIGO_SENDER_KEY', 'ALIGO_SENDER', 'ALIGO_TEST_SEND_ALLOW']) delete process.env[k];   // 키 없음 = 허용 뒤에도 keys-missing 에서 멈춤(발송 0)
+        const KN = require(path.join(ROOT, 'kakao-notify.js'));
+        let cfgVal = null, reads = 0, boom = false;
+        KN.setCfgReader(async (key) => { reads++; if (boom) throw new Error('db down'); return key === 'aligo_test_send_allow' ? cfgVal : null; });
+        const T0 = 1e12;
+        const a0 = await KN.testSendAllow(T0);
+        const s0 = await KN.sendTestOne({ to: '010-1111-2222' });
+        ok(a0.join() === '01066874031' && s0.status === 'blocked', '설정·env 둘 다 없음 = 회사 번호만 · 다른 번호 blocked', [a0, s0]);
+        cfgVal = { numbers: ['010-1111-2222', 'x'] }; KN.setCfgReader(async (key) => { reads++; if (boom) throw new Error('db down'); return key === 'aligo_test_send_allow' ? cfgVal : null; }); reads = 0;
+        const a1 = await KN.testSendAllow(T0), a1b = await KN.testSendAllow(T0 + 30000);
+        cfgVal = '01033334444'; const a2 = await KN.testSendAllow(T0 + 59000), a3 = await KN.testSendAllow(T0 + 61000);
+        ok(a1.join() === '01066874031,01011112222' && a1b.join() === a1.join() && reads === 2 && a2.join() === a1.join() && a3.join() === '01066874031,01033334444', '설정 {numbers} 읽음(이상한 값 거름) · 60초 기억(30초·59초 = 다시 안 읽음 · 61초 = 새 값 · 쉼표 글자 꼴)', [a1, a2, a3, reads]);
+        boom = true; const a4 = await KN.testSendAllow(T0 + 200000); boom = false;
+        process.env.ALIGO_TEST_SEND_ALLOW = '010-5555-6666'; const r0 = reads; const a5 = await KN.testSendAllow(T0 + 300000); const envNoRead = reads === r0; delete process.env.ALIGO_TEST_SEND_ALLOW;
+        const s1 = await KN.sendTestOne({ to: '01033334444' });
+        ok(a4.join() === '01066874031,01033334444' && a5.join() === '01066874031,01055556666' && envNoRead && s1.status === 'keys-missing', 'DB 읽기 실패 = 지난 값 유지 · env 가 있으면 env 먼저(설정 안 읽음) · 허용 번호 = 차단 통과(키 없어 발송 0)', [a4, a5, s1]);
+        KN.setCfgReader(null);
     }
     console.log(`\n결과: ${pass}/${pass + fail}`);
     process.exit(fail ? 1 : 0);

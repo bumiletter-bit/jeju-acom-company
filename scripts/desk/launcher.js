@@ -19,7 +19,8 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const { spawn } = require('child_process');
-const { pool, ROOT, heartbeat, appendStep } = require('./_db');
+const { pool, ROOT, appendStep } = require('./_db');
+const { spawnSync } = require('child_process');
 const { claim } = require('./get');
 const fast = require('./fast');
 const trust = require('./trust-desk');
@@ -77,13 +78,17 @@ function trimLog() {
 function dieLog(kind, e) {
     log(kind + ' → 종료 1: ' + String(e && e.stack || e).replace(/\s+/g, ' ').slice(0, 600));
     process.exitCode = 1;
+    try { killAllKids('치명 오류'); } catch (_) { /* 끄기 실패는 무시 — 다음 기동의 killOrphanKids 가 pid 파일로 다시 끈다 */ }   // #829
     try { pool.end().catch(() => { }); } catch (_) { /* 무시 */ }
-    setTimeout(() => process.exit(1), 300).unref();
+    setTimeout(() => process.exit(1), 500).unref();
 }
 process.on('uncaughtException', e => dieLog('치명 오류', e));
 process.on('unhandledRejection', e => dieLog('처리 안 된 거부', e));
 process.on('exit', code => log('종료 code=' + code + (process.env.DESK_GUARDED ? ' (감시자 아래)' : '')));
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) { try { process.on(sig, () => { log('신호 ' + sig + ' → 종료'); process.exit(0); }); } catch (_) { /* 이 OS 에 없는 신호 */ } }
+// #829(위험 5): 신호로 꺼질 때 돌던 claude 자식(일반·켜 둔 창구)을 전부 트리로 끈다 — 종전엔 부모만 죽어 자식이 결과를 올리고, 다음 기동의 recoverOrphans 가 같은 지시를 「대기」로 되돌려 두 번 처리될 틈이 있었다.
+//   taskkill 은 spawn 호출 시점에 프로세스가 만들어지므로(uv_spawn 동기) 바로 exit 해도 끄기는 진행된다 · 그래도 500ms 를 둔다. Windows 의 child.kill()/taskkill /F 는 신호가 안 와 이 길을 못 타므로 pid 파일(아래 kidsSave) + 기동 때 killOrphanKids 가 뒷받침.
+let _shuttingDown = false;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) { try { process.on(sig, () => { if (_shuttingDown) return; _shuttingDown = true; const k = killAllKids('신호 ' + sig); log('신호 ' + sig + ' → 종료' + (k ? ' · 돌던 창구 ' + k + '개 끔(트리)' : '')); setTimeout(() => process.exit(0), k ? 500 : 0).unref(); }); } catch (_) { /* 이 OS 에 없는 신호 */ } }
 
 async function cfgGet(key) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [key]);
@@ -148,6 +153,54 @@ function killTree(child, dep) {
         else child.kill('SIGKILL');
         return true;
     } catch (e) { try { child.kill(); } catch (_) { } return false; }
+}
+// #829 돌고 있는 자식 전부(kids = 지시별 · warm = 켜 둔 창구 — 쉬는 것 포함) 끄기 · 끈 수를 돌려준다
+function killAllKids(why, dep) {
+    const d = dep || {}; const K = d.kids || kids, W = d.warm || warm; const seen = new Set(); let c = 0;
+    for (const ch of K.values()) { if (ch && !seen.has(ch)) { seen.add(ch); if ((d.killTree || killTree)(ch, d)) c++; } }
+    for (const w of W.values()) { const ch = w && w.child; if (ch && !seen.has(ch)) { seen.add(ch); if ((d.killTree || killTree)(ch, d)) c++; } }
+    try { kidsSave(d); } catch (_) { /* 무시 */ }
+    return c;
+}
+// 돌고 있는 자식의 pid 를 파일에 적어 둔다(~/.akkome/desk-kids.json {order_id: {pid, at}}) — 부모가 신호 없이 죽어도(taskkill /F · 전원) 다음 기동이 그 pid 를 끈다
+const KIDS_FILE = path.join(os.homedir(), '.akkome', 'desk-kids.json');
+function kidsSave(dep) {
+    const d = dep || {}; const K = d.kids || kids; const v = {};
+    for (const [id, ch] of K.entries()) if (ch && ch.pid && ch.exitCode == null) v[id] = { pid: ch.pid, at: new Date().toISOString() };
+    try { fs.mkdirSync(path.dirname(d.file || KIDS_FILE), { recursive: true }); fs.writeFileSync(d.file || KIDS_FILE, JSON.stringify(v)); } catch (_) { /* 기록 실패는 무시 */ }
+}
+// 기동 때: 앞 대기 프로그램이 남긴 pid 를 끈다 — pid 재사용(몇 시간 뒤 같은 번호를 받은 워커 claude·감시자 node·자기 자신)으로 남의 프로세스를 끄지 않게 세 겹으로 본다(교차 점검 2 · 10/23):
+//   ①자기 pid·부모(감시자) pid 건너뜀 ②PowerShell Get-Process 의 이름이 claude/node/cmd 이고 **시작 시각이 파일에 적은 시각(at)보다 앞**일 때만(뒤면 다른 프로세스) · 시작 시각을 못 읽으면 안 끈다 ③부팅 시각이 at 보다 뒤면(재부팅 뒤) 파일 통째 버림
+//   돌려주는 값 = { killed: [{order_id, pid}], order_ids: 파일에 있던 지시 번호 전부(죽였든 이미 없든) } — recoverOrphans({dead}) 가 그 지시를 heartbeat·3분 조건 없이 「대기」로 되돌린다(자식을 끈 지시는 결과를 올릴 길이 없으므로)
+function procInfo(pids) {   // Windows: { boot: ISO, procs: [{pid, name, start: ISO|null}] } · 실패·다른 OS = null(= 아무도 안 끈다)
+    if (process.platform !== 'win32' || !pids.length) return null;
+    const ps = `$ids=@(${pids.map(Number).join(',')}); $o=@{boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o'); procs=@()}; foreach($i in $ids){ try{ $p=Get-Process -Id $i -ErrorAction Stop; $st=$null; try{ $st=$p.StartTime.ToUniversalTime().ToString('o') }catch{}; $o.procs += @{pid=$i; name=$p.ProcessName; start=$st} }catch{} }; $o | ConvertTo-Json -Compress -Depth 3`;
+    try { const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 20000 }); const j = JSON.parse(String(r.stdout || '').trim()); if (!Array.isArray(j.procs)) j.procs = j.procs ? [j.procs] : []; return j; } catch (_) { return null; }
+}
+function killOrphanKids(dep) {
+    const d = dep || {}; const file = d.file || KIDS_FILE; let v = null;
+    const L = d.log || log;
+    try { v = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return { killed: [], order_ids: [] }; }
+    const entries = Object.entries(v || {}).filter(([, e]) => e && Number(e.pid) > 0);
+    const orderIds = entries.map(([id]) => Number(id)).filter(Boolean);
+    const killed = [];
+    const info = entries.length ? (d.procInfo || procInfo)(entries.map(([, e]) => Number(e.pid))) : null;
+    const bootMs = info && info.boot ? Date.parse(info.boot) : NaN;
+    const atMs = Math.min(...entries.map(([, e]) => Date.parse(e.at || '') || Infinity));
+    if (Number.isFinite(bootMs) && Number.isFinite(atMs) && bootMs > atMs) L(`기동 복구: 재부팅 뒤(부팅 ${info.boot} > 기록 ${new Date(atMs).toISOString()}) — 앞 창구 자식 pid 파일은 버림(${entries.length}건)`);
+    else for (const [id, e] of entries) {
+        const pid = Number(e.pid), at = Date.parse(e.at || '');
+        if (pid === process.pid || pid === (d.ppid != null ? d.ppid : process.ppid)) { L(`기동 복구: #${id} pid ${pid} = 지금 창구·감시자 자신 — 건너뜀`); continue; }
+        const p = info && info.procs.find(x => Number(x.pid) === pid);
+        const name = p ? String(p.name || '').toLowerCase() : null;
+        if (!p) { L(`기동 복구: #${id} 앞 창구 자식 pid ${pid} 이미 없음 — 건너뜀`); continue; }
+        if (!/^(claude|node|cmd)(\.exe)?$/.test(name)) { L(`기동 복구: #${id} pid ${pid} 는 다른 프로그램(${name}) — 건너뜀`); continue; }
+        const start = Date.parse(p.start || '');
+        if (!Number.isFinite(start) || !Number.isFinite(at) || start > at + 2000) { L(`기동 복구: #${id} pid ${pid}(${name}) 시작 시각 ${p.start || '모름'} 이 기록(${e.at || '모름'}) 뒤 = 다른 프로세스 — 건너뜀`); continue; }
+        try { if (process.platform === 'win32') (d.spawnSync || spawnSync)('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 10000 }); else process.kill(pid, 'SIGKILL'); killed.push({ order_id: Number(id), pid }); L(`기동 복구: #${id} 앞 창구가 남긴 자식 pid ${pid}(${name}) 끔(트리)`); } catch (err) { L(`기동 복구: #${id} pid ${pid} 끄기 실패(무시): ${err.message}`); }
+    }
+    try { fs.unlinkSync(file); } catch (_) { /* 없음 */ }
+    return { killed, order_ids: orderIds };
 }
 // 3초마다 그 지시가 「사람이 종료」(질문종결 + result.type closed_by_user)가 됐는지 보고, 됐으면 그 자식을 끈다 → run 이 끝나 handle 이 다음으로 넘어간다
 function endWatcher(orderId, dep) {
@@ -223,8 +276,9 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
         const out = fs.openSync(outPath, 'a');
         const env = Object.assign({}, process.env);
         if (key) env.ANTHROPIC_API_KEY = key; else delete env.ANTHROPIC_API_KEY;
-        // 🔴 문장은 반드시 맨 앞 — --add-dir 는 폴더를 여러 개 받는 옵션이라 뒤에 둔 문장을 폴더로 삼킨다(실측).
-        const args = [opt.prompt || promptFor(order), '--model', opt.model || MODEL, '--dangerously-skip-permissions', '--add-dir', ROOT];
+        // #829 지시 전문은 명령줄 인자가 아니라 stdin 으로 준다(-p 는 인자 문장이 없으면 stdin 전체를 문장으로 읽음) — 명령줄 길이 상한(ENAMETOOLONG)·프로세스 목록 노출 제거 · --add-dir 가 문장을 폴더로 삼키는 함정도 사라짐
+        const promptText = opt.prompt || promptFor(order);
+        const args = ['-p', '--model', opt.model || MODEL, '--dangerously-skip-permissions', '--add-dir', ROOT];
         if (opt.stream) args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages');
         // 가볍게: 대표 개인 설정(도구를 쓸 때마다 울리는 알림 훅·플러그인)과 외부 연결(MCP)을 창구 실행에서 뺀다.
         //   창구 규칙(★에이전트오피스의 CLAUDE.md·settings.json)은 그대로 읽는다 · 생각 깊이는 종전 값(high)을 그대로 준다.
@@ -233,8 +287,10 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
         const exe = findClaude();
         if (!exe) { try { fs.closeSync(out); } catch (_) { } return resolve({ code: -1, err: 'claude 실행 파일을 찾지 못했습니다', outPath, info: {} });
         }
-        const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['ignore', opt.stream ? 'pipe' : out, out], windowsHide: true });
-        kids.set(order.id, child);   // #799
+        const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', opt.stream ? 'pipe' : out, out], windowsHide: true });
+        kids.set(order.id, child); kidsSave();   // #799 · #829 pid 파일
+        child.stdin.on('error', () => { /* 바로 죽은 자식에 쓰려 한 경우 — exit 가 처리한다 */ });
+        try { child.stdin.end(promptText); } catch (e) { /* 위 error 핸들러로 */ }   // #829 문장 전체를 넣고 닫는다 — 닫아야 -p 가 읽기를 끝내고 시작한다
         let done = false;
         const info = {};
         if (opt.stream) {
@@ -260,7 +316,7 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
                 while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { watcher.line(line); } catch (e) { /* 한 줄 해석 실패는 무시 */ } }
             });
         }
-        const finish = r => { if (done) return; done = true; clearTimeout(timer); if (kids.get(order.id) === child) kids.delete(order.id); try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ } resolve(r); };
+        const finish = r => { if (done) return; done = true; clearTimeout(timer); if (kids.get(order.id) === child) { kids.delete(order.id); kidsSave(); } try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ } resolve(r); };
         const timer = setTimeout(() => {
             log(`#${order.id} 25분을 넘겨 중단`);
             try { child.kill(); } catch (e) { /* 이미 끝남 */ }
@@ -330,7 +386,7 @@ function runWarm(order, key, opt) {
         let done = false;
         const finish = code => {
             if (done) return; done = true; clearTimeout(timer);
-            if (kids.get(order.id) === w.child) kids.delete(order.id);   // #799
+            if (kids.get(order.id) === w.child) { kids.delete(order.id); kidsSave(); }   // #799 · #829
             try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ }
             w.onExit = null;
             if (w.dead) { w.onLine = null; return resolve({ code, outPath, info }); }
@@ -351,7 +407,7 @@ function runWarm(order, key, opt) {
         });
         const timer = setTimeout(() => { log(`#${order.id} 25분을 넘겨 중단`); try { w.child.kill(); } catch (e) { /* 이미 끝남 */ } }, RUN_TIMEOUT_MS);
         w.busy = true;
-        kids.set(order.id, w.child);   // #799
+        kids.set(order.id, w.child); kidsSave();   // #799 · #829
         w.onLine = line => { try { fs.writeSync(out, line + '\n'); } catch (_) { /* 무시 */ } watcher.line(line); };
         w.onExit = () => finish(-1);
         try { warmSend(w, opt.prompt); } catch (e) { finish(-1); }
@@ -582,6 +638,11 @@ async function writeState() {
 }
 
 const firstRunning = () => { const it = st.running.keys().next(); return it.done ? null : it.value; };
+// #829(위험 5): heartbeat 에 돌고 있는 지시 전부(order_ids · PARALLEL 4) — 종전엔 한 id 만 적어 다른 창구의 recoverOrphans 가 나머지 3건을 「대기」로 되돌릴 틈이 있었다 · order_id(첫 번째)는 종전 그대로
+async function heartbeat(state, orderId) {
+    const ids = [...st.running.keys()];
+    await cfgSet('desk_heartbeat', { at: new Date().toISOString(), state, order_id: orderId || ids[0] || null, order_ids: ids });
+}
 async function handle(order, key) {
     st.running.set(order.id, { by: order.created_by_id, at: Date.now(), settle: fast.settleImage(order) });   // settle = 정산 이미지 판독(#580 C)
     await heartbeat('busy', firstRunning() || order.id);
@@ -773,9 +834,21 @@ async function tick(mode) {
 //   대상 = status 처리중 · 창구가 집은 기록(audit desk_claim)이 있거나 만든 지 N분 넘음 · 마지막 집은 시각이 N분(기본 3) 전 · 시험 계정(≥990000) 제외
 //   · 살아 있는 다른 창구의 heartbeat 가 지금 그 지시를 가리키면(at 이 N분 안) 건너뜀. 시각 비교는 SQL 안에서(naive timestamp — 메모리 jeju-db-time-calc).
 //   deps 는 시험용 주입(가짜 pool·log·audit) · 돌려주는 값 = 되돌린 id 배열.
+// #829 잠금 포트를 들고 있는 pid(Windows netstat) — 로그용 · 못 찾으면 null
+function portOwnerPid(port) {
+    if (process.platform !== 'win32') return null;
+    try { const r = spawnSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }); const m = new RegExp('127\\.0\\.0\\.1:' + port + '\\s+\\S+\\s+LISTENING\\s+(\\d+)').exec(String(r.stdout || '')); return m ? Number(m[1]) : null; } catch (_) { return null; }
+}
 const RECOVER_MIN = 3;
 async function recoverOrphans(deps) {
-    const d = Object.assign({ pool, log, audit: require('./_db').audit, minutes: RECOVER_MIN, now: Date.now }, deps || {});
+    const d = Object.assign({ pool, log, audit: require('./_db').audit, minutes: RECOVER_MIN, now: Date.now, dead: [] }, deps || {});
+    // #829 보완: 앞 창구가 자식을 끈 채 죽은 지시(pid 파일에 있던 것)는 결과를 올릴 길이 없다 → heartbeat·3분 조건 없이 「대기」로(교차 점검 2 — 종전엔 자식이 살아 respond 까지 갔음)
+    const dead = [...new Set((Array.isArray(d.dead) ? d.dead : []).map(Number).filter(x => x > 0))];
+    const doneDead = [];
+    if (dead.length) {
+        const u = await d.pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = ANY($1::int[]) AND status = '처리중' AND is_deleted = false RETURNING id`, [dead]);
+        for (const r of u.rows) { doneDead.push(Number(r.id)); d.log(`기동 복구: #${r.id} 대기로(앞 창구가 자식을 끈 채 꺼짐 · heartbeat 와 무관)`); try { await d.audit('desk_recover', Number(r.id), { status: '대기', why: '기동 복구 #829 — 자식 끊긴 지시' }); } catch (e) { /* 기록 실패는 무시 */ } }
+    }
     const hb = ((await d.pool.query(`SELECT value FROM agent_office_config WHERE key = 'desk_heartbeat'`)).rows[0] || {}).value || null;
     const hbFresh = !!(hb && hb.at && Number.isFinite(Date.parse(hb.at)) && d.now() - Date.parse(hb.at) < d.minutes * 60000);
     const rows = (await d.pool.query(
@@ -785,9 +858,11 @@ async function recoverOrphans(deps) {
           WHERE o.status = '처리중' AND o.is_deleted = false AND COALESCE(o.created_by_id, 0) < 990000
             AND COALESCE(a.last_claim, o.created_at) < now() - make_interval(mins => $1::int)
           ORDER BY o.id`, [d.minutes])).rows;
-    const done = [];
+    const done = [...doneDead];
     for (const r of rows) {
-        if (hbFresh && hb && Number(hb.order_id) === Number(r.id)) { d.log(`기동 복구: #${r.id} 는 살아 있는 창구가 처리 중(heartbeat) — 그대로 둠`); continue; }
+        if (dead.includes(Number(r.id))) continue;   // 위에서 이미 처리
+        const hbHas = hb && (Number(hb.order_id) === Number(r.id) || (Array.isArray(hb.order_ids) && hb.order_ids.map(Number).includes(Number(r.id))));   // #829 order_ids(전부) 또는 종전 order_id
+        if (hbFresh && hbHas) { d.log(`기동 복구: #${r.id} 는 살아 있는 창구가 처리 중(heartbeat) — 그대로 둠`); continue; }
         const u = await d.pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = $1 AND status = '처리중' RETURNING id`, [r.id]);
         if (!u.rows.length) continue;
         done.push(r.id);
@@ -830,11 +905,14 @@ async function main() {
     }
     await new Promise((resolve, reject) => {
         const srv = net.createServer();
-        srv.once('error', e => reject(e.code === 'EADDRINUSE' ? new Error('이미 실행 중입니다') : e));
+        srv.once('error', e => { if (e.code === 'EADDRINUSE') { log('포트 ' + LOCK_PORT + ' 점유자 pid=' + (portOwnerPid(LOCK_PORT) || '?') + ' — 이미 실행 중이라 이 실행은 끝냄'); return reject(new Error('이미 실행 중입니다')); } reject(e); });   // #829 누가 들고 있는지 한 줄
         srv.listen(LOCK_PORT, '127.0.0.1', () => resolve(srv));
     });
     trimLog();
-    try { const ids = await recoverOrphans(); if (!ids.length) log('기동 복구: 되돌릴 「처리중」 없음'); } catch (e) { log('기동 복구 실패(무시 · 다음 기동 때 다시): ' + e.message); }   // #701 보완
+    // #829 ① 앞 창구가 남긴 자식(pid 파일)을 먼저 끈다 → ② 그 뒤에 「처리중」을 되돌린다. 순서가 이래야 되돌린 지시를 새 창구가 집는 동안 옛 자식이 같은 지시의 결과를 올리는 일이 없다.
+    let deadIds = [];
+    try { const k = killOrphanKids(); deadIds = k.order_ids; if (k.killed.length || k.order_ids.length) log('기동 복구: 앞 창구 자식 ' + k.killed.length + '개 끔 · 끊긴 지시 ' + k.order_ids.join(',')); } catch (e) { log('기동 복구: 앞 창구 자식 끄기 실패(무시): ' + e.message); }
+    try { const ids = await recoverOrphans({ dead: deadIds }); if (!ids.length) log('기동 복구: 되돌릴 「처리중」 없음'); } catch (e) { log('기동 복구 실패(무시 · 다음 기동 때 다시): ' + e.message); }   // #701 보완
     log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498 · 동시 ' + PARALLEL + '개 #503' + (process.env.DESK_GUARDED ? ' · 감시자 아래(pid ' + process.pid + ') #701' : ' · 감시자 없음(pid ' + process.pid + ')'));
     for (;;) {
         try { await tick(null); } catch (e) { log('주기 오류(재시도): ' + e.message); }
@@ -842,4 +920,4 @@ async function main() {
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans, _t799: { killTree, endWatcher, kids, nextOrder }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)

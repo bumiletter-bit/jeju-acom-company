@@ -124,7 +124,8 @@ async function _apiFetch(url, method, body, signal) {
     }
     if (!res.ok) {
         const err = await res.json().catch(() => ({ error: '서버 오류' }));
-        throw new Error(akmErrText(err.error, res.status));
+        const e = new Error(akmErrText(err.error, res.status)); e.status = res.status; e.body = err;   // #829 부르는 쪽이 409 { dup } 같은 칸을 읽을 수 있게(글은 종전 그대로)
+        throw e;
     }
     return res.json();
 }
@@ -1158,6 +1159,18 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+// #829 Esc 로도 닫기 — 판이 맨 위일 때만(이전 알림 창·공통 창·달력이 떠 있으면 그쪽이 먼저) · 붙잡기 단계에서 멈춰 아래 화면(자세히 보기·[+] 메뉴 등)이 같이 닫히지 않게
+//   닫힌 뒤 뒤로가기 칸은 바깥 클릭으로 닫을 때와 같은 길(akmNav sync 가 화면 변화로 알아채 되돌린다)
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.isComposing) return;
+    const dropdown = document.getElementById('notification-dropdown');
+    if (!dropdown || dropdown.style.display === 'none' || !dropdown.getClientRects().length) return;
+    const nh = document.getElementById('noti-hist'); if (nh && !nh.hidden) return;
+    if ([...document.querySelectorAll('.modal-overlay')].some(ov => ov.isConnected && getComputedStyle(ov).display !== 'none')) return;
+    if ([...document.querySelectorAll('.akm-cal')].some(c => c.getClientRects().length)) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    dropdown.style.display = 'none';
+}, true);
 
 async function renderNotificationList() {
     const listEl = document.getElementById('noti-list');
@@ -14812,12 +14825,13 @@ setupNaverTimerCard();
         $('si-q').addEventListener('input', e => { S.q = e.target.value; clearTimeout(tm); tm = setTimeout(search, 300); });
         root.addEventListener('change', e => {   // akm-date 는 날짜를 고르면 change(bubbles)를 쏜다 → 바로 조회
             if (e.target.id === 'si-from' || e.target.id === 'si-to') query();
-            else if (e.target.id === 'si-pd') S.payDraft.day = e.target.value;   // #824 입금일
+            else if (e.target.id === 'si-pd') { S.payDraft.day = e.target.value; if (S.payDup) dupOff(); }   // #824 입금일
             else if (e.target.id === 'si-xl' && e.target.files && e.target.files[0]) readImport(e.target.files[0]);
         });
         root.addEventListener('input', e => {   // #824 금액 = 숫자만 · 콤마
             if (e.target.id === 'si-pa') { const v = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 10) /* 10억 = 10자리까지(서버 상한) */; e.target.value = v ? Number(v).toLocaleString('ko-KR') : ''; S.payDraft.amt = e.target.value; }
             else if (e.target.id === 'si-pm') S.payDraft.memo = e.target.value;
+            if (S.payDup && (e.target.id === 'si-pa' || e.target.id === 'si-pm')) dupOff();   // #829 값이 바뀌면 「같은 입금」 물음은 거둔다
         });
         root.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'si-pa' || e.target.id === 'si-pm')) { e.preventDefault(); const sv = root.querySelector('[data-si="paysave"]'); if (sv) sv.click(); }
@@ -14956,6 +14970,20 @@ setupNaverTimerCard();
         }).join('');
         body.innerHTML = html || `<div class="card si-group"><p class="si-empty">조건에 맞는 계산서가 없어요.</p></div>`;
     }
+    // #829 입금 보내기 — 409 { dup:true } (같은 날 같은 금액 이미 있음)면 칸 안에서 되묻는다 · 옛 서버(dup 없음)·다른 오류 = 종전처럼 글만
+    async function sendPay(b, k, body) {
+        b.disabled = true;
+        try {
+            await api('/api/tax-invoices/payments', 'POST', body);
+            showToast(`${k === 'hyodon' ? '효돈' : '시온'} ${md(body.paid_on)} 입금 ${won(body.amount)}원 넣음`, 'success');
+            S.payForm = null; S.payDup = null; S.payDupBody = null; load();
+        } catch (err) {
+            b.disabled = false;
+            if (err && err.status === 409 && err.body && err.body.dup === true && body.force !== true) { S.payDup = k; S.payDupBody = body; render(); const f = document.querySelector('#si-pdup [data-si="payforce"]'); if (f) f.focus(); return; }
+            showToast(err && err.message || '저장하지 못했어요', 'error');   // 409(옛 서버 · 같은 입금) = 서버 글 그대로
+        }
+    }
+    function dupOff() { S.payDup = null; S.payDupBody = null; const q = $('si-pdup'); if (q) q.remove(); const fb = $('si-payfb'); if (fb) fb.hidden = false; }
     function payHtml(k, st) {   // #824 관리자만 — [+ 입금] · [엑셀 올리기] · 기간 안 입금 목록([삭제] 두 번 누름)
         const pays = Array.isArray(st.payments) ? st.payments : [], open = !!S.payOpen[k], d = S.payDraft;
         const bar = `<div class="si-paybar"><button type="button" class="btn-outline si-btn" data-si="payadd" data-v="${k}" aria-expanded="${S.payForm === k}">+ 입금</button><button type="button" class="btn-outline si-btn" data-si="payxl" data-v="${k}">엑셀 올리기</button>`
@@ -14963,7 +14991,8 @@ setupNaverTimerCard();
         const form = S.payForm !== k ? '' : `<div class="si-payf" role="group" aria-label="입금 넣기"><label class="si-rl"><span>입금일</span><input type="text" id="si-pd" class="form-input akm-date si-date" readonly autocomplete="off" value="${esc(d.day)}"></label>`
             + `<label class="si-rl si-pamt"><span>금액(원)</span><input type="text" id="si-pa" class="form-input si-pin" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amt)}"></label>`
             + `<label class="si-rl si-pmemo"><span>메모</span><input type="text" id="si-pm" class="form-input si-pin" maxlength="200" autocomplete="off" placeholder="선택" value="${esc(d.memo)}"></label>`
-            + `<div class="si-payfb"><button type="button" class="btn-primary si-btn" data-si="paysave" data-v="${k}">저장</button><button type="button" class="btn-outline si-btn" data-si="paycancel">취소</button></div></div>`;
+            + (S.payDup === k ? `<div class="si-pdup" id="si-pdup" role="alert"><p class="si-pdupt si-diffv">같은 날 같은 금액 입금이 이미 있습니다. 그래도 넣을까요?</p><div class="si-payfb"><button type="button" class="btn-primary si-btn" data-si="payforce" data-v="${k}">그래도 넣기</button><button type="button" class="btn-outline si-btn" data-si="paydupno">아니오</button></div></div>` : '')   // #829 서버 409 { dup } = 사람이 확인하고 다시 보냄
+            + `<div class="si-payfb" id="si-payfb"${S.payDup === k ? ' hidden' : ''}><button type="button" class="btn-primary si-btn" data-si="paysave" data-v="${k}">저장</button><button type="button" class="btn-outline si-btn" data-si="paycancel">취소</button></div></div>`;
         const n = v => Array.isArray(v) ? v.length : (Number(v) || 0);
         let imp = '';
         if (S.imp && S.imp.k === k) {
@@ -15018,24 +15047,24 @@ setupNaverTimerCard();
         }
         else if (k === 'payadd') {   // #824 입금 넣기 칸 열고 닫기
             if (!canEdit()) return;
-            S.payForm = S.payForm === b.dataset.v ? null : b.dataset.v;
+            S.payForm = S.payForm === b.dataset.v ? null : b.dataset.v; S.payDup = null;
             if (S.payForm) S.payDraft = { day: kstDay(Date.now()), amt: '', memo: '' };
             render(); const a = $('si-pa'); if (a) a.focus();
         }
-        else if (k === 'paycancel') { S.payForm = null; render(); }
+        else if (k === 'paycancel') { S.payForm = null; S.payDup = null; render(); }
         else if (k === 'paylist') { S.payOpen[b.dataset.v] = !S.payOpen[b.dataset.v]; render(); }
         else if (k === 'paysave') {
             if (!canEdit()) return;
             const day = ($('si-pd') || {}).value || '', amount = Number(String(($('si-pa') || {}).value || '').replace(/\D/g, '')), memo = String(($('si-pm') || {}).value || '').trim();
             if (!okDay(day)) { showToast('입금일을 골라 주세요', 'error'); return; }
             if (!(amount > 0)) { showToast('금액을 넣어 주세요', 'error'); const a = $('si-pa'); if (a) a.focus(); return; }
-            b.disabled = true;
-            try {
-                await api('/api/tax-invoices/payments', 'POST', memo ? { supplier: b.dataset.v, paid_on: day, amount, memo } : { supplier: b.dataset.v, paid_on: day, amount });
-                showToast(`${b.dataset.v === 'hyodon' ? '효돈' : '시온'} ${md(day)} 입금 ${won(amount)}원 넣음`, 'success');
-                S.payForm = null; load();
-            } catch (err) { b.disabled = false; showToast(err && err.message || '저장하지 못했어요', 'error'); }   // 409(같은 입금) = 서버 글 그대로
+            await sendPay(b, b.dataset.v, memo ? { supplier: b.dataset.v, paid_on: day, amount, memo } : { supplier: b.dataset.v, paid_on: day, amount });
         }
+        else if (k === 'payforce') {   // #829 「그래도 넣기」 = 막혔던 그 몸통 그대로 + force
+            if (!canEdit() || !S.payDupBody) return;
+            await sendPay(b, b.dataset.v, Object.assign({}, S.payDupBody, { force: true }));
+        }
+        else if (k === 'paydupno') { S.payDup = null; S.payDupBody = null; render(); const a = $('si-pa'); if (a) a.focus(); }   // #829 아니오 = 넣지 않고 칸 그대로
         else if (k === 'paydel') {   // 한 번 = 「정말 삭제」 · 4초 안 한 번 더 = 삭제
             if (!canEdit()) return;
             const id = b.dataset.v;

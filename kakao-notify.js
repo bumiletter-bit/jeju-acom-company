@@ -333,11 +333,29 @@ async function selftest(opts) {
 
 // ── 지시 #153-4: 단건 테스트 실발송 — 이모지 실물 확정용. 🔴 대표 GO 후 플래그(aligo_test_send_request)로만 발동.
 //    KAKAO_NOTIFY 스위치와 무관하게 지정 번호 1건만 발송(스위치 전체 ON 없이 검증). 수신번호는 화이트리스트(대표 번호)로 하드 제한.
-const TEST_SEND_ALLOW = ['01066874031', '01065594031'];   // #161: 회사 + 대표 개인 — 이 2개 외 하드 차단
+// #829 대표 개인 번호는 공개 리포에서 뺌 → ① Render env ALIGO_TEST_SEND_ALLOW(쉼표로 여러 개) ② 없으면 실DB 설정 agent_office_config 'aligo_test_send_allow'
+//   ({"numbers":["010…"]} · ["010…"] · 쉼표 글자 · 60초 기억 · 서버가 setCfgReader(naverCfgGet) 로 붙여야 읽음) · 회사 번호는 그대로 · 이 목록 밖은 하드 차단
+const TEST_SEND_COMPANY = '01066874031';
+let testAllowWarned = false, cfgRead = null, allowCache = null;
+function setCfgReader(fn) { cfgRead = typeof fn === 'function' ? fn : null; allowCache = null; }
+const allowNums = (v) => (Array.isArray(v) ? v : (v && Array.isArray(v.numbers)) ? v.numbers : typeof v === 'string' ? v.split(',') : [])
+    .map(x => String(x).replace(/[^0-9]/g, '')).filter(x => /^01\d{8,9}$/.test(x));
+async function testSendAllow(now = Date.now()) {
+    let extra = allowNums(String(process.env.ALIGO_TEST_SEND_ALLOW || ''));
+    if (!extra.length && cfgRead) {
+        if (!allowCache || now - allowCache.at > 60000) {
+            try { allowCache = { at: now, nums: allowNums(await cfgRead('aligo_test_send_allow')) }; }
+            catch (e) { console.error('[알림톡 시험] 설정 aligo_test_send_allow 읽기 실패:', String(e && e.message || e).slice(0, 120)); }   // 실패는 기억하지 않음(다음에 다시)
+        }
+        extra = (allowCache && allowCache.nums) || [];
+    }
+    if (!extra.length && !testAllowWarned) { testAllowWarned = true; console.log('[알림톡 시험] env ALIGO_TEST_SEND_ALLOW·설정 aligo_test_send_allow 없음 — 시험 발송은 회사 번호만'); }
+    return [TEST_SEND_COMPANY, ...extra];
+}
 function kstMdDowNow() { const d = new Date(Date.now() + 9 * 3600 * 1000); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '(' + '일월화수목금토'[d.getUTCDay()] + ')'; }   // #679 시험 발송 기본값만(실발송 값은 server.js kstMdDow 가 채운다)
 async function sendTestOne({ to, key, vars: extVars }) {
     const receiver = String(to || '').replace(/[^0-9]/g, '');
-    if (!TEST_SEND_ALLOW.includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
+    if (!(await testSendAllow()).includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
     if (!configured()) return { status: 'keys-missing' };
     const KEYMAP = { order: 'order_normal', order_reserve: 'order_reserve', welcome: 'welcome', guide: 'ship_guide' };   // APPROVED_TPL 별칭 → 문안 JSON key
     const testTplCode = (key === 'guide' && process.env.ALIGO_TPL_CODE_GUIDE) || APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome;   // #679: 발송안내 시험은 실발송과 같은 코드로(env 롤백 중이면 그 코드)
@@ -469,4 +487,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, matchNotifyAlias, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */
+module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, matchNotifyAlias, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, setCfgReader, testSendAllow, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */

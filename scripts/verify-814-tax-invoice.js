@@ -12,7 +12,8 @@ const { PGlite } = require(path.join(PGL, 'node_modules', '@electric-sql', 'pgli
 const TI = require(path.join(ROOT, 'tax-invoices.js'));
 const IM = require(path.join(__dirname, 'desk', 'invoice-month.js'));
 const SEMI = require(path.join(ROOT, 'agents', '세미.js'));
-const OUR = '4228104127';
+const OUR = '4228104127';   // 우리 사업자번호(계산서 글에서 「우리 번호 빼고」 가르는 데만)
+const PW = 'test-pw-829';   // 시험 비밀번호 — 실제 값은 설정 tax_invoice.pdf_password(코드·리포에 안 둠)
 
 function mkPool(db, hook) {
     const conv = (v) => (v && typeof v === 'object' && !(v instanceof Date) && !(v instanceof Uint8Array)) ? JSON.stringify(v) : v;
@@ -218,7 +219,7 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         ok(st('sion').cum_paid === 1500000 && st('hyodon').cum_paid === 0 && st('hyodon').month_rows[0].paid === 90000 && st('hyodon').payments.length === 0, '달 중간 to(10/5) = 누적 입금은 to 로 자름(효돈 10/10 빠짐) · 달 줄은 달 전체(10/10 셈) · 목록은 기간 안', st('hyodon'));
         const n0 = await pn();
         const d1 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-10-02', amount: 1000000, memo: '다른 메모' });
-        ok(d1.s === 409 && d1.j.error === '같은 입금이 이미 있어요' && await pn() === n0, '같은 거래처·날짜·금액 = 409 · 쓰기 0', d1.j);
+        ok(d1.s === 409 && d1.j.error === '같은 입금이 이미 있어요' && d1.j.dup === true && await pn() === n0, '같은 거래처·날짜·금액 = 409 { dup:true } · 쓰기 0', d1.j);
         ok((await call('POST', '/api/tax-invoices/payments', { supplier: 'hyodon', paid_on: '2026-10-02', amount: 1000000 })).s === 200, '거래처 다르면 같은 날·금액도 받음');
         const bads = [{ supplier: 'cj', paid_on: '2026-10-01', amount: 1 }, { supplier: 'other', paid_on: '2026-10-01', amount: 1 }, { paid_on: '2026-10-01', amount: 1 },
             { supplier: 'sion', paid_on: '2026-02-30', amount: 1 }, { supplier: 'sion', paid_on: '2026/10/01', amount: 1 }, { supplier: 'sion', amount: 1 },
@@ -270,7 +271,6 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
             a.addRow([D(2026, 3, 20), 100, null, '기준일 앞']);
             a.addRow([D(2026, 9, 28), 1250099, '9/28 입금', '04/29 20,,000,000원 (비고 글 숫자는 안 읽음)']);
             a.addRow([D(2026, 10, 25), 260000]);
-            a.addRow([D(2026, 10, 25), 260000, '같은 파일 안 같은 줄']);
             a.addRow([]);
             a.addRow(['발급일자', { formula: 'SUM(B2:B5)', result: 1770198 }]);
             a.addRow([D(2026, 10, 5), -1250000, '계산서(음수) 줄']);
@@ -287,8 +287,8 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         const a0 = audits.length, n0 = await pn();
         let x = await call('POST', '/api/tax-invoices/payments/import', { data: full, dry: true });
         ok(x.s === 200 && x.j.dry === true && x.j.sheets.join() === '대성,효돈' && JSON.stringify(x.j.new) === JSON.stringify([{ supplier: 'sion', paid_on: '2026-09-28', amount: 1250099 }, { supplier: 'sion', paid_on: '2026-10-25', amount: 260000 }, { supplier: 'hyodon', paid_on: '2026-10-18', amount: 90000 }])
-            && x.j.dup === 1 && x.j.before_start === 1 && x.j.unreadable === 2 && !('inserted' in x.j) && await pn() === n0 && audits.length === a0,
-            'dry = 대성·효돈 시트만 · 날짜 칸 + 양수 정수 줄만(머리·빈 줄·합계 수식·계산서 음수·수식·0 빠짐) · 기준일 앞 1 · 같은 파일 안 중복 1 · 글자 날짜 + 글자 금액 = 못 읽음 2 · 쓰기·감사 0', x.j);
+            && x.j.dup === 0 && x.j.before_start === 1 && x.j.unreadable === 2 && !('inserted' in x.j) && await pn() === n0 && audits.length === a0,
+            'dry = 대성·효돈 시트만 · 날짜 칸 + 양수 정수 줄만(머리·빈 줄·합계 수식·계산서 음수·수식·0 빠짐) · 기준일 앞 1 · 글자 날짜 + 글자 금액 = 못 읽음 2 · 쓰기·감사 0', x.j);
         { const only = await mkXlsx((wb) => { const t = wb.addWorksheet('대성'); t.addRow([D(2026, 10, 8), '1,000,000']); t.addRow([D(2026, 10, 9), { formula: 'B1*2', result: 2 }]); t.addRow([D(2026, 10, 10), null, '빈 금액']); });
           const q = await call('POST', '/api/tax-invoices/payments/import', { data: only, dry: true });
           ok(q.s === 200 && q.j.unreadable === 1 && q.j.new.length === 0, 'A 날짜 + B 글자 금액 = 못 읽음 1(조용히 안 빠짐) · 수식·빈칸은 조용히 빠짐(0)', q.j); }
@@ -298,9 +298,9 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         const ex = (await db.query(`SELECT supplier, to_char(paid_on, 'YYYY-MM-DD') AS d, amount::int AS a, memo, source, created_name FROM tax_invoice_payments ORDER BY paid_on`)).rows;
         ok(x.s === 200 && x.j.inserted === 3 && x.j.new.length === 3 && ex.length === 3 && ex.every(r => r.source === 'excel' && r.created_name === '대표') && ex[0].memo === '9/28 입금 / 04/29 20,,000,000원 (비고 글 숫자는 안 읽음)' && ex[1].memo === '발행 작성일자 10/12 / 10/18 입금 *효돈으로 입금 / 비고 글' && ex[2].memo === '',
             '실행 = 3줄 source excel · 메모 = C~끝 글 원문 「 / 」 이음(data: 머리 붙어도 받음)', ex);
-        ok(audits.length === a0 + 1 && audits[a0].action === 'payment_import' && audits[a0].source === 'tax_invoice' && audits[a0].targetId === null && JSON.stringify(audits[a0].changes) === JSON.stringify({ inserted: 3, dup: 1, before_start: 1, unreadable: 2 }), '감사 1줄 = 건수만(금액·날짜 없음)', audits.slice(a0));
+        ok(audits.length === a0 + 1 && audits[a0].action === 'payment_import' && audits[a0].source === 'tax_invoice' && audits[a0].targetId === null && JSON.stringify(audits[a0].changes) === JSON.stringify({ inserted: 3, dup: 0, before_start: 1, unreadable: 2 }), '감사 1줄 = 건수만(금액·날짜 없음)', audits.slice(a0));
         x = await call('POST', '/api/tax-invoices/payments/import', { data: full, dry: false });
-        ok(x.s === 200 && x.j.inserted === 0 && x.j.new.length === 0 && x.j.dup === 4 && await pn() === 3 && audits.length === a0 + 1, '같은 파일 다시 = 새 줄 0 · 중복 4 · 감사 0', x.j);
+        ok(x.s === 200 && x.j.inserted === 0 && x.j.new.length === 0 && x.j.dup === 3 && await pn() === 3 && audits.length === a0 + 1, '같은 파일 다시 = 새 줄 0 · 중복 3 · 감사 0', x.j);
         r = await call('GET', '/api/tax-invoices?from=2026-09-01&to=2026-10-31');
         const sm = st('sion').month_rows;
         ok(sm[0].diff === 0 && sm[1].diff === 0 && sm[0].invoice === 99 + 1250000 && sm[1].invoice === 260000 && sm[1].balance === 0 && sm[0].balance === 0 && sm[1].pre_issued_cnt === 1 && sm[1].pre_issued_amt === 1250000
@@ -315,6 +315,34 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         ok(bs.every(v => v.startsWith('400:')) && /시트가 없어요/.test(bs[0]) && /읽지 못했어요/.test(bs[1]) && /5MB/.test(bs[5]) && await pn() === 3 && audits.length === a0 + 1, '400 = 대성·효돈 시트 없음 · 깨진 파일 · base64 아님 · 없음 · 5MB 넘음 · 쓰기 0', bs);
         role = 'staff'; const f1 = await call('POST', '/api/tax-invoices/payments/import', { data: full, dry: true }); role = 'admin';
         ok(f1.s === 403 && await pn() === 3, '직원 계정 엑셀 가져오기 = 403');
+        await db.query(`DELETE FROM tax_invoice_payments`); audits.splice(a0);
+    }
+    console.log('③-d2 #829 같은 날 같은 금액 입금 둘 = 엑셀은 파일 안 줄 수만큼 · 다시 올리면 부족분만 · 수기는 force 로');
+    {
+        const pn = async () => (await db.query(`SELECT count(*)::int AS n FROM tax_invoice_payments WHERE deleted_at IS NULL`)).rows[0].n;
+        const ExcelJS = require(path.join(ROOT, 'node_modules', 'exceljs'));
+        const D = (y, m, d) => new Date(Date.UTC(y, m - 1, d));
+        const mkXlsx = async (rows) => { const wb = new ExcelJS.Workbook(); const a = wb.addWorksheet('대성'); a.addRow(['결제날짜', '입금금액']); for (const r of rows) a.addRow(r); return Buffer.from(await wb.xlsx.writeBuffer()).toString('base64'); };
+        const a0 = audits.length;
+        const two = await mkXlsx([[D(2026, 10, 25), 260000, '첫째'], [D(2026, 10, 25), 260000, '둘째'], [D(2026, 10, 26), 5000]]);
+        let x = await call('POST', '/api/tax-invoices/payments/import', { data: two, dry: true });
+        ok(x.s === 200 && x.j.new.length === 3 && x.j.dup === 0 && await pn() === 0, 'dry = 파일 안 같은 날 같은 금액 2줄 = 2줄 다 새 줄(버리지 않음)', x.j);
+        x = await call('POST', '/api/tax-invoices/payments/import', { data: two, dry: false });
+        const rows = (await db.query(`SELECT memo FROM tax_invoice_payments WHERE paid_on = DATE '2026-10-25' ORDER BY id`)).rows.map(r => r.memo);
+        ok(x.j.inserted === 3 && rows.join() === '첫째,둘째', '실행 = 2줄 다 들어감(파일 안 순서 그대로)', rows);
+        x = await call('POST', '/api/tax-invoices/payments/import', { data: two, dry: false });
+        ok(x.j.inserted === 0 && x.j.dup === 3 && await pn() === 3, '같은 파일 다시 = 0줄(표 2 = 파일 2)', x.j);
+        const three = await mkXlsx([[D(2026, 10, 25), 260000, '첫째'], [D(2026, 10, 25), 260000, '둘째'], [D(2026, 10, 25), 260000, '셋째'], [D(2026, 10, 26), 5000]]);
+        x = await call('POST', '/api/tax-invoices/payments/import', { data: three, dry: false });
+        const last = (await db.query(`SELECT memo FROM tax_invoice_payments WHERE paid_on = DATE '2026-10-25' ORDER BY id DESC LIMIT 1`)).rows[0];
+        ok(x.j.inserted === 1 && x.j.dup === 3 && x.j.new.length === 1 && await pn() === 4 && last.memo === '셋째', '같은 날 같은 금액이 파일 3 · 표 2 = 부족분 1줄만(파일 셋째 줄)', x.j);
+        const m1 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-10-26', amount: 5000 });
+        const m2 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-10-26', amount: 5000, force: 'true' });
+        const n1 = await pn();
+        const m3 = await call('POST', '/api/tax-invoices/payments', { supplier: 'sion', paid_on: '2026-10-26', amount: 5000, memo: '둘째 입금', force: true });
+        const au = audits.slice(a0).filter(a => a.action === 'payment_add');
+        ok(m1.s === 409 && m1.j.dup === true && m2.s === 409 && m3.s === 200 && Number.isInteger(m3.j.id) && await pn() === n1 + 1 && au.length === 1 && au[0].changes.force === true,
+            '수기 = 같은 입금 있으면 409 { dup } · force 는 true(불리언)만 · force:true = 넣음 · 감사에 force 표시', [m1.j, m2.s, m3.j, au.map(a => a.changes)]);
         await db.query(`DELETE FROM tax_invoice_payments`); audits.splice(a0);
     }
     console.log('③-e #825 짝 맞추기 = 계산서는 그 계산서를 다 갚은 입금의 달에 붙음(선행 · 선입금 · 부분 입금 · 안 갚음 · 보류 · 지운 입금 · 기준일 앞 · 달 중간 to)');
@@ -379,8 +407,8 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
     {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'v814-'));
         const pdfSion = path.join(tmp, 's.pdf'), pdfCj = path.join(tmp, 'c.pdf'), pdfBad = path.join(tmp, 'b.pdf');
-        mkPdf(pdfSion, SION_TXT.replace('12345678', '22222222').replace('2026-10-05', '2026-10-06'), OUR);
-        mkPdf(pdfCj, CJ_TXT.replace('00000099', '00000098'), OUR);
+        mkPdf(pdfSion, SION_TXT.replace('12345678', '22222222').replace('2026-10-05', '2026-10-06'), PW);
+        mkPdf(pdfCj, CJ_TXT.replace('00000099', '00000098'), PW);
         mkPdf(pdfBad, SION_TXT, 'other-password');
         const db2 = new PGlite();
         await db2.exec(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP DEFAULT NOW());
@@ -394,7 +422,7 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
               ('INBOX', 7, 14, '홈택스', '(제주조천점->제주아꼼이네)', '2026-10-15T02:00:00Z', '{"kind":"tax_invoice","supplier":"sion"}'),
               ('INBOX', 7, 15, '에프씨', '(제주아꼼이네->에프씨컨슈머(F.C.C))', '2026-10-15T02:00:00Z', '{"kind":"tax_invoice_other"}'),
               ('INBOX', 7, 16, '강주아', '늦은 것', '2026-11-12T02:00:00Z', '{"kind":"tax_invoice","supplier":"cj"}');`);
-        await db2.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR }), JSON.stringify({ initial_done: true })]);
+        await db2.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: PW }), JSON.stringify({ initial_done: true })]);
         const MAILS = { 11: { pdf: pdfSion, name: '계산서_시온.pdf', text: '안내' }, 12: { pdf: pdfCj, name: 'cj.pdf', text: '' }, 13: { pdf: null, text: '홈택스 발급 안내\n작성일자 2026-10-12\n공급가액 90,000\n세액 0\n합계금액 90,000\n승인번호 20261012-41000000-00000013' }, 14: { pdf: pdfBad, name: 'bad.pdf', text: '' } };
         const reqs = [];
         const hook = async (sql, p) => {
@@ -421,14 +449,14 @@ const CJ_TXT = '전자세금계산서\n승인번호 20261031-41000000-00000099\n
         ok(h13.read_status === 'check' && /첨부 PDF 없음/.test(h13.read_note) && h13.t === 90000 && !h13.pdf, '첨부 없는 홈택스 메일 = 본문에서 읽되 「원본 확인」', h13);
         ok(b14.read_status === 'error' && /비밀번호/.test(b14.read_note) && !b14.pdf, '비밀번호 안 맞으면 오류 · 숫자 0', b14);
         ok((await db2.query(`SELECT count(*)::int AS n FROM report_files WHERE is_deleted = false`)).rows[0].n === 0, '잠긴 원본 첨부는 파일함에서 숨김');
-        ok(!printed.join('').includes(OUR) && !reqs.some(x => JSON.stringify(x).includes(OUR)), '비밀번호가 출력·요청 줄에 안 나옴');
+        ok(!printed.join('').includes(PW) && !reqs.some(x => JSON.stringify(x).includes(PW)), '비밀번호가 출력·요청 줄에 안 나옴');
         const before = reqs.length;
         o = await run(['2026-10']);
         ok(o.counts.skipped === 2 && o.counts.inserted === 0 && (await db2.query(`SELECT count(*)::int AS n FROM tax_invoices`)).rows[0].n === 4 && reqs.length - before === 3, '다시 돌리면 = 새 줄 0 · 읽힘 2통은 메일도 안 엶(확인 필요·오류만 다시)', { c: o.counts, opened: reqs.length - before });
         await db2.query(`UPDATE agent_office_config SET value = '{}' WHERE key = 'tax_invoice'`);
         o = await run(['2026-10']); ok(!o.ok && /pdf_password/.test(o.error), '비밀번호 설정 없으면 멈춤');
         await db2.query(`UPDATE agent_office_config SET value = '{"initial_done":false}' WHERE key = 'mail_index_state'`);
-        await db2.query(`UPDATE agent_office_config SET value = $1 WHERE key = 'tax_invoice'`, [JSON.stringify({ pdf_password: OUR })]);
+        await db2.query(`UPDATE agent_office_config SET value = $1 WHERE key = 'tax_invoice'`, [JSON.stringify({ pdf_password: PW })]);
         o = await run(['2026-10']); ok(!o.ok && /색인/.test(o.error), '메일 색인 덜 찼으면 멈춤');
         fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -452,8 +480,8 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
   else document.getElementById('o').textContent = '비밀번호가 틀렸습니다'; });</script></body>`;
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'v814h-'));
         const hFb = path.join(tmp, 'fb.html'), hHt = path.join(tmp, 'ht.html'), hBad = path.join(tmp, 'bad.html');
-        fs.writeFileSync(hFb, secHtml(FB_TXT, OUR)); fs.writeFileSync(hHt, secHtml(HT_TXT, OUR)); fs.writeFileSync(hBad, secHtml(FB_TXT, 'other'));
-        const hOcean = path.join(tmp, 'ocean.html'); fs.writeFileSync(hOcean, secHtml(FB_TXT.replace('2026100841000000AB12CD34', '2026100941000000OC00EA01').replace('상호 (법인명) 제주아꼼이네', '상호 (법인명) 오션라운지'), OUR));   // 받는 쪽 = 오션라운지
+        fs.writeFileSync(hFb, secHtml(FB_TXT, PW)); fs.writeFileSync(hHt, secHtml(HT_TXT, PW)); fs.writeFileSync(hBad, secHtml(FB_TXT, 'other'));
+        const hOcean = path.join(tmp, 'ocean.html'); fs.writeFileSync(hOcean, secHtml(FB_TXT.replace('2026100841000000AB12CD34', '2026100941000000OC00EA01').replace('상호 (법인명) 제주아꼼이네', '상호 (법인명) 오션라운지'), PW));   // 받는 쪽 = 오션라운지
         const db3 = new PGlite();
         await db3.exec(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP DEFAULT NOW());
             CREATE TABLE report_files (id SERIAL PRIMARY KEY, filename VARCHAR(200) NOT NULL, run_id INTEGER, data BYTEA NOT NULL, size_bytes INTEGER, created_at TIMESTAMP DEFAULT NOW(), is_deleted BOOLEAN DEFAULT false, purged_at TIMESTAMP);
@@ -465,7 +493,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
               ('INBOX', 9, 33, 'FirstBill', '[효돈] 전자계산서', '2026-10-09T02:00:00Z', '{"kind":"tax_invoice","supplier":"hyodon"}'),
               ('INBOX', 9, 34, '네이버', '(오션라운지->제주아꼼이네) 키워드 광고', '2026-10-10T02:00:00Z', '{"kind":"tax_invoice","supplier":null}'),
               ('INBOX', 9, 35, 'FirstBill', '전자계산서 발행 안내', '2026-10-11T02:00:00Z', '{"kind":"tax_invoice","supplier":null}');`);
-        await db3.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
+        await db3.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: PW, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
         let failRead = false;
         const MAILS = { 31: { file: hFb, name: 'FirstBill_Tax.html' }, 32: { file: hHt, name: 'NTS_eTaxInvoice.html' }, 33: { file: hBad, name: 'FirstBill_Tax.html' }, 34: { file: hOcean, name: 'x.html' }, 35: { file: hOcean, name: 'FirstBill_Tax.html' } };
         const reqs = [];
@@ -489,7 +517,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         ok(f31 && f31.supplier === 'sion' && f31.supplier_name === '제주감귤농협 조천지점' && f31.d === '2026-10-08' && f31.t === 1000000 && f31.pdf_name === 'FirstBill_Tax.pdf' && Buffer.from(f31.head || []).toString() === '%PDF-', 'FirstBill = 색인 분류 없어도 사업자번호로 시온 · 상호 · 열람용 PDF 저장', f31 && { ...f31, head: undefined });
         ok(h32 && h32.supplier === 'cj' && h32.read_status === 'read' && h32.t === 330000, '홈택스 「(제주조천점->…)」 = 색인은 시온이어도 계산서 번호로 CJ', h32 && { ...h32, head: undefined });
         ok(b33 && b33.read_status === 'error' && /비밀번호/.test(b33.read_note || '') && b33.supplier === 'hyodon', '안 풀린 보안메일 = 오류 · 숫자 0 · 공급자는 색인 분류', b33 && { ...b33, head: undefined });
-        ok((await db3.query(`SELECT count(*)::int AS n FROM report_files WHERE is_deleted = false`)).rows[0].n === 0 && !printed.join('').includes(OUR) && fs.readdirSync(path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'invoice')).filter(f => /^3[123]-in\./.test(f)).length === 0, '받은 HTML 원본 = 파일함 숨김 · 로컬 임시 파일 지움 · 비밀번호 출력 0');
+        ok((await db3.query(`SELECT count(*)::int AS n FROM report_files WHERE is_deleted = false`)).rows[0].n === 0 && !printed.join('').includes(PW) && fs.readdirSync(path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'invoice')).filter(f => /^3[123]-in\./.test(f)).length === 0, '받은 HTML 원본 = 파일함 숨김 · 로컬 임시 파일 지움 · 비밀번호 출력 0');
         // 같은 메일이 이미 a: 줄로 있는데 다시 돌릴 때 읽기 실패 → 새 줄 0 · 그 줄의 읽기 결과만(승인번호·숫자 유지)
         await db3.query(`UPDATE tax_invoices SET read_status = 'check' WHERE mail_uid = 31`);
         failRead = true;
@@ -499,7 +527,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         const r31 = tv2.find(x => x.u === 31);
         ok(tv2.length === 3 && o2.counts.inserted === 0 && r31.read_status === 'error' && /메일 읽기 실패|시험 실패/.test(r31.read_note || '') && r31.approval_no === '2026100841000000AB12CD34' && r31.dedup_key === 'a:2026100841000000AB12CD34' && r31.t === 1000000, '재실행 실패 = 같은 메일 2줄 안 생김 · a: 줄의 읽기 결과만 바뀜(승인번호·금액 유지)', { c: o2.counts, tv2 });
         // 설정에 suppliers 가 없으면 = 색인 분류로(종전 그대로) → 그것도 없으면 기타
-        await db3.query(`UPDATE agent_office_config SET value = $1 WHERE key = 'tax_invoice'`, [JSON.stringify({ pdf_password: OUR })]);
+        await db3.query(`UPDATE agent_office_config SET value = $1 WHERE key = 'tax_invoice'`, [JSON.stringify({ pdf_password: PW })]);
         await db3.query(`DELETE FROM tax_invoices`);
         const o3 = await IM.main(['2026-10'], { pool: mkPool(db3, hook), sleep: () => Promise.resolve(), now: () => Date.now() + Math.random(), print: () => { } });
         const sv = (await db3.query(`SELECT mail_uid::int AS u, supplier FROM tax_invoices ORDER BY mail_uid`)).rows.map(x => x.supplier).join();
@@ -534,7 +562,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
               ('&zK2tbAC3rLDIHA-', 7, 42, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-07T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}'),
               ('&zK2tbAC3rLDIHA-', 7, 44, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-09T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}'),
               ('&zK2tbAC3rLDIHA-', 7, 43, '씨제이대한통운㈜ (발신전용메일)', '[전자세금계산서 정발행] 씨제이대한통운㈜ ▶ 제주아꼼이네', '2026-10-08T00:31:00Z', '{"kind":"tax_invoice","supplier":"cj"}');`);
-        await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: OUR, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
+        await db4.query(`INSERT INTO agent_office_config (key, value) VALUES ('tax_invoice', $1), ('mail_index_state', $2)`, [JSON.stringify({ pdf_password: PW, suppliers: SUP }), JSON.stringify({ initial_done: true })]);
         const reqs4 = [];
         const hook4 = async (sql, p) => {
             const m = /INSERT INTO agent_office_config \(key, value\) VALUES \(\$1, \$2::jsonb\)/.test(sql) && /^mail_(read|attach)_request$/.exec(p[0]);
@@ -556,7 +584,7 @@ document.getElementById('p').addEventListener('keydown', function (e) { if (e.ke
         ok(s42 && s42.read_status === 'check' && /스마트빌/.test(s42.read_note || '') && s42.d === '2026-09-30' && s42.supplier === 'cj' && !s42.pdf_name, '스마트빌 비밀번호가 안 맞으면 = 종전 「원본 확인」 줄(본문의 작성일만)', s42 && { ...s42, head: undefined });
         ok(s43 && s43.read_status === 'read' && s43.approval_no === '202609304100000000000778' && s43.t === 3300000 && s43.supplier === 'cj' && Buffer.from(s43.head || []).toString() === '%PDF-', '링크가 form 꼴(주소만으론 안 열림) = 메일 HTML 원문을 띄워 「세금계산서 보기」 누름 → 비밀번호 → 계산서 표 · PDF', s43 && { ...s43, head: undefined });
         ok(s44 && s44.read_status === 'read' && s44.approval_no === '20260930410000ab1c2d3x9z' && s44.supplier_bizno === '110-81-05034' && s44.sa === 1234500 && s44.va === 123450 && s44.t === 1357950 && s44.d === '2026-09-30' && s44.supplier === 'cj' && Buffer.from(s44.head || []).toString() === '%PDF-', '실물 꼴 = 배너 말고 「전자세금계산서 확인」 링크 → 비밀번호 화면 없이 프레임 안 계산서 = 그 프레임 글만 읽음(머리 메뉴의 우리 번호·전화 무시) · PDF', s44 && { ...s44, head: undefined });
-        ok(!printed4.join('').includes(HEX) && !JSON.stringify(tv4).includes(HEX) && !reqs4.some(x => JSON.stringify(x).includes(HEX)) && !printed4.join('').includes(OUR), '스마트빌 비밀번호(hex)·사업자 비밀번호 = 출력·표·요청 줄에 0', o4.counts);
+        ok(!printed4.join('').includes(HEX) && !JSON.stringify(tv4).includes(HEX) && !reqs4.some(x => JSON.stringify(x).includes(HEX)) && !printed4.join('').includes(PW), '스마트빌 비밀번호(hex)·계산서 비밀번호(설정 tax_invoice.pdf_password) = 출력·표·요청 줄에 0', o4.counts);
     }
     console.log(`\n결과 ${pass}/${pass + failN}`);
     process.exit(failN ? 1 : 0);

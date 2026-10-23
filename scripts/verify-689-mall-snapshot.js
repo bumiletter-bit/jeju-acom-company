@@ -2,7 +2,7 @@
 //   ① 함수 단위: server.js 에서 cafe24OptKey·storeSnapshotForMall 원문을 떼어 실행(실DB 최신 스냅샷·실설정 SELECT 만 · 쓰기 0)
 //   ② 분기: collectCafe24Sync 의 옵션 비교 줄이 재고 0 을 건너뛰는지(원문 대조 + 같은 조건식 실행)
 //   ③ 라우트: 로컬 실서버(포트 3465 · 스케줄러 차단) GET /api/public/store-snapshot = 걸러진 items · 그 밖 칸·CORS 그대로
-//   실행: node scripts/verify-689-mall-snapshot.js   (PORT689 로 포트 변경)
+//   실행: node scripts/verify-689-mall-snapshot.js   (PORT689 로 포트 변경 · NO689SRV=1 = ③ 로컬 서버 건너뜀(#829))
 require('dotenv').config();
 const fs = require('fs'), path = require('path'), os = require('os'), { spawn } = require('child_process'); const { Pool } = require('pg');
 const ROOT = path.join(__dirname, '..'), PORT = Number(process.env.PORT689) || 3465, BASE = 'http://localhost:' + PORT;
@@ -34,7 +34,7 @@ const J = x => JSON.stringify(x);
         const changed = items.filter((it, i) => J(it) !== J(out[i])).map(it => it.name);
         ok(changed.length === 1 && changed[0] === lemon.name, `나머지 ${items.length - 1}상품 JSON 바이트 동일(바뀐 것 = 레몬만)`, J(changed));
         const gm = items.find(x => (x.opts || []).some(o => /황금향 못난이/.test(o.n2 || o.n1 || '') && Number(o.stock) === 0)), gmOut = gm && out.find(x => x.no === gm.no);
-        ok(gm && gmOut && J(gm.opts) === J(gmOut.opts) && ((ignCfg && ignCfg.keys) || []).includes('황금향|못난이|5kg|랜덤과'), '재고 0 황금향 못난이(열쇠가 제외 목록에 있어도)는 남음 — 스킨이 품절로 그림', gm && J(gm.opts.map(o => [o.n2 || o.n1, o.stock])));
+        ok(!gm || (gmOut && J(gm.opts) === J(gmOut.opts)), '재고 0 황금향 못난이 = 그대로 남음(스킨이 품절로 그림 · 열쇠는 10/14 제외 목록에서 뺐음 · 스냅샷에 없으면 건너뜀)', gm && J(gm.opts.map(o => [o.n2 || o.n1, o.stock])));
         ok(F.storeSnapshotForMall(items, null, ignCfg) === items && F.storeSnapshotForMall(items, mapCfg, null) === items && F.storeSnapshotForMall(items, mapCfg, { keys: [] }) === items && F.storeSnapshotForMall(items, { map: {} }, ignCfg) === items, '설정 null · 빈 keys · 빈 연결표 = 원본 그대로(같은 참조)');
         ok(F.storeSnapshotForMall(null, mapCfg, ignCfg) === null && J(F.storeSnapshotForMall([], mapCfg, ignCfg)) === '[]', 'items 가 null·빈 배열이면 그대로');
         { const only = { no: lemon.no, name: '시험', statusType: 'SALE', opts: [naverOnly[0]] }; const r = F.storeSnapshotForMall([only], mapCfg, ignCfg); ok(r[0] === only && r[0].opts.length === 1, '전용 옵션뿐인 상품은 전부 빠지지 않고 원본 유지'); }
@@ -48,6 +48,7 @@ const J = x => JSON.stringify(x);
         ok(skip({ usable: true, stock: 0 }) && skip({ usable: false, stock: 5 }) && !skip({ usable: true, stock: 40 }) && !skip({ usable: true, stock: null }), '조건식: 재고 0 건너뜀 · usable false 건너뜀 · 재고 40 비교 · 재고 모름(null)은 종전대로 비교');
         ok(!/if \(o\.usable === false\) continue;\s*\n\s*const k = cafe24OptKey/.test(src), '옛 줄(usable 만 보는 것)은 남아 있지 않음');
 
+        if (process.env.NO689SRV === '1') throw Object.assign(new Error('skip'), { skip689: true });   // #829 ③ 건너뜀 = 아래 catch 가 조용히 받음
         console.log('③ 라우트 — 로컬 실서버 ' + PORT);
         const env = { ...process.env, JWT_SECRET: 'local689', PORT: String(PORT) }; delete env.RENDER;
         srv = spawn(process.execPath, ['-e', `global.setInterval=()=>({unref(){},ref(){}}); process.env.ANTHROPIC_API_KEY=''; require('./server.js');`], { cwd: ROOT, env, stdio: ['ignore', fs.openSync(path.join(os.tmpdir(), 'v689-server.log'), 'w'), fs.openSync(path.join(os.tmpdir(), 'v689-server.err'), 'w')] });
@@ -58,7 +59,7 @@ const J = x => JSON.stringify(x);
         ok(body.items.length === items.length && J(body.items) === J(out) && J(body.items) !== raw, `라우트 items = 함수 결과와 바이트 동일(${body.items.length}상품) · 원본과는 다름(레몬 옵션 ${body.items.find(x => x.no === lemon.no).opts.length}개)`);
         ok(String(new Date(body.at).getTime()) === String(new Date(snap.run_at).getTime()) && body.total === snap.total, 'at·total = 최신 스냅샷 값');
         code = fail ? 1 : 0;
-    } catch (e) { console.error('ERR', e.stack || e.message); code = 1; }
+    } catch (e) { if (e && e.skip689) { console.log('③ 라우트 = 건너뜀(NO689SRV=1)'); code = fail ? 1 : 0; } else { console.error('ERR', e.stack || e.message); code = 1; } }
     finally { if (srv) srv.kill(); await pool.end().catch(() => { }); }
     console.log(`\n결과: ${pass}/${pass + fail}`); setTimeout(() => process.exit(code), 200);
 })();

@@ -326,16 +326,18 @@ function mount(app, deps) {
             if (day < bs.date) return res.status(400).json({ error: `기준일(${bs.date}) 앞 입금은 넣지 않아요 — 이월(carry)에 들어 있어요` });
             if (!Number.isInteger(amount) || amount < 1 || amount > PAY_MAX) return res.status(400).json({ error: '금액은 1원 ~ 10억 원 정수' });
             if (memo.length > 200) return res.status(400).json({ error: '메모는 200자까지' });
-            if ((await pool.query(`SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL LIMIT 1`, [sup, day, amount])).rows.length)
-                return res.status(409).json({ error: '같은 입금이 이미 있어요' });
+            // #829 같은 날 같은 금액 입금이 진짜 둘일 수 있음 → 있으면 409 { dup:true } · 사람이 확인하고 force:true 로 다시 보내면 넣음
+            if (b.force !== true && (await pool.query(`SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL LIMIT 1`, [sup, day, amount])).rows.length)
+                return res.status(409).json({ error: '같은 입금이 이미 있어요', dup: true, hint: '진짜 같은 날 같은 금액 입금이 또 있으면 「그래도 넣기」(force:true)' });
             const who = actorOf(req), whoName = String(who.name || '').slice(0, 60) || null;
             const id = (await pool.query(`INSERT INTO tax_invoice_payments (supplier, paid_on, amount, memo, source, created_by, created_name) VALUES ($1, $2::date, $3, $4, 'manual', $5, $6) RETURNING id`,
                 [sup, day, amount, memo, Number.isInteger(who.id) ? who.id : null, whoName])).rows[0].id;
-            try { await writeAudit({ action: 'payment_add', targetType: 'tax_invoice_payment', targetId: id, changes: { supplier: sup, paid_on: day, amount, source: 'manual' }, source: 'tax_invoice', actor: who }); } catch (_) { }
+            try { await writeAudit({ action: 'payment_add', targetType: 'tax_invoice_payment', targetId: id, changes: { supplier: sup, paid_on: day, amount, source: 'manual', ...(b.force === true ? { force: true } : {}) }, source: 'tax_invoice', actor: who }); } catch (_) { }
             res.json({ ok: true, id });
         } catch (e) { payErr(res, e, '넣기'); }
     });
-    // #824 엑셀 가져오기 — dry = 무엇이 들어갈지만 · 기준일 앞·이미 있는 줄(같은 거래처+날짜+금액) 건너뜀 · 파일·금액은 로그에 안 찍음
+    // #824 엑셀 가져오기 — dry = 무엇이 들어갈지만 · 기준일 앞 건너뜀 · 파일·금액은 로그에 안 찍음
+    //   #829 같은 거래처+날짜+금액 = 파일 안 n줄이면 n줄(파일 안 순서) · 표에 이미 m줄이면 n−m 줄만 더함(다시 올려도 0 · 같은 날 같은 금액 둘째 입금도 살림)
     app.post('/api/tax-invoices/payments/import', authMiddleware, adminOnly, async (req, res) => {
         try {
             await ready;
@@ -349,12 +351,14 @@ function mount(app, deps) {
             try { x = await readPaymentsXlsx(buf); } catch (_) { return res.status(400).json({ error: '엑셀을 읽지 못했어요 — xlsx 파일인지 확인해 주세요' }); }
             if (!x.sheets.length) return res.status(400).json({ error: '「대성」·「효돈」 시트가 없어요' });
             const bs = await balanceStart(pool);
-            const fresh = [], seen = new Set(); let dup = 0, beforeStart = 0;
+            const fresh = [], seq = new Map(), have = new Map(); let dup = 0, beforeStart = 0;
             for (const r of x.rows) {
                 if (r.paid_on < bs.date) { beforeStart++; continue; }
                 const k = r.supplier + '|' + r.paid_on + '|' + r.amount;
-                if (seen.has(k) || (await pool.query(`SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL LIMIT 1`, [r.supplier, r.paid_on, r.amount])).rows.length) { dup++; continue; }
-                seen.add(k); fresh.push(r);
+                const n = (seq.get(k) || 0) + 1; seq.set(k, n);   // 이 줄 = 파일 안 같은 열쇠의 n 번째
+                if (!have.has(k)) have.set(k, (await pool.query(`SELECT count(*)::int AS n FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL`, [r.supplier, r.paid_on, r.amount])).rows[0].n);
+                if (n <= have.get(k)) { dup++; continue; }
+                fresh.push({ ...r, seq: n });
             }
             const out = { ok: true, dry, new: fresh.map(r => ({ supplier: r.supplier, paid_on: r.paid_on, amount: r.amount })), dup, before_start: beforeStart, unreadable: x.unreadable, sheets: x.sheets };
             if (dry) return res.json(out);
@@ -362,8 +366,8 @@ function mount(app, deps) {
             let inserted = 0;
             for (const r of fresh) {
                 inserted += (await pool.query(`INSERT INTO tax_invoice_payments (supplier, paid_on, amount, memo, source, created_by, created_name)
-                    SELECT $1, $2::date, $3, $4, 'excel', $5, $6 WHERE NOT EXISTS (SELECT 1 FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL) RETURNING id`,
-                    [r.supplier, r.paid_on, r.amount, r.memo, uid, whoName])).rows.length;
+                    SELECT $1, $2::date, $3, $4, 'excel', $5, $6 WHERE (SELECT count(*) FROM tax_invoice_payments WHERE supplier = $1 AND paid_on = $2::date AND amount = $3 AND deleted_at IS NULL) < $7::int RETURNING id`,
+                    [r.supplier, r.paid_on, r.amount, r.memo, uid, whoName, r.seq])).rows.length;   // 그 사이 누가 넣었으면 seq 까지만
             }
             if (inserted) { try { await writeAudit({ action: 'payment_import', targetType: 'tax_invoice_payment', targetId: null, changes: { inserted, dup, before_start: beforeStart, unreadable: x.unreadable }, source: 'tax_invoice', actor: who }); } catch (_) { } }
             res.json({ ...out, inserted });

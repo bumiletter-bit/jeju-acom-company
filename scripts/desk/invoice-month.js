@@ -62,7 +62,7 @@ const supplierNameOf = (text) => { const m = /상\s*호\s*(?:\(\s*법인명\s*\)
 //   🔴 메일 제목만으로는 틀릴 수 있음(10/21 실물: 홈택스 「(제주조천점->…)」 = 품목 택배서비스)
 const supplierByBiz = (biz, map) => { const d = digitsOf(biz); if (!d || !map) return null; for (const k of TI.SUPPLIERS) if ((map[k] || []).some(x => digitsOf(x) === d)) return k; return null; };
 
-// 보안메일 HTML(홈택스 NTS_eTaxInvoice.html · 농협 FirstBill_Tax.html) = 브라우저에서 비밀번호(사업자번호)를 넣어야 풀림 → 화면 없는 크롬으로 열어 글 + 열람용 PDF
+// 보안메일 HTML(홈택스 NTS_eTaxInvoice.html · 농협 FirstBill_Tax.html) = 브라우저에서 비밀번호(설정 tax_invoice.pdf_password)를 넣어야 풀림 → 화면 없는 크롬으로 열어 글 + 열람용 PDF
 //   홈택스 판은 srtk.hometax.go.kr 의 공식 풀기 스크립트를 내려받아 씀(인터넷 필요) · Playwright 는 저장소 node_modules(--no-save) — 없으면 오류 줄
 let _browser = null;
 const NO_PW = '이 PC 에 Playwright 가 없어 보안메일을 못 열어요(npm install --no-save playwright · 총괄에게)';
