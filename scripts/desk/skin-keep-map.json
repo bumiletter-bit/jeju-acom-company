@@ -1,0 +1,140 @@
+{
+ "note": "#833 apply-428-skin.js 가 새 네이버 상세 스냅샷 블록에 적용하는 「옛 주소(쿼리 앞까지) → 지킬 주소」 표. 출처 = docs/832-gif-light-map.md(경량 CDN 주소 있는 줄) + #749 배너. 시즌 오픈 때 네이버 상세도 같은 주소가 되면 그 줄은 남아도 무해(일치하는 옛 주소가 없어짐).",
+ "map": [
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_134/1788154910522Apl0D_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(명절 추석 설날 혼 #28)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_204/1788153201072WlQ8p_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%ED%99%A9%EA%B8%88%ED%96%A5_%EB%A8%B9%EB%8A%94%EB%B2%95.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_294/17927721879150GjaK_PNG/145544972385727617_999054237.png",
+   "why": "#832 경량(제주 황금향 가정용 #41)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_207/1788154888386uBqWc_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 노지 감귤 타 #60)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20231106_130/1699236436165WmiFa_GIF/KakaoTalk_20231106_110433050.gif",
+   "to": "https://shop-phinf.pstatic.net/20261024_29/17927721880966Lq7L_GIF/145544972615341164_930940036.gif",
+   "why": "#832 경량(테스트 한라봉 #8)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_253/1754620355849oYN4y_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(제주 양배추 고깔양 #10)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_232/1754617752088y0d7K_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 양배추 고깔양 #11)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_7/1754620508504lYQpT_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(레드향 한라봉 천혜 #12)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_69/1754617598702vpwln_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(레드향 한라봉 천혜 #13)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_159/17881549627288llKs_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(레드향 한라봉 천혜 #32)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_2/1788154946921R2jzr_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 자몽 산지직송 #28)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_251/1754617396446JaklV_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 제철 미니밤호 #17)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_205/1754620411477KE7wG_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(제주 레드키위 홍다 #12)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_20/1754617696090EQJCS_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 레드키위 홍다 #13)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20251124_267/1763951100843MS6q1_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(제주 홍귤 산하홍  #11)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_29/17546175503725r2hJ_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 홍귤 산하홍  #15)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_145/17881550980086URTG_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 홍귤 산하홍  #36)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20251215_85/1765764950978AK2D0_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(제주도 제철 레드향 #13)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20251215_80/1765764456797z2XcJ_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 천혜향 3kg #15)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20251215_120/1765764494461ej8xN_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%ED%8F%AC%EC%9E%A5.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_150/1792388889419X33o7_GIF/126521872260113945_418985564.gif",
+   "why": "#832 경량(제주 천혜향 3kg #26)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_240/1788155078431H72XQ_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주도 제철 레드향 #44)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20251215_44/1765764440788d6Kx3_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EB%AC%B4%EB%A3%8C%EB%B0%B0%EC%86%A1.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_38/17923888506043O3Pe_GIF/20615279479329993_1935329299.gif",
+   "why": "#832 경량(제주 천혜향 3kg #14)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_153/1788155060794WOrpc_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 한라봉 노지  #47)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_107/1788155036496vLSnv_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 천혜향 3kg #46)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20250808_131/1754617467529rlrYh_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EC%B2%AD%EB%85%84%EB%86%8D%EB%B6%80%EC%9D%B4%EC%95%BC%EA%B8%B0.gif",
+   "to": "https://shop-phinf.pstatic.net/20261019_109/1792388850836954D2_GIF/20615279710083832_1411077166.gif",
+   "why": "#832 경량(제주 청귤 풋귤 5 #35)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_295/1788155014183a0gkq_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 블러드 오렌지 #25)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260831_234/1788154995281Kn4zo_PNG/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%EA%BF%80%ED%8C%81.png",
+   "to": "https://shop-phinf.pstatic.net/20261024_68/1792772187705EBASE_PNG/145544972272379828_1627108288.png",
+   "why": "#832 경량(제주 카라향 3kg #37)"
+  },
+  {
+   "from": "https://shop-phinf.pstatic.net/20260929_174/179066175096160EfG_GIF/%EC%A0%9C%EC%A3%BC%EC%95%84%EA%BC%BC%EC%9D%B4%EB%84%A4_%ED%99%A9%EA%B8%88%ED%96%A56.gif",
+   "to": "https://shop-phinf.pstatic.net/20261018_237/1792311810775hV0kL_GIF/46920627530533613_203719265.gif",
+   "why": "#749 황금향 배너 33,500→30,100(대용량 12957301776 은 품절이라 네이버 상세가 옛 판 · 자사몰만 새 판)"
+  }
+ ]
+}

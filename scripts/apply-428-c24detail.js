@@ -1,11 +1,15 @@
 // #428(대표 9/7 "선물용 상세페이지 변경 — 모두 긁어와줘"): 네이버 상세 스냅샷(9/7 09:12 전량 재수집) → 카페24 description 19종 이관
+//   #833: 인자 = 네이버 상품번호(쉼표) → 그 상품만 보냄 · 인자 없으면 종전대로 매핑 전체(mall-sync ⑤ 는 지정 상품을 넘김)
 //   러너 = cafe24_product_request {action:'bulk-detail', map} (server.js #246 B안 — 이미지 CDN 참조+no-referrer·텍스트 블록 스타일 동봉). #399와 동일 절차.
 require('dotenv').config();
 const fs = require('fs');
 const { Client } = require('pg');
-const MAP = JSON.parse(fs.readFileSync('_참고자료/카페24스킨백업/scripts/c24-map-new-246.json', 'utf8')).map;
+const ALL = JSON.parse(fs.readFileSync('_참고자료/카페24스킨백업/scripts/c24-map-new-246.json', 'utf8')).map;
+const ONLY = process.argv[2] ? process.argv[2].split(/[,\s]+/).filter(Boolean) : null;
+const MAP = ONLY ? Object.fromEntries(Object.entries(ALL).filter(([n]) => ONLY.includes(n))) : ALL;
 (async () => {
     const c = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    if (!Object.keys(MAP).length) { console.log(`✅ 카페24 상세 0/0 — 지정 상품(${ONLY.join(',')})에 카페24 매핑 없음 · 건너뜀`); process.exit(0); }
     await c.connect();
     const snap = (await c.query(`SELECT value->>'at' AS at FROM agent_office_config WHERE key='product_detail_snapshot'`)).rows[0];
     console.log('상세 스냅샷', snap.at, '| 매핑', Object.keys(MAP).length + '종');

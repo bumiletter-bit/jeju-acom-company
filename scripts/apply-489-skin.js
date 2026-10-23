@@ -16,6 +16,8 @@
 require('dotenv').config();
 const fs = require('fs');
 const { Pool } = require('pg');
+// #833 잠금 — 이 스크립트는 #489(10/1) 오픈 1회용(옵션 길만 따로 쓰는 호출처 없음) · 상세 3종을 통째 덮으므로 SKIN_489_UNLOCK=1 없으면 멈춤(총괄만)
+if (process.env.SKIN_489_UNLOCK !== '1') { console.error('🔴 #833: apply-489-skin 은 상세를 통째 덮어 전용 버튼·경량 주소가 되돌아감 · 상세는 mall-sync run(지정 상품만) 으로'); process.exit(1); }
 const argv = process.argv.slice(2);
 const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null ? argv[i + 1] : d; };
 const DRY = argv.includes('--dry');

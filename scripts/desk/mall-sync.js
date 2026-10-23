@@ -1,11 +1,11 @@
 // #588-e(대표 GO 10/8) 창구용 — 네이버 상세·옵션을 자사몰에 반영(스냅샷 재수집 → 스킨 정본 갱신 → 올림 → 카페24 상세) 한 명령
 //   node scripts/desk/mall-sync.js preview <네이버 상품번호…>          지금 스냅샷 기준으로 무엇이 바뀔지(쓰기 0 · 올리기 0)
-//   🔴 run = 잠김(#832 · 스킨 전용 버튼 7개·대용량 배너 회귀 · apply-428-skin.js 고친 뒤 총괄이 풂) — preview·check·rollback 은 그대로
-//   node scripts/desk/mall-sync.js run <네이버 상품번호…> <지시 id>     ①서버 원본 = 정본 확인 ②스냅샷 재수집(최대 6분) ③스킨 정본 갱신(apply-428-skin.js) ④올림·다시 받아 대조 ⑤카페24 상세(apply-428-c24detail.js) ⑥실화면 확인
+//   run = 지정 상품만 · 전용 버튼 유지(#833) — 스킨 상세·카페24 상세 모두 지정한 상품만 다시 씀
+//   node scripts/desk/mall-sync.js run <네이버 상품번호…> <지시 id>     ①서버 원본 = 정본 확인 ②스냅샷 재수집(최대 6분) ③스킨 정본 갱신(apply-428-skin.js) ④올림·다시 받아 대조 ⑤지정 상품 카페24 상세(apply-428-c24detail.js <번호>) ⑥실화면 확인
 //   node scripts/desk/mall-sync.js rollback <지시 id>                  그 지시가 만든 백업 파일로 스킨을 되돌림(카페24 상세는 네이버 상세 그대로라 되돌리지 않음)
 //   node scripts/desk/mall-sync.js check <네이버 상품번호…>            실화면(akkome.com)의 옵션·가격이 정본과 같은지만 다시 확인
 //   기존 절차(#537)를 그대로 부른다 — 스킨 갱신·카페24 상세의 규칙은 그 스크립트들이 정본이다. 이 도구는 순서·중단·기록만 맡는다.
-//   상품번호는 공백 또는 쉼표로 여러 개. 상세 그림은 지정한 상품만이 아니라 스킨에 있는 전 상품이 함께 최신으로 바뀐다(apply-428-skin.js 동작).
+//   상품번호는 공백 또는 쉼표로 여러 개. 상세 그림은 지정한 상품만 바뀐다(#833 · 자사몰 전용 버튼 data-btn802 등은 그 자리 유지 · 지킬 주소 = desk/skin-keep-map.json) — 다른 상품은 정본 그대로.
 //   옵션 이름이 바뀐 상품은 먼저 카페24 옵션(관리자 화면)과 mall-price.js 로 결제가를 맞춘 뒤 실행한다 — 화면만 바뀌고 결제가 안 맞으면 사고다.
 const fs = require('fs'), path = require('path'), { spawnSync } = require('child_process');
 const M = require('./_mall');
@@ -62,12 +62,10 @@ async function liveCheck(nos, tries, waitMs) {
         const d = diff(D, snap, det, nos);
         console.log(JSON.stringify({ targets: d.items, other_products_detail_changed: d.other_detail_changed, snapshot: `#${snap.id} · ${snap.kst} · ${snap.ageMin}분 전`, detail_snapshot_at: det && det.at, server_equals_local: srv.same, server: srv,
             c24_detail: nos.map(n => map[n] ? `${n} → 카페24 c${map[n]} 상세 갱신 대상` : `${n} → 카페24 상세 매핑 없음(스킨 화면만 바뀜 · 카페24 상세는 총괄에게)`),
-            steps: ['서버 원본 = 정본 확인', '스냅샷 재수집(최대 6분)', '스킨 정본 갱신', '올림 → 다시 받아 대조', '카페24 상세 19종 갱신', '실화면 확인'],
+            steps: ['서버 원본 = 정본 확인', '스냅샷 재수집(최대 6분)', '스킨 정본 갱신', '올림 → 다시 받아 대조', '지정 상품 카페24 상세 갱신', '실화면 확인'],
             note: '미리 보기 — 지금 스냅샷 기준이에요(run 은 스냅샷을 새로 받은 뒤 반영하므로 방금 네이버에서 바꾼 것은 여기 안 보일 수 있어요). 아직 아무것도 바꾸지 않았어요' }, null, 1));
     } else if (cmd === 'run') {
         const orderId = parseInt(args[args.length - 1], 10); const nos = targets(args.slice(0, -1), D); if (!orderId || /^\d{9,}$/.test(args[args.length - 1])) throw new Error('사용: mall-sync.js run <네이버 상품번호…> <지시 id>');
-        // #832 잠금 — 푸는 열쇠 MALL_SYNC_UNLOCK_832=1 은 총괄만
-        if (process.env.MALL_SYNC_UNLOCK_832 !== '1') throw new Error('🔴 #832: mall-sync run 은 지금 잠김(스킨 전용 버튼 7개·대용량 배너가 옛 모습으로 되돌아감 · apply-428-skin.js 고친 뒤 총괄이 풀어요). preview·check·rollback 은 그대로 돼요. 자사몰 상세 반영은 총괄 창으로.');
         const actor = await M.who(orderId), tag = 'desk' + orderId + 's', backup = path.join(M.SKIN_DIR, `index_pre${tag}_backup.html`), log = [];
         const stop = async (at, why, extra) => { await M.audit('update', 'mall_sync', orderId, { targets: nos, order_id: orderId, stopped_at: at, why, log }, actor); console.log(JSON.stringify({ ok: false, stopped_at: at, why, done: log, ...extra }, null, 1)); await M.pool.end(); };
         if (fs.existsSync(backup)) return stop('시작', `백업 파일이 이미 있어요(${path.basename(backup)}) — 같은 지시로 두 번 실행한 것 같아요`);
@@ -92,8 +90,8 @@ async function liveCheck(nos, tries, waitMs) {
         let up; try { up = await M.serverPut(M.readLocal()); } catch (e) { fs.copyFileSync(backup, M.FILE); return stop('④ 올리기', '올리기 실패 — 정본을 백업으로 되돌렸어요: ' + e.message.slice(0, 120)); }
         if (!up.same) return stop('④ 올린 뒤 대조', '올린 뒤 다시 받은 파일이 달라요 — 총괄에게 바로 알려 주세요', { backup: path.basename(backup) });
         log.push(`④ 올림 ${up.size}b · 다시 받아 바이트 동일`);
-        await M.stepLog(orderId, '자사몰 반영 5/6: 카페24 상세 갱신(최대 4분)');
-        const cd = runScript('scripts/apply-428-c24detail.js', [], 300000); const cdOk = cd.code === 0;
+        await M.stepLog(orderId, '자사몰 반영 5/6: 지정 상품 카페24 상세 갱신(최대 4분)');
+        const cd = runScript('scripts/apply-428-c24detail.js', [nos.join(',')], 300000); const cdOk = cd.code === 0;
         log.push('⑤ 카페24 상세: ' + (cdOk ? tail(cd.out, 1)[0] : '실패 — ' + tail(cd.out, 2).join(' / ')));
         await M.stepLog(orderId, '자사몰 반영 6/6: 실화면 확인(캐시 때문에 몇 분 걸릴 수 있음)');
         const live = await liveCheck(nos, 4, 45000);
