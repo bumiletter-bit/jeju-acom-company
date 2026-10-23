@@ -23,6 +23,7 @@ const { pool, ROOT, heartbeat, appendStep } = require('./_db');
 const { claim } = require('./get');
 const fast = require('./fast');
 const trust = require('./trust-desk');
+const scratchClean = require('./scratch-clean');   // #827-B
 
 const DESK_DIR = path.join(ROOT, '★에이전트오피스');
 const KEY_FILE = path.join(os.homedir(), '.akkome', 'desk-api-key.txt');
@@ -692,12 +693,33 @@ async function handle(order, key) {
     try { await writeState(); } catch (e) { /* 다음 주기에 다시 적는다 */ }
 }
 
+// #827-B .scratch{지시번호} 정리 — 설정 agent_office_config 'desk_scratch_clean' {enabled:true, keep_days} 일 때만(기본 꺼짐).
+//   기동 5분 뒤부터 · 한 시간에 한 번 확인 · 하루 한 번(마지막 날 = ~/.akkome/scratch-clean.json) · 처리 중 지시가 0일 때만 · 실패해도 대기 프로그램은 그대로.
+const SCRATCH_STATE = path.join(os.homedir(), '.akkome', 'scratch-clean.json');
+const scr = { nextAt: Date.now() + 5 * 60000, busy: false };
+function scratchMaybe() {
+    if (scr.busy || Date.now() < scr.nextAt || st.running.size) return;
+    scr.nextAt = Date.now() + 60 * 60000;
+    scr.busy = true;
+    (async () => {
+        const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);   // KST 날짜
+        let last = null; try { last = JSON.parse(fs.readFileSync(SCRATCH_STATE, 'utf8')).day; } catch (e) { /* 처음 */ }
+        if (last === today) return;
+        const cfg = await scratchClean.readConfig(pool);
+        if (!cfg.enabled) return;
+        const r = await scratchClean.clean({ root: ROOT, days: cfg.keep_days, apply: true, busyIds: new Set(st.running.keys()), log });
+        try { fs.writeFileSync(SCRATCH_STATE, JSON.stringify({ day: today, at: new Date().toISOString(), deleted: r.deleted, bytes: r.bytes })); } catch (e) { /* 다음 확인 때 다시 */ }
+        log(`.scratch 정리: ${r.deleted}개 · ${(r.bytes / 1048576).toFixed(1)}MB (${r.days}일 기준 · 살펴본 ${r.checked}개)`);
+    })().catch(e => log('.scratch 정리 실패(무시): ' + e.message)).finally(() => { scr.busy = false; });
+}
+
 // 10초마다: 화면 버튼 신호·설정·상태 기록(종전 tick의 앞부분 그대로)
 async function slowTick() {
     const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
     st.paused = !!(autoCfg && autoCfg.on === false);
     st.fast = fast.settings(ENV_FAST || fastCfg);
     if (Date.now() - st.lastTrim > 86400e3) { st.lastTrim = Date.now(); trimLog(); }   // 하루 한 번(상주 시작 때는 main 이 이미 돌렸다)
+    scratchMaybe();   // #827-B 끝난 지시의 .scratch 폴더 정리(설정 켰을 때만 · 하루 한 번 · 기다리지 않음)
     warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
     // 화면 버튼 신호(켜기/끄기)

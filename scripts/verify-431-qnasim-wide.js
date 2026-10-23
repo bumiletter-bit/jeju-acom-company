@@ -42,7 +42,7 @@ async function runBatch(cases) {
     if (v.error) { out += `\n[묶음 ${i / 6 + 1} 오류] ${v.error}\n`; continue; }
     for (const r of v.results || []) out += `\n\n▶ [${i / 6 + 1}] ${r.q}${r.error ? '  ERR ' + r.error : ''}\n${String(r.answer || '').replace(/\n{2,}/g, '\n')}`;
   }
-  const f = process.env.SCR ? process.env.SCR + '/qnasim-wide.md' : 'qnasim-wide.md';
+  const f = process.env.SCR ? process.env.SCR + '/qnasim-wide.md' : require('path').join(require('os').tmpdir(), 'qnasim-wide.md');
   fs.writeFileSync(f, out, 'utf8');
   console.log(out);
   console.log('\n(저장:', f + ')');

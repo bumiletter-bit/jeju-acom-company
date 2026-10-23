@@ -53,7 +53,7 @@ async function runBatch(cases) {
     console.log(`\n▶ [${i + 1}] ${r.q}  (skip=${r.skip})\n${a.replace(/\n{2,}/g, '\n').slice(0, 520)}`);
     ok(r.skip ? /요청형|정책 미정/.test(Q[i].t) : Q[i].chk(a), `[${i + 1}] ${Q[i].t}`, r.skip ? '무응답' : '');
   });
-  fs.writeFileSync(process.env.SCR ? process.env.SCR + '/chuseok-script.md' : 'chuseok-script.md', out, 'utf8');
+  fs.writeFileSync(process.env.SCR ? process.env.SCR + '/chuseok-script.md' : require('path').join(require('os').tmpdir(), 'chuseok-script.md'), out, 'utf8');
   console.log(`\n결과: ${pass}/${pass + fail}`);
   await pool.end();
   process.exit(0);

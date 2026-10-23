@@ -1,6 +1,6 @@
 // #453 검증: 배송메모 「보내는이 변경」 판정기(public/invoice-sender.js 실코드)
 //   ① 가상 메모(개인정보 없음) 판정표 — 확실한 것만 자동 · 애매 = ambiguous · 무관 = null
-//   ② 실자료 채점(있을 때만): 리포 폴더의 0916·0917·0918.xlsx(스토어 원본) ↔ 제주아꼼이네송장(효돈/대성) 완성본(수기)
+//   ② 실자료 채점(있을 때만): _참고자료/실자료-453/ 의 0916·0917·0918.xlsx(스토어 원본) ↔ 제주아꼼이네송장(효돈/대성) 완성본(수기)
 //      - 🔴 수기로 안 바꾼 주문을 자동으로 바꾼 건 = 0 · 이름이 수기와 다른 건 = 0(표기 차이만 허용) · 번호 교체 = 수기와 전부 일치
 //   실자료는 개인정보라 미커밋 — 없으면 ②는 건너뛴다. 화면·시트 검증은 verify-452-invoice-test.js ④.
 const path = require('path'); const fs = require('fs');
@@ -133,10 +133,10 @@ for (const [memo, buyer, exp, tel] of CASES) {
 }
 
 // ② 실자료 채점
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '..', '_참고자료', '실자료-453');
 const DAYS = [
     { d: '0916', done: ['제주아꼼이네송장(효돈)09.16.xlsx', '제주아꼼이네송장(대성)09.16.xlsx'] },
-    { d: '0917', done: ['제주아꼼이네송장(효돈)09.17 -.xlsx', '제주아꼼이네송장(대성)09.17.xlsx'] },
+    { d: '0917', done: ['제주아꼼이네송장(효돈)09.17.xlsx', '제주아꼼이네송장(대성)09.17.xlsx'] },
     { d: '0918', done: ['제주아꼼이네송장(효돈)09.18.xlsx', '제주아꼼이네송장(대성)09.18.xlsx'] },
 ].filter(x => fs.existsSync(path.join(ROOT, x.d + '.xlsx')) && x.done.every(f => fs.existsSync(path.join(ROOT, f))));
 if (!DAYS.length) console.log('② 실자료 없음 — 건너뜀');
