@@ -1130,6 +1130,9 @@ async function initDB() {
           기존 신청분은 NULL(회원 불명)이 정답이고, 그 건들은 마이 화면에 뜨지 않는다. */
     await pool.query(`ALTER TABLE season_waitlist ADD COLUMN IF NOT EXISTS member_key VARCHAR(60)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_season_waitlist_member ON season_waitlist (member_key) WHERE member_key IS NOT NULL`);
+    // #832(대표 「고」 10/24): 시즌 오픈 알림 발송 기록 — notified_at(보낸·건너뛴 시각) · notify_result('sent'|'skip-refuse'|'bad-tel'|'failed: …') · 기존 notified(BOOLEAN)는 유지(보낼 때 둘 다 적음) · 🔴 DEFAULT 없음(기존 행 = NULL = 미발송)
+    await pool.query(`ALTER TABLE season_waitlist ADD COLUMN IF NOT EXISTS notified_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE season_waitlist ADD COLUMN IF NOT EXISTS notify_result TEXT`);
     // ── 지시 #69: 발송 휴무일 DB 승격 ("자주 바뀌는 값은 화면에서") — 명절 임시휴무·태풍 결항 등 직원이 즉시 추가
     await pool.query(`
         CREATE TABLE IF NOT EXISTS shipping_holidays (
@@ -5701,8 +5704,8 @@ app.delete('/api/agent-office/season-knowledge/:id', authMiddleware, async (req,
 app.get('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT id, item, contact, memo, notified, created_by, created_at FROM season_waitlist
-             WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 500`);
+            `SELECT id, item, contact, memo, notified, notified_at, notify_result, created_by, created_at FROM season_waitlist
+             WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 500`);   /* #832 notified_at·notify_result = 화면 「보낸 시각」 */
         /* 🔴 #356(대표 8/11 "번호가 가려져 있어 그때마다 연락을 못 드린다"): 전체 번호 표시.
            이 명단의 존재 이유가 **시즌 오픈 시 알림톡·문자 발송**이라 가려두면 쓸 수가 없다(손님이 그 목적으로 직접 남긴 번호).
            ⚠️ 감사 로그(audit_logs)에는 **종전대로 마스킹만** 남긴다 — 로그에 원문을 쌓지 않는 원칙은 유지(#177). */
@@ -5736,6 +5739,78 @@ app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, ownerOnly, a
         res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── #832 시즌 오픈 알림 시작 (verify-832-season-notify.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
+// #832(대표 「고」 10/24 · #831 자사몰 점검 6번): 시즌 오픈 대기 신청 손님에게 문자(LMS) 1회 — 56명(10/24) 받아 놓고 보내는 코드가 0 이었음(손님 문구 「오픈되면 알려드려요」).
+//   POST /api/agent-office/season-waitlist/notify { item, dry } (관리자 = 대표·경리) → 그 item 의 미발송(deleted_at IS NULL · notified_at IS NULL · notified false) 전부에
+//   · 문구 = 설정 season_notify.template({item} 치환 · 없으면 아래 기본) → kakaoNotify.smsSafe(이모지 0) → kakaoNotify.sendLms(#688 과 같은 알리고 문자 경로 · KAKAO_NOTIFY=on + 알리고 키 셋 필요 · 아니면 503 = 미리보기만)
+//   · 하루 상한 = 설정 season_notify.daily_cap(기본 200 · 오늘 KST 'sent' 건수 기준 · 넘치는 건은 그대로 두어 다음 날 다시 대상) · 같은 item 2중 클릭 = 409(메모리 잠금 · 끝나면 풀림)
+//   · 수신거부 = 문자 봇이 180일 안 「그만 보내」로 받은 번호(sms_messages.bucket='refuse' · sms_threads.phone_digits) → 보내지 않고 notify_result 'skip-refuse'(notified_at 기록 = 다시 대상 안 됨)
+//   · 번호 꼴 틀림(휴대폰 아님 · 010 인데 11자리 아님) = 'bad-tel'(기록 · 다시 대상 안 됨) · 발송 실패 = notify_result 'failed: …' 만 적고 notified_at 은 비움(다음 클릭에 다시 대상)
+//   · 보낸 건 = notified true + notified_at + 'sent' · 사이 200ms · audit source season-notify(번호 0 · 건수만) · dry = 대상 수·문구·상한만(쓰기 0 · 발송 0 · audit 0)
+const SEASON_NOTIFY_TEMPLATE_DEFAULT = '[제주아꼼이네] 신청하신 {item} 시즌이 오픈했어요! 자사몰 akkome.com 에서 바로 주문하실 수 있어요. (시즌 오픈 알림을 신청하신 분께 1회 안내드립니다) 문의 064-805-9181';
+const SEASON_NOTIFY_CAP_DEFAULT = 200;
+const _seasonNotifyBusy = new Set();   // item → 발송 진행 중(인스턴스 1개 전제 · 배포 겹침 때는 notified_at IS NULL 조건이 2중 발송을 거의 막음)
+function seasonNotifyText(cfg, item) {
+    const raw = (cfg && typeof cfg.template === 'string' && cfg.template.trim()) ? cfg.template : SEASON_NOTIFY_TEMPLATE_DEFAULT;
+    return kakaoNotify.smsSafe(raw.split('{item}').join(String(item || '').trim())).replace(/\s+\n/g, '\n').trim();
+}
+function seasonNotifyTelOk(digits) { const s = String(digits || ''); return /^01[016789]\d{7,8}$/.test(s) && !(s.startsWith('010') && s.length !== 11); }
+async function seasonNotifyRefused() {
+    try {
+        const r = await pool.query(`SELECT DISTINCT t.phone_digits FROM sms_threads t JOIN sms_messages m ON m.thread_id = t.id
+                                    WHERE m.direction = 'in' AND m.bucket = 'refuse' AND m.created_at > now() - interval '180 days'`);
+        return new Set(r.rows.map(x => String(x.phone_digits || '').replace(/[^0-9]/g, '')).filter(Boolean));
+    } catch (e) { console.error('[#832 시즌 알림] 수신거부 목록 조회 실패(거부 0으로 진행):', String(e.message || e).slice(0, 120)); return new Set(); }
+}
+function seasonNotifyLive() { return kakaoNotify.switchOn() && !!(process.env.ALIGO_API_KEY && process.env.ALIGO_USER_ID && process.env.ALIGO_SENDER); }   // sendLms 가 보는 조건과 같음(SENDER_KEY 는 알림톡용이라 안 봄)
+app.post('/api/agent-office/season-waitlist/notify', authMiddleware, adminOnly, async (req, res) => {
+    const body = req.body || {};
+    const item = String(body.item || '').trim().slice(0, 200);
+    const dry = body.dry === true || String(body.dry || '') === '1';
+    if (!item) return res.status(400).json({ error: '품목을 지정해주세요' });
+    if (!dry && _seasonNotifyBusy.has(item)) return res.status(409).json({ error: '같은 품목 발송이 진행 중입니다 — 끝난 뒤 목록을 새로고침해주세요' });
+    if (!dry) _seasonNotifyBusy.add(item);
+    try {
+        let cfg = null; try { cfg = await naverCfgGet('season_notify'); } catch (_) { cfg = null; }
+        cfg = cfg || {};
+        const cap = Number(cfg.daily_cap) >= 1 ? Math.floor(Number(cfg.daily_cap)) : SEASON_NOTIFY_CAP_DEFAULT;
+        const message = seasonNotifyText(cfg, item);
+        const sentToday = Number((await pool.query(`SELECT count(*)::int AS n FROM season_waitlist WHERE notify_result = 'sent' AND notified_at IS NOT NULL AND (notified_at + interval '9 hours')::date = $1::date`, [kstTodayStr()])).rows[0].n) || 0;
+        const targets = (await pool.query(`SELECT id, contact FROM season_waitlist WHERE item = $1 AND deleted_at IS NULL AND notified_at IS NULL AND COALESCE(notified, false) = false ORDER BY id`, [item])).rows;
+        const refused = targets.length ? await seasonNotifyRefused() : new Set();
+        const plan = targets.map(t => { const d = String(t.contact || '').replace(/[^0-9]/g, ''); return { id: t.id, d, why: !seasonNotifyTelOk(d) ? 'bad-tel' : (refused.has(d) ? 'skip-refuse' : null) }; });
+        const sendable = plan.filter(p => !p.why);
+        const capLeft = Math.max(0, cap - sentToday);
+        const live = seasonNotifyLive();
+        const base = { item, message, targets: targets.length, sendable: sendable.length, skip_refuse: plan.filter(p => p.why === 'skip-refuse').length, bad_tel: plan.filter(p => p.why === 'bad-tel').length,
+            cap, sent_today: sentToday, cap_left: capLeft, will_send: Math.min(sendable.length, capLeft), live };
+        if (dry) return res.json({ ok: true, dry: true, ...base });
+        if (!targets.length) return res.json({ ok: true, ...base, sent: 0, failed: 0, skipped: 0, capped: 0, errors: [] });
+        if (!live) return res.status(503).json({ error: '문자 발송 스위치(KAKAO_NOTIFY)가 꺼져 있거나 알리고 키가 없어요 — 미리보기만 됩니다', ...base });
+        const out = { sent: 0, failed: 0, skipped: 0, capped: 0, taken: 0, errors: [] };
+        // 먼저 집는다(notified_at IS NULL 인 행만 · RETURNING) → 보낸다 → 확정(sent) 또는 되돌림(NULL + failed 사유). 배포 겹침으로 두 인스턴스가 같은 품목을 집어도 한 행은 한 쪽만 보낸다(워커2 점검 ②).
+        const claim = async (id, result) => (await pool.query(`UPDATE season_waitlist SET notified = false, notified_at = now(), notify_result = $2 WHERE id = $1 AND notified_at IS NULL RETURNING id`, [id, String(result).slice(0, 200)])).rowCount > 0;
+        const confirmSent = id => pool.query(`UPDATE season_waitlist SET notified = true, notify_result = 'sent' WHERE id = $1`, [id]);
+        const release = (id, why) => pool.query(`UPDATE season_waitlist SET notified = false, notified_at = NULL, notify_result = $2 WHERE id = $1`, [id, String(why).slice(0, 200)]);
+        for (const p of plan) {
+            if (p.why) { if (await claim(p.id, p.why)) out.skipped++; else out.taken++; continue; }
+            if (out.sent >= capLeft) { out.capped++; continue; }
+            if (!(await claim(p.id, 'sending'))) { out.taken++; continue; }   // 다른 인스턴스가 먼저 집음
+            let r;
+            try { r = await kakaoNotify.sendLms({ receiver: p.d, subject: '제주아꼼이네 시즌 오픈 안내', message }); }
+            catch (e) { r = { status: 'failed', error: String(e.message || e).slice(0, 120) }; }
+            if (r && r.status === 'sent') { out.sent++; await confirmSent(p.id); }
+            else { const why = ('failed: ' + String((r && r.status) || '') + ' ' + String((r && r.error) || '')).trim(); out.failed++; out.errors.push(why.slice(0, 200)); await release(p.id, why); }
+            await new Promise(r2 => setTimeout(r2, 200));
+        }
+        await writeAudit({ action: 'season_notify', targetType: 'season_waitlist', targetId: null,
+            changes: { item, targets: targets.length, sent: out.sent, failed: out.failed, skipped: out.skipped, capped: out.capped, taken: out.taken, cap, cap_left: capLeft, message, errors: out.errors.slice(0, 5) },
+            source: 'season-notify', actor: adminActor(req) });
+        res.json({ ok: true, ...base, ...out, errors: out.errors.slice(0, 5) });
+    } catch (err) { handleAdminErr(res, err); }
+    finally { if (!dry) _seasonNotifyBusy.delete(item); }
+});
+// ── #832 시즌 오픈 알림 끝 ──
 // ── 지시 #69: 발송 휴무일 관리 — 추가·삭제 직원 가능 (자주 바뀌는 값은 화면에서 · audit 기록 · soft-delete)
 // #336: 발송휴무 집합 / 도착불가 집합 / 날짜별 사유 — 세 갈래로 나눠 돌려준다.
 //   set(발송휴무)과 arriveOff(도착불가)는 **서로 독립**이다(한 날짜가 둘 다일 수도, 하나만일 수도 있다).
@@ -10100,10 +10175,136 @@ app.get('/api/public/store-snapshot', async (req, res) => {
         } catch (_) { /* 산출 실패 시 null — 화면은 '수집 기준일 확인 불가' 폴백 */ }
         // #689: 자사몰에는 「네이버 전용」 옵션(설정 cafe24_sync_ignore_opts · 연결표 상품 · 팔리는 옵션만)을 빼고 준다 — 설정을 못 읽으면 종전 그대로(원본)
         let mallItems = r.rows[0].items;
-        try { const [mapCfg, ignoreCfg, textCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts'), naverCfgGet('cafe24_option_texts')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg, textCfg); } catch (_) { mallItems = r.rows[0].items; }   // #742 textCfg = 옵션마다 c24t
+        try { const [mapCfg, ignoreCfg, textCfg, testCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts'), naverCfgGet('cafe24_option_texts'), naverCfgGet('naver_test_products')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg, textCfg, testCfg); } catch (_) { try { mallItems = storeSnapshotForMall(r.rows[0].items, null, null, null, null); } catch (_2) { mallItems = r.rows[0].items; } }   // #742 textCfg = 옵션마다 c24t · #832 testCfg = 시험 상품 번호(설정 못 읽어도 판매중지·기본 시험 상품은 뺀다)
         res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: mallItems, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
     } catch (e) { console.error('[공개 store-snapshot] 오류:', String(e.message || e).slice(0, 200)); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만
 });
+
+// ── #832 공개 GET 시작 (verify-832-public.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
+// #832(대표 「고」 10/24 · #831 자사몰 점검): 자사몰 스킨이 쓸 공개 GET 2개 — 개인정보 0 · 60초 기억 · 분당 상한(#693 publicClientIp·publicRateHit 꼴) · CORS *
+//   GET /api/public/ship-today → { today, yesterday, asof } = 발송안내가 실제로 나간 건수(lms_guide_log mode 'real' · status 'sent' · KST 날짜) — 체험(status 'experience')·건너뜀(skip-*)·실패는 sent 가 아니라 빠짐 · 소급(backfill) 칸은 kakao_notify_log 에만 있어 lms_guide_log 엔 해당 없음
+//   GET /api/public/season-now → { hero, next, asof } = 지금 파는 시기 품목 1 + 다음 오픈 품목 1
+//     재료 = 시기 지식(product_season_knowledge enabled·미삭제) + 판매현황(bot_products 판매중·미삭제) + 연결표(cafe24_sync_map) + 품목 사진(lucky_assets slot brand · 공개 /api/lucky/asset/:id)
+//     · 품목 목록 = SEASON_NOW_CATALOG(설정 season_now.items 배열이 있으면 그것으로 덮음 · 같은 칸 이름) · title·sub·cta 는 손님 노출 글 → 가격·「최고·보장·비교」 표현 0
+//     · 「지금 파는」 = 판매현황에 판매중 행이 있음(prod 정규식) AND (skLabel 이 있으면 그 라벨 구간이 오늘을 덮음) AND 시기 지식 「비시즌·시즌종료」 구간이 오늘을 덮지 않음
+//       → 노지황금향처럼 판매현황 행이 없으면 「판매 중」으로 단정하지 않는다(시기 지식 9 예외)
+//     · open_md = 설정 open_md > 시기 지식 「오픈 예정」 라벨 구간 글의 첫 m/d(「10/26(월)~27(화)」 → 10-26 · 없으면 그 구간 end_md 다음 날) > 판매 구간(비시즌·종료·공통·오픈 예정 아닌 행 · skLabel 있으면 그 라벨) 가운데 가장 이른 start_md
+//     · hero = 지금 파는 품목 가운데 가장 최근에 열린 것(open_md 가 오늘에 가장 가까운 · 같으면 목록 순) · next = 아직 안 파는 품목 가운데 open_md 가 오늘 뒤로 가장 가까운 것(D-n · 당일 = 0)
+//     · img = 사진 라벨이 같은 brand 그림의 공개 주소(요청 host 기준 절대 주소) · c24 = 연결표의 카페24 번호 · 없으면 null
+const SEASON_NOW_CATALOG = [
+    { key: 'tyvek', title: '타이벡 감귤', sub: '햇빛을 반사하는 흰 천(타이벡)을 깔고 키운 노지 감귤이에요. 수확한 날 선별해 보내드려요.', sk: ['타이벡'], prod: '타이벡', pno: '6400134206', img: '타이벡감귤', cta: '타이벡 감귤 주문하기' },
+    { key: 'noji', title: '노지 감귤', sub: '제주 들녘에서 자란 노지 감귤이에요. 수확한 날 선별해 보내드려요.', sk: ['유라조생', '노지감귤'], prod: '노지감귤', pno: '6400134206', img: '노지감귤', cta: '노지 감귤 주문하기' },
+    { key: 'house', title: '하우스 감귤', sub: '하우스에서 익힌 제주 감귤이에요. 수확한 날 선별해 보내드려요.', sk: ['하우스감귤'], prod: '하우스감귤', pno: '6400134206', img: '하우스감귤', cta: '하우스 감귤 주문하기' },
+    { key: 'gold', title: '하우스 황금향', sub: '과즙이 많은 제주 황금향이에요. 수확한 날 선별해 보내드려요.', sk: ['하우스황금향'], prod: '황금향', pno: '11126666859', img: '황금향', cta: '황금향 주문하기' },
+    { key: 'noji_gold', title: '노지 황금향', sub: '노지에서 자란 제주 황금향이에요. 수확한 날 선별해 보내드려요.', sk: ['노지황금향'], prod: '노지황금향|노지 황금향', pno: '11126666859', img: '노지황금향', cta: '노지 황금향 주문하기' },
+    { key: 'green_lemon', title: '제주 그린레몬', sub: '첫 수확 시기의 초록빛 제주 레몬이에요. 덜 익은 게 아니라 이 시기 레몬의 색이에요.', sk: ['레몬'], skLabel: '그린', prod: '레몬', pno: '5531798664', img: '그린레몬', cta: '그린레몬 주문하기' },
+    { key: 'yellow_lemon', title: '제주 노란 레몬', sub: '노랗게 익은 제주 레몬이에요. 수확한 날 선별해 보내드려요.', sk: ['레몬'], skLabel: '노란', prod: '레몬', pno: '5531798664', img: '노란레몬', cta: '노란 레몬 주문하기' },
+    { key: 'redkiwi', title: '제주 레드키위', sub: '제주에서 키운 레드키위예요. 서늘한 실온에서 며칠 후숙하면 더 맛있어요.', sk: ['레드키위'], prod: '레드키위', pno: '13782816361', img: '레드키위', cta: '레드키위 주문하기' },
+    { key: 'cheonggyul', title: '제주 청귤(풋귤)', sub: '청귤청 담그기 좋은 제주 풋귤이에요. 여름 한철만 판매해요.', sk: ['청귤(풋귤)'], prod: '청귤', pno: '5731582511', img: '청귤', cta: '청귤 주문하기' },
+    { key: 'pumpkin', title: '제주 미니밤호박', sub: '밤처럼 포슬한 제주 미니밤호박이에요. 여름 한철만 판매해요.', sk: ['미니밤호박'], prod: '밤호박', pno: '5011476022', img: '미니밤호박', cta: '미니밤호박 주문하기' },
+    { key: 'experience', title: '감귤 체험농장', sub: '아꼼이네 귤밭에서 직접 귤을 따고 맛보는 체험이에요. 11월 1일부터 열려요.', sk: [], prod: null, pno: '7673020911', img: null, cta: '체험 예약하기', open_md: '11-01' },
+];
+const SEASON_NOW_OFF_RE = /비시즌|시즌\s*종료|종료/;
+const SEASON_NOW_PRE_RE = /오픈\s*예정|출하\s*예정|판매\s*예정/;
+const SEASON_NOW_SKIP_RE = /^\[|공통|행사|쿠폰/;   // 판매 구간이 아닌 행(채널 태그·공통·행사·쿠폰)
+function seasonNowMdOk(md) { return /^\d{2}-\d{2}$/.test(String(md || '')); }
+function seasonNowDays(fromYmd, md, dir) {   // dir 'until' = 오늘→그 월일(0 이상 · 지났으면 내년) · 'since' = 그 월일→오늘(0 이상 · 아직이면 작년)
+    const [y, m, d] = String(fromYmd).split('-').map(Number), [mm, dd] = String(md).split('-').map(Number);
+    const t0 = Date.UTC(y, m - 1, d), day = 86400000;
+    for (const yy of (dir === 'until' ? [y, y + 1] : [y, y - 1])) {
+        const t = Date.UTC(yy, mm - 1, dd), n = Math.round((dir === 'until' ? (t - t0) : (t0 - t)) / day);
+        if (n >= 0) return n;
+    }
+    return null;
+}
+function seasonNowInRange(md, s, e) { return (s <= e) ? (md >= s && md <= e) : (md >= s || md <= e); }
+function seasonNowNextMd(md) { const [m, d] = String(md).split('-').map(Number); const t = new Date(Date.UTC(2001, m - 1, d) + 86400000); return String(t.getUTCMonth() + 1).padStart(2, '0') + '-' + String(t.getUTCDate()).padStart(2, '0'); }
+function seasonNowCompute({ today, rows, products, map, assets, catalog }) {
+    const md = String(today).slice(5, 10);
+    const cat = (Array.isArray(catalog) && catalog.length ? catalog : SEASON_NOW_CATALOG).filter(e => e && e.key && e.title);
+    const names = (Array.isArray(products) ? products : []).map(p => String((p && p.name) || p || ''));
+    const mapObj = (map && map.map && typeof map.map === 'object') ? map.map : ((map && typeof map === 'object') ? map : {});
+    const assetBy = {}; for (const a of (Array.isArray(assets) ? assets : [])) if (a && a.label && !assetBy[a.label]) assetBy[a.label] = a;
+    const evals = cat.map(e => {
+        const skRows = (Array.isArray(rows) ? rows : []).filter(r => r && r.enabled !== false && !r.deleted_at && (e.sk || []).includes(String(r.item_key || '')) && seasonNowMdOk(r.start_md) && seasonNowMdOk(r.end_md));
+        const labelOf = r => String(r.label || '');
+        const offNow = skRows.some(r => SEASON_NOW_OFF_RE.test(labelOf(r)) && seasonNowInRange(md, r.start_md, r.end_md));
+        const sellRows = skRows.filter(r => !SEASON_NOW_OFF_RE.test(labelOf(r)) && !SEASON_NOW_PRE_RE.test(labelOf(r)) && !SEASON_NOW_SKIP_RE.test(labelOf(r)) && (!e.skLabel || new RegExp(e.skLabel).test(labelOf(r))));
+        const preRows = skRows.filter(r => SEASON_NOW_PRE_RE.test(labelOf(r)));
+        const hasProduct = !!(e.prod && names.some(n => { try { return new RegExp(e.prod).test(n); } catch (_) { return false; } }));
+        const sellNow = sellRows.some(r => seasonNowInRange(md, r.start_md, r.end_md));   // 파는 구간이 오늘을 덮음
+        const labelNow = !e.skLabel || sellNow;
+        const selling = hasProduct && labelNow && (sellNow || !offNow);   // 파는 구간이 오늘을 덮으면(예: 노지감귤 11/1~) 다른 열쇠(유라조생 종료)가 막지 못함 · 덮지 않으면 종료 구간이 있을 때만 「안 팜」
+        let open_md = seasonNowMdOk(e.open_md) ? e.open_md : null;
+        if (!open_md && preRows.length) {
+            const m = /(\d{1,2})\s*\/\s*(\d{1,2})/.exec(String(preRows[0].knowledge || ''));
+            open_md = m ? String(Number(m[1])).padStart(2, '0') + '-' + String(Number(m[2])).padStart(2, '0') : seasonNowNextMd(preRows[0].end_md);
+            if (!seasonNowMdOk(open_md) || Number(open_md.slice(0, 2)) > 12 || Number(open_md.slice(3)) > 31) open_md = seasonNowNextMd(preRows[0].end_md);
+        }
+        if (!open_md && sellRows.length) open_md = sellRows.map(r => r.start_md).sort((a, b) => (seasonNowDays(today, a, 'until') ?? 9999) - (seasonNowDays(today, b, 'until') ?? 9999))[0];   // 오늘 뒤로 가장 가까운 시작일(해 넘김 포함) — 다음 오픈 판정용
+        if (selling && sellRows.length) {   // 파는 중이면 「최근에 열린」 시작일 = 오늘을 덮는 구간(없으면 가장 최근 start)
+            const cur = sellRows.filter(r => seasonNowInRange(md, r.start_md, r.end_md)).map(r => r.start_md).sort((a, b) => (seasonNowDays(today, a, 'since') ?? 9999) - (seasonNowDays(today, b, 'since') ?? 9999));
+            if (cur.length) open_md = cur[0];
+        }
+        return { e, selling, open_md, since: (selling && open_md) ? (seasonNowDays(today, open_md, 'since') ?? 9999) : 9999, until: (!selling && open_md) ? seasonNowDays(today, open_md, 'until') : null };
+    });
+    const heroEv = evals.filter(x => x.selling).sort((a, b) => a.since - b.since)[0] || null;
+    const nextEv = evals.filter(x => !x.selling && x.until != null && x.until <= 120).sort((a, b) => a.until - b.until)[0] || null;   // 120일 안에 열리는 것만(먼 품목은 「다음」이 아님)
+    const asset = e => { const a = e.img ? assetBy[e.img] : null; return a ? `/api/lucky/asset/${a.id}?v=${String(a.sha1 || '').slice(0, 8)}` : null; };
+    const c24 = e => { const m = mapObj[String(e.pno || '')]; return (m && m.c24 != null) ? Number(m.c24) : null; };
+    return {
+        hero: heroEv ? { key: heroEv.e.key, title: heroEv.e.title, sub: heroEv.e.sub || '', product_no: heroEv.e.pno || null, c24: c24(heroEv.e), img: asset(heroEv.e), cta_text: heroEv.e.cta || '지금 주문하기', open_md: heroEv.open_md || null } : null,
+        next: nextEv ? { key: nextEv.e.key, title: nextEv.e.title, open_md: nextEv.open_md, dday: nextEv.until, waitlist_item: nextEv.e.waitlist_item || nextEv.e.title, img: asset(nextEv.e) } : null,
+    };
+}
+const _pub832Cache = new Map();   // key → { at, data }(60초)
+const _pub832Rate = new Map();    // ip → { n, at }(분당 30)
+async function pub832Cached(key, fn) {
+    const hit = _pub832Cache.get(key);
+    if (hit && Date.now() - hit.at < 60000) return hit.data;
+    const data = await fn();
+    _pub832Cache.set(key, { at: Date.now(), data });
+    return data;
+}
+function pub832Gate(req, res) {
+    res.set('Access-Control-Allow-Origin', '*');
+    if (publicRateHit(_pub832Rate, publicClientIp(req), Date.now()) > 30) { res.status(429).json({ error: '잠시 후 다시 시도해주세요' }); return false; }
+    return true;
+}
+function pub832Ok(res, body) { res.set('Cache-Control', 'public, max-age=60'); res.json(body); }   // 성공 응답에만 60초 캐시
+// DB 오류 = 200 + 빈 값(스킨 폴백 단순화 · 기억 안 함 → 다음 요청이 다시 읽음) · 원문은 로그만(워커2 점검 ①)
+app.get('/api/public/ship-today', async (req, res) => {
+    if (!pub832Gate(req, res)) return;
+    try {
+        const data = await pub832Cached('ship-today', async () => {
+            const r = await pool.query(`SELECT count(*) FILTER (WHERE d = $1::date)::int AS today, count(*) FILTER (WHERE d = $1::date - 1)::int AS yesterday
+                                        FROM (SELECT (created_at + interval '9 hours')::date AS d FROM lms_guide_log
+                                              WHERE mode = 'real' AND status = 'sent' AND created_at > now() - interval '3 days') x`, [kstTodayStr()]);
+            return { today: Number(r.rows[0].today) || 0, yesterday: Number(r.rows[0].yesterday) || 0, asof: new Date().toISOString() };
+        });
+        pub832Ok(res, data);
+    } catch (e) { console.error('[공개 ship-today] 오류:', String(e.message || e).slice(0, 200)); res.json({ today: null, yesterday: null, asof: new Date().toISOString(), error: true }); }
+});
+app.get('/api/public/season-now', async (req, res) => {
+    if (!pub832Gate(req, res)) return;
+    try {
+        const data = await pub832Cached('season-now', async () => {
+            const [rows, products, map, assets, cfg] = await Promise.all([
+                pool.query(`SELECT item_key, label, start_md, end_md, knowledge, enabled, deleted_at FROM product_season_knowledge WHERE enabled = true AND deleted_at IS NULL ORDER BY item_key, sort, id`).then(r => r.rows),
+                pool.query(`SELECT name FROM bot_products WHERE status = '판매중' AND deleted_at IS NULL`).then(r => r.rows),
+                naverCfgGet('cafe24_sync_map').catch(() => null),
+                pool.query(`SELECT id, label, sha1 FROM lucky_assets WHERE slot = 'brand' AND purged_at IS NULL AND bytes IS NOT NULL ORDER BY id`).then(r => r.rows).catch(() => []),
+                naverCfgGet('season_now').catch(() => null),
+            ]);
+            return { ...seasonNowCompute({ today: kstTodayStr(), rows, products, map, assets, catalog: cfg && Array.isArray(cfg.items) ? cfg.items : null }), asof: new Date().toISOString() };
+        });
+        const proto = /^http$/i.test(String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()) ? 'http' : 'https';   // 값은 http/https 둘만(손님이 꾸민 글자가 주소에 들어가지 않게) · host 는 Render 가 넘기는 원래 host(x-forwarded-host 는 안 믿음)
+        const host = String(req.headers.host || '').split(',')[0].trim().replace(/[^A-Za-z0-9.:\-]/g, '');
+        const abs = u => (u && /^\//.test(u) && host) ? proto + '://' + host + u : u;
+        pub832Ok(res, { hero: data.hero ? { ...data.hero, img: abs(data.hero.img) } : null, next: data.next ? { ...data.next, img: abs(data.next.img) } : null, asof: data.asof });
+    } catch (e) { console.error('[공개 season-now] 오류:', String(e.message || e).slice(0, 200)); res.json({ hero: null, next: null, asof: new Date().toISOString(), error: true }); }
+});
+// ── #832 공개 GET 끝 ──
 
 // ── #794 수집기 시간 상한 시작 (verify-794-collect-limit.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
 // 대표 10/20 「이런 문제 안 생기도록」: 수집기 하나가 외부 응답을 끝없이 기다리면 1분 틱 전체(18개)가 멈췄다.
@@ -15615,7 +15816,27 @@ function cafe24OptKey(s) {
 //   재고 0 옵션(황금향 못난이 등)은 그대로 둔다(스킨이 품절로 그린다) · 전부 빠지면 원본 유지(상품이 비어 보이지 않게) · 원본 배열·객체는 바꾸지 않고 복사본을 돌려준다.
 // #742(대표 「글자가 달라도 특징이 같으면 통과」): textCfg = 설정 'cafe24_option_texts' { by:{ 카페24번호:[{ t:카페24 옵션 실제 글자, k:cafe24OptKey }] } }(05:10 동기화가 이미 읽는 품목에서 적어 둠 · 새 호출 0)
 //   → 옵션마다 `c24t` = 짝 카페24 옵션 글자(같은 상품 · 같은 열쇠가 딱 하나일 때만 · 네이버 글자와 같으면 안 붙임) — 스킨 akmC24Flow 가 카페24 select 를 이 글자로 찾게(워커2)
-function storeSnapshotForMall(items, mapCfg, ignoreCfg, textCfg) {
+// #832(대표 「고」 10/24): 손님 화면 응답에서 **판매중지(statusType SUSPENSION)** 상품과 **시험 상품**(설정 naver_test_products 배열 · 없으면 기본 [13817259794 테스트 한라봉] + 이름에 「테스트」)을 뺀다.
+//   🔴 OUTOFSTOCK(품절) 행은 그대로 둔다 — 스킨이 품절 표시를 그 행으로 그린다. 영향 = 스킨 mergeSnapshot 은 내장 STORE_DATA 에 있는 상품만 갱신하고 응답에 없는 상품은 추가하지 않음(apply-489-skin.js 13행) → 내장에 없는 시험 상품은 종전에도 안 그려졌고, 이제 공개 JSON 에서도 사라진다.
+//   testCfg 가 없으면(설정 못 읽음 · 옛 호출) 기본값으로 판정 — 연결표·제외 열쇠가 없어도 이 거름은 돈다(아래 종전 「return items」 보다 먼저).
+const NAVER_TEST_PRODUCTS_DEFAULT = ['13817259794'];
+function storeSnapshotTestNos(testCfg) {
+    const arr = Array.isArray(testCfg) ? testCfg : (testCfg && Array.isArray(testCfg.ids) ? testCfg.ids : (testCfg && Array.isArray(testCfg.nos) ? testCfg.nos : null));
+    const nos = (arr || NAVER_TEST_PRODUCTS_DEFAULT).map(x => String(x).trim()).filter(x => /^\d{5,15}$/.test(x));
+    return new Set(nos.length ? nos : NAVER_TEST_PRODUCTS_DEFAULT);
+}
+function storeSnapshotHideItem(it, testNos) {
+    if (!it) return false;
+    if (String(it.statusType || '') === 'SUSPENSION') return true;
+    if (testNos.has(String(it.no))) return true;
+    return /테스트|시험용/.test(String(it.name || ''));
+}
+function storeSnapshotForMall(items, mapCfg, ignoreCfg, textCfg, testCfg) {
+    if (Array.isArray(items)) {
+        const testNos = storeSnapshotTestNos(testCfg);
+        const kept = items.filter(it => !storeSnapshotHideItem(it, testNos));
+        if (kept.length !== items.length) items = kept;   // 새 배열(원본 무변경)
+    }
     const map = (mapCfg && mapCfg.map && typeof mapCfg.map === 'object') ? mapCfg.map : {};
     const keys = new Set(Array.isArray(ignoreCfg && ignoreCfg.keys) ? ignoreCfg.keys.map(String) : []);
     const texts = (textCfg && textCfg.by && typeof textCfg.by === 'object') ? textCfg.by : {};

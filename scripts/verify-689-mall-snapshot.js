@@ -1,5 +1,5 @@
 // #689 검증 — 자사몰 공개 스냅샷에서 「네이버 전용」 옵션 제거(storeSnapshotForMall) + 05:10 옵션 비교에서 재고 0 제외
-//   ① 함수 단위: server.js 에서 cafe24OptKey·storeSnapshotForMall 원문을 떼어 실행(실DB 최신 스냅샷·실설정 SELECT 만 · 쓰기 0)
+//   ① 함수 단위: server.js 에서 cafe24OptKey·storeSnapshotForMall 원문을 떼어 실행(실DB 최신 스냅샷·실설정 SELECT 만 · 쓰기 0) · #832 뒤 판매중지·시험 상품은 응답에서 빠지므로 기대 = 보이는 상품 기준
 //   ② 분기: collectCafe24Sync 의 옵션 비교 줄이 재고 0 을 건너뛰는지(원문 대조 + 같은 조건식 실행)
 //   ③ 라우트: 로컬 실서버(포트 3465 · 스케줄러 차단) GET /api/public/store-snapshot = 걸러진 items · 그 밖 칸·CORS 그대로
 //   실행: node scripts/verify-689-mall-snapshot.js   (PORT689 로 포트 변경 · NO689SRV=1 = ③ 로컬 서버 건너뜀(#829))
@@ -24,18 +24,23 @@ const J = x => JSON.stringify(x);
         const items = snap.items; const raw = J(items);
         console.log(`① 함수 단위 — 스냅샷 #${snap.id}(${items.length}상품) · 연결표 ${Object.keys((mapCfg && mapCfg.map) || {}).length}상품 · 제외 열쇠 ${((ignCfg && ignCfg.keys) || []).length}개 ${J((ignCfg && ignCfg.keys) || [])}`);
         const out = F.storeSnapshotForMall(items, mapCfg, ignCfg);
+        // #832: 판매중지(SUSPENSION)·시험 상품(테스트 한라봉 13817259794 · 이름 「테스트」)은 공개 응답에서 빠진다 → 기대는 「보이는 상품」 기준
+        const hidden = items.filter(it => String(it.statusType) === 'SUSPENSION' || String(it.no) === '13817259794' || /테스트|시험용/.test(String(it.name || '')));
+        const visible = items.filter(it => !hidden.includes(it));
+        const sameAsVisible = r => hidden.length ? (Array.isArray(r) && r !== items && J(r) === J(visible)) : r === items;
+        console.log(`   #832 숨김 ${hidden.length}상품: ${J(hidden.map(x => x.name))}`);
         ok(J(items) === raw, '원본 items 는 바뀌지 않음(복사본)');
-        ok(Array.isArray(out) && out.length === items.length && out !== items, '상품 수 그대로 · 새 배열');
+        ok(Array.isArray(out) && out.length === visible.length && out !== items, `상품 수 = 보이는 상품 ${visible.length}(원본 ${items.length} − 판매중지·시험 ${hidden.length}) · 새 배열`, out.length);
         const lemon = items.find(x => /레몬/.test(x.name) && String(x.statusType) === 'SALE'), lemonOut = out.find(x => x.no === lemon.no);
         const lemonKey = o => F.cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || ''));
         const naverOnly = (lemon.opts || []).filter(o => ((ignCfg && ignCfg.keys) || []).includes(lemonKey(o)) && Number(o.stock) > 0 && o.usable !== false);
         ok(naverOnly.length === 1 && /못난이5kg/.test(naverOnly[0].n1) && lemonKey(naverOnly[0]) === '레몬|못난이|5kg|랜덤과', '레몬 페이지의 네이버 전용 옵션 = 「그린레몬 못난이5kg」 1개(열쇠 레몬|못난이|5kg|랜덤과 · 재고 ' + (naverOnly[0] && naverOnly[0].stock) + ')', J(naverOnly.map(o => [o.n1, o.stock])));
         ok(lemon.opts.length === 4 && lemonOut.opts.length === 3 && !lemonOut.opts.some(o => /못난이/.test(o.n1)) && lemonOut.opts.map(o => o.n1).join('|') === lemon.opts.filter(o => !/못난이/.test(o.n1)).map(o => o.n1).join('|'), '레몬 옵션 4 → 3(못난이만 빠짐 · 나머지 순서 그대로)', J([lemon.opts.length, lemonOut.opts.length]));
-        const changed = items.filter((it, i) => J(it) !== J(out[i])).map(it => it.name);
-        ok(changed.length === 1 && changed[0] === lemon.name, `나머지 ${items.length - 1}상품 JSON 바이트 동일(바뀐 것 = 레몬만)`, J(changed));
+        const changed = visible.filter((it, i) => J(it) !== J(out[i])).map(it => it.name);
+        ok(changed.length === 1 && changed[0] === lemon.name, `나머지 ${visible.length - 1}상품 JSON 바이트 동일(바뀐 것 = 레몬만)`, J(changed));
         const gm = items.find(x => (x.opts || []).some(o => /황금향 못난이/.test(o.n2 || o.n1 || '') && Number(o.stock) === 0)), gmOut = gm && out.find(x => x.no === gm.no);
         ok(!gm || (gmOut && J(gm.opts) === J(gmOut.opts)), '재고 0 황금향 못난이 = 그대로 남음(스킨이 품절로 그림 · 열쇠는 10/14 제외 목록에서 뺐음 · 스냅샷에 없으면 건너뜀)', gm && J(gm.opts.map(o => [o.n2 || o.n1, o.stock])));
-        ok(F.storeSnapshotForMall(items, null, ignCfg) === items && F.storeSnapshotForMall(items, mapCfg, null) === items && F.storeSnapshotForMall(items, mapCfg, { keys: [] }) === items && F.storeSnapshotForMall(items, { map: {} }, ignCfg) === items, '설정 null · 빈 keys · 빈 연결표 = 원본 그대로(같은 참조)');
+        ok(sameAsVisible(F.storeSnapshotForMall(items, null, ignCfg)) && sameAsVisible(F.storeSnapshotForMall(items, mapCfg, null)) && sameAsVisible(F.storeSnapshotForMall(items, mapCfg, { keys: [] })) && sameAsVisible(F.storeSnapshotForMall(items, { map: {} }, ignCfg)), '설정 null · 빈 keys · 빈 연결표 = 원본 그대로(#832 숨김 상품만 빠짐 · 숨김 0 이면 같은 참조)');
         ok(F.storeSnapshotForMall(null, mapCfg, ignCfg) === null && J(F.storeSnapshotForMall([], mapCfg, ignCfg)) === '[]', 'items 가 null·빈 배열이면 그대로');
         { const only = { no: lemon.no, name: '시험', statusType: 'SALE', opts: [naverOnly[0]] }; const r = F.storeSnapshotForMall([only], mapCfg, ignCfg); ok(r[0] === only && r[0].opts.length === 1, '전용 옵션뿐인 상품은 전부 빠지지 않고 원본 유지'); }
         { const noMap = { no: '1', name: '연결표 밖', statusType: 'SALE', opts: [naverOnly[0]] }; const r = F.storeSnapshotForMall([noMap], mapCfg, ignCfg); ok(r[0] === noMap, '연결표에 없는 상품은 건드리지 않음'); }
@@ -56,7 +61,7 @@ const J = x => JSON.stringify(x);
         if (!up) throw new Error('서버가 안 떴거나 /api/public/store-snapshot 이 200 이 아님');
         const body = await res.json();
         ok(res.headers.get('access-control-allow-origin') === '*' && 'at' in body && 'total' in body && 'reviews' in body && 'reviews_fresh_at' in body && 'store' in body, 'CORS * · 응답 칸(at·total·items·reviews·reviews_fresh_at·store) 그대로');
-        ok(body.items.length === items.length && J(body.items) === J(out) && J(body.items) !== raw, `라우트 items = 함수 결과와 바이트 동일(${body.items.length}상품) · 원본과는 다름(레몬 옵션 ${body.items.find(x => x.no === lemon.no).opts.length}개)`);
+        ok(body.items.length === out.length && J(body.items) === J(out) && J(body.items) !== raw, `라우트 items = 함수 결과와 바이트 동일(${body.items.length}상품 · #832 숨김 ${hidden.length}) · 원본과는 다름(레몬 옵션 ${body.items.find(x => x.no === lemon.no).opts.length}개)`);
         ok(String(new Date(body.at).getTime()) === String(new Date(snap.run_at).getTime()) && body.total === snap.total, 'at·total = 최신 스냅샷 값');
         code = fail ? 1 : 0;
     } catch (e) { if (e && e.skip689) { console.log('③ 라우트 = 건너뜀(NO689SRV=1)'); code = fail ? 1 : 0; } else { console.error('ERR', e.stack || e.message); code = 1; } }

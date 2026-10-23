@@ -13667,7 +13667,8 @@ async function renderSeasonWaitlist() {
     const el = document.getElementById('season-wait-list');
     if (!el) return;
     const d = await api('/api/agent-office/season-waitlist');
-    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');   // 삭제 = 대표만(종전)
+    const canNotify = currentUser?.role === 'admin';   // #832 오픈 알림 보내기 = 관리자(대표·경리)
     /* #356(대표): 전화번호는 하이픈을 넣어 읽기 쉽게 — 보고 바로 걸거나 옮겨 적는 용도라 한 줄로 붙여 보이면 실수가 난다.
        숫자 폭이 들쭉날쭉하지 않게 tabular-nums로 표시(표에서 자릿수가 흔들리지 않는다). */
     const fmtWaitTel = (t) => {
@@ -13676,19 +13677,60 @@ async function renderSeasonWaitlist() {
         if (s.length === 10) return s.slice(0, 3) + '-' + s.slice(3, 6) + '-' + s.slice(6);
         return String(t || '');
     };
-    const rows = (d.rows || []).map(r => `
-        <tr>
-            <td>${escapeHtml(r.item)}</td>
-            <td style="white-space:nowrap; font-variant-numeric:tabular-nums; padding-left:12px; padding-right:12px;">${escapeHtml(fmtWaitTel(r.contact))}</td>
-            <td style="white-space:nowrap; padding-left:10px; padding-right:10px;">${escapeHtml(r.memo || '')}</td>
-            <td>${r.notified ? '✅ 발송됨' : '대기'}</td>
-            <td style="white-space:nowrap;">${akmDate(r.created_at)}</td>
-            <td>${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonWait(${r.id})">삭제</button>` : ''}</td>
-        </tr>`).join('');
-    el.innerHTML = rows
-        ? `<table class="data-table"><thead><tr><th>품목</th><th>연락처</th><th>메모</th><th>발송</th><th>신청일</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<p class="text-muted">대기 신청이 없습니다 — 품절·시즌 문의 손님을 등록해두면 오픈 때 한 번에 안내할 수 있습니다.</p>';
+    // #832: 품목 묶음(신청 많은 순) · 묶음마다 「미발송 n · 발송 n」 + [미리보기](dry) · [오픈 알림 보내기](관리자만 · 확인 창 1번) · 줄마다 보낸 시각·결과
+    const sentCell = (r) => {
+        if (r.notify_result === 'sent' || (r.notified && r.notified_at)) return `<span class="pill pill-ok" title="${escapeHtml(r.notify_result || 'sent')}">발송 ${escapeHtml(akmDateTime(r.notified_at))}</span>`;
+        if (r.notify_result === 'skip-refuse') return `<span class="pill pill-off" title="문자 봇에 「그만 보내」로 받은 번호">수신거부 · 안 보냄</span>`;
+        if (r.notify_result === 'bad-tel') return `<span class="pill pill-off" title="휴대폰 번호 꼴이 아니라 보내지 않음">번호 확인</span>`;
+        if (r.notify_result && /^failed/.test(r.notify_result)) return `<span class="pill pill-wait" title="${escapeHtml(r.notify_result)}">실패 · 다시 보내기 대상</span>`;
+        if (r.notified) return '<span class="pill pill-ok">발송됨</span>';
+        return '<span class="pill pill-wait">미발송</span>';
+    };
+    const groups = new Map();
+    for (const r of (d.rows || [])) { const k = String(r.item || ''); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+    const html = [...groups.entries()].sort((x, y) => y[1].length - x[1].length).map(([item, rows]) => {
+        const sent = rows.filter(r => r.notify_result === 'sent' || (r.notified && r.notified_at)).length;
+        const skipped = rows.filter(r => r.notify_result === 'skip-refuse' || r.notify_result === 'bad-tel').length;
+        const pending = rows.length - sent - skipped;
+        // 품목 글은 손님이 공개 POST 로 넣는 글(거름 0) → onclick 안 글자 인용 대신 data-item 속성으로(속성 안 &#39; 는 ' 로 되돌아가 JS 탈출이 됨 — 워커2 점검)
+        const btns = canNotify ? `<button class="btn-sm btn-outline" data-item="${escapeHtml(item)}" onclick="seasonWaitPreview(this.dataset.item)">미리보기</button>
+                <button class="btn-sm btn-primary" ${pending ? '' : 'disabled'} data-item="${escapeHtml(item)}" data-pending="${pending}" onclick="seasonWaitNotify(this.dataset.item, Number(this.dataset.pending))">오픈 알림 보내기</button>` : '';
+        const trs = rows.map(r => `
+            <tr>
+                <td style="white-space:nowrap; font-variant-numeric:tabular-nums; padding-left:12px; padding-right:12px;">${escapeHtml(fmtWaitTel(r.contact))}</td>
+                <td style="white-space:nowrap; padding-left:10px; padding-right:10px;">${escapeHtml(r.memo || '')}</td>
+                <td style="white-space:nowrap;">${sentCell(r)}</td>
+                <td style="white-space:nowrap;">${akmDate(r.created_at)}</td>
+                <td>${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonWait(${r.id})">삭제</button>` : ''}</td>
+            </tr>`).join('');
+        return `<div class="season-wait-group" style="margin-bottom:14px; border:1px solid var(--card-border,#E4E7EC); border-radius:12px; overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 12px; background:var(--bg,#F5F6F8);">
+                <strong style="flex:1 1 160px; min-width:0; word-break:keep-all;">${escapeHtml(item)}</strong>
+                <span class="pill pill-wait">미발송 ${pending}</span><span class="pill pill-ok">발송 ${sent}</span>${skipped ? `<span class="pill pill-off">안 보냄 ${skipped}</span>` : ''}
+                ${btns}
+            </div>
+            <div class="table-scroll-wrapper"><table class="data-table" style="margin:0;"><thead><tr><th>연락처</th><th>메모</th><th>발송</th><th>신청일</th><th></th></tr></thead><tbody>${trs}</tbody></table></div>
+        </div>`;
+    }).join('');
+    el.innerHTML = html || '<p class="text-muted">대기 신청이 없습니다 — 품절·시즌 문의 손님을 등록해두면 오픈 때 한 번에 안내할 수 있습니다.</p>';
 }
+// #832 [미리보기] = dry(발송 0 · 쓰기 0) → 보낼 대상 수·문구·오늘 남은 상한
+window.seasonWaitPreview = async function(item) {
+    try {
+        const r = await api('/api/agent-office/season-waitlist/notify', 'POST', { item, dry: true });
+        akmAlert(`[${item}] 미리보기\n\n보낼 대상 ${r.will_send}명 (미발송 ${r.targets} · 수신거부 ${r.skip_refuse} · 번호 확인 ${r.bad_tel} · 오늘 남은 상한 ${r.cap_left}/${r.cap})${r.live ? '' : '\n⚠️ 문자 스위치(KAKAO_NOTIFY)가 꺼져 있어 지금은 보낼 수 없어요'}\n\n문구:\n${r.message}`);
+    } catch (e) { akmAlert(e.message); }
+};
+// #832 [오픈 알림 보내기] = 확인 창 1번 → 서버가 그 품목 미발송 전부에 문자(상한·수신거부·잠금은 서버)
+window.seasonWaitNotify = async function(item, pending) {
+    if (!confirm(`[${item}] ${pending}명에게 시즌 오픈 문자를 보낼까요?\n(한 번 보낸 분께는 다시 가지 않아요 · 미리보기로 문구를 먼저 확인하세요)`)) return;
+    try {
+        const r = await api('/api/agent-office/season-waitlist/notify', 'POST', { item });
+        showToast(`✅ 보냄 ${r.sent} · 실패 ${r.failed} · 안 보냄 ${r.skipped}${r.capped ? ` · 상한으로 남김 ${r.capped}` : ''}`, r.failed ? 'error' : 'lime');
+        if (r.failed && r.errors && r.errors.length) akmAlert('실패 사유: ' + r.errors.join('\n'));
+    } catch (e) { akmAlert(e.message); }
+    renderSeasonWaitlist().catch(console.error);
+};
 window.deleteSeasonWait = async function(id) {
     if (!confirm('이 대기 신청을 삭제할까요?')) return;
     try { await api('/api/agent-office/season-waitlist/' + id, 'DELETE', { confirm: true }); showToast('🗑 삭제 완료', 'lime'); }
