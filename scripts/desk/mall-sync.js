@@ -1,5 +1,6 @@
 // #588-e(대표 GO 10/8) 창구용 — 네이버 상세·옵션을 자사몰에 반영(스냅샷 재수집 → 스킨 정본 갱신 → 올림 → 카페24 상세) 한 명령
 //   node scripts/desk/mall-sync.js preview <네이버 상품번호…>          지금 스냅샷 기준으로 무엇이 바뀔지(쓰기 0 · 올리기 0)
+//   🔴 run = 잠김(#832 · 스킨 전용 버튼 7개·대용량 배너 회귀 · apply-428-skin.js 고친 뒤 총괄이 풂) — preview·check·rollback 은 그대로
 //   node scripts/desk/mall-sync.js run <네이버 상품번호…> <지시 id>     ①서버 원본 = 정본 확인 ②스냅샷 재수집(최대 6분) ③스킨 정본 갱신(apply-428-skin.js) ④올림·다시 받아 대조 ⑤카페24 상세(apply-428-c24detail.js) ⑥실화면 확인
 //   node scripts/desk/mall-sync.js rollback <지시 id>                  그 지시가 만든 백업 파일로 스킨을 되돌림(카페24 상세는 네이버 상세 그대로라 되돌리지 않음)
 //   node scripts/desk/mall-sync.js check <네이버 상품번호…>            실화면(akkome.com)의 옵션·가격이 정본과 같은지만 다시 확인
@@ -65,6 +66,8 @@ async function liveCheck(nos, tries, waitMs) {
             note: '미리 보기 — 지금 스냅샷 기준이에요(run 은 스냅샷을 새로 받은 뒤 반영하므로 방금 네이버에서 바꾼 것은 여기 안 보일 수 있어요). 아직 아무것도 바꾸지 않았어요' }, null, 1));
     } else if (cmd === 'run') {
         const orderId = parseInt(args[args.length - 1], 10); const nos = targets(args.slice(0, -1), D); if (!orderId || /^\d{9,}$/.test(args[args.length - 1])) throw new Error('사용: mall-sync.js run <네이버 상품번호…> <지시 id>');
+        // #832 잠금 — 푸는 열쇠 MALL_SYNC_UNLOCK_832=1 은 총괄만
+        if (process.env.MALL_SYNC_UNLOCK_832 !== '1') throw new Error('🔴 #832: mall-sync run 은 지금 잠김(스킨 전용 버튼 7개·대용량 배너가 옛 모습으로 되돌아감 · apply-428-skin.js 고친 뒤 총괄이 풀어요). preview·check·rollback 은 그대로 돼요. 자사몰 상세 반영은 총괄 창으로.');
         const actor = await M.who(orderId), tag = 'desk' + orderId + 's', backup = path.join(M.SKIN_DIR, `index_pre${tag}_backup.html`), log = [];
         const stop = async (at, why, extra) => { await M.audit('update', 'mall_sync', orderId, { targets: nos, order_id: orderId, stopped_at: at, why, log }, actor); console.log(JSON.stringify({ ok: false, stopped_at: at, why, done: log, ...extra }, null, 1)); await M.pool.end(); };
         if (fs.existsSync(backup)) return stop('시작', `백업 파일이 이미 있어요(${path.basename(backup)}) — 같은 지시로 두 번 실행한 것 같아요`);
