@@ -48,6 +48,7 @@ app.disable('x-powered-by');   // #610 검토: 서버 종류 노출 안 함
 app.use('/api/track-order', express.json({ limit: '2kb' }));   // #610 손님 셀프 조회(공개)는 작은 본문만 — 전역 15MB 파서 앞에
 app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/sms/webhook')) req.rawBody = buf.toString('utf8'); } }));   // #610 문자 webhook 서명 검증용 원문(그 라우트만)
 app.use((req, res, next) => { const h = String(req.headers['x-forwarded-host'] || req.hostname || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, ''); if (req.path === '/' && h === String(process.env.EVENT_HOST || 'event.akkome.com').toLowerCase()) return res.redirect(302, '/lucky.html'); next(); });   // #708: 이벤트 주소(event.akkome.com)로 들어온 「/」는 손님 이벤트 페이지로(express.static 이 index.html 을 내보내기 전에) · 다른 Host·경로는 무접촉
+app.use('/media', express.static(path.join(__dirname, 'public', 'media'), { maxAge: '1d' }));   // #832(총괄 10/24) 홈 영상(public/media · 파일 이름에 _v2 꼴 버전) = Cache-Control public, max-age=86400 · 다른 정적 파일·index.html 은 아래 종전 규칙(max-age=0) 그대로
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === JWT 인증 미들웨어 ===
