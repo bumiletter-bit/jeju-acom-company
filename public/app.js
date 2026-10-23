@@ -14898,6 +14898,14 @@ setupNaverTimerCard();
                 ttl = '미발행 잔액 = 이월 + 누적 입금 − 누적 계산서';
                 const upw = up > 0 ? '아직 안 보낸 돈' : up < 0 ? '입금이 정산보다 많음' : '정산과 입금 같음';
                 note = `<p class="si-month-note si-paynote">${esc(base)}${base ? ' · ' : ''}우리 정산 ${won(st.cum_settle)}원 · 입금과 차 ${won(Math.abs(up))}원(${upw})</p>`;
+                const pd = st.period && typeof st.period === 'object' && st.period.from && st.period.to ? st.period : null;
+                if (pd) {   // #826 머리 = 조회 기간 입금 · 계산서 · 차 한 줄(누적·이월·정산 줄 없음) · 옛 서버(period 없음) = 위 종전 줄
+                    const pdf = Number(pd.diff) || 0;
+                    cmp = stat(`${md(pd.from)}~${md(pd.to)} 입금`, won(pd.paid) + '원', '', `${Number(pd.paid_count) || 0}건`) + stat('계산서', won(pd.invoice) + '원')
+                        + stat('차', pdf === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="${pdf > 0 ? 'si-diffv' : 'si-ahead'}">${pdf > 0 ? '+' : '−'}${won(Math.abs(pdf))}원</span>`, 'si-diff',
+                            pdf === 0 ? '' : pdf > 0 ? '입금이 계산서보다 많음' : '계산서가 많음');
+                    ttl = '차 = 조회 기간 입금 − 계산서'; note = '';
+                }
                 const mr = Array.isArray(st.month_rows) ? st.month_rows.filter(x => x && /^\d{4}-\d{2}$/.test(x.month || '')) : [];
                 const sgn = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${won(Math.abs(d))}`;
                 const judge = d => d === 0 ? '<span class="pill pill-ok si-match">일치</span>' : `<span class="${d > 0 ? 'si-diffv' : 'si-ahead'}">${sgn(d)}</span>`;   // 0 = 일치 · + 호박 · − 회색

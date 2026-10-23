@@ -205,6 +205,15 @@ function mount(app, deps) {
             const monthBal = (s, m) => bs[s] + payAll[s].reduce((a, p) => a + (p.d.slice(0, 7) <= m ? p.a : 0), 0) - mat[s].reduce((a, v) => a + (effM(v) <= m ? v.amount : 0), 0);
             const preList = (s) => mat[s].filter(v => v.day >= from && v.day <= to && v.settled_on && effM(v) !== v.day.slice(0, 7)).slice(0, 50)
                 .map(v => ({ issue_date: v.day, amount: v.amount, paid_on: v.settled_on }));
+            // #826 머리 한 줄 = 조회 기간 안 입금 · 「붙은」 계산서(settled_on 또는 작성일 ∈ from~to · 기준일 앞 계산서는 작성일) · 차
+            const prePeriod = { sion: 0, hyodon: 0 };
+            for (const r of (await pool.query(`SELECT supplier, COALESCE(SUM(total_amount), 0)::bigint AS t FROM tax_invoices
+                WHERE supplier IN ('sion', 'hyodon') AND status <> 'hold' AND ${DAY} >= $1::date AND ${DAY} <= $2::date AND ${DAY} < $3::date GROUP BY 1`, [from, to, bs.date])).rows) prePeriod[r.supplier] = Number(r.t) || 0;
+            const periodOf = (s) => {
+                const ps = payAll[s].filter(p => p.d >= from && p.d <= to), paid = ps.reduce((a, p) => a + p.a, 0);
+                const invoice = prePeriod[s] + mat[s].reduce((a, v) => { const d = v.settled_on || v.day; return a + (d >= from && d <= to ? v.amount : 0); }, 0);
+                return { from, to, paid, paid_count: ps.length, invoice, diff: paid - invoice };
+            };
             for (const s of PAY_SUP) payList[s] = (await pool.query(`SELECT id, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, amount, memo, source, created_name, created_at FROM tax_invoice_payments
                 WHERE supplier = $1 AND deleted_at IS NULL AND paid_on >= $2::date AND paid_on <= $3::date ORDER BY paid_on DESC, id DESC LIMIT ${PAY_LIST_MAX}`, [s, from, to])).rows
                 .map(r => ({ id: r.id, paid_on: r.paid_on, amount: Number(r.amount), memo: r.memo || '', source: r.source, by: r.created_name, at: r.created_at }));
@@ -227,7 +236,7 @@ function mount(app, deps) {
                     unissued: bs[s] + c.paid - c.invoice, unpaid: c.settle - c.paid, paid_count: c.n,
                     month_rows: months.map(m => { const p = payM[s][m] || 0, i = invM[s][m] || 0; const x = preM[s][m] || { n: 0, a: 0 };
                         return { month: m, paid: p, invoice: i, diff: p - i, balance: monthBal(s, m), pre_issued_cnt: x.n, pre_issued_amt: x.a }; }),
-                    pre_issued: preList(s), payments: payList[s] };
+                    pre_issued: preList(s), period: periodOf(s), payments: payList[s] };
             };
             const groups = SHOWN.map(s => {
                 const g = all.filter(r => r.supplier === s), live = g.filter(r => r.status !== 'hold');
