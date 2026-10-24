@@ -61,7 +61,7 @@ const authMiddleware = (req, res, next) => { req.user = { id: 1, name: '대표',
     const P = new Function('app', 'pool', 'naverCfgGet', pubSrc + '\n' + sellSrc + '\nreturn { seasonNowCompute };')({ get() {}, options() {} }, pool, async () => null);
     const srv = http.createServer(app); await new Promise(r => srv.listen(0, '127.0.0.1', r));
     const BASE = 'http://127.0.0.1:' + srv.address().port;
-    const call = async (method, p, body, headers) => { const r = await fetch(BASE + p, { method, headers: { 'Content-Type': 'application/json', ...(headers || {}) }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+    const call = async (method, p, body, headers) => { const r = await fetch(BASE + p, { method, headers: { 'Content-Type': 'application/json', connection: 'close', ...(headers || {}) }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 
     console.log('① 거름 표(규칙 × 판매중) + 종전 조건');
     const names = ['타이벡 감귤 5kg', '하우스감귤 2.5kg'];
@@ -168,7 +168,9 @@ const authMiddleware = (req, res, next) => { req.user = { id: 1, name: '대표',
     const pubVerify = fs.readFileSync(path.join(ROOT, 'scripts/verify-832-public.js'), 'utf8');
     ok(/#836 판매 연동 시작/.test(pubVerify), 'verify-832-public 도 #836 구간을 함께 뗌(seasonNowCompute 가 seasonSellKeep 을 부름)');
 
-    srv.close();
     console.log(`\n결과 ${pass}/${pass + fail}` + (fail ? ` — 실패 ${fail}` : ''));
-    process.exit(fail ? 1 : 0);
-})().catch(e => { console.error(e); process.exit(1); });
+    // Node 24(Windows): srv.close() 직후 process.exit() 하면 libuv assert(!(handle->flags & UV_HANDLE_CLOSING) · src\win\async.c) 로 종료 코드 127(결과 줄은 이미 찍힘) → 닫힘을 기다리고 한 틱 뒤에 끝낸다(총괄 확인 10/24)
+    //   process.exit 자체를 쓰지 않고(종료 코드만 두고 자연 종료) · fetch 는 Connection: close 라 남는 소켓 0 → 바로 끝남
+    process.exitCode = fail ? 1 : 0;
+    await new Promise(r => srv.close(r));
+})().catch(e => { console.error(e); process.exitCode = 1; });
