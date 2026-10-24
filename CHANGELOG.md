@@ -1,3 +1,8 @@
+## v5.9.619 (2026-10-24) — #838 핫픽스: invoice_auto_runs 칸 이름 fetch(PostgreSQL 예약어) → fetch_info
+
+- v5.9.618 배포 뒤 initDB 가 「syntax error at or near "fetch"」 로 실패해 표 2개가 안 생김(총괄이 실DB BEGIN/ROLLBACK 으로 원인 확인 · 기존 기능 무영향 · 새 단추만 500 · 사용 0). 응답 JSON 키는 그대로.
+- verify-838-invoice-auto 68/68 = ⓪ 실DB BEGIN → CREATE 2 + INSERT 1 → ROLLBACK(가짜 pool 이 SQL 문법을 안 보던 틈 · NO838DB=1 이면 건너뜀).
+
 ## v5.9.618 (2026-10-24) — #838 자동 송장 등록 1단계(카드까지 · 전송 0 · 대표 「고」 · 설계 정본 docs/838/838-자동송장등록-시공설계(정본).md)
 
 - **서버(워커3 · 새 invoice-auto.js · server.js +60/−39)**: POST /api/agent-office/invoice-auto/match = CJ(LOIS) 운송장 시트 xlsx(JSON+base64 · ≤4개 · 5MB) → 파일 검사 먼저(빈 목록 400 · 재조회 0) → 3채널 불러오기 재조회(naverFetchInvoiceOrders · coupangFetchInvoiceOrders ≤31 · cafe24.fetchInvoiceOrders ≤90 · 종전 함수 그대로 · 읽기) → 짝(받는분 이름+전화+주소 셋 다 · 수량2 = 작은 운송장 · 같은 품목 any · 다른 품목 상품명 · 입력삭제 = 같은 구매자 번호 운송장 스토어 주소 먼저 → 없으면 any · 현금 「!」 = 등록 0 · 그 밖 todo/unmatched) → 카드 JSON(전화·주소 원문 0) · 동시 409 · 같은 호출에서 delivery_shipments 색인도(LOIS 파서 loisShipRows·loisUpsertShipments 공통화 · 종전 /api/delivery/shipments/upload 응답·INSERT 바이트 동일) · POST …/register = **dry 고정**(관리자 · 멱등 열쇠 채널:주문번호 · 전송 함수 0) · 새 표 invoice_auto_runs(90일)·invoice_auto_items · 🔴 교차 점검이 TDZ(ExcelJS 선언 전 사용 → 기동 즉사)를 잡아 고침 · 로컬 기동 1회 확인.

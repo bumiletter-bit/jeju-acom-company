@@ -1,5 +1,6 @@
 // #838-1 검증 — 자동 송장 등록 1단계(invoice-auto.js 짝 맞추기 · match/register 라우트 · LOIS 파서 공통화) · 워커3
-//   🔴 실DB 접속 0(pg 안 씀 · 가짜 pool 메모리 표) · 네트워크 0(3채널 재조회 = 가짜 함수) · 채널 전송 0(모듈에 전송 함수 자체가 없음 · 아래 글자 검사) · server.js 기동 0(LOIS 파서 구간만 글자로 떼어 실행)
+//   🔴 ⓪ 만 실DB 접속 = 새 표 initDB 문장을 BEGIN … ROLLBACK 안에서 1회(문법·예약어 확인 · 남는 쓰기 0 · 총괄 10/24 허가 — 가짜 pool 은 SQL 문법을 안 봐서 v5.9.618 「fetch」 예약어를 못 잡았음) · NO838DB=1 이면 건너뜀
+//   그 밖 실DB 접속 0(가짜 pool 메모리 표) · 네트워크 0(3채널 재조회 = 가짜 함수) · 채널 전송 0(모듈에 전송 함수 자체가 없음 · 아래 글자 검사) · server.js 기동 0(LOIS 파서 구간만 글자로 떼어 실행)
 //   가짜 자료 = docs/838/t838c 하네스와 같은 가짜 번호 꼴(010-0000-xxxx) · 정본 2절 규칙표 경우마다 1항목 이상 + 채우기 주문으로 시트2 50줄 넘김
 //   실행: node scripts/verify-838-invoice-auto.js
 'use strict';
@@ -20,7 +21,7 @@ const pool = { query: async (sql, p) => {
     const s = String(sql).replace(/\s+/g, ' ').trim(); queries.push(s.slice(0, 60));
     if (/^CREATE TABLE IF NOT EXISTS invoice_auto_(runs|items)/.test(s)) return { rows: [] };
     if (/^DELETE FROM invoice_auto_runs WHERE created_at < now\(\) - interval '90 days'/.test(s)) { runs = runs.filter(r => Date.now() - r.created_at < 90 * 86400e3); return { rowCount: 0 }; }
-    if (/^INSERT INTO invoice_auto_runs \(created_by, ship_date, file_hash, files, fetch, summary, result\)/.test(s)) { const id = runs.length + 1; runs.push({ id, created_at: Date.now(), created_by: p[0], ship_date: p[1], file_hash: p[2], files: JSON.parse(p[3]), fetch: JSON.parse(p[4]), summary: JSON.parse(p[5]), result: JSON.parse(p[6]), register_state: null }); return { rows: [{ id }] }; }
+    if (/^INSERT INTO invoice_auto_runs \(created_by, ship_date, file_hash, files, fetch_info, summary, result\)/.test(s)) { const id = runs.length + 1; runs.push({ id, created_at: Date.now(), created_by: p[0], ship_date: p[1], file_hash: p[2], files: JSON.parse(p[3]), fetch: JSON.parse(p[4]), summary: JSON.parse(p[5]), result: JSON.parse(p[6]), register_state: null }); return { rows: [{ id }] }; }
     if (/^SELECT id, result, register_state FROM invoice_auto_runs WHERE id = \$1/.test(s)) return { rows: runs.filter(r => r.id === p[0]) };
     if (/^UPDATE invoice_auto_runs SET register_state = 'prepared'/.test(s)) { const r = runs.find(x => x.id === p[0]); if (r) { r.register_state = 'prepared'; r.register = JSON.parse(p[1]); } return { rowCount: r ? 1 : 0 }; }
     if (/^SELECT run_id, state, tracking FROM invoice_auto_items WHERE idem_key = \$1/.test(s)) { const x = items.get(p[0]); return { rows: x ? [x] : [] }; }
@@ -106,6 +107,28 @@ async function xlsxOf(lines, withSheet1) {
     const mod = IA(app, { pool, authMiddleware, adminOnly, writeAudit: async x => { audits.push(x); }, adminActor: req => ({ id: req.user.id, name: req.user.name }), ExcelJS, kstToday: () => '2026-10-24',
         lois: { shipRows: lois.loisShipRows, upsert: async (wb, rows, date, partner) => (await lois.loisUpsertShipments(wb, rows, date, partner)).n }, fetchers, log: { error() {} } });
     await mod.initDB();
+    console.log('⓪ 실DB 문법(initDB · BEGIN … ROLLBACK · 남는 쓰기 0)');
+    if (process.env.NO838DB === '1') console.log('  (NO838DB=1 — 건너뜀)');
+    else {
+        require('dotenv').config({ path: path.join(ROOT, '.env') });
+        const { Client } = require('pg'); const cl = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        let err = null, cols = [];
+        try {
+            await cl.connect(); await cl.query('BEGIN');
+            const throwaway = IA({ get() {}, post() {} }, { pool: { query: (q, p) => cl.query(q, p) }, authMiddleware() {}, adminOnly() {}, writeAudit: async () => {}, adminActor: () => null, ExcelJS, lois: {}, fetchers: {}, kstToday: () => '' });
+            await throwaway.initDB();
+            cols = (await cl.query(`SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN ('invoice_auto_runs','invoice_auto_items') ORDER BY table_name, ordinal_position`)).rows.map(x => x.table_name.replace('invoice_auto_', '') + '.' + x.column_name);
+            // 라우트가 쓰는 INSERT 문장도 같은 트랜잭션 안에서 1회(값 = 가짜 · 롤백)
+            const insSql = (fs.readFileSync(path.join(ROOT, 'invoice-auto.js'), 'utf8').match(/INSERT INTO invoice_auto_runs \([^)]*\) VALUES \([^)]*\) RETURNING id/) || [''])[0];
+            await cl.query(insSql, ['verify838', '2026-10-24', 'x', '[]', '{}', '{}', '{}']);
+        } catch (e) { err = e; }
+        finally { try { await cl.query('ROLLBACK'); } catch (_) {} try { await cl.end(); } catch (_) {} }
+        ok(!err, '실DB 에서 initDB 두 표 CREATE + 라우트 INSERT 문법 통과(롤백)', err && err.message);
+        ok(cols.includes('runs.fetch_info') && !cols.includes('runs.fetch') && cols.includes('items.idem_key'), '칸 = fetch_info(예약어 fetch 아님) · items.idem_key', cols.join(','));
+        { const cl2 = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); let left = null;
+          try { await cl2.connect(); left = (await cl2.query(`SELECT count(*)::int AS n FROM invoice_auto_runs WHERE created_by = 'verify838'`)).rows[0].n; } catch (e) { left = /does not exist/.test(e.message) ? 0 : 'err ' + e.message; } finally { try { await cl2.end(); } catch (_) {} }
+          ok(left === 0, '롤백 뒤 실DB 에 시험 행 0(표가 없으면 0 으로 셈)', left); }
+    }
     const srv = http.createServer(app); await new Promise(r => srv.listen(0, '127.0.0.1', r)); const BASE = 'http://127.0.0.1:' + srv.address().port;
     const call = async (p, body, role) => { const r = await fetch(BASE + p, { method: 'POST', headers: { 'Content-Type': 'application/json', connection: 'close', 'x-role': role || 'admin' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 

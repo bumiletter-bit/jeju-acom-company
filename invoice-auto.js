@@ -142,7 +142,7 @@ module.exports = function mountInvoiceAuto(app, d) {
     async function initDB() {
         await pool.query(`CREATE TABLE IF NOT EXISTS invoice_auto_runs (
             id SERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT now(), created_by TEXT, ship_date DATE, file_hash TEXT,
-            files JSONB, fetch JSONB, summary JSONB, result JSONB, register_state TEXT, register JSONB, registered_at TIMESTAMPTZ, registered_by TEXT)`);
+            files JSONB, fetch_info JSONB, summary JSONB,   /* #838 핫픽스: fetch 는 PostgreSQL 예약어(v5.9.618 표 생성 실패) → fetch_info */ result JSONB, register_state TEXT, register JSONB, registered_at TIMESTAMPTZ, registered_by TEXT)`);
         await pool.query(`CREATE TABLE IF NOT EXISTS invoice_auto_items (
             idem_key TEXT PRIMARY KEY, run_id INTEGER, channel TEXT, order_key TEXT, tracking TEXT, state TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
     }
@@ -187,7 +187,7 @@ module.exports = function mountInvoiceAuto(app, d) {
             const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
             const filesOut = parsed.map(p => ({ name: p.name, partner: p.partner, rows: p.rows.length }));
             await pool.query(`DELETE FROM invoice_auto_runs WHERE created_at < now() - interval '90 days'`);
-            const ins = await pool.query(`INSERT INTO invoice_auto_runs (created_by, ship_date, file_hash, files, fetch, summary, result) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+            const ins = await pool.query(`INSERT INTO invoice_auto_runs (created_by, ship_date, file_hash, files, fetch_info, summary, result) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
                 [(adminActor(req) || {}).name || null, shipDate, hash.digest('hex').slice(0, 16), JSON.stringify(filesOut), JSON.stringify(fetchInfo), JSON.stringify(summary), JSON.stringify(card)]);
             const runId = ins.rows[0].id;
             await writeAudit({ action: 'invoice_auto_match', targetType: 'invoice_auto_run', targetId: runId, changes: { ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, by_channel: card.by_channel }, source: 'invoice-auto', actor: adminActor(req) });
