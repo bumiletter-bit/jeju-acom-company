@@ -2486,3 +2486,238 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
 
     window.AkmFinalOrder = { open, close, state: st };
 })();
+
+// #838-2(대표 「고」 10/24) 자동 송장 등록 — 최종발주 화면 맨 아래 새 묶음. 계약 = docs/838/838-api.md · 설계 = docs/838/838-자동송장등록-시공설계(정본).md 5절
+//   무회귀: 위 최종발주(IIFE)의 함수·상태는 하나도 부르거나 바꾸지 않는다. 최종발주 창(#fo-panel)이 생기면 그 .fo-body 끝에 묶음을 붙일 뿐이다.
+//   1단계 = 서버가 외부로 보내지 않는다(register 는 dry). 옛 서버(라우트 404)면 묶음을 숨긴다.
+(() => {
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const CH = ['naver', 'coupang', 'cafe24'];
+    const CH_LABEL = { naver: '네이버', coupang: '쿠팡', cafe24: '자사몰' };
+    const RULE = {
+        auto: '이름·번호·주소 일치', auto_multi: '이름·번호·주소 일치 · 박스 여러 개(첫 운송장 등록)', auto_qty_diff: '이름·번호·주소 일치 · 박스 수 다름',
+        by_product: '같은 분 다른 품목 · 상품명으로 가름', same_item_any: '같은 분 같은 품목 · 하나씩 배정', indiv_store_addr: '개별 주소 · 스토어 주소 운송장', indiv_any: '개별 주소 · 그 구매자 운송장 하나',
+        todo_product: '같은 분 여러 주문인데 상품명으로 못 가름', todo_pick: '짝이 안 맞아요 · 운송장을 골라 주세요',
+    };
+    const MAX_FILES = 4, MAX_BYTES = 5 * 1024 * 1024;
+    const API = '/api/agent-office/invoice-auto/';
+    const isAdmin = () => typeof currentUser !== 'undefined' && !!currentUser && currentUser.role === 'admin';
+    const call = (path, body) => window.api(API + path, 'POST', body, { timeoutMs: 180000 });
+    const tno = v => { const s = String(v == null ? '' : v), d = s.replace(/\D/g, ''); return d.length === 12 ? d.replace(/(\d{4})(\d{4})(\d{4})/, '$1-$2-$3') : s; };   // 운송장 = 숫자 12자리(서버) → 4-4-4 로 끊어 보이기(값은 그대로)
+    const partnerOf = name => { const m = String(name || '').match(/\(([^)]+)\)/); return m ? m[1].trim() : '?'; };   // = 서버 규칙(파일 이름 괄호)
+    const ia = { probed: false, alive: false, busy: false, files: [], res: null, picks: new Map(), reg: null, ask: false };
+
+    function html() {
+        return `
+        <div class="fo-cards-head"><h3>자동 송장 등록 <small>CJ 운송장 파일을 올리면 그날 주문과 짝을 맞춰요</small></h3></div>
+        <div class="fo-ia-drop" id="fo-ia-drop">
+            <input type="file" id="fo-ia-file" accept=".xlsx,.xls" multiple hidden>
+            <p>거래처별 운송장 엑셀(시트2 꼴)을 여기에 끌어다 놓거나</p>
+            <button type="button" class="fo-btn" id="fo-ia-pick">파일 고르기</button>
+            <span class="fo-hint">최대 ${MAX_FILES}개 · 개당 5MB</span>
+        </div>
+        <ul class="fo-ia-files" id="fo-ia-files" hidden></ul>
+        <div class="fo-acts">
+            <button type="button" class="fo-btn primary" id="fo-ia-match" disabled>짝 맞추기</button>
+            <span class="fo-msg" id="fo-ia-msg" role="status" aria-live="polite"></span>
+        </div>
+        <div class="fo-ia-out" id="fo-ia-out" hidden></div>`;
+    }
+    function mount(panel) {
+        const body = panel.querySelector('.fo-body'); if (!body || $('fo-ia')) return;
+        const sec = document.createElement('section');
+        sec.className = 'fo-sec fo-ia'; sec.id = 'fo-ia'; sec.hidden = true; sec.setAttribute('aria-label', '자동 송장 등록');
+        sec.innerHTML = html();
+        body.appendChild(sec);
+        $('fo-ia-pick').addEventListener('click', () => { if (!ia.busy) $('fo-ia-file').click(); });
+        $('fo-ia-file').addEventListener('change', e => { const l = Array.from(e.target.files || []); e.target.value = ''; addFiles(l); });
+        const dz = $('fo-ia-drop');
+        dz.addEventListener('dragover', e => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); dz.classList.add('on'); } });
+        dz.addEventListener('dragleave', () => dz.classList.remove('on'));
+        dz.addEventListener('drop', e => { dz.classList.remove('on'); if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return; e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); });
+        $('fo-ia-files').addEventListener('click', e => { const b = e.target.closest('button[data-ia-rm]'); if (!b || ia.busy) return; ia.files.splice(Number(b.dataset.iaRm), 1); resetOut(); drawFiles(); });
+        $('fo-ia-match').addEventListener('click', match);
+        $('fo-ia-out').addEventListener('change', onPick);
+        $('fo-ia-out').addEventListener('click', onOutClick);
+    }
+    // 옛 서버 = 라우트 없음(404) → 묶음을 숨긴다. 빈 파일 목록은 새 서버가 400(파일 없음)으로 답한다(외부 조회 전 검사 · 계약 1절 오류).
+    async function probe() {
+        if (ia.probed || typeof window.api !== 'function') return; ia.probed = true;
+        try { await call('match', { files: [] }); ia.alive = true; }
+        catch (err) { ia.alive = !!(err && err.status && err.status !== 404); if (!err || !err.status) ia.probed = false; }   // 통신 끊김이면 다음에 창을 열 때 다시 물음
+        const sec = $('fo-ia'); if (sec) sec.hidden = !ia.alive;
+    }
+
+    // ── 파일 ─────────────────────────────────────────────────────────────
+    function addFiles(list) {
+        const msg = []; let added = 0;
+        for (const f of list) {
+            if (!/\.xlsx?$/i.test(f.name)) { msg.push(`${f.name} = 엑셀이 아니에요`); continue; }
+            if (f.size > MAX_BYTES) { msg.push(`${f.name} = 5MB를 넘어요`); continue; }
+            if (ia.files.some(x => x.name === f.name && x.size === f.size)) continue;
+            if (ia.files.length >= MAX_FILES) { msg.push(`파일은 ${MAX_FILES}개까지예요`); break; }
+            ia.files.push(f); added++;
+        }
+        if (added) resetOut();
+        drawFiles(); say(msg.join(' · '), !!msg.length);
+    }
+    function drawFiles() {
+        const ul = $('fo-ia-files');
+        ul.hidden = !ia.files.length;
+        ul.innerHTML = ia.files.map((f, i) => { const p = partnerOf(f.name); return `<li><span class="fo-tag" data-k="${p === '?' ? 'cash' : 'pick'}">${esc(p === '?' ? '거래처 ?' : p)}</span><span class="fo-ia-fname" title="${esc(f.name)}">${esc(f.name)}</span><button type="button" class="fo-x" data-ia-rm="${i}" aria-label="${esc(f.name)} 빼기" title="빼기">×</button></li>`; }).join('');
+        sync();
+    }
+    const readB64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => no(new Error(f.name + ' 파일을 읽지 못했어요')); r.readAsDataURL(f); });
+    function say(t, err) { const m = $('fo-ia-msg'); m.textContent = t ? (err ? '⚠️ ' : '') + t : ''; m.classList.toggle('err', !!err); }
+    function sync() {
+        $('fo-ia-match').disabled = ia.busy || !ia.files.length;
+        $('fo-ia-pick').disabled = ia.busy;
+        const reg = $('fo-ia-reg'); if (reg) reg.disabled = ia.busy || !isAdmin() || todoLeft() > 0 || !!ia.reg;
+        $('fo-ia').classList.toggle('busy', ia.busy);
+    }
+    function resetOut() { ia.res = null; ia.picks = new Map(); ia.reg = null; ia.ask = false; const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
+
+    // ── 짝 맞추기 ────────────────────────────────────────────────────────
+    async function match() {
+        if (ia.busy || !ia.files.length) return;
+        ia.busy = true; resetOut(); sync();
+        const t0 = Date.now(), tick = setInterval(() => say(`3채널 주문을 다시 불러와 짝을 맞추는 중 (${Math.round((Date.now() - t0) / 1000)}초)`), 1000);
+        say('파일을 읽는 중');
+        try {
+            const files = []; for (const f of ia.files) files.push({ name: f.name, data: await readB64(f) });
+            const r = await call('match', { files });
+            if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
+            ia.res = r; say(''); render();
+        } catch (err) { say(err && err.message ? err.message : String(err), true); }
+        finally { clearInterval(tick); ia.busy = false; sync(); }
+    }
+    const todoRows = () => ((ia.res && ia.res.rows) || []).filter(r => r.status === 'todo');
+    const todoLeft = () => todoRows().filter(r => !ia.picks.has(r.id)).length;
+
+    function render() {
+        const r = ia.res, out = $('fo-ia-out'); if (!r) return;
+        const rows = r.rows || [], auto = rows.filter(x => x.status === 'auto'), todo = todoRows(), s = r.summary || {};
+        const qty2 = rows.filter(x => (x.tracking_all || []).length > 1).length;
+        const fetchErr = CH.filter(c => r.fetch && r.fetch[c] && !r.fetch[c].ok);
+        const files = (r.files || []).map(f => `${esc(f.partner || '?')} ${Number(f.rows) || 0}줄`).join(' · ');
+        const chRow = c => { const b = (r.by_channel || {})[c] || {}; return `<li><b>${CH_LABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
+        out.innerHTML = `
+            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 운송장 없는 주문 ${Number(r.orders_without_tracking) || 0}건(지정발송일·아직 안 보낸 주문)</p>
+            ${fetchErr.length ? `<p class="fo-hint err" role="alert">${fetchErr.map(c => `${CH_LABEL[c]} 주문을 못 불러왔어요(${esc(r.fetch[c].error || '오류')}) — 그 채널 운송장은 「주문 없음」으로 남아요`).join('<br>')}</p>` : ''}
+            <div class="fo-sum fo-ia-sum">
+                <span>자동 <b>${s.auto || 0}</b></span><span class="${todo.length ? 'warn' : ''}">할 일 <b>${todo.length}</b></span><span>현금(송장만) <b>${s.cash || 0}</b></span><span>수량2 <b>${qty2}</b></span><span>다른 주소 박스 <b>${s.extra || 0}</b></span><span>주문 없음 <b>${s.unmatched || 0}</b></span>
+            </div>
+            <ul class="fo-ch fo-ia-ch">${CH.map(chRow).join('')}</ul>
+            <div class="fo-ia-todo" id="fo-ia-todo">${todo.length ? todo.map(cardHtml).join('') : '<p class="fo-done">고를 것이 없어요 · 전부 자동으로 짝이 맞았어요</p>'}</div>
+            ${listHtml(`자동 ${auto.length}`, auto, x => [CH_LABEL[x.channel] || x.channel, x.recipient_masked, `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
+            ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], x => ['', x.recipient_masked, x.product, tno(x.tracking), x.why])}
+            ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], x => ['', x.recipient_masked, x.product || '', tno(x.tracking), x.why])}
+            ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], x => ['', x.recipient_masked, x.product, tno(x.tracking), x.why])}
+            <div class="fo-acts">
+                <button type="button" class="fo-btn primary" id="fo-ia-reg">등록</button>
+                <span class="fo-msg" id="fo-ia-reg-msg" role="status"></span>
+            </div>
+            <div class="fo-reset-confirm fo-ia-confirm" id="fo-ia-confirm" role="alertdialog" aria-labelledby="fo-ia-q" hidden></div>
+            <div class="fo-ia-result" id="fo-ia-result" hidden></div>`;
+        out.hidden = false; regNote(); sync();
+    }
+    const trk = x => { const a = x.tracking_all || []; return tno(x.tracking || '') + (a.length > 1 ? ` 외 ${a.length - 1}` : ''); };
+    function listHtml(title, list, cols) {
+        if (!list.length) return '';
+        return `<details class="fo-ia-list"><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+    }
+    function cardHtml(x) {
+        const v = ia.picks.get(x.id), done = v != null;
+        const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(o.recipient_masked)} · ${esc(o.product || '')}</option>`).join('');
+        return `<div class="fo-card" data-state="${done ? 'done' : 'open'}" data-ia-id="${esc(x.id)}">
+            <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(CH_LABEL[x.channel] || x.channel)}</span><b>${esc(x.recipient_masked)} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
+            <div class="fo-card-body"><div class="fo-line"><span>왜</span><p>${esc(RULE[x.rule] || x.rule)}</p></div><div class="fo-line"><span>주문번호</span><p>${esc(x.order_key)}</p></div></div>
+            <div class="fo-card-acts"><label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(x.recipient_masked)} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}</div>
+        </div>`;
+    }
+    function onPick(e) {
+        const sel = e.target.closest('select[data-ia-pick]'); if (!sel || ia.busy || ia.reg) return;
+        const id = sel.dataset.iaPick, v = sel.value;
+        if (!v) ia.picks.delete(id); else ia.picks.set(id, v);
+        const card = sel.closest('.fo-card'), row = todoRows().find(x => x.id === id);
+        if (card && row) { card.outerHTML = cardHtml(row); const ns = document.querySelector(`select[data-ia-pick="${CSS.escape(id)}"]`); if (ns) ns.focus({ preventScroll: true }); }
+        const sp = $('fo-ia-out').querySelector('.fo-ia-sum span:nth-child(2)'); if (sp) sp.classList.toggle('warn', todoLeft() > 0);
+        regNote(); sync();
+    }
+    function regNote() {
+        const m = $('fo-ia-reg-msg'); if (!m) return;
+        m.classList.remove('err');
+        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : '지금은 시험 단계 — 눌러도 채널에 보내지 않아요';
+    }
+    function counts() {
+        const rows = (ia.res && ia.res.rows) || [], n = { naver: 0, coupang: 0, cafe24: 0 }; let manual = 0;
+        rows.forEach(x => { const v = x.status === 'todo' ? ia.picks.get(x.id) : x.tracking; if (v === 'manual') manual++; else if (v && n[x.channel] != null) n[x.channel]++; });
+        return { n, manual };
+    }
+    function askConfirm() {
+        const c = counts(), box = $('fo-ia-confirm');
+        box.innerHTML = `<p id="fo-ia-q"><b>송장을 등록할까요?</b> ${CH.map(ch => `${CH_LABEL[ch]} ${c.n[ch]}건`).join(' · ')}${c.manual ? ` · 수기 ${c.manual}건` : ''}. 지금은 시험 단계라 실제로 채널에 보내지는 않아요.</p>
+            <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-yes">등록</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
+        box.hidden = false; $('fo-ia-yes').focus({ preventScroll: true });
+    }
+    async function register() {
+        const box = $('fo-ia-confirm'); box.hidden = true;
+        if (ia.busy || !ia.res || !isAdmin() || todoLeft()) return;
+        ia.busy = true; sync(); const m = $('fo-ia-reg-msg'); m.classList.remove('err'); m.textContent = '등록하는 중';
+        try {
+            const picks = {}; todoRows().forEach(x => { picks[x.id] = ia.picks.get(x.id); });
+            const r = await call('register', { run_id: ia.res.run_id, picks, skip: [], dry: true });
+            if (!r || !r.ok) throw new Error((r && r.error) || '등록 결과를 받지 못했어요');
+            ia.reg = r; m.textContent = ''; drawResult();
+        } catch (err) { m.textContent = '⚠️ ' + (err && err.message ? err.message : String(err)); m.classList.add('err'); }
+        finally { ia.busy = false; sync(); }
+    }
+    // 실패·수기 줄 = 등록 결과에서 준비(ready)·이미 보냄(already) 이 아닌 줄 + 수기로 둔 줄 + 주문 없는 운송장
+    function failRows() {
+        const r = ia.res, g = ia.reg, byId = new Map(((r && r.rows) || []).map(x => [x.id, x])), out = [];
+        ((g && g.items) || []).filter(it => !/^(ready|already|sent)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', x.recipient_masked || '', x.option || '', it.tracking || '', '전송 안 됨(' + (it.state || '?') + ')']); });
+        todoRows().filter(x => ia.picks.get(x.id) === 'manual').forEach(x => out.push([CH_LABEL[x.channel] || x.channel, x.order_key, x.recipient_masked, x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule)]));
+        ((r && r.unmatched) || []).forEach(x => out.push(['', '', x.recipient_masked, x.product || '', x.tracking, x.why || '주문 없음']));
+        return out;
+    }
+    function drawResult() {
+        const g = ia.reg, box = $('fo-ia-result'); if (!g) return;
+        const items = g.items || [], per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
+        const fails = failRows();
+        box.innerHTML = `
+            <h3>등록 결과 ${g.dry ? '<small>시험 단계 · 채널로 보낸 것 0</small>' : ''}</h3>
+            <div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
+                ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.ready || {})[c] || 0}</td><td>${st(c, 'already')}</td><td>${per(c).length - st(c, 'ready') - st(c, 'already')}</td></tr>`).join('')}
+                <tr class="tot"><td>합계</td><td>${CH.reduce((a, c) => a + ((g.ready || {})[c] || 0), 0)}</td><td>${Number(g.already) || 0}</td><td>수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr>
+            </tbody></table></div>
+            <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}</div>`;
+        box.hidden = false; regNote();
+        box.scrollIntoView({ block: 'nearest' });
+    }
+    function download() {
+        const rows = failRows(); if (!rows.length || typeof XLSX === 'undefined') return;
+        const ws = XLSX.utils.aoa_to_sheet([['채널', '주문번호', '받는 분', '상품', '운송장', '사유'], ...rows]);
+        ws['!cols'] = [{ wch: 8 }, { wch: 24 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 40 }];
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '수기 등록');
+        XLSX.writeFile(wb, `자동송장등록_실패줄_${(ia.res && ia.res.ship_date) || ''}.xlsx`);
+    }
+    function onOutClick(e) {
+        const b = e.target.closest('button'); if (!b || ia.busy) return;
+        if (b.id === 'fo-ia-reg') { if (!b.disabled) askConfirm(); }
+        else if (b.id === 'fo-ia-yes') register();
+        else if (b.id === 'fo-ia-no') { $('fo-ia-confirm').hidden = true; $('fo-ia-reg').focus({ preventScroll: true }); }
+        else if (b.id === 'fo-ia-dl') download();
+    }
+
+    // 최종발주 창은 처음 열 때 만들어진다 → 생기면 붙이고, 열릴 때마다(아직 확인 못 했으면) 서버를 확인
+    function watch(panel) {
+        mount(panel);
+        if (!panel.hidden) probe();
+        new MutationObserver(() => { if (!panel.hidden) probe(); }).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+    }
+    const p0 = document.getElementById('fo-panel');
+    if (p0) watch(p0);
+    else { const mo = new MutationObserver(() => { const p = document.getElementById('fo-panel'); if (p) { mo.disconnect(); watch(p); } }); mo.observe(document.body, { childList: true }); }
+    window.AkmInvoiceAuto = { state: ia };
+})();

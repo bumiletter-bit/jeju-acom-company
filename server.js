@@ -11176,61 +11176,81 @@ app.post('/api/delivery/handled', authMiddleware, async (req, res) => {
     res.json({ ok: true, tracking: cjTrack.fmtTracking(r.rows[0].tracking), handled_at: r.rows[0].handled_at, handled_by: r.rows[0].handled_by || '' });
 });
 // 보조 입력 — LOIS 엑셀(Sheet2 운송장) base64 · body { name, data, date? } → delivery_shipments upsert
+// #838-1 LOIS 운송장 시트 파서·색인 upsert 공통 — 종전 /api/delivery/shipments/upload 와 자동 송장 등록(invoice-auto.js)이 같이 쓴다(글자 그대로 옮김 · 응답 동일)
+const loisCellStr = v => v == null ? '' : typeof v === 'object' ? (v.richText ? v.richText.map(t => t.text).join('') : v.text != null ? String(v.text) : v.result != null ? String(v.result) : String(v)) : String(v);
+function loisShipRows(wb) {
+    const cellStr = loisCellStr;
+    // 운송장 시트 = 머리글에 「운송장번호」가 있는 시트(보통 Sheet2) · 받는 분·전화·주소·메시지·품목·수량은 머리글 이름으로
+    let rows = [];
+    wb.eachSheet(ws => {
+        if (rows.length) return; let h = 0, map = {};
+        for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const s = cellStr(c.value).replace(/\s/g, ''); if (s) mm[s] = i; }); if (mm['운송장번호']) { h = r; map = mm; } }
+        if (!h) return;
+        const find = (...keys) => { for (const k of keys) { const hit = Object.keys(map).find(x => x.includes(k)); if (hit) return map[hit]; } return 0; };
+        const cTr = map['운송장번호'], cNm = find('받는분', '수취인명', '수취인', '받는사람', '고객명'), cTel = find('받는분전화', '수취인전화', '전화', '연락처', '휴대폰'), cAd = find('받는분주소', '수취인주소', '주소'),
+            cMs = find('배송메세지', '배송메시지', '메세지', '메시지'), cOp = find('품목', '상품명', '옵션', '내용물', '품명'), cQ = find('수량', '박스수'),
+            cSn = map['보내는분'] || map['보내는사람'] || 0, cSt = map['보내는분전화번호'] || map['보내는사람연락처'] || find('보내는분전화', '보내는사람전화');   // #838-1
+        for (let r = h + 1; r <= ws.rowCount; r++) {
+            const row = ws.getRow(r); const tr = cjTrack.normTracking(cellStr(row.getCell(cTr).value)); if (tr.length < 10) continue;
+            const g = c => c ? cellStr(row.getCell(c).value).trim() : '';
+            rows.push({ tr, nm: g(cNm), tel: g(cTel), ad: g(cAd), ms: g(cMs), op: g(cOp), q: parseInt(g(cQ), 10) || null, sn: g(cSn), stel: g(cSt) });   // #838-1 sn·stel = 보내는분·보내는분전화(자동 송장 등록 열쇠 · 색인 upsert 엔 안 씀)
+        }
+    });
+    return rows;
+}
+async function loisUpsertShipments(wb, rows, date, partner) {
+    const cellStr = loisCellStr;
+    const merged = {}; for (const x of rows) { const m = merged[x.tr]; if (!m) merged[x.tr] = Object.assign({}, x); else { if (x.op && !m.op.includes(x.op)) m.op = m.op ? m.op + ' / ' + x.op : x.op; m.q = (m.q || 0) + (x.q || 0) || x.q; } }
+    // #610-C: 구매자 번호 = 첫 시트(머리글 「구매자연락처」)에서 「받는 분 번호 + 이름」으로 짝지어 붙임(선물 주문 손님이 문자로 물을 때 찾히게) · 못 찾으면 비움
+    let buyerN = 0;
+    try {
+        const smsLookup = require('./sms/lookup.js'); const bidx = smsLookup.makeBuyerIndex();
+        wb.eachSheet(ws => {
+            let h = 0, m = {};
+            for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const t = cellStr(c.value).replace(/\s/g, ''); if (t) mm[t] = i; }); if (mm['구매자연락처']) { h = r; m = mm; } }
+            if (!h) return; const cN = m['수취인명'], cT = m['수취인연락처1'], cB = m['구매자연락처']; if (!cN || !cT || !cB) return;
+            for (let r = h + 1; r <= ws.rowCount; r++) { const row = ws.getRow(r); bidx.add('', cellStr(row.getCell(cT).value), cellStr(row.getCell(cN).value), cellStr(row.getCell(cB).value)); }
+        });
+        for (const x of Object.values(merged)) { const f = bidx.find('', x.tel, x.nm); x.bp = f && f.buyer ? f.buyer : null; if (x.bp) buyerN++; }
+    } catch (e) { console.error('[배송조회] 구매자 번호 붙이기 실패(무시):', e.message); }
+    let n = 0;
+    for (const x of Object.values(merged)) {
+        await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at, buyer_phone)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upload',now(),$10) ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = COALESCE(NULLIF(delivery_shipments.partner,''), EXCLUDED.partner),
+            recipient = COALESCE(NULLIF(EXCLUDED.recipient,''), delivery_shipments.recipient), phone = COALESCE(NULLIF(EXCLUDED.phone,''), delivery_shipments.phone),
+            addr = COALESCE(NULLIF(EXCLUDED.addr,''), delivery_shipments.addr), option_text = COALESCE(NULLIF(EXCLUDED.option_text,''), delivery_shipments.option_text),
+            qty = COALESCE(EXCLUDED.qty, delivery_shipments.qty), memo = COALESCE(NULLIF(EXCLUDED.memo,''), delivery_shipments.memo), source = 'upload', uploaded_at = now(),
+            buyer_phone = COALESCE(NULLIF(EXCLUDED.buyer_phone,''), delivery_shipments.buyer_phone)`,
+            [x.tr, date, partner, x.nm, x.tel, x.ad, x.op, x.q, x.ms, x.bp || null]); n++;
+    }
+    return { n, buyerN };
+}
 app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {
     try {
         const name = String(req.body?.name || ''); const b64 = String(req.body?.data || '').replace(/^data:[^,]*,/, '');
         if (!b64) return res.status(400).json({ ok: false, error: '파일이 없습니다' });
         const buf = Buffer.from(b64, 'base64'); if (buf.length > 12 * 1024 * 1024) return res.status(400).json({ ok: false, error: '파일이 너무 큽니다(12MB)' });
         const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
-        const cellStr = v => v == null ? '' : typeof v === 'object' ? (v.richText ? v.richText.map(t => t.text).join('') : v.text != null ? String(v.text) : v.result != null ? String(v.result) : String(v)) : String(v);
         // 날짜 = body.date > 파일 이름 「MM.DD」 + 올해 · 거래처 = 파일 이름의 (효돈) 꼴
         let date = isYmd(req.body?.date) ? req.body.date : null;
         if (!date) { const m = name.match(/(\d{1,2})\.(\d{1,2})/); if (m) date = kstDateStr().slice(0, 4) + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0'); }
         if (!date) return res.status(400).json({ ok: false, error: '발송일을 알 수 없어요 — 파일 이름에 「10.07」 꼴이 없으면 날짜를 골라 주세요' });
         const pm = name.match(/\(([^)]+)\)/); const partner = pm ? pm[1] : (name.replace(/\.xlsx?$/i, '').split(/[_\s]/)[0] || '');
-        // 운송장 시트 = 머리글에 「운송장번호」가 있는 시트(보통 Sheet2) · 받는 분·전화·주소·메시지·품목·수량은 머리글 이름으로
-        let rows = [];
-        wb.eachSheet(ws => {
-            if (rows.length) return; let h = 0, map = {};
-            for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const s = cellStr(c.value).replace(/\s/g, ''); if (s) mm[s] = i; }); if (mm['운송장번호']) { h = r; map = mm; } }
-            if (!h) return;
-            const find = (...keys) => { for (const k of keys) { const hit = Object.keys(map).find(x => x.includes(k)); if (hit) return map[hit]; } return 0; };
-            const cTr = map['운송장번호'], cNm = find('받는분', '수취인명', '수취인', '받는사람', '고객명'), cTel = find('받는분전화', '수취인전화', '전화', '연락처', '휴대폰'), cAd = find('받는분주소', '수취인주소', '주소'),
-                cMs = find('배송메세지', '배송메시지', '메세지', '메시지'), cOp = find('품목', '상품명', '옵션', '내용물', '품명'), cQ = find('수량', '박스수');
-            for (let r = h + 1; r <= ws.rowCount; r++) {
-                const row = ws.getRow(r); const tr = cjTrack.normTracking(cellStr(row.getCell(cTr).value)); if (tr.length < 10) continue;
-                const g = c => c ? cellStr(row.getCell(c).value).trim() : '';
-                rows.push({ tr, nm: g(cNm), tel: g(cTel), ad: g(cAd), ms: g(cMs), op: g(cOp), q: parseInt(g(cQ), 10) || null });
-            }
-        });
+        const rows = loisShipRows(wb);   // #838-1 공통 함수(종전 글자 그대로)
         if (!rows.length) return res.json({ ok: false, error: '운송장번호 머리글이 있는 시트를 못 찾았어요(LOIS 엑셀 Sheet2 인지 확인)' });
-        const merged = {}; for (const x of rows) { const m = merged[x.tr]; if (!m) merged[x.tr] = Object.assign({}, x); else { if (x.op && !m.op.includes(x.op)) m.op = m.op ? m.op + ' / ' + x.op : x.op; m.q = (m.q || 0) + (x.q || 0) || x.q; } }
-        // #610-C: 구매자 번호 = 첫 시트(머리글 「구매자연락처」)에서 「받는 분 번호 + 이름」으로 짝지어 붙임(선물 주문 손님이 문자로 물을 때 찾히게) · 못 찾으면 비움
-        let buyerN = 0;
-        try {
-            const smsLookup = require('./sms/lookup.js'); const bidx = smsLookup.makeBuyerIndex();
-            wb.eachSheet(ws => {
-                let h = 0, m = {};
-                for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const t = cellStr(c.value).replace(/\s/g, ''); if (t) mm[t] = i; }); if (mm['구매자연락처']) { h = r; m = mm; } }
-                if (!h) return; const cN = m['수취인명'], cT = m['수취인연락처1'], cB = m['구매자연락처']; if (!cN || !cT || !cB) return;
-                for (let r = h + 1; r <= ws.rowCount; r++) { const row = ws.getRow(r); bidx.add('', cellStr(row.getCell(cT).value), cellStr(row.getCell(cN).value), cellStr(row.getCell(cB).value)); }
-            });
-            for (const x of Object.values(merged)) { const f = bidx.find('', x.tel, x.nm); x.bp = f && f.buyer ? f.buyer : null; if (x.bp) buyerN++; }
-        } catch (e) { console.error('[배송조회] 구매자 번호 붙이기 실패(무시):', e.message); }
-        let n = 0;
-        for (const x of Object.values(merged)) {
-            await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at, buyer_phone)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upload',now(),$10) ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = COALESCE(NULLIF(delivery_shipments.partner,''), EXCLUDED.partner),
-                recipient = COALESCE(NULLIF(EXCLUDED.recipient,''), delivery_shipments.recipient), phone = COALESCE(NULLIF(EXCLUDED.phone,''), delivery_shipments.phone),
-                addr = COALESCE(NULLIF(EXCLUDED.addr,''), delivery_shipments.addr), option_text = COALESCE(NULLIF(EXCLUDED.option_text,''), delivery_shipments.option_text),
-                qty = COALESCE(EXCLUDED.qty, delivery_shipments.qty), memo = COALESCE(NULLIF(EXCLUDED.memo,''), delivery_shipments.memo), source = 'upload', uploaded_at = now(),
-                buyer_phone = COALESCE(NULLIF(EXCLUDED.buyer_phone,''), delivery_shipments.buyer_phone)`,
-                [x.tr, date, partner, x.nm, x.tel, x.ad, x.op, x.q, x.ms, x.bp || null]); n++;
-        }
+        const { n, buyerN } = await loisUpsertShipments(wb, rows, date, partner);
         res.json({ ok: true, date, partner, rows: rows.length, upserted: n, buyer_phone: buyerN });
     } catch (e) { res.status(500).json({ ok: false, error: '엑셀을 읽지 못했어요: ' + String(e.message).slice(0, 120) }); }
 });
 // ===== #594 택배 배송조회 — 끝 =====
+// ===== #838-1 자동 송장 등록 — 1단계(외부 쓰기 0 · 짝 맞추기 + 색인 + 등록 준비 dry) · 핵심은 invoice-auto.js · 계약 docs/838/838-api.md =====
+const invoiceAuto = require('./invoice-auto.js')(app, { pool, authMiddleware, adminOnly, writeAudit, adminActor, ExcelJS: require('exceljs'), kstToday: () => kstDateStr(),   /* #838-1 손질: ExcelJS 상수는 아래(13691)라 여기서 바로 require(TDZ 기동 사망 · 워커2) */
+    lois: { shipRows: loisShipRows, upsert: async (wb, rows, date, partner) => (await loisUpsertShipments(wb, rows, date, partner)).n },
+    fetchers: {   // 종전 「불러오기」 함수 그대로(읽기) · 쿠팡 상한 31일 · 카페24 90일
+        naver: async days => { if (!naverRelay.configured()) throw new Error('중계서버 환경변수 미설정'); return naverFetchInvoiceOrders(days); },
+        coupang: async days => { if (!naverRelay.configured()) throw new Error('중계서버 환경변수 미설정'); return coupangFetchInvoiceOrders(Math.min(days, 31)); },
+        cafe24: async days => cafe24.fetchInvoiceOrders(Math.min(days, 90)),
+    } });
 
 // ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====
 //   켜기 = agent_office_config 'sms_gateway' {"enabled":true,"mode":"record"} (record → draft → auto 순 · auto 는 대표 「고」 뒤) · env SMSGATE_USER/PASS/SIGNING_KEY(Render) · webhook 등록 = POST /api/sms/register-webhooks(관리자 1회)
@@ -19274,6 +19294,7 @@ app.use((err, req, res, next) => {
 process.on('unhandledRejection', (reason) => { try { console.error('[서버] 받지 않은 약속 거부(계속 실행):', (reason && reason.stack) || reason); } catch (_) { /* 로그 실패는 무시 */ } });
 // 서버 시작
 initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message)))
+    .then(() => invoiceAuto.initDB().catch(e => console.error('[#838 자동 송장] 표 생성 실패:', e.message)))   // #838-1
     .then(() => smsDesk.initDB().then(() => smsDesk.start()).catch(e => console.error('[문자] 표 생성 실패:', e.message)))   // #610
     .then(() => {
     app.listen(PORT, () => {

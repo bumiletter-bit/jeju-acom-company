@@ -1,3 +1,11 @@
+## v5.9.618 (2026-10-24) — #838 자동 송장 등록 1단계(카드까지 · 전송 0 · 대표 「고」 · 설계 정본 docs/838/838-자동송장등록-시공설계(정본).md)
+
+- **서버(워커3 · 새 invoice-auto.js · server.js +60/−39)**: POST /api/agent-office/invoice-auto/match = CJ(LOIS) 운송장 시트 xlsx(JSON+base64 · ≤4개 · 5MB) → 파일 검사 먼저(빈 목록 400 · 재조회 0) → 3채널 불러오기 재조회(naverFetchInvoiceOrders · coupangFetchInvoiceOrders ≤31 · cafe24.fetchInvoiceOrders ≤90 · 종전 함수 그대로 · 읽기) → 짝(받는분 이름+전화+주소 셋 다 · 수량2 = 작은 운송장 · 같은 품목 any · 다른 품목 상품명 · 입력삭제 = 같은 구매자 번호 운송장 스토어 주소 먼저 → 없으면 any · 현금 「!」 = 등록 0 · 그 밖 todo/unmatched) → 카드 JSON(전화·주소 원문 0) · 동시 409 · 같은 호출에서 delivery_shipments 색인도(LOIS 파서 loisShipRows·loisUpsertShipments 공통화 · 종전 /api/delivery/shipments/upload 응답·INSERT 바이트 동일) · POST …/register = **dry 고정**(관리자 · 멱등 열쇠 채널:주문번호 · 전송 함수 0) · 새 표 invoice_auto_runs(90일)·invoice_auto_items · 🔴 교차 점검이 TDZ(ExcelJS 선언 전 사용 → 기동 즉사)를 잡아 고침 · 로컬 기동 1회 확인.
+- **화면(워커1 · final-order.js 끝 IIFE +234 · css +38 · 기존 줄 무변경)**: 최종발주 맨 아래 「자동 송장 등록」 = 파일 고르기·끌어 놓기 → [짝 맞추기] → 요약 칩·채널별 줄·할 일 카드(고르기/수기) → [등록](관리자만 · 화면 안 확인 · 지금은 「시험 단계라 보내지 않아요」) → 결과 표 + [실패 줄 내려받기] · 옛 서버 404 = 숨김 · 운송장 4-4-4 표시 · 캐시 final-order.js 41 · css 28.
+- **카페24 scope**: cafe24.js SCOPE + `mall.write_order,mall.read_shipping`(송장 등록 = shipments POST 의 scope 는 WRITE_ORDER · 공식 문서 · 개발자센터 우리 앱에 먼저 등록함 · 🔴 #479 순서) → 배포 뒤 대표 재승인 1회.
+- 검증 = verify-838-invoice-auto 65/65 · verify-838-ui 104/104(둘 다 실DB·네트워크 0) · 교차 점검(워커2) 막을 것 0(TDZ 고침 뒤).
+- **전송(2단계) 전 필수(교차 점검)**: A register already 판정 = sent 일 때만(dry 준비 줄이 막지 않게) · B 쿠팡 orderId·vendorItemId 칸 · C 쿠팡 shipmentBoxId·카페24 order_id 단위 묶어 한 운송장 · D register 행 집기 잠금 · E invoice_auto_items 보관 정리.
+
 ## v5.9.617 (2026-10-24) — #837 문자 직원 알림 끄는 스위치(대표 「회사프로그램에 문자 알림 안 뜨게 · 승인 알림이 묻힘 · 미처리는 에이전트 오피스에서」 · 워커3 · sms/index.js +3/−1)
 
 - 설정 `sms_gateway.staff_notify`(행에 false 만 꺼짐 · 없음 = true 종전) → notifyStaff 첫 줄에서 return 0 = 문자 대화의 직원 알림(알림 종 + 폰 푸시 · 클레임·수신거부·봇 응대 끈 번호·해외·늦은 글·발송 실패·사진 등 20여 곳이 이 함수 하나를 지남) 전부 끔 · 5분 잠금 UPDATE 도 안 함. 텔레그램·sms_threads 상태·staff_why·미처리 집계·에이전트 오피스 「손님 n」 카드·문자 창 = 무접촉(그대로 보임). /api/sms/config 저장은 prev 와 합쳐 다시 쓰므로 다른 설정을 저장해도 false 유지.

@@ -722,3 +722,42 @@ html[data-ao-theme="dark"] .fo-info li[data-info-src="memo"] { background: color
 }
 /* #673 「직접 고치기」 머리의 작은 글 — 인디고 옅은 바탕 위 대비 4.39 → 5.3(주간만 · 야간은 토큰 그대로) */
 html:not([data-ao-theme="dark"]) .fo-fix > summary small { color: #586174; }
+
+/* #838-2 자동 송장 등록(최종발주 맨 아래 새 묶음 · final-order.js 끝의 별도 IIFE) — 기존 .fo 토큰·버튼·카드를 그대로 쓰고 새 조각만 */
+.fo-ia.busy .fo-btn.primary:not(:disabled) { opacity: .7; }
+.fo-ia-drop { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 14px 16px; border: 1.5px dashed var(--f-card-line); border-radius: 12px; background: var(--f-soft); transition: border-color 160ms var(--f-ease), background-color 160ms var(--f-ease); }
+.fo-ia-drop p { margin: 0; font-size: 13.5px; color: var(--f-ink); }
+.fo-ia-drop.on { border-color: var(--f-accent); background: var(--f-accent-soft); }
+.fo-ia-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.fo-ia-files li { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 44px; padding: 0 4px 0 10px; border: 1px solid var(--f-card-line); border-radius: 10px; background: #fff; font-size: 13px; }
+.fo-ia-fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fo-ia-files .fo-x { min-width: 44px; min-height: 44px; border-radius: 10px; font-size: 18px; }
+.fo-ia-sum span.warn { border-color: #FEC84B; background: #FFFCF5; color: #B54708; }
+.fo-ia-sum span.warn b { color: #B54708; }
+.fo-ia-ch li span em { font-style: normal; font-weight: 700; color: var(--f-ink); font-variant-numeric: tabular-nums; }
+.fo-ia-todo { display: flex; flex-direction: column; gap: 10px; }
+.fo-ia-todo .fo-pick select { min-width: 0; max-width: 100%; }
+.fo-ia-todo .fo-pick { flex-wrap: wrap; max-width: 100%; }
+.fo-ia-list summary { min-height: 44px; display: flex; align-items: center; font-size: 13.5px; font-weight: 600; cursor: pointer; color: var(--f-ink); }
+.fo-ia-list summary:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; border-radius: 8px; }
+.fo-ia-list summary { list-style: none; gap: 10px; }
+.fo-ia-list summary::-webkit-details-marker { display: none; }
+.fo-ia-list summary::before { content: ""; flex: none; width: 7px; height: 7px; border-right: 2px solid var(--f-sub); border-bottom: 2px solid var(--f-sub); transform: rotate(-45deg); transition: transform 160ms var(--f-ease); }
+.fo-ia-list[open] summary::before { transform: rotate(45deg); }
+.fo-ia-scroll { max-height: 360px; overflow: auto; border: 1px solid var(--f-line); border-radius: 10px; }
+.fo-ia-scroll table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.fo-ia-scroll th, .fo-ia-scroll td { padding: 7px 10px; border-bottom: 1px solid var(--f-line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.fo-ia-scroll th { position: sticky; top: 0; background: var(--f-soft); color: var(--f-sub); font-weight: 600; white-space: nowrap; }
+.fo-ia-scroll td { font-variant-numeric: tabular-nums; }
+.fo-ia-scroll th:first-child, .fo-ia-scroll td:first-child, .fo-ia-list .fo-ia-scroll td:nth-child(4) { white-space: nowrap; }
+.fo-ia-list .fo-ia-scroll table { min-width: 600px; }   /* 폰에서는 칸을 부수지 않고 틀 안에서 옆으로 밀어 봄 */
+.fo-ia-scroll tr.tot td { font-weight: 700; }
+.fo-ia-confirm { border-color: #C7CBFF; background: var(--f-accent-soft); }
+.fo-ia-result { display: flex; flex-direction: column; gap: 10px; }
+.fo-ia-result h3 small { margin-left: 6px; }
+@media (max-width: 640px) { .fo-ia-scroll table { font-size: 12px; } .fo-ia-scroll th, .fo-ia-scroll td { padding: 6px 8px; } }
+@media (prefers-reduced-motion: reduce) { .fo-ia-drop, .fo-ia-list summary::before { transition: none; } }
+html[data-ao-theme="dark"] .fo-ia-files li { background: var(--fd-bg); }
+html[data-ao-theme="dark"] .fo-ia-sum span.warn { border-color: var(--fd-warn-line); background: #262313; color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-ia-sum span.warn b { color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-ia-confirm { border-color: var(--fd-accent-line); background: var(--f-accent-soft); }

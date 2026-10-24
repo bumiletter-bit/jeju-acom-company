@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MALL_ID = 'akkome';
 const CLIENT_ID = 'mMdlm3cHGZwkVaem7wGDIB';                                  // 공개값 (Secret은 env)
 const REDIRECT_URI = 'https://jeju-acom-company.onrender.com/api/cafe24/callback'; // 앱 등록값과 한 글자도 다르면 실패
-const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community,mall.write_community,mall.read_category,mall.write_category,mall.read_customer,mall.read_promotion,mall.write_promotion';   // #479: 적립금(mall.*_mileage)은 개발자센터 권한 선택지에 없어 보류(9/30 실측 — 등록 안 된 스코프를 요청하면 재승인이 실패할 수 있어 넣지 않는다) · #248-③ 상품+상점+게시판+분류/진열 · #401 read_customer(가입 환영 — 🔴 개발자센터 권한 선택지에 privacy가 없어 customer로 실측 확정 8/24) · #341 promotion 2종(룰렛 쿠폰 자동발급 대비)
+const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community,mall.write_community,mall.read_category,mall.write_category,mall.read_customer,mall.read_promotion,mall.write_promotion,mall.write_order,mall.read_shipping';   // #838 송장 등록 = POST admin/shipments 의 scope 는 WRITE_ORDER(공식 문서 2026-09-01판 · write_shipping 아님) + read_shipping(GET carriers = 우리 몰 배송사 코드 확인) · 개발자센터 등록(10/24 총괄) 뒤에 넣음 · #479: 적립금(mall.*_mileage)은 개발자센터 권한 선택지에 없어 보류(9/30 실측 — 등록 안 된 스코프를 요청하면 재승인이 실패할 수 있어 넣지 않는다) · #248-③ 상품+상점+게시판+분류/진열 · #401 read_customer(가입 환영 — 🔴 개발자센터 권한 선택지에 privacy가 없어 customer로 실측 확정 8/24) · #341 promotion 2종(룰렛 쿠폰 자동발급 대비)
 const API_BASE = `https://${MALL_ID}.cafe24api.com`;
 
 let _pool = null;
