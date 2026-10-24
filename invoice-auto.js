@@ -52,8 +52,19 @@ function prodMatch(orderOpt, shipProd) {
     return !!tail && tail.length >= 4 && (tail === b || b.includes(tail));
 }
 
-// 짝 맞추기(순수 함수 · 검증이 바로 부름) — 정본 2절 규칙표
-function matchShipments({ ships, orders }) {
+// #841(대표 10/25 첫 실등록): 채널 옵션 「…하우스감귤 가정용 - 4.5kg(로얄과)」 ↔ 운송장 상품명 = 단가표 이름 「고당도 하우스감귤 / 상품 및 과수: 가정용 - 4.5kg(로얄과)」 는 글자 포함으로 안 맞음
+//   → 최종발주·송장변환과 같은 품목 변환(app.js matchProduct · price-check.js optionKey 경유 · 전체 이름 일치만)으로 단가표 이름을 구해 같을 때도 같은 품목(새 넓은 규칙 없음)
+let _pc; function pcMod() { if (_pc === undefined) { try { _pc = require('./price-check.js'); } catch (e) { _pc = null; } } return _pc; }
+function canonOf(text, pricingNames) {
+    const m = pcMod(); if (!m || typeof m.optionKey !== 'function' || !String(text || '').trim()) return '';
+    try { const r = m.optionKey([String(text)], Array.isArray(pricingNames) ? pricingNames : []); return r && r.by === 'match' ? normProd(r.label) : ''; } catch (e) { return ''; }
+}
+const prodHit = (o, s) => prodMatch(o.option, s.product) || (!!o.canon && o.canon === s.canon);
+
+// 짝 맞추기(순수 함수 · 검증이 바로 부름) — 정본 2절 규칙표 · pricingNames = 그날 단가표 이름(#841 · 없으면 종전 글자 비교만 + 표준명)
+function matchShipments({ ships, orders, pricingNames }) {
+    for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
+    for (const s of ships) if (s.canon === undefined) s.canon = canonOf(s.product, pricingNames) || normProd(s.product);
     const byT = (a, b) => (a.tracking < b.tracking ? -1 : a.tracking > b.tracking ? 1 : 0);
     const cash = ships.filter(s => s.cash).sort(byT), live = ships.filter(s => !s.cash).sort(byT);
     const assign = new Map();   // order_key → { o, ships:[], rule, todo?:[ships] }
@@ -75,11 +86,19 @@ function matchShipments({ ships, orders }) {
         // 같은 분 다른 품목 = 운송장 상품명으로 가름 · 운송장마다 맞는 「품목 묶음」이 정확히 하나여야(아니면 그 열쇠 주문 전부 할 일)
         const groups = new Map(); let bad = false;
         for (const s of ss) {
-            const hit = os.filter(o => prodMatch(o.option, s.product)); const hp = new Set(hit.map(o => normProd(o.option)));
+            const hit = os.filter(o => prodHit(o, s)); const hp = new Set(hit.map(o => normProd(o.option)));
             if (hp.size !== 1) { bad = true; break; }
             const gk = [...hp][0]; if (!groups.has(gk)) groups.set(gk, { os: hit, ss: [] }); groups.get(gk).ss.push(s);
         }
-        if (bad) { os.forEach(o => todos.push({ o, rule: 'todo_product', options: ss })); continue; }
+        if (bad) {   // #841 ② 그래도 모르면 할 일 — 이 주문 품목에만 맞는 운송장이 딱 1장이고 주문 수량 1 이면 미리 골라 둠(확인 필요 · 사람이 [등록] 전 봄)
+            os.forEach(o => {
+                const mine = ss.filter(s => prodHit(o, s) && os.every(x => !prodHit(x, s) || normProd(x.option) === normProd(o.option)));
+                const solo = os.filter(x => normProd(x.option) === normProd(o.option)).length === 1;
+                const sg = (o.qty === 1 && solo && mine.length === 1) ? mine[0].tracking : null;
+                todos.push({ o, rule: 'todo_product', options: ss, suggest: sg, suggest_why: sg ? '확인 필요 — 품목이 같은 운송장 1장' : null });
+            });
+            continue;
+        }
         for (const g of groups.values()) { if (g.os.length === 1) give(g.os[0], g.ss, 'by_product'); else distribute(g.os, g.ss, 'same_item_any'); }
     }
     // 입력삭제(주문 통째 개별 주소 = 현금파일 줄로 나감): 운송장이 안 붙은 주문 → 같은 구매자 번호(시트2 보내는분 전화)로 나간 남은 운송장
@@ -90,10 +109,14 @@ function matchShipments({ ships, orders }) {
     for (const [buyer, os] of tlByBuyer) {
         const cand = leftover.filter(s => s.senderTel === buyer && !used.has(s.tracking)); if (!cand.length) continue;
         for (const o of os) {
-            const mine = cand.filter(s => !used.has(s.tracking) && prodMatch(o.option, s.product)); if (!mine.length) continue;
+            const mine = cand.filter(s => !used.has(s.tracking) && prodHit(o, s)); if (!mine.length) continue;
             // 그 구매자의 운송장 안 붙은 주문 가운데 같은 품목이 둘 이상이면 어느 주문 것인지 모름(지정발송일 주문과 섞일 수 있음) → 할 일
-            const rivals = os.filter(x => x !== o && prodMatch(x.option, mine[0].product));
-            if (rivals.length) { todos.push({ o, rule: 'todo_pick', options: mine }); todoKeys.add(o.channel + ':' + o.order_key); continue; }
+            const rivals = os.filter(x => x !== o && prodHit(x, mine[0]));
+            if (rivals.length) {   // #841 ② 주문 주소와 같은 운송장이 1장이고 같은 주소의 맞수 주문이 없을 때만 미리 고름
+                const sameAddr = mine.filter(s => normAddr(s.addr) === o.kAddr);
+                const sg = sameAddr.length === 1 && !rivals.some(x => x.kAddr === o.kAddr) ? sameAddr[0].tracking : null;
+                todos.push({ o, rule: 'todo_pick', options: mine, suggest: sg, suggest_why: sg ? '확인 필요 — 주문 주소와 같은 운송장 1장' : null }); todoKeys.add(o.channel + ':' + o.order_key); continue;
+            }
             const store = mine.find(s => normAddr(s.addr) === o.kAddr);
             const pick = store || mine[0]; used.add(pick.tracking);
             give(o, [pick], store ? 'indiv_store_addr' : 'indiv_any');
@@ -106,26 +129,38 @@ function matchShipments({ ships, orders }) {
         if (used.has(s.tracking) || todoTr.has(s.tracking)) continue;
         if (validTel(s.senderTel) && assignedBuyers.has(s.senderTel)) extra.push(s); else unmatched.push(s);
     }
+    // #841 손질(워커3 점검): 미리 고른 운송장이 이미 다른 주문에 붙었거나(assign·입력삭제 used) 두 할 일이 같은 장을 골랐으면 미리 고르기를 뺀다
+    const taken = new Set(used); assign.forEach(a => a.ships.forEach(s => taken.add(s.tracking)));
+    const sgN = new Map(); todos.forEach(t => { if (t.suggest) sgN.set(t.suggest, (sgN.get(t.suggest) || 0) + 1); });
+    todos.forEach(t => { if (t.suggest && (taken.has(t.suggest) || sgN.get(t.suggest) > 1)) { t.suggest = null; t.suggest_why = null; } });
     return { assign: [...assign.values()], todos, cash, extra, unmatched };
 }
 
-// 응답·저장 꼴(손님 이름 가림 · 번호 끝 4자리 · 주소 0)
+// 응답 꼴 — #841 ③ 화면용 전체 이름·번호(recipient_name·recipient_tel · 로그인 직원 응답에만) + 가림(recipient_masked) · 주소 0
+//   🔴 DB(invoice_auto_runs.result)·audit 에는 stripPII 로 뺀 꼴만 저장(종전처럼 가림만)
+const PII_KEYS = ['recipient_name', 'recipient_tel'];
+const who = (name, tel) => ({ recipient_name: String(name == null ? '' : name).trim(), recipient_tel: String(tel == null ? '' : tel).trim() });
+function stripPII(card) {
+    const un = x => { const y = { ...x }; PII_KEYS.forEach(k => { delete y[k]; }); if (Array.isArray(y.pick_options)) y.pick_options = y.pick_options.map(un); return y; };
+    const L = a => (Array.isArray(a) ? a.map(un) : a);
+    return { ...card, rows: L(card.rows), cash: L(card.cash), extra: L(card.extra), unmatched: L(card.unmatched) };
+}
 function buildCard(m, orders) {
     const rows = []; let n = 0;
     const by = { naver: { auto: 0, todo: 0, cash: 0, skipped: 0 }, coupang: { auto: 0, todo: 0, cash: 0, skipped: 0 }, cafe24: { auto: 0, todo: 0, cash: 0, skipped: 0 } };
-    const shipOpt = s => ({ tracking: s.tracking, recipient_masked: maskRecipient(s.name, s.tel), product: s.product });
+    const shipOpt = s => ({ tracking: s.tracking, recipient_masked: maskRecipient(s.name, s.tel), ...who(s.name, s.tel), product: s.product });
     const boxItems = new Map(); for (const o of orders) if (o.channel === 'coupang' && o.box_id) { if (!boxItems.has(o.box_id)) boxItems.set(o.box_id, []); if (o.vendor_item_id && !boxItems.get(o.box_id).includes(o.vendor_item_id)) boxItems.get(o.box_id).push(o.vendor_item_id); }
     const sendCols = o => ({ order_id: o.order_id || null, vendor_item_id: o.vendor_item_id || null, box_vendor_items: o.channel === 'coupang' ? (boxItems.get(o.box_id) || [o.vendor_item_id]).filter(Boolean) : null });   // #838-4 B 전송 칸(쿠팡 = 상자 안 옵션 전부)
     for (const a of m.assign) {
         const o = a.o, ss = a.ships.slice().sort((x, y) => (x.tracking < y.tracking ? -1 : 1));
-        rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), option: o.option, qty: o.qty,
+        rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), ...who(o.name, o.tel), option: o.option, qty: o.qty,
             tracking: ss[0].tracking, tracking_all: ss.map(s => s.tracking), rule: a.rule, status: 'auto', pick_options: [] });
         by[o.channel].auto++; by[o.channel].skipped += ss.length - 1;
     }
     for (const t of m.todos) {
         const o = t.o;
-        rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), option: o.option, qty: o.qty,
-            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt) });
+        rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), ...who(o.name, o.tel), option: o.option, qty: o.qty,
+            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt), suggest: t.suggest || null, suggest_why: t.suggest ? (t.suggest_why || '확인 필요') : null });
         by[o.channel].todo++;
     }
     const assignedKeys = new Set(m.assign.map(a => a.o.channel + ':' + a.o.order_key).concat(m.todos.map(t => t.o.channel + ':' + t.o.order_key)));
@@ -192,7 +227,9 @@ module.exports = function mountInvoiceAuto(app, d) {
                 catch (e) { fetchInfo[ch] = { ok: false, orders: 0, error: String((e && e.message) || e).slice(0, 120) }; }
             }
             const ships = []; parsed.forEach(p => ships.push(...normShips(p.rows.map(r => ({ ...r, partner: p.partner })), p.partner)));
-            const m = matchShipments({ ships, orders });
+            let pricingNames = [];   // #841 그날 단가표 이름(/api/invoice/catalog 와 같은 SQL · 읽기) · 실패하면 빈 목록(표준명·글자 비교로)
+            try { const pr = await pool.query(`SELECT items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [shipDate]); const set = new Set(); pr.rows.forEach(row => (row.items || []).forEach(it => { if (it && it.name) set.add(it.name); })); pricingNames = [...set]; } catch (e) { pricingNames = []; }
+            const m = matchShipments({ ships, orders, pricingNames });
             const card = buildCard(m, orders);
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;
@@ -202,7 +239,7 @@ module.exports = function mountInvoiceAuto(app, d) {
             await pool.query(`DELETE FROM invoice_auto_runs WHERE created_at < now() - interval '90 days'`);
             await pool.query(`DELETE FROM invoice_auto_items WHERE created_at < now() - interval '90 days'`);   // #838-4 E
             const ins = await pool.query(`INSERT INTO invoice_auto_runs (created_by, ship_date, file_hash, files, fetch_info, summary, result) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-                [(adminActor(req) || {}).name || null, shipDate, hash.digest('hex').slice(0, 16), JSON.stringify(filesOut), JSON.stringify(fetchInfo), JSON.stringify(summary), JSON.stringify(card)]);
+                [(adminActor(req) || {}).name || null, shipDate, hash.digest('hex').slice(0, 16), JSON.stringify(filesOut), JSON.stringify(fetchInfo), JSON.stringify(summary), JSON.stringify(stripPII(card))]);
             const runId = ins.rows[0].id;
             await writeAudit({ action: 'invoice_auto_match', targetType: 'invoice_auto_run', targetId: runId, changes: { ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, by_channel: card.by_channel }, source: 'invoice-auto', actor: adminActor(req) });
             res.json({ ok: true, run_id: runId, ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, ...card });
@@ -296,6 +333,10 @@ module.exports = function mountInvoiceAuto(app, d) {
                 if (!tr) { manual++; items.push({ ...base, tracking: null, idem: null, state: 'manual' }); continue; }
                 chosen.push({ row, tr });
             }
+            // #841 손질(워커3 점검): 같은 운송장이 서로 다른 주문 두 줄에 쓰이면 둘 다 보내지 않고 수기(쿠팡 같은 상자 · 카페24 같은 주문번호 = 한 상자라 제외)
+            const grpOf = row => row.channel === 'coupang' ? 'coupang:' + row.box_id : row.channel === 'cafe24' ? 'cafe24:' + (row.order_id || row.box_id) : row.channel + ':' + row.order_key;
+            const trGrp = new Map(); chosen.forEach(c => { if (!trGrp.has(c.tr)) trGrp.set(c.tr, new Set()); trGrp.get(c.tr).add(grpOf(c.row)); });
+            for (let i = chosen.length - 1; i >= 0; i--) { const c = chosen[i]; if (trGrp.get(c.tr).size > 1) { manual++; items.push({ id: c.row.id, channel: c.row.channel, order_key: c.row.order_key, box_id: c.row.box_id, tracking: c.tr, idem: null, state: 'manual', error: '같은 운송장 두 줄 — 어느 주문 것인지 채널 화면에서 확인해 주세요' }); chosen.splice(i, 1); } }
             // ② 전송 단위(쿠팡 = 상자 · 운송장 = 상자 안 가장 작은 것 · 상자의 다른 줄이 건너뜀·수기면 상자째 수기)
             const units = new Map(); const blockedBox = new Set(items.filter(x => x.channel === 'coupang' && (x.state === 'manual' || x.state === 'skipped')).map(x => x.box_id));
             for (const c of chosen) {
@@ -407,3 +448,5 @@ module.exports.normShips = normShips;
 module.exports.buildCard = buildCard;
 module.exports.prodMatch = prodMatch;
 module.exports.maskRecipient = maskRecipient;
+module.exports.stripPII = stripPII;
+module.exports.canonOf = canonOf;

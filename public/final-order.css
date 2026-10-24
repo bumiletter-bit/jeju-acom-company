@@ -794,3 +794,32 @@ html[data-ao-theme="dark"] .fo-note.warn { --n-bg: var(--fd-warn-bg); --n-line: 
 html[data-ao-theme="dark"] .fo-note.is-empty { --n-bg: var(--f-soft); --n-line: var(--f-line); --n-bar: var(--f-card-line); --n-key: var(--f-sub); --n-num: var(--f-sub); }
 html[data-ao-theme="dark"] .fo-note { border-color: var(--n-line); border-left-color: var(--n-bar); background: var(--n-bg); }
 .fo-note .fo-settle-note { color: var(--n-key); font-weight: 400; }
+
+/* #841 자동 송장 등록 손질 — 미리 고른 운송장 「확인 필요」(주황 글) · 보낸 결과 팝업(인디고 · 44px · Esc·바깥 닫힘) */
+.fo-ia-sg { font-size: 13px; font-weight: 600; color: #B54708; overflow-wrap: anywhere; }
+.fo-iam { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 24, 40, .5); }
+.fo-iam-box { width: 100%; max-width: 520px; max-height: calc(100dvh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 20px; background: #fff; color: var(--f-ink); border: 1px solid var(--f-card-line); border-top: 4px solid var(--f-accent); border-radius: 14px; box-shadow: 0 24px 64px -12px rgba(16, 24, 40, .4); animation: fo-in 200ms var(--f-ease); }
+.fo-iam-box[data-ok="false"] { border-top-color: #F59E0B; }
+.fo-iam-box h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.fo-iam-big { margin: 0; font-size: 22px; font-weight: 700; color: #067647; }
+.fo-iam-line { margin: 0; font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; word-break: keep-all; overflow-wrap: anywhere; }
+.fo-iam-line.warn { color: #8A4B00; }
+.fo-iam-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fo-iam-list li { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 9px 12px; border: 1px solid #FBDDA6; border-left: 4px solid #F59E0B; border-radius: 10px; background: #FFF7E6; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.fo-iam-list li[data-k="unknown"] { border-color: #FDA29B; border-left-color: #D92D20; background: #FEF3F2; }
+.fo-iam-k { grid-row: span 2; font-weight: 700; color: #8A4B00; }
+.fo-iam-list li[data-k="unknown"] .fo-iam-k { color: var(--f-err); }
+.fo-iam-t { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fo-iam-why { color: var(--f-sub); }
+.fo-iam-box .fo-acts { justify-content: flex-end; margin-top: 4px; }
+.fo-iam-box .fo-btn { min-height: 44px; }
+@media (prefers-reduced-motion: reduce) { .fo-iam-box { animation: none; } }
+html[data-ao-theme="dark"] .fo-ia-sg { color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-iam-box { background: var(--fd-card); border-color: var(--f-card-line); border-top-color: #8C94FF; }
+html[data-ao-theme="dark"] .fo-iam-box[data-ok="false"] { border-top-color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-iam-big { color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo-iam-line.warn, html[data-ao-theme="dark"] .fo-iam-k { color: #FBCB6E; }
+html[data-ao-theme="dark"] .fo-iam-list li { border-color: var(--fd-warn-line); border-left-color: var(--fd-warn); background: var(--fd-warn-bg); }
+html[data-ao-theme="dark"] .fo-iam-list li[data-k="unknown"] { border-color: var(--fd-err-line); border-left-color: var(--f-err); background: var(--fd-err-bg); }
+.fo-iam-no { white-space: nowrap; }
+.fo.iam-open .fo-float { visibility: hidden; }   /* 팝업이 떠 있는 동안 「↑ 맨 위」 등 떠 있는 단추를 숨김 */

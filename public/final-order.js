@@ -2521,8 +2521,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     const isAdmin = () => typeof currentUser !== 'undefined' && !!currentUser && currentUser.role === 'admin';
     const call = (path, body) => window.api(API + path, 'POST', body, { timeoutMs: 180000 });
     const tno = v => { const s = String(v == null ? '' : v), d = s.replace(/\D/g, ''); return d.length === 12 ? d.replace(/(\d{4})(\d{4})(\d{4})/, '$1-$2-$3') : s; };   // 운송장 = 숫자 12자리(서버) → 4-4-4 로 끊어 보이기(값은 그대로)
-    const partnerOf = name => { const m = String(name || '').match(/\(([^)]+)\)/); return m ? m[1].trim() : '?'; };   // = 서버 규칙(파일 이름 괄호)
-    const ia = { probed: false, alive: false, busy: false, files: [], res: null, picks: new Map(), reg: null, ask: false, sent: false };
+    // #841 이름·연락처 전체(서버 recipient_name·recipient_tel) · 옛 서버면 마스킹 글
+    const who = x => { if (!x) return ''; const n = String(x.recipient_name || '').trim(), p = String(x.recipient_tel || '').trim(); return n || p ? [n, p].filter(Boolean).join(' · ') : (x.recipient_masked || ''); };
+    const ia = { probed: false, alive: false, busy: false, files: [], res: null, picks: new Map(), sugg: new Set(), reg: null, sent: false };
 
     function html() {
         return `
@@ -2581,7 +2582,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function drawFiles() {
         const ul = $('fo-ia-files');
         ul.hidden = !ia.files.length;
-        ul.innerHTML = ia.files.map((f, i) => { const p = partnerOf(f.name); return `<li><span class="fo-tag" data-k="${p === '?' ? 'cash' : 'pick'}">${esc(p === '?' ? '거래처 ?' : p)}</span><span class="fo-ia-fname" title="${esc(f.name)}">${esc(f.name)}</span><button type="button" class="fo-x" data-ia-rm="${i}" aria-label="${esc(f.name)} 빼기" title="빼기">×</button></li>`; }).join('');
+        ul.innerHTML = ia.files.map((f, i) => { return `<li><span class="fo-ia-fname" title="${esc(f.name)}">${esc(f.name)}</span><button type="button" class="fo-x" data-ia-rm="${i}" aria-label="${esc(f.name)} 빼기" title="빼기">×</button></li>`; }).join('');
         sync();
     }
     const readB64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => no(new Error(f.name + ' 파일을 읽지 못했어요')); r.readAsDataURL(f); });
@@ -2593,7 +2594,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const sb = $('fo-ia-send'); if (sb) sb.disabled = ia.busy || ia.sent;
         $('fo-ia').classList.toggle('busy', ia.busy);
     }
-    function resetOut() { ia.res = null; ia.picks = new Map(); ia.reg = null; ia.ask = false; ia.sent = false; const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
+    function resetOut() { ia.res = null; ia.picks = new Map(); ia.sugg = new Set(); ia.reg = null; ia.sent = false; closeModal(false); const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
 
     // ── 짝 맞추기 ────────────────────────────────────────────────────────
     async function match() {
@@ -2605,11 +2606,13 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             const files = []; for (const f of ia.files) files.push({ name: f.name, data: await readB64(f) });
             const r = await call('match', { files });
             if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
-            ia.res = r; say(''); render();
+            ia.res = r; seedSuggest(); say(''); render();
         } catch (err) { say(err && err.message ? err.message : String(err), true); }
         finally { clearInterval(tick); ia.busy = false; sync(); }
     }
     const todoRows = () => ((ia.res && ia.res.rows) || []).filter(r => r.status === 'todo');
+    // #841 서버가 미리 고른 운송장(suggest · 고를 목록 안의 것만) = 선택해 두고 「확인 필요」 · 사람이 바꾸면 「고름」
+    function seedSuggest() { todoRows().forEach(x => { const v = x.suggest == null ? '' : String(x.suggest); if (v && (x.pick_options || []).some(o => String(o.tracking) === v)) { ia.picks.set(x.id, v); ia.sugg.add(x.id); } }); }
     const todoLeft = () => todoRows().filter(r => !ia.picks.has(r.id)).length;
 
     function render() {
@@ -2627,16 +2630,16 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             </div>
             <ul class="fo-ch fo-ia-ch">${CH.map(chRow).join('')}</ul>
             <div class="fo-ia-todo" id="fo-ia-todo">${todo.length ? todo.map(cardHtml).join('') : '<p class="fo-done">고를 것이 없어요 · 전부 자동으로 짝이 맞았어요</p>'}</div>
-            ${listHtml(`자동 ${auto.length}`, auto, x => [CH_LABEL[x.channel] || x.channel, x.recipient_masked, `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
-            ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], x => ['', x.recipient_masked, x.product, tno(x.tracking), x.why])}
-            ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], x => ['', x.recipient_masked, x.product || '', tno(x.tracking), x.why])}
-            ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], x => ['', x.recipient_masked, x.product, tno(x.tracking), x.why])}
+            ${listHtml(`자동 ${auto.length}`, auto, x => [CH_LABEL[x.channel] || x.channel, who(x), `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
+            ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], x => ['', who(x), x.product, tno(x.tracking), x.why])}
+            ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], x => ['', who(x), x.product || '', tno(x.tracking), x.why])}
+            ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], x => ['', who(x), x.product, tno(x.tracking), x.why])}
             <div class="fo-acts">
                 <button type="button" class="fo-btn primary" id="fo-ia-reg">등록</button>
                 <span class="fo-msg" id="fo-ia-reg-msg" role="status"></span>
             </div>
-            <div class="fo-reset-confirm fo-ia-confirm" id="fo-ia-confirm" role="alertdialog" aria-labelledby="fo-ia-q" hidden></div>
-            <div class="fo-ia-result" id="fo-ia-result" hidden></div>`;
+            <div class="fo-ia-result" id="fo-ia-result" hidden></div>
+            <div class="fo-reset-confirm fo-ia-confirm send" id="fo-ia-confirm" role="alertdialog" aria-labelledby="fo-ia-q" hidden></div>`;
         out.hidden = false; regNote(); sync();
     }
     const trk = x => { const a = x.tracking_all || []; return tno(x.tracking || '') + (a.length > 1 ? ` 외 ${a.length - 1}` : ''); };
@@ -2645,18 +2648,18 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         return `<details class="fo-ia-list"><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
     }
     function cardHtml(x) {
-        const v = ia.picks.get(x.id), done = v != null;
-        const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(o.recipient_masked)} · ${esc(o.product || '')}</option>`).join('');
-        return `<div class="fo-card" data-state="${done ? 'done' : 'open'}" data-ia-id="${esc(x.id)}">
-            <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(CH_LABEL[x.channel] || x.channel)}</span><b>${esc(x.recipient_masked)} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
+        const v = ia.picks.get(x.id), done = v != null, sg = done && ia.sugg.has(x.id);
+        const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(who(o))} · ${esc(o.product || '')}</option>`).join('');
+        return `<div class="fo-card" data-state="${sg ? 'open' : done ? 'done' : 'open'}" data-ia-id="${esc(x.id)}">
+            <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(CH_LABEL[x.channel] || x.channel)}</span><b>${esc(who(x))} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
             <div class="fo-card-body"><div class="fo-line"><span>왜</span><p>${esc(RULE[x.rule] || x.rule)}</p></div><div class="fo-line"><span>주문번호</span><p>${esc(x.order_key)}</p></div></div>
-            <div class="fo-card-acts"><label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(x.recipient_masked)} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}</div>
+            <div class="fo-card-acts"><label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(who(x))} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${sg ? `<span class="fo-ia-sg">${esc(x.suggest_why || '확인 필요 · 미리 고름')}</span>` : done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}</div>
         </div>`;
     }
     function onPick(e) {
         const sel = e.target.closest('select[data-ia-pick]'); if (!sel || ia.busy || ia.reg) return;
         const id = sel.dataset.iaPick, v = sel.value;
-        if (!v) ia.picks.delete(id); else ia.picks.set(id, v);
+        ia.sugg.delete(id); if (!v) ia.picks.delete(id); else ia.picks.set(id, v);
         const card = sel.closest('.fo-card'), row = todoRows().find(x => x.id === id);
         if (card && row) { card.outerHTML = cardHtml(row); const ns = document.querySelector(`select[data-ia-pick="${CSS.escape(id)}"]`); if (ns) ns.focus({ preventScroll: true }); }
         const sp = $('fo-ia-out').querySelector('.fo-ia-sum span:nth-child(2)'); if (sp) sp.classList.toggle('warn', todoLeft() > 0);
@@ -2665,28 +2668,16 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function regNote() {
         const m = $('fo-ia-reg-msg'); if (!m) return;
         m.classList.remove('err');
-        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : '먼저 준비만 해요 — 채널에 보내기 전에 한 번 더 물어요';
-    }
-    function counts() {
-        const rows = (ia.res && ia.res.rows) || [], n = { naver: 0, coupang: 0, cafe24: 0 }; let manual = 0;
-        rows.forEach(x => { const v = x.status === 'todo' ? ia.picks.get(x.id) : x.tracking; if (v === 'manual') manual++; else if (v && n[x.channel] != null) n[x.channel]++; });
-        return { n, manual };
+        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : (ia.sugg.size ? `미리 고른 ${ia.sugg.size}건(주황)을 확인해 주세요 · ` : '') + '[등록] = 준비만 해요 · 채널에 보내기 전에 한 번 더 물어요';
     }
     // #838-5 두 단계: [등록] = 준비(dry · 채널 전송 0 · 같은 실행에서 다시 해도 됨) → 서버 설정 send_enabled 가 켜져 있으면 [채널에 보내기] + 확인 한 번(되돌릴 수 없음)
-    function askConfirm(send) {
-        const box = $('fo-ia-confirm');
-        if (send) {
-            const g = ia.reg, rd = (g && g.ready) || {}, tot = CH.reduce((a, c) => a + (rd[c] || 0), 0);
-            box.innerHTML = `<p id="fo-ia-q"><b>채널에 실제로 보내요 · 되돌릴 수 없어요.</b> ${CH.map(ch => `${CH_LABEL[ch]} ${rd[ch] || 0}건`).join(' · ')} = ${tot}건을 발송처리해요. 틀린 송장은 채널에서 취소할 수 없어요.</p>
-                <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-send-yes">보내기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
-            box.classList.add('send'); $('fo-ia-send').closest('.fo-acts').after(box);
-            box.hidden = false; $('fo-ia-send-yes').focus({ preventScroll: true }); return;
-        }
-        const c = counts();
-        box.innerHTML = `<p id="fo-ia-q"><b>등록 준비를 할까요?</b> ${CH.map(ch => `${CH_LABEL[ch]} ${c.n[ch]}건`).join(' · ')}${c.manual ? ` · 수기 ${c.manual}건` : ''}. 이 단계에서는 채널에 보내지 않아요.</p>
-            <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-yes">준비하기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
-        box.classList.remove('send'); $('fo-ia-reg').closest('.fo-acts').after(box);
-        box.hidden = false; $('fo-ia-yes').focus({ preventScroll: true });
+    //   #841(대표 10/25): [등록]은 묻지 않고 바로 준비 조회 · 보내기 확인(주황)만 남김
+    function askSend() {
+        const box = $('fo-ia-confirm'), g = ia.reg, rd = (g && g.ready) || {}, tot = CH.reduce((a, c) => a + (rd[c] || 0), 0);
+        box.innerHTML = `<p id="fo-ia-q"><b>채널에 실제로 보내요 · 되돌릴 수 없어요.</b> ${CH.map(ch => `${CH_LABEL[ch]} ${rd[ch] || 0}건`).join(' · ')} = ${tot}건을 발송처리해요. 틀린 송장은 채널에서 취소할 수 없어요.</p>
+            <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-send-yes">보내기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
+        $('fo-ia-send').closest('.fo-acts').after(box);
+        box.hidden = false; $('fo-ia-send-yes').focus({ preventScroll: true });
     }
     const picksNow = () => { const p = {}; todoRows().forEach(x => { p[x.id] = ia.picks.get(x.id); }); return p; };
     async function register() {
@@ -2707,7 +2698,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         try {
             const r = await call('register', { run_id: ia.res.run_id, picks: picksNow(), skip: [], dry: false });
             if (!r || !r.ok) throw Object.assign(new Error((r && r.error) || '결과를 받지 못했어요'), { status: 0 });
-            ia.reg = r; m.textContent = ''; drawResult();
+            ia.reg = r; m.textContent = ''; drawResult(); openModal();
         } catch (err) {
             const st = err && err.status, b = (err && err.body) || {};
             if (st === 409 && b.dry === true && b.send_enabled === false) { ia.sent = false; ia.reg = Object.assign({}, ia.reg, b, { ok: true }); drawResult(); say2('전송이 꺼져 있어요 — 준비만 저장했어요(총괄이 켜면 다시 보낼 수 있어요)'); }
@@ -2721,9 +2712,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function failRows() {
         const r = ia.res, g = ia.reg, byId = new Map(((r && r.rows) || []).map(x => [x.id, x])), out = [], seen = new Set();
         const WHY = { failed: '채널이 거절', unknown: '모름 · 다시 안 보냄 · 채널 화면에서 확인', manual: '수기' };
-        ((g && g.items) || []).filter(it => !/^(ready|already|sent|skipped)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; seen.add(it.id); out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', x.recipient_masked || '', x.option || '', it.tracking || '', (WHY[it.state] || '전송 안 됨(' + (it.state || '?') + ')') + (it.error ? ' · ' + it.error : '')]); });
-        todoRows().filter(x => ia.picks.get(x.id) === 'manual' && !seen.has(x.id)).forEach(x => out.push([CH_LABEL[x.channel] || x.channel, x.order_key, x.recipient_masked, x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule)]));
-        ((r && r.unmatched) || []).forEach(x => out.push(['', '', x.recipient_masked, x.product || '', x.tracking, x.why || '주문 없음']));
+        ((g && g.items) || []).filter(it => !/^(ready|already|sent|skipped)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; seen.add(it.id); out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', who(x), x.option || '', it.tracking || '', (WHY[it.state] || '전송 안 됨(' + (it.state || '?') + ')') + (it.error ? ' · ' + it.error : '')]); });
+        todoRows().filter(x => ia.picks.get(x.id) === 'manual' && !seen.has(x.id)).forEach(x => out.push([CH_LABEL[x.channel] || x.channel, x.order_key, who(x), x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule)]));
+        ((r && r.unmatched) || []).forEach(x => out.push(['', '', who(x), x.product || '', x.tracking, x.why || '주문 없음']));
         return out;
     }
     function drawResult() {
@@ -2731,6 +2722,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const items = g.items || [], byId = new Map(((ia.res && ia.res.rows) || []).map(x => [x.id, x])), fails = failRows();
         const per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
         const sum = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0);
+        const held = items.filter(it => it.state === 'manual' && it.error), heldHtml = () => held.length ? `<ul class="fo-ia-bad">${held.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="failed"><b>수기 · 등록 안 함</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''} · ${esc(it.error)}</span></li>`; }).join('')}</ul>` : '';
         let head, table, extra = '';
         if (g.dry === false) {
             const cf = g.confirmed;
@@ -2741,7 +2733,8 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             const bad = items.filter(it => it.state === 'failed' || it.state === 'unknown');
             if (cf && cf.checked) extra += `<p class="fo-hint">네이버 발송 상태 확인 ${Number(cf.naver) || 0}/${cf.checked}건</p>`;
             else if (cf && cf.error) extra += `<p class="fo-hint">네이버 발송 상태 확인을 못 했어요(${esc(cf.error)}) — 보낸 결과는 위 표 그대로예요</p>`;
-            if (bad.length) extra += `<ul class="fo-ia-bad">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><b>${it.state === 'unknown' ? '모름 · 다시 안 보냄 · 채널 화면에서 확인' : '실패 · 다음 [짝 맞추기] 때 다시 보낼 수 있어요'}</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(x.recipient_masked || '')} · ${esc(it.order_key || '')} · ${esc(tno(it.tracking))}${it.error ? ' · ' + esc(it.error) : ''}</span></li>`; }).join('')}</ul>`;
+            extra += heldHtml();
+            if (bad.length) extra += `<ul class="fo-ia-bad">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><b>${it.state === 'unknown' ? '모름 · 다시 안 보냄 · 채널 화면에서 확인' : '실패 · 다음 [짝 맞추기] 때 다시 보낼 수 있어요'}</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || '')} · ${esc(tno(it.tracking))}${it.error ? ' · ' + esc(it.error) : ''}</span></li>`; }).join('')}</ul>`;
         } else {
             head = `<h3>등록 준비 ${g.send_enabled ? '<small>아직 채널에 보내지 않았어요</small>' : '<small>시험 단계 · 채널로 보낸 것 0</small>'}</h3>`;
             table = `<thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
@@ -2751,6 +2744,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             extra = g.send_enabled === true
                 ? `<div class="fo-acts">${canSend ? `<button type="button" class="fo-btn primary" id="fo-ia-send">채널에 보내기 (${sum('ready')}건)</button>` : ''}<span class="fo-msg" id="fo-ia-send-msg" role="status"></span></div>`
                 : `<div class="fo-acts"><span class="fo-msg" id="fo-ia-send-msg" role="status">${ia.sent ? '' : '지금은 채널 전송이 꺼져 있어요 — 준비만 저장했어요'}</span></div>`;
+            extra = heldHtml() + extra;
         }
         box.innerHTML = `${head}<div class="fo-ia-scroll"><table>${table}</table></div>${extra}
             <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}<span class="fo-msg" id="fo-ia-dl-msg" role="status"></span></div>`;
@@ -2778,13 +2772,36 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     }
     function onOutClick(e) {
         const b = e.target.closest('button'); if (!b || ia.busy) return;
-        if (b.id === 'fo-ia-reg') { if (!b.disabled) askConfirm(false); }
-        else if (b.id === 'fo-ia-yes') register();
-        else if (b.id === 'fo-ia-send') askConfirm(true);
+        if (b.id === 'fo-ia-reg') { if (!b.disabled) register(); }
+        else if (b.id === 'fo-ia-send') askSend();
         else if (b.id === 'fo-ia-send-yes') send();
         else if (b.id === 'fo-ia-no') { $('fo-ia-confirm').hidden = true; const back = $('fo-ia-send') || $('fo-ia-reg'); if (back) back.focus({ preventScroll: true }); }
         else if (b.id === 'fo-ia-dl') download();
     }
+
+    // #841 보낸 결과 팝업 — 전부 성공이면 한 줄 · 실패·모름이 있으면 성공 수 + 그 줄 목록 + [수기 파일 내려받기] · Esc·바깥·[닫기]로 닫힘
+    let modalBack = null;
+    function openModal() {
+        const g = ia.reg; if (!g || g.dry !== false) return;
+        closeModal(false);
+        const byId = new Map(((ia.res && ia.res.rows) || []).map(x => [x.id, x])), items = g.items || [];
+        const n = c => (g.sent || {})[c] || 0, okLine = CH.map(c => `${CH_LABEL[c]} ${n(c)}`).join(' · ');
+        const bad = items.filter(it => it.state === 'failed' || it.state === 'unknown' || (it.state === 'manual' && it.error)), held = bad.filter(it => it.state === 'manual').length;
+        const tot = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0), ok = !bad.length && !tot('failed') && !tot('unknown');
+        const body = ok
+            ? `<p class="fo-iam-big">오류 없음</p><p class="fo-iam-line">${esc(okLine)}</p>`
+            : `<p class="fo-iam-line">보냄 <b>${tot('sent')}</b> · ${esc(okLine)}</p><p class="fo-iam-line warn">실패 <b>${tot('failed')}</b> · 모름 <b>${tot('unknown')}</b>${held ? ` · 수기 <b>${held}</b>` : ''} — 아래 줄은 채널 화면에서 확인하거나 수기로 넣어 주세요</p>
+               <ul class="fo-iam-list">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><span class="fo-iam-k">${it.state === 'unknown' ? '모름' : it.state === 'manual' ? '수기' : '실패'}</span><span class="fo-iam-t">${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))}${it.tracking ? ` · <span class="fo-iam-no">${esc(tno(it.tracking))}</span>` : ''}</span><span class="fo-iam-why">${esc(it.error || (it.state === 'unknown' ? '응답 없음 · 다시 안 보냄' : '채널이 거절'))}</span></li>`; }).join('')}</ul>`;
+        const el = document.createElement('div'); el.className = 'fo-iam'; el.id = 'fo-ia-modal';
+        el.innerHTML = `<div class="fo-iam-box" role="dialog" aria-modal="true" aria-labelledby="fo-iam-h" data-ok="${ok}"><h3 id="fo-iam-h">${ok ? '등록 완료' : '등록 결과 · 확인할 줄 있음'}</h3>${body}
+            <div class="fo-acts">${ok ? '' : '<button type="button" class="fo-btn" data-iam="dl">수기 파일 내려받기</button>'}<button type="button" class="fo-btn primary" data-iam="close">닫기</button></div></div>`;
+        modalBack = document.activeElement;
+        ($('fo-panel') || document.body).appendChild(el); if ($('fo-panel')) $('fo-panel').classList.add('iam-open');
+        el.addEventListener('click', e => { if (e.target === el) closeModal(true); const b = e.target.closest('button[data-iam]'); if (!b) return; if (b.dataset.iam === 'dl') download(); else closeModal(true); });
+        el.querySelector('[data-iam="close"]').focus({ preventScroll: true });
+    }
+    function closeModal(focus) { const el = $('fo-ia-modal'); if (!el) return; el.remove(); if ($('fo-panel')) $('fo-panel').classList.remove('iam-open'); const back = modalBack; modalBack = null; if (focus && back && back.isConnected) back.focus({ preventScroll: true }); }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('fo-ia-modal')) { e.stopImmediatePropagation(); e.preventDefault(); closeModal(true); } }, true);   // 팝업만 닫는다(최종발주 화면의 Esc 닫기보다 먼저)
 
     // 최종발주 창은 처음 열 때 만들어진다 → 생기면 붙이고, 열릴 때마다(아직 확인 못 했으면) 서버를 확인
     function watch(panel) {

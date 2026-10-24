@@ -18,6 +18,7 @@ const cjTrack = require(path.join(ROOT, 'cj-track.js'));
 
 // ── 가짜 pool ──
 let runs = [], items = new Map(), shipIdx = new Map(), unknownSql = [], queries = [];
+let PRICING_ROWS = [];   // #841 가짜 단가표(기본 빈 = 종전 판정 그대로)
 const pool = { query: async (sql, p) => {
     const s = String(sql).replace(/\s+/g, ' ').trim(); queries.push(s.slice(0, 60));
     if (/^CREATE TABLE IF NOT EXISTS invoice_auto_(runs|items)/.test(s)) return { rows: [] };
@@ -33,6 +34,7 @@ const pool = { query: async (sql, p) => {
     if (/^UPDATE invoice_auto_runs SET register_state = 'prepared'/.test(s)) { const r = runs.find(x => x.id === p[0]); if (r) { r.register_state = 'prepared'; r.register = JSON.parse(p[1]); } return { rowCount: r ? 1 : 0 }; }
     if (/^SELECT run_id, state, tracking FROM invoice_auto_items WHERE idem_key = \$1/.test(s)) { const x = items.get(p[0]); return { rows: x ? [x] : [] }; }
     if (/^INSERT INTO invoice_auto_items \(idem_key, run_id, channel, order_key, tracking, state\) VALUES \(\$1,\$2,\$3,\$4,\$5,'ready'\) ON CONFLICT \(idem_key\) DO UPDATE SET run_id = EXCLUDED\.run_id, tracking = EXCLUDED\.tracking, state = 'ready', error_text = NULL, updated_at = now\(\) WHERE invoice_auto_items\.state NOT IN \('sent','sending','unknown'\)$/.test(s)) { const x = items.get(p[0]); if (!x) items.set(p[0], { idem_key: p[0], run_id: p[1], channel: p[2], order_key: p[3], tracking: p[4], state: 'ready', created_at: Date.now() }); else if (!['sent', 'sending', 'unknown'].includes(x.state)) { x.run_id = p[1]; x.tracking = p[4]; x.state = 'ready'; x.error_text = null; } return { rowCount: 1 }; }
+    if (/^SELECT items FROM pricing WHERE start_date <= \$1::date AND end_date >= \$1::date$/.test(s)) return { rows: PRICING_ROWS };   // #841 그날 단가표 이름(읽기)
     if (/^INSERT INTO delivery_shipments/.test(s)) { shipIdx.set(p[0], { tracking: p[0], date: p[1], partner: p[2] }); return { rowCount: 1 }; }
     unknownSql.push(s.slice(0, 120)); throw new Error('가짜 pool: 모르는 SQL — ' + s.slice(0, 120));
 } };
@@ -200,7 +202,10 @@ async function xlsxOf(lines, withSheet1) {
     ok(B.by_channel.naver.skipped === 4, 'naver skipped = 수량2 둘째 1 + qty_diff 둘째 1 + extra 2', B.by_channel.naver.skipped);
     ok(B.summary.shipments === LINES.length && B.summary.auto + B.summary.todo === B.rows.length && B.summary.index_upserted === LINES.length, 'summary 셈 · 색인 upsert = 운송장 전부', JSON.stringify(B.summary));
     ok(shipIdx.size === LINES.length && [...shipIdx.values()].every(x => x.partner === '효돈' && x.date === '2026-10-24'), 'delivery_shipments 색인 = 거래처·발송일 붙음');
-    { const all = JSON.stringify(B); ok(!/010-0000-0001|01000000001\b|서울 가가구|가가로/.test(all) && /가A|가\*?/.test(B.rows.find(x => x.order_key === '1001').recipient_masked) && /끝 0001/.test(row(1001).recipient_masked), '응답에 전화 전체·주소 0 · 이름 가림·끝 4자리', row(1001).recipient_masked); }
+    { const all = JSON.stringify(B); ok(!/서울 가가구|가가로/.test(all) && /가\*?/.test(row(1001).recipient_masked) && /끝 0001/.test(row(1001).recipient_masked), '응답에 주소 0 · 가림 칸(recipient_masked) 그대로', row(1001).recipient_masked); }
+    // #841 ③ 응답 = 전체 이름·번호(화면용 · 로그인 직원) · DB 저장분 = 종전처럼 가림만
+    ok(row(1001).recipient_name === '가A' && row(1001).recipient_tel === T(1) && row(1010).pick_options.every(x => x.recipient_name && x.recipient_tel) && B.unmatched.every(x => 'recipient_name' in x) && B.cash.every(x => 'recipient_tel' in x), '#841③ 응답 rows·pick_options·unmatched·cash = recipient_name·recipient_tel 전체', JSON.stringify(row(1001)).slice(0, 200));
+    { const st = JSON.stringify(runs[0].result); ok(!/recipient_name|recipient_tel|010-0000-0001|01000000001/.test(st) && /recipient_masked/.test(st), '#841③ invoice_auto_runs 저장분 = 전체 이름·번호 0 · 가림만', (st.match(/recipient_\w+/g) || []).filter((v, i, a) => a.indexOf(v) === i).join()); }
     ok(/^나\*$/.test(row(1002).recipient_masked.split(' · ')[0]) && /^채\*+\d$/.test(row(2010).recipient_masked.split(' · ')[0]), '이름 가림 꼴(2자 = 나* · 긴 이름 = 첫·끝만)', row(2010).recipient_masked);
     ok(fetchCalls.length === 3 && fetchCalls.every(c => c[1] === 30), '3채널 재조회 1번씩 · 기본 30일', JSON.stringify(fetchCalls));
     ok(runs[0].result && !/010-0000-0001|가가로/.test(JSON.stringify(runs[0])), '저장 행(invoice_auto_runs)에도 전화·주소 0');
@@ -246,6 +251,19 @@ async function xlsxOf(lines, withSheet1) {
     items.get('naver:1001').state = 'failed'; r = await call('/api/agent-office/invoice-auto/register', { run_id: 1 }); ok(r.body.items.find(x => x.order_key === '1001').state === 'ready' && items.get('naver:1001').state === 'ready', 'A: failed 인 주문 = 다시 준비(재시도 가능)');
     runs[0].register_state = 'sent'; r = await call('/api/agent-office/invoice-auto/register', { run_id: 1 }); ok(r.status === 409, '보낸 run = 409'); runs[0].register_state = 'prepared';
     ok(audits.some(a => a.action === 'invoice_auto_prepare' && a.changes.dry === true), 'audit invoice_auto_prepare');
+    {   // #841 손질: 같은 운송장이 다른 주문 두 줄 = 둘 다 수기 · 쿠팡 같은 상자 두 줄(같은 운송장)은 그대로 한 상자
+        const dupRun = { id: 9001, created_at: Date.now(), register_state: null, result: { rows: [
+            { id: 'd1', channel: 'naver', order_key: 'dupA', box_id: 'dupA', status: 'auto', tracking: '600000009001', option: 'x', qty: 1 },
+            { id: 'd2', channel: 'naver', order_key: 'dupB', box_id: 'dupB', status: 'todo', tracking: null, option: 'x', qty: 1, pick_options: [{ tracking: '600000009001' }] },
+            { id: 'd3', channel: 'coupang', order_key: 'dupBox|1', box_id: 'dupBox', order_id: '7009', vendor_item_id: '1', box_vendor_items: ['1', '2'], status: 'auto', tracking: '600000009002', option: 'x', qty: 1 },
+            { id: 'd4', channel: 'coupang', order_key: 'dupBox|2', box_id: 'dupBox', order_id: '7009', vendor_item_id: '2', box_vendor_items: ['1', '2'], status: 'auto', tracking: '600000009002', option: 'x', qty: 1 }] } };
+        runs.push(dupRun);
+        r = await call('/api/agent-office/invoice-auto/register', { run_id: 9001, picks: { d2: '600000009001' } });
+        const it = id => r.body.items.find(x => x.id === id) || {};
+        ok(r.status === 200 && it('d1').state === 'manual' && it('d2').state === 'manual' && /같은 운송장 두 줄/.test(it('d1').error) && !items.has('naver:dupA') && !items.has('naver:dupB'), '#841 같은 운송장 · 다른 주문 두 줄 = 둘 다 수기(「같은 운송장 두 줄」) · 준비 0', JSON.stringify(r.body.items));
+        ok(it('d3').state === 'ready' && it('d4').state === 'ready' && r.body.ready.coupang === 1 && items.has('coupang:dupBox'), '#841 쿠팡 같은 상자 두 줄(같은 운송장) = 그대로 한 상자 준비', JSON.stringify({ rd: r.body.ready, d3: it('d3') }));
+        items.delete('coupang:dupBox'); runs.splice(runs.indexOf(dupRun), 1);
+    }
 
     console.log('⑥ 전송(가짜 3채널 · 바디 꼴·묶음·멱등·부분 실패·모름)');
     // 새 자료: 쿠팡 상자 하나에 옵션 2(운송장 2줄) · 자사몰 한 주문 품목 2(거래처가 달라 운송장 다름)
@@ -317,6 +335,40 @@ async function xlsxOf(lines, withSheet1) {
       let q = await g('staff'); ok(q.status === 403 && !c24get.length, '카페24 배송사 목록 = 직원 403(호출 0)');
       q = await g(); ok(q.status === 200 && q.body.count === 2 && q.body.cj_candidates.length === 1 && q.body.cj_candidates[0].shipping_carrier_code === '0006' && q.body.cj_candidates[0].carrier_id === 7 && q.body.cj_candidates[0].default === 'T' && c24get[0][0] === '/api/v2/admin/carriers' && c24get[0][1].shop_no === 1 && q.body.raw.carriers.length === 2, '카페24 배송사 목록 = GET /api/v2/admin/carriers?shop_no=1 · CJ 후보 코드·carrier_id·기본 여부 · 원문 raw', JSON.stringify(q.body).slice(0, 200));
       c24getFail = Object.assign(new Error('cafe24_api_403'), { status: 403 }); q = await g(); ok(q.status === 403 && /read_shipping/.test(q.body.error), '권한 없음 = 403 「재승인 확인」'); c24getFail = null; }
+    console.log('⑦ #841 같은 분 다른 품목 = 단가표 이름 변환 · 미리 고르기');
+    {   // 10/25 실자료 꼴(이*안 3778 · 공*성 9630 · 조*원 7813) — 운송장 상품명 = 단가표 이름 · 채널 옵션 = 「하우스감귤 가정용」
+        const PN = ['고당도 하우스감귤 / 상품 및 과수: 가정용 - 4.5kg(로얄과)', '고당도 하우스감귤 / 상품 및 과수: 가정용 - 2.5kg(로얄과)', '과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 5kg(중소과 27과 전후)', '과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 3kg(중소과 17과 전후)', '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)'];
+        const OH45 = '아꼼이네 상품선택: 1. (제철)고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 4.5kg(로얄과)', OH25 = '아꼼이네 상품선택: 1. (제철)고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 2.5kg(로얄과)';
+        const OG5 = '아꼼이네 상품선택: 3. (제철)과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 5kg(중소과 27과 전후)', OY3 = '아꼼이네 상품선택: 2. (제철)유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)';
+        const ad = '제주 칠칠로 7', mk = (pid, opt, r = '칠Q', t = T(77), a = ad) => nv(pid, { r, bt: t, rt: t, opt, ad: a });
+        const sh = (tr, p, r = '칠Q', t = T(77), a = ad) => ({ tr, nm: r, tel: t, ad: a, op: p, q: 1, sn: '제주아꼼이네', stel: t });
+        const run = (rows, lines, pn) => { const os = IA.normOrders('naver', rows), ss = IA.normShips(lines, '효돈'); const m = IA.matchShipments({ ships: ss, orders: os, pricingNames: pn }); return IA.buildCard(m, os); };
+        const rows3 = [mk(5001, OG5), mk(5002, OY3), mk(5003, OH45)], lines3 = [sh('600000004213', PN[2]), sh('600000005285', PN[4]), sh('600000007293', PN[0])];
+        let c = run(rows3, lines3, PN); const r3 = k => c.rows.find(x => x.order_key === String(k));
+        ok(c.rows.every(x => x.status === 'auto' && x.rule === 'by_product') && r3(5001).tracking === '600000004213' && r3(5002).tracking === '600000005285' && r3(5003).tracking === '600000007293', '①이*안 꼴 3품목 3장 = 단가표 이름 변환으로 전부 by_product(종전 3 할 일)', JSON.stringify(c.rows.map(x => [x.order_key, x.rule, x.tracking])));
+        c = run(rows3, lines3, []);
+        ok(c.rows.every(x => x.rule === 'by_product'), '①단가표를 못 읽어도 표준명 규칙(matchProductRaw · 송장변환과 같음)으로 같은 판정', JSON.stringify(c.rows.map(x => x.rule)));
+        c = run(rows3, [lines3[0], lines3[1], sh('600000007293', '모르는 상품')], PN);
+        ok(c.rows.find(x => x.order_key === '5001').suggest === '600000004213' && c.rows.find(x => x.order_key === '5002').suggest === '600000005285' && !c.rows.find(x => x.order_key === '5003').suggest && /확인 필요/.test(c.rows.find(x => x.order_key === '5001').suggest_why), '②남은 할 일 = 이 품목에만 맞는 운송장 1장이면 suggest(확인 필요) · 못 가르면 null', JSON.stringify(c.rows.map(x => [x.order_key, x.suggest])));
+        c = run([mk(5011, OG5), mk(5012, OH25)], [sh('600000004246', PN[2]), sh('600000007072', PN[1] + ' 2S사이즈로!')], PN);
+        ok(c.rows.every(x => x.rule === 'by_product') && c.rows.find(x => x.order_key === '5012').tracking === '600000007072', '①사이즈 꼬리 붙은 운송장(「2S사이즈로!」)도 같은 품목', JSON.stringify(c.rows.map(x => [x.rule, x.tracking])));
+        // 다른 크기는 같은 품목 아님(넓히지 않음): 하우스감귤 2.5kg 주문 ↔ 4.5kg 운송장
+        c = run([mk(5021, OG5), mk(5022, OH25)], [sh('600000004001', PN[2]), sh('600000004002', PN[0])], PN);
+        ok(c.rows.every(x => x.status === 'todo' && x.rule === 'todo_product') && c.rows.find(x => x.order_key === '5022').suggest == null && c.rows.find(x => x.order_key === '5021').suggest === '600000004001', '①크기 다른 운송장(2.5kg 주문 ↔ 4.5kg 장) = 자동 안 함 · 그 주문 suggest 없음', JSON.stringify(c.rows.map(x => [x.rule, x.suggest])));
+        // 같은 품목 2 주문 + 다른 품목 1 → 같은 품목 쪽은 suggest 안 함(어느 주문 것인지 모름)
+        c = run([mk(5031, OH25), mk(5032, OH25), mk(5033, OG5)], [sh('600000004011', PN[1]), sh('600000004012', PN[1]), sh('600000004013', '모르는 상품')], PN);
+        ok(c.rows.every(x => x.status === 'todo') && c.rows.filter(x => x.option === OH25).every(x => x.suggest == null), '②같은 품목 주문 2 = suggest 없음(동점)', JSON.stringify(c.rows.map(x => [x.order_key, x.suggest])));
+        // todo_pick: 주문 주소와 같은 운송장 1장 · 맞수 주문은 다른 주소 → suggest
+        const rp = [nv(5041, { r: '팔R', bt: T(88), rt: T(88), opt: OH25, ad: '서울 팔팔로 8' }), nv(5042, { r: '팔R', bt: T(88), rt: T(88), opt: OH25, ad: '경기 다른로 9' })];
+        const lp = [sh('600000004021', PN[1], '받는이P', T(89), '서울 팔팔로 8'), sh('600000004022', PN[1], '받는이Q', T(90), '부산 먼곳로 1')].map(x => ({ ...x, stel: T(88) }));
+        c = run(rp, lp, PN);
+        ok(c.rows.every(x => x.rule === 'todo_pick') && c.rows.find(x => x.order_key === '5041').suggest === '600000004021' && c.rows.find(x => x.order_key === '5042').suggest == null, '②todo_pick = 주문 주소와 같은 운송장 1장이면 suggest · 아니면 null', JSON.stringify(c.rows.map(x => [x.order_key, x.rule, x.suggest])));
+        // 미리 고를 운송장이 이미 다른 주문에 붙은 장이면 뺀다(시트에 같은 운송장 줄이 두 번 · 한 번은 다른 분 auto)
+        c = run([mk(5051, OG5), mk(5052, OH25), nv(5053, { r: '구S', bt: T(91), rt: T(91), opt: OG5, ad: '대구 구구로 9' })],
+            [sh('600000004031', PN[2]), sh('600000004032', '모르는 상품'), sh('600000004031', PN[2], '구S', T(91), '대구 구구로 9')], PN);
+        ok(c.rows.find(x => x.order_key === '5053').status === 'auto' && c.rows.find(x => x.order_key === '5051').status === 'todo' && c.rows.find(x => x.order_key === '5051').suggest == null, '#841 미리 고를 운송장이 이미 다른 주문(auto)에 붙었으면 suggest 없음', JSON.stringify(c.rows.map(x => [x.order_key, x.status, x.suggest])));
+        const sp = IA.stripPII(c); ok(!/recipient_name|recipient_tel/.test(JSON.stringify(sp)) && sp.rows[0].suggest === c.rows[0].suggest, 'stripPII = 전체 이름·번호만 빠지고 suggest·가림 유지');
+    }
     console.log('⑤ 글자(전송 0 · 장착 · 무회귀)');
     const ia = fs.readFileSync(path.join(ROOT, 'invoice-auto.js'), 'utf8');
     ok(!/callNaver|apiReq|callCoupang|fetch\(|require\('https?'\)|product-orders\/dispatch|orders\/invoices|admin\/shipments/.test(ia), 'invoice-auto.js 에 네트워크 함수·채널 경로 0(길은 server.js transport 만)');
