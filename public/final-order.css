@@ -775,3 +775,22 @@ html[data-ao-theme="dark"] .fo-ia-confirm { border-color: var(--fd-accent-line);
 html[data-ao-theme="dark"] .fo-ia-confirm.send { border-color: var(--fd-warn-line); background: #262313; }
 html[data-ao-theme="dark"] .fo-ia-bad li[data-k="unknown"] { border-color: var(--fd-err-line); background: var(--fd-err-bg); }
 html[data-ao-theme="dark"] .fo-ia-bad li[data-k="failed"] b { color: var(--fd-warn); }
+
+/* #840 결과 화면 머리 세 줄 = 옅은 음영 카드(왼쪽 4px 띠) · 제주 배송 = 바다(청록) · 스토어 정산예정 = 인디고 · 특이사항 = 호박(주의) · 정보 없으면 옅게(is-empty) */
+.fo-notes { display: grid; gap: 8px; }
+.fo-note { --n-bg: var(--f-soft); --n-line: var(--f-line); --n-bar: var(--f-card-line); --n-key: var(--f-sub); --n-num: var(--f-ink);
+    margin: 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--n-line); border-left: 4px solid var(--n-bar); background: var(--n-bg); color: var(--f-ink); font-size: 13.5px; line-height: 1.6; word-break: keep-all; overflow-wrap: anywhere; }
+.fo-note .fo-note-k { font-weight: 600; color: var(--n-key); }
+.fo-note > b { font-weight: 700; color: var(--n-num); font-variant-numeric: tabular-nums; }
+.fo-note.sea { --n-bg: #E8F6F7; --n-line: #BFE6E9; --n-bar: #0E9AA7; --n-key: #0B5C63; --n-num: #08474D; }
+.fo-note.ink { --n-bg: #EEF0FF; --n-line: #D8DBFF; --n-bar: #4F46E5; --n-key: #3730A3; --n-num: #2E2A8C; }
+.fo-note.warn { --n-bg: #FFF7E6; --n-line: #FBDDA6; --n-bar: #F59E0B; --n-key: #8A4B00; --n-num: #6F3C00; }
+.fo-note.is-empty { --n-bg: var(--f-soft); --n-line: var(--f-line); --n-bar: var(--f-card-line); --n-key: var(--f-sub); --n-num: var(--f-sub); color: var(--f-sub); }
+.fo-note.is-empty > b { font-weight: 600; }
+.fo-note.warn li { padding-left: 10px; border-left: 2px solid var(--n-line); }
+html[data-ao-theme="dark"] .fo-note.sea { --n-bg: #0F2C31; --n-line: #1D4E55; --n-bar: #2CC5CF; --n-key: #7FE0E6; --n-num: #A6EEF2; }
+html[data-ao-theme="dark"] .fo-note.ink { --n-bg: var(--f-accent-soft); --n-line: var(--fd-accent-line); --n-bar: #8C94FF; --n-key: #B9BEFF; --n-num: #D4D7FF; }
+html[data-ao-theme="dark"] .fo-note.warn { --n-bg: var(--fd-warn-bg); --n-line: var(--fd-warn-line); --n-bar: var(--fd-warn); --n-key: #FBCB6E; --n-num: #FDDB94; }
+html[data-ao-theme="dark"] .fo-note.is-empty { --n-bg: var(--f-soft); --n-line: var(--f-line); --n-bar: var(--f-card-line); --n-key: var(--f-sub); --n-num: var(--f-sub); }
+html[data-ao-theme="dark"] .fo-note { border-color: var(--n-line); border-left-color: var(--n-bar); background: var(--n-bg); }
+.fo-note .fo-settle-note { color: var(--n-key); font-weight: 400; }

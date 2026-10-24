@@ -1665,11 +1665,13 @@
         const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyFig(f)}${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
         const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
-        const pl = patchLines();
+        const pl = patchLines(), jejuN = [...jejuCount().values()].reduce((a, n) => a + n, 0);   // #840 제주 0건이면 카드를 옅게
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all" title="엑셀 파일만 받아요. 수량 이미지는 엑셀의 수량 시트에도 있고, 아래 버튼으로 따로 받을 수 있어요">파일 ${st.files.length}개 전부 저장</button></div>
-            <p class="fo-jeju" id="fo-jeju-result">제주도 배송: <b>${esc(jejuText())}</b></p>
-            ${settleText() ? `<p class="fo-jeju" id="fo-settle-result">스토어 정산예정: <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}
-            ${pl.length ? `<div class="fo-patched" id="fo-patched"><b>말로 바꾼 것 ${pl.length}건</b> (바뀐 칸은 연보라색)<ul>${pl.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
+            <div class="fo-notes">
+            <p class="fo-jeju fo-note sea${jejuN ? '' : ' is-empty'}" id="fo-jeju-result"><span class="fo-note-k">제주도 배송:</span> <b>${esc(jejuText())}</b></p>
+            ${settleText() ? `<p class="fo-jeju fo-note ink" id="fo-settle-result"><span class="fo-note-k">스토어 정산예정:</span> <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}
+            ${pl.length ? `<div class="fo-patched fo-note warn" id="fo-patched"><span class="fo-note-k">특이사항:</span> <b>말로 바꾼 것 ${pl.length}건</b> <span class="fo-settle-note">(바뀐 칸은 연보라색)</span><ul>${pl.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : `<p class="fo-note warn is-empty" id="fo-patched-none"><span class="fo-note-k">특이사항:</span> 없음</p>`}
+            </div>
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
             <div class="fo-files">${ps.map(partner).join('')}${ss.map(store).join('')}</div>
             <p class="fo-hint">색이 칠해진 배송메세지 칸(보내는이·사이즈·날짜 요청)은 송장변환과 같아요. 확인하고 지워 주세요. 메모나 현금파일을 고치면 [다시 판정] 후 다시 만들어요.</p>`;
