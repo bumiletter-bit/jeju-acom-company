@@ -5710,7 +5710,12 @@ app.get('/api/agent-office/season-waitlist', authMiddleware, async (req, res) =>
         /* 🔴 #356(대표 8/11 "번호가 가려져 있어 그때마다 연락을 못 드린다"): 전체 번호 표시.
            이 명단의 존재 이유가 **시즌 오픈 시 알림톡·문자 발송**이라 가려두면 쓸 수가 없다(손님이 그 목적으로 직접 남긴 번호).
            ⚠️ 감사 로그(audit_logs)에는 **종전대로 마스킹만** 남긴다 — 로그에 원문을 쌓지 않는 원칙은 유지(#177). */
-        res.json({ rows: r.rows });
+        /* #834: 설정 season_notify.groups = {"묶음 이름": ["품목 글", …]} 이 있으면 묶음 단위 합산(groups[])도 함께 — 옛 화면은 rows 만 읽어 그대로 동작 */
+        let cfg834 = null; try { cfg834 = await naverCfgGet('season_notify'); } catch (_) { cfg834 = null; }
+        const groups834 = seasonNotifyGroups(cfg834);
+        const stat834 = rs => { const sent = rs.filter(x => x.notify_result === 'sent' || (x.notified && x.notified_at)).length, skipped = rs.filter(x => x.notify_result === 'skip-refuse' || x.notify_result === 'bad-tel' || x.notify_result === 'dup').length; return { total: rs.length, pending: rs.length - sent - skipped, sent, skipped }; };   /* dup = 같은 번호 두 번째 행(#834) */
+        const groups = Object.entries(groups834).map(([name, items]) => ({ name, items, ...stat834(r.rows.filter(x => items.includes(String(x.item || '')))) })).filter(g => g.total > 0);
+        res.json({ rows: r.rows, groups, grouped_items: [].concat(...groups.map(g => g.items)) });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.post('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
@@ -5748,12 +5753,36 @@ app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, ownerOnly, a
 //   · 수신거부 = 문자 봇이 180일 안 「그만 보내」로 받은 번호(sms_messages.bucket='refuse' · sms_threads.phone_digits) → 보내지 않고 notify_result 'skip-refuse'(notified_at 기록 = 다시 대상 안 됨)
 //   · 번호 꼴 틀림(휴대폰 아님 · 010 인데 11자리 아님) = 'bad-tel'(기록 · 다시 대상 안 됨) · 발송 실패 = notify_result 'failed: …' 만 적고 notified_at 은 비움(다음 클릭에 다시 대상)
 //   · 보낸 건 = notified true + notified_at + 'sent' · 사이 200ms · audit source season-notify(번호 0 · 건수만) · dry = 대상 수·문구·상한만(쓰기 0 · 발송 0 · audit 0)
-const SEASON_NOTIFY_TEMPLATE_DEFAULT = '[제주아꼼이네] 신청하신 {item} 시즌이 오픈했어요! 자사몰 akkome.com 에서 바로 주문하실 수 있어요. (시즌 오픈 알림을 신청하신 분께 1회 안내드립니다) 문의 064-805-9181';
+// #834(대표 「고」 10/24 · 워커3): ①품목별 문구 = 설정 season_notify.templates {"<품목 글 또는 묶음 이름>": "문구"} → 묶음 이름 → 품목 글 → template(공통) → 기본 순(template_source group|item|global|default · {item} 은 그 열쇠 글로 치환)
+//   ②묶음 = 설정 season_notify.groups {"묶음 이름": ["품목 글", …]} → 목록 GET 이 groups[](합산) 도 주고 · notify { item:"묶음 이름" } 또는 { items:[…] }(≤30 · item 은 표시 이름) 허용 · 잠금은 묶음 이름 + 품목 글 전부(묶음 발송 중 그 안 품목 단건 클릭 = 409)
+//   · 신청 기록이 한 건도 없는 품목 글(묶음 설정도 아님 · items 배열 안에 섞여도) = 400(이름 오타 보호 · 묶음 설정이 있으면 0건이어도 200 · targets 0)
+//   · 같은 번호가 한 요청 안 두 행(묶음 안 두 품목에 신청)이면 첫 행만 보내고 다음 행은 notify_result 'dup'(문자 0 · 기록 · 화면 「안 보냄」) — 워커2 점검 ①(실DB 레드향 2종 1명)
+//   ④(대표) PUT /api/agent-office/season-waitlist/template { item|group, text } = 화면 [미리보기] 창에서 문구 저장(관리자) → 설정 season_notify.templates[열쇠] · 빈칸 = 삭제(기본 문구로) · smsSafe · 2,000바이트 · audit
+const SEASON_NOTIFY_TEMPLATE_DEFAULT = '[제주아꼼이네] 신청하신 {item} 시즌이 오픈했어요! 자사몰 akkome.com 에서 바로 주문하실 수 있어요. (시즌 오픈 알림을 신청하신 분께 1회 안내드립니다) 문의 010-6687-4031';
 const SEASON_NOTIFY_CAP_DEFAULT = 200;
 const _seasonNotifyBusy = new Set();   // item → 발송 진행 중(인스턴스 1개 전제 · 배포 겹침 때는 notified_at IS NULL 조건이 2중 발송을 거의 막음)
-function seasonNotifyText(cfg, item) {
-    const raw = (cfg && typeof cfg.template === 'string' && cfg.template.trim()) ? cfg.template : SEASON_NOTIFY_TEMPLATE_DEFAULT;
-    return kakaoNotify.smsSafe(raw.split('{item}').join(String(item || '').trim())).replace(/\s+\n/g, '\n').trim();
+const SEASON_NOTIFY_ITEMS_MAX = 30;   // #834 한 번에 묶는 품목 글 상한
+function seasonNotifyGroups(cfg) {   // #834 설정 groups 정규화 → {묶음 이름: [품목 글 …]}(빈 이름·빈 배열·중복 제거)
+    const g = (cfg && cfg.groups && typeof cfg.groups === 'object' && !Array.isArray(cfg.groups)) ? cfg.groups : {};
+    const out = {};
+    for (const [name, arr] of Object.entries(g)) {
+        const nm = String(name || '').trim(); if (!nm || !Array.isArray(arr)) continue;
+        const items = [...new Set(arr.map(x => String(x == null ? '' : x).trim()).filter(Boolean))].slice(0, SEASON_NOTIFY_ITEMS_MAX);
+        if (items.length) out[nm] = items;
+    }
+    return out;
+}
+function seasonNotifyPick(cfg, item, groupName, displayName) {   // #834 문구 고르기: templates[설정 묶음 이름] → templates[품목] → template → 기본 · displayName = items 배열의 표시 이름({item} 치환에만 · 문구 열쇠로는 안 씀 — 워커2 점검 ②)
+    const t = (cfg && cfg.templates && typeof cfg.templates === 'object' && !Array.isArray(cfg.templates)) ? cfg.templates : {};
+    const has = k => !!(k && typeof t[k] === 'string' && t[k].trim());
+    if (has(groupName)) return { raw: t[groupName], source: 'group', label: groupName };
+    if (has(item)) return { raw: t[item], source: 'item', label: item };
+    if (cfg && typeof cfg.template === 'string' && cfg.template.trim()) return { raw: cfg.template, source: 'global', label: displayName || groupName || item };
+    return { raw: SEASON_NOTIFY_TEMPLATE_DEFAULT, source: 'default', label: displayName || groupName || item };
+}
+function seasonNotifyText(cfg, item, groupName, displayName) {
+    const p = seasonNotifyPick(cfg, item, groupName, displayName);
+    return kakaoNotify.smsSafe(p.raw.split('{item}').join(String(p.label || '').trim())).replace(/\s+\n/g, '\n').trim();
 }
 function seasonNotifyTelOk(digits) { const s = String(digits || ''); return /^01[016789]\d{7,8}$/.test(s) && !(s.startsWith('010') && s.length !== 11); }
 async function seasonNotifyRefused() {
@@ -5768,22 +5797,40 @@ app.post('/api/agent-office/season-waitlist/notify', authMiddleware, adminOnly, 
     const body = req.body || {};
     const item = String(body.item || '').trim().slice(0, 200);
     const dry = body.dry === true || String(body.dry || '') === '1';
-    if (!item) return res.status(400).json({ error: '품목을 지정해주세요' });
-    if (!dry && _seasonNotifyBusy.has(item)) return res.status(409).json({ error: '같은 품목 발송이 진행 중입니다 — 끝난 뒤 목록을 새로고침해주세요' });
-    if (!dry) _seasonNotifyBusy.add(item);
+    const hasArr = body.items !== undefined && body.items !== null;
+    if (hasArr && (!Array.isArray(body.items) || !body.items.length || body.items.length > SEASON_NOTIFY_ITEMS_MAX || body.items.some(x => typeof x !== 'string' || !x.trim()))) return res.status(400).json({ error: '품목 배열(items)은 1~' + SEASON_NOTIFY_ITEMS_MAX + '개의 품목 글이어야 합니다' });
+    if (!item && !hasArr) return res.status(400).json({ error: '품목을 지정해주세요' });
+    let cfg = null; try { cfg = await naverCfgGet('season_notify'); } catch (_) { cfg = null; }
+    cfg = cfg || {};
+    const groupsCfg = seasonNotifyGroups(cfg);
+    // #834 대상 품목 글 풀기: items 배열(item 은 표시 이름) → 설정 묶음 이름 → 품목 글 하나
+    const cfgGroup = (!hasArr && groupsCfg[item]) ? item : null;   // 설정에 있는 묶음 이름일 때만 묶음 문구(templates[묶음])·0건 허용 — items 배열의 표시 이름은 문구 열쇠가 아님
+    const groupName = hasArr ? (item || null) : cfgGroup;           // 응답·audit 의 group 칸(표시)
+    const items = hasArr ? [...new Set(body.items.map(x => String(x).trim().slice(0, 200)))] : (cfgGroup ? groupsCfg[item] : [item]);
+    const label = item || items.join(' · ');
+    const lockKeys = [...new Set([groupName, ...items].filter(Boolean))];
+    if (!dry && lockKeys.some(k => _seasonNotifyBusy.has(k))) return res.status(409).json({ error: '같은 품목(또는 그 품목이 든 묶음) 발송이 진행 중입니다 — 끝난 뒤 목록을 새로고침해주세요' });
+    if (!dry) lockKeys.forEach(k => _seasonNotifyBusy.add(k));
     try {
-        let cfg = null; try { cfg = await naverCfgGet('season_notify'); } catch (_) { cfg = null; }
-        cfg = cfg || {};
+        if (!cfgGroup) {   // 설정 묶음이 아니면(품목 글 하나 · items 배열) 신청 기록이 한 건도 없는 품목 글이 하나라도 섞이면 400(오타 보호)
+            const known = new Set((await pool.query(`SELECT item FROM season_waitlist WHERE item = ANY($1::text[]) AND deleted_at IS NULL GROUP BY item`, [items])).rows.map(x => String(x.item || '')));
+            const unknown = items.filter(it => !known.has(it));
+            if (unknown.length) return res.status(400).json({ error: '신청 기록이 없는 품목 글이 있습니다 — 목록의 품목 글 그대로 지정해주세요: ' + unknown.join(' · '), item: label, items, unknown });
+        }
         const cap = Number(cfg.daily_cap) >= 1 ? Math.floor(Number(cfg.daily_cap)) : SEASON_NOTIFY_CAP_DEFAULT;
-        const message = seasonNotifyText(cfg, item);
+        const msgOf = {}; const messages = [];
+        const dispName = hasArr ? (item || null) : null;
+        for (const it of items) { const p = seasonNotifyPick(cfg, it, cfgGroup, dispName); msgOf[it] = { message: seasonNotifyText(cfg, it, cfgGroup, dispName), template_source: p.source, raw: p.raw }; if (!messages.some(m => m.message === msgOf[it].message)) messages.push({ item: it, message: msgOf[it].message, template_source: p.source }); }
+        const message = msgOf[items[0]].message, templateSource = msgOf[items[0]].template_source, templateRaw = msgOf[items[0]].raw;   // template_raw = 화면 문구 수정 칸의 시작 글({item} 그대로)
         const sentToday = Number((await pool.query(`SELECT count(*)::int AS n FROM season_waitlist WHERE notify_result = 'sent' AND notified_at IS NOT NULL AND (notified_at + interval '9 hours')::date = $1::date`, [kstTodayStr()])).rows[0].n) || 0;
-        const targets = (await pool.query(`SELECT id, contact FROM season_waitlist WHERE item = $1 AND deleted_at IS NULL AND notified_at IS NULL AND COALESCE(notified, false) = false ORDER BY id`, [item])).rows;
+        const targets = (await pool.query(`SELECT id, item, contact FROM season_waitlist WHERE item = ANY($1::text[]) AND deleted_at IS NULL AND notified_at IS NULL AND COALESCE(notified, false) = false ORDER BY id`, [items])).rows;
         const refused = targets.length ? await seasonNotifyRefused() : new Set();
-        const plan = targets.map(t => { const d = String(t.contact || '').replace(/[^0-9]/g, ''); return { id: t.id, d, why: !seasonNotifyTelOk(d) ? 'bad-tel' : (refused.has(d) ? 'skip-refuse' : null) }; });
+        const seenTel = new Set();   // #834 같은 번호가 두 행(묶음 안 두 품목) = 첫 행만 보냄 · 다음 행 'dup'
+        const plan = targets.map(t => { const d = String(t.contact || '').replace(/[^0-9]/g, ''); let why = !seasonNotifyTelOk(d) ? 'bad-tel' : (refused.has(d) ? 'skip-refuse' : null); if (!why) { if (seenTel.has(d)) why = 'dup'; else seenTel.add(d); } return { id: t.id, item: String(t.item || ''), d, why }; });
         const sendable = plan.filter(p => !p.why);
         const capLeft = Math.max(0, cap - sentToday);
         const live = seasonNotifyLive();
-        const base = { item, message, targets: targets.length, sendable: sendable.length, skip_refuse: plan.filter(p => p.why === 'skip-refuse').length, bad_tel: plan.filter(p => p.why === 'bad-tel').length,
+        const base = { item: label, items, group: groupName, message, template_source: templateSource, template_raw: templateRaw, messages, targets: targets.length, sendable: sendable.length, skip_refuse: plan.filter(p => p.why === 'skip-refuse').length, bad_tel: plan.filter(p => p.why === 'bad-tel').length, dup: plan.filter(p => p.why === 'dup').length,
             cap, sent_today: sentToday, cap_left: capLeft, will_send: Math.min(sendable.length, capLeft), live };
         if (dry) return res.json({ ok: true, dry: true, ...base });
         if (!targets.length) return res.json({ ok: true, ...base, sent: 0, failed: 0, skipped: 0, capped: 0, errors: [] });
@@ -5797,19 +5844,42 @@ app.post('/api/agent-office/season-waitlist/notify', authMiddleware, adminOnly, 
             if (p.why) { if (await claim(p.id, p.why)) out.skipped++; else out.taken++; continue; }
             if (out.sent >= capLeft) { out.capped++; continue; }
             if (!(await claim(p.id, 'sending'))) { out.taken++; continue; }   // 다른 인스턴스가 먼저 집음
+            const rowMsg = (msgOf[p.item] || msgOf[items[0]]).message;   // #834 행의 품목 글에 맞는 문구
             let r;
-            try { r = await kakaoNotify.sendLms({ receiver: p.d, subject: '제주아꼼이네 시즌 오픈 안내', message }); }
+            try { r = await kakaoNotify.sendLms({ receiver: p.d, subject: '제주아꼼이네 시즌 오픈 안내', message: rowMsg }); }
             catch (e) { r = { status: 'failed', error: String(e.message || e).slice(0, 120) }; }
             if (r && r.status === 'sent') { out.sent++; await confirmSent(p.id); }
             else { const why = ('failed: ' + String((r && r.status) || '') + ' ' + String((r && r.error) || '')).trim(); out.failed++; out.errors.push(why.slice(0, 200)); await release(p.id, why); }
             await new Promise(r2 => setTimeout(r2, 200));
         }
         await writeAudit({ action: 'season_notify', targetType: 'season_waitlist', targetId: null,
-            changes: { item, targets: targets.length, sent: out.sent, failed: out.failed, skipped: out.skipped, capped: out.capped, taken: out.taken, cap, cap_left: capLeft, message, errors: out.errors.slice(0, 5) },
+            changes: { item: label, items, group: groupName, template_source: templateSource, targets: targets.length, sent: out.sent, failed: out.failed, skipped: out.skipped, capped: out.capped, taken: out.taken, cap, cap_left: capLeft, message, errors: out.errors.slice(0, 5) },
             source: 'season-notify', actor: adminActor(req) });
         res.json({ ok: true, ...base, ...out, errors: out.errors.slice(0, 5) });
     } catch (err) { handleAdminErr(res, err); }
-    finally { if (!dry) _seasonNotifyBusy.delete(item); }
+    finally { if (!dry) lockKeys.forEach(k => _seasonNotifyBusy.delete(k)); }
+});
+// #834 ④(대표): [미리보기] 창의 문구 수정 → 설정 season_notify.templates[열쇠] 저장(관리자 = 대표·경리) · 열쇠 = 묶음 이름(group) 또는 품목 글(item) · 빈칸 = 그 열쇠 삭제(기본 문구로) · smsSafe(이모지 삭제) · 2,000바이트 상한 · {item} 글자는 그대로 · 다른 설정 칸(daily_cap·groups·template)은 그대로 둠 · audit 문구 전/후(번호 없음)
+const SEASON_NOTIFY_TEMPLATE_MAX_BYTES = 2000;
+app.put('/api/agent-office/season-waitlist/template', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const key = String(body.group || body.item || '').trim().slice(0, 200);
+        if (!key) return res.status(400).json({ error: '품목(또는 묶음 이름)을 지정해주세요' });
+        if (body.text != null && typeof body.text !== 'string') return res.status(400).json({ error: '문구는 글이어야 합니다' });
+        const text = kakaoNotify.smsSafe(String(body.text == null ? '' : body.text)).replace(/\s+\n/g, '\n').trim();
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > SEASON_NOTIFY_TEMPLATE_MAX_BYTES) return res.status(400).json({ error: '문구가 너무 길어요 — 2,000바이트(한글 약 660자)까지 · 지금 ' + bytes + '바이트', bytes });
+        let cfg = null; try { cfg = await naverCfgGet('season_notify'); } catch (_) { cfg = null; }
+        cfg = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
+        const templates = (cfg.templates && typeof cfg.templates === 'object' && !Array.isArray(cfg.templates)) ? { ...cfg.templates } : {};
+        const before = typeof templates[key] === 'string' ? templates[key] : null;
+        if (text) templates[key] = text; else delete templates[key];
+        await naverCfgSet('season_notify', { ...cfg, templates });
+        await writeAudit({ action: 'season_notify_template', targetType: 'agent_office_config', targetId: null,
+            changes: { key, before, after: text || null, bytes }, source: 'season-notify', actor: adminActor(req) });
+        res.json({ ok: true, key, text, deleted: !text, bytes });
+    } catch (err) { handleAdminErr(res, err); }
 });
 // ── #832 시즌 오픈 알림 끝 ──
 // ── 지시 #69: 발송 휴무일 관리 — 추가·삭제 직원 가능 (자주 바뀌는 값은 화면에서 · audit 기록 · soft-delete)
