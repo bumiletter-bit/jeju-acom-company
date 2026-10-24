@@ -43,7 +43,7 @@ const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i + 1); if 
     ok(/naverCfgGet\('naver_test_products'\)\]\); mallItems = storeSnapshotForMall\(r\.rows\[0\]\.items, mapCfg, ignoreCfg, textCfg, testCfg\)/.test(src), '공개 라우트가 testCfg 를 넘김');
 
     console.log('② 공개 GET — 라우트');
-    const pubSrc = cut('function publicClientIp(req) {', 'const _chatRate = new Map();') + '\n' + cut('function kstTodayStr() {', '// 표기 규칙') + '\n' + cut('// ── #832 공개 GET 시작', '// ── #832 공개 GET 끝') + '\nreturn { seasonNowCompute, SEASON_NOW_CATALOG };';
+    const pubSrc = cut('function publicClientIp(req) {', 'const _chatRate = new Map();') + '\n' + cut('function kstTodayStr() {', '// 표기 규칙') + '\n' + cut('// ── #836 판매 연동 시작', '// ── #836 판매 연동 끝') + '\n' + cut('// ── #832 공개 GET 시작', '// ── #832 공개 GET 끝') + '\nreturn { seasonNowCompute, SEASON_NOW_CATALOG };';
     let poolCalls = []; let todayOverride = null;
     const KST = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
     const fixture = {

@@ -1260,6 +1260,8 @@ async function initDB() {
             updated_at TIMESTAMPTZ DEFAULT now()
         )
     `);
+    await pool.query(`ALTER TABLE product_season_knowledge ADD COLUMN IF NOT EXISTS sell_match TEXT`);   // #836 판매 연동: 판매현황 「판매중」 이름에 들어가는 낱말 목록(| 구분 · NULL = 종전)
+    await pool.query(`ALTER TABLE product_season_knowledge ADD COLUMN IF NOT EXISTS sell_rule TEXT`);    // #836 'hide_when_selling' | 'only_when_selling' | NULL(DEFAULT 없음 · #336)
     // 시드 (대표 원문 #108 — 테이블 비어있을 때 1회만. 이후 수정은 화면에서)
     const skCnt = await pool.query(`SELECT COUNT(*)::int AS n FROM product_season_knowledge`);
     if (skCnt.rows[0].n === 0) {
@@ -5647,9 +5649,10 @@ const maskWaitContact = (t) => { const s = String(t || '').replace(/[^0-9]/g, ''
 // ── 지시 #108: 시기별 상품 지식 관리 (직원 편집 가능 — 매년 날짜 조정. soft delete·audit)
 app.get('/api/agent-office/season-knowledge', authMiddleware, async (req, res) => {
     try {
-        const r = await pool.query(`SELECT id, item_key, label, start_md, end_md, knowledge, sort, enabled, updated_by, updated_at
+        const r = await pool.query(`SELECT id, item_key, label, start_md, end_md, knowledge, sort, enabled, updated_by, updated_at, sell_match, sell_rule
                                     FROM product_season_knowledge WHERE deleted_at IS NULL ORDER BY item_key, sort, id`);
-        res.json({ rows: r.rows });
+        const names = r.rows.some(x => x.sell_match) ? await seasonSellingNames() : null;   // #836 화면 배지용 매칭 수(판매현황 1회)
+        res.json({ rows: r.rows.map(x => ({ ...x, sell_now: x.sell_match ? { match: seasonSellMatchCount(x, names), words: seasonSellWords(x.sell_match) || [], hidden: !seasonSellKeep(x, names) } : null })) });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/agent-office/season-knowledge', authMiddleware, async (req, res) => {
@@ -5659,9 +5662,10 @@ app.post('/api/agent-office/season-knowledge', authMiddleware, async (req, res) 
         if (!item_key || !label || !mdOk(start_md) || !mdOk(end_md) || !knowledge) {
             return res.status(400).json({ error: '품목·구간 이름·기간(MM-DD)·내용을 모두 입력해주세요' });
         }
+        const sell = seasonSellValidate(req.body || {}, null); if (sell.error) return res.status(400).json({ error: sell.error });   // #836
         const r = await pool.query(
-            `INSERT INTO product_season_knowledge (item_key, label, start_md, end_md, knowledge, sort, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-            [String(item_key).slice(0, 40), String(label).slice(0, 80), start_md, end_md, String(knowledge), Number(sort) || 0, adminActor(req)?.name || null]);
+            `INSERT INTO product_season_knowledge (item_key, label, start_md, end_md, knowledge, sort, updated_by, sell_match, sell_rule) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [String(item_key).slice(0, 40), String(label).slice(0, 80), start_md, end_md, String(knowledge), Number(sort) || 0, adminActor(req)?.name || null, sell.sell_match, sell.sell_rule]);
         await writeAudit({ action: 'create', targetType: 'season_knowledge', targetId: r.rows[0].id,
             changes: { after: r.rows[0] }, source: 'season-knowledge', actor: adminActor(req) });
         res.json({ row: r.rows[0] });
@@ -5682,9 +5686,10 @@ app.put('/api/agent-office/season-knowledge/:id', authMiddleware, async (req, re
             sort: b.sort != null ? Number(b.sort) || 0 : cur.rows[0].sort,
             enabled: b.enabled != null ? !!b.enabled : cur.rows[0].enabled,
         };
+        const sell = seasonSellValidate(b, cur.rows[0]); if (sell.error) return res.status(400).json({ error: sell.error });   // #836(칸이 없으면 종전 값 유지 · '' = 비움)
         const r = await pool.query(
-            `UPDATE product_season_knowledge SET item_key=$2, label=$3, start_md=$4, end_md=$5, knowledge=$6, sort=$7, enabled=$8, updated_by=$9, updated_at=now() WHERE id=$1 RETURNING *`,
-            [req.params.id, next.item_key, next.label, next.start_md, next.end_md, next.knowledge, next.sort, next.enabled, adminActor(req)?.name || null]);
+            `UPDATE product_season_knowledge SET item_key=$2, label=$3, start_md=$4, end_md=$5, knowledge=$6, sort=$7, enabled=$8, updated_by=$9, updated_at=now(), sell_match=$10, sell_rule=$11 WHERE id=$1 RETURNING *`,
+            [req.params.id, next.item_key, next.label, next.start_md, next.end_md, next.knowledge, next.sort, next.enabled, adminActor(req)?.name || null, sell.sell_match, sell.sell_rule]);
         await writeAudit({ action: 'update', targetType: 'season_knowledge', targetId: r.rows[0].id,
             changes: { before: cur.rows[0], after: r.rows[0] }, source: 'season-knowledge', actor: adminActor(req) });
         res.json({ row: r.rows[0] });
@@ -5867,7 +5872,9 @@ app.put('/api/agent-office/season-waitlist/template', authMiddleware, adminOnly,
         const key = String(body.group || body.item || '').trim().slice(0, 200);
         if (!key) return res.status(400).json({ error: '품목(또는 묶음 이름)을 지정해주세요' });
         if (body.text != null && typeof body.text !== 'string') return res.status(400).json({ error: '문구는 글이어야 합니다' });
-        const text = kakaoNotify.smsSafe(String(body.text == null ? '' : body.text)).replace(/\s+\n/g, '\n').trim();
+        const rawText = String(body.text == null ? '' : body.text);
+        const text = kakaoNotify.smsSafe(rawText).replace(/\s+\n/g, '\n').trim();
+        if (rawText.trim() && !text) return res.status(400).json({ error: '이모지만 있어요 — 문자에는 이모지가 안 실려요. 글자를 넣어 주세요(비우고 저장하면 기본 문구로)' });   // #834 손질 ②: 원문이 비었을 때만 삭제
         const bytes = Buffer.byteLength(text, 'utf8');
         if (bytes > SEASON_NOTIFY_TEMPLATE_MAX_BYTES) return res.status(400).json({ error: '문구가 너무 길어요 — 2,000바이트(한글 약 660자)까지 · 지금 ' + bytes + '바이트', bytes });
         let cfg = null; try { cfg = await naverCfgGet('season_notify'); } catch (_) { cfg = null; }
@@ -8776,6 +8783,55 @@ async function qnaScenarios() {
 //    「[자사몰챗] …」 = 자사몰 챗에만 · 「[네이버] …」 = 자사몰 챗에서 뺌 · 머리말 없는 행 = 종전대로 전 채널. 머리말은 재료 이름에 싣지 않는다
 //    (네이버 채널 프롬프트 글자 불변). channel 을 안 넘기는 호출(톡톡·상품문의·고객문의)은 「[자사몰챗]」 행만 빠지고 나머지는 종전과 같다.
 const SEASON_LABEL_TAG_RE = /^\[(자사몰챗|네이버)\]\s*/;
+// ── #836 판매 연동 시작 (verify-836-season-sell.js · verify-832-public.js 가 이 구간을 떼어 쓴다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
+// #836(대표 「A안 고」 10/24 · 워커2 설계 · 워커3 시공): 시기 지식 행에 「판매 연동」 2칸 — sell_match(판매현황 「판매중」 상품 이름에 들어가는 낱말 목록 · `|` 로 여러 개 · 양쪽 공백 제거 뒤 includes · 대소문자 무시 · 낱말 1~10개 · 각 2~40자 · 정규식 아님 = 워커2 점검 ① 폭주 꼴 차단) · sell_rule('hide_when_selling' = 그 낱말이 든 상품이 판매중이면 이 행을 뺌 / 'only_when_selling' = 판매중일 때만 넣음 / NULL = 종전).
+//   쓰는 곳 = seasonScenariosToday(톡톡 /api/scenarios · 상품문의·자사몰챗 qnaGenerate 전부 이 함수) · seasonNowCompute(공개 season-now) · 관리 GET(sell_now 매칭 수). 낱말 꼴 틀림·매칭 글 비움·판매현황 조회 실패 = 종전 그대로(거름 없음 · 무회귀).
+//   쓰임(총괄이 실DB 행에 넣음) = 타이벡 「오픈 예정」 행 hide 「타이벡」(판매현황에 타이벡 판매중 행이 생기면 예정 글이 저절로 빠짐) · 노지황금향 「출하 예정」 행 hide 「노지황금향」(이름의 공백은 지우고 비교 → 「노지 황금향」도 맞음) · 「판매 중」 글 행 = only_when_selling.
+const SEASON_SELL_RULES = ['hide_when_selling', 'only_when_selling'];
+const SEASON_SELL_WORDS_MAX = 10, SEASON_SELL_WORD_MIN = 2, SEASON_SELL_WORD_MAX = 40;
+const SEASON_SELL_SPLIT_RE = /[|｜,，、]/;   // 낱말 구분자 = 반각 | · 전각 ｜ · 쉼표(, ， 、) 전부(저장은 | 로 묶음 · 정규식 리터럴 = 고정 글자라 폭주 없음)
+const seasonSellNorm = v => String(v == null ? '' : v).replace(/\s+/g, '').toLowerCase();   // 비교 꼴 = 공백 전부 제거 + 소문자(「노지 황금향」 = 「노지황금향」)
+function seasonSellWords(src) {   // 「타이벡|노지황금향」 → ['타이벡','노지황금향'] · 꼴 틀림(빈 낱말 · 1~10개 밖 · 2~40자 밖) = null(= 매칭 글 없음으로 봄)
+    const t = String(src == null ? '' : src).trim(); if (!t) return null;
+    const words = t.split(SEASON_SELL_SPLIT_RE).map(w => w.trim());   // 빈 낱말(「타이벡||감귤」)도 꼴 틀림(저장 검사와 같게) · 구분자 = SEASON_SELL_SPLIT_RE
+    if (!words.length || words.length > SEASON_SELL_WORDS_MAX || words.some(w => w.length < SEASON_SELL_WORD_MIN || w.length > SEASON_SELL_WORD_MAX)) return null;
+    return words;
+}
+function seasonSellMatchCount(row, names) {   // 판매중 이름 가운데 낱말 하나라도 들어 있는 수 · null = 매칭 글 없음/꼴 틀림/이름 목록 없음(조회 실패)
+    const words = seasonSellWords(row && row.sell_match); if (!words || !Array.isArray(names)) return null;
+    const ws = words.map(seasonSellNorm);
+    let n = 0; for (const nm of names) { const h = seasonSellNorm(nm); if (ws.some(w => h.includes(w))) n++; } return n;
+}
+function seasonSellKeep(row, names) {   // true = 행을 그대로 쓴다
+    const rule = String((row && row.sell_rule) || '');
+    if (!SEASON_SELL_RULES.includes(rule)) return true;
+    const n = seasonSellMatchCount(row, names); if (n === null) return true;
+    return rule === 'hide_when_selling' ? n === 0 : n > 0;
+}
+function seasonSellValidate(b, cur) {   // CRUD 입력 검사 → { sell_match, sell_rule } 또는 { error } · 칸이 undefined 면 cur 값 유지 · '' = 비움(NULL)
+    const out = { sell_match: cur ? (cur.sell_match || null) : null, sell_rule: cur ? (cur.sell_rule || null) : null };
+    if (b && b.sell_match !== undefined) {
+        const t = String(b.sell_match == null ? '' : b.sell_match).trim();
+        if (t) {
+            const words = t.split(SEASON_SELL_SPLIT_RE).map(w => w.trim());   // 같은 구분자 · 저장은 | 로 묶음
+            if (words.some(w => !w)) return { error: '판매 연동 낱말이 비어 있어요 — 낱말 사이는 | 또는 쉼표 하나로(예: 타이벡|노지황금향)' };   // #836 마지막 손질: 전각 ｜·쉼표도 구분자
+            if (words.length > SEASON_SELL_WORDS_MAX) return { error: '판매 연동 낱말은 ' + SEASON_SELL_WORDS_MAX + '개까지' };
+            const bad = words.find(w => w.length < SEASON_SELL_WORD_MIN || w.length > SEASON_SELL_WORD_MAX); if (bad !== undefined) return { error: '판매 연동 낱말은 ' + SEASON_SELL_WORD_MIN + '~' + SEASON_SELL_WORD_MAX + '자(「' + bad.slice(0, 40) + '」)' };
+            out.sell_match = words.join('|');
+        } else out.sell_match = null;
+    }
+    if (b && b.sell_rule !== undefined) {
+        const r = String(b.sell_rule == null ? '' : b.sell_rule).trim();
+        if (r && !SEASON_SELL_RULES.includes(r)) return { error: '판매 연동 규칙은 hide_when_selling · only_when_selling · 빈칸만' };
+        out.sell_rule = r || null;
+    }
+    return out;
+}
+async function seasonSellingNames() {   // 판매현황 「판매중」 이름(요청당 1회) · 실패 = null(거름 없음)
+    try { const r = await pool.query(`SELECT name FROM bot_products WHERE status = '판매중' AND deleted_at IS NULL`); return r.rows.map(x => String(x.name || '')); }
+    catch (e) { console.error('[#836 판매 연동] 판매현황 조회 실패(거름 없이 진행):', String(e.message || e).slice(0, 120)); return null; }
+}
+// ── #836 판매 연동 끝 ──
 async function seasonScenariosToday(dateOverride, channel) {
     try {
         const isMall = channel === 'mall';
@@ -8788,13 +8844,15 @@ async function seasonScenariosToday(dateOverride, channel) {
             return (bm * 31 + bd) - (am * 31 + ad);
         };
         const r = await pool.query(`SELECT * FROM product_season_knowledge WHERE enabled = true AND deleted_at IS NULL ORDER BY item_key, sort, id`);
+        const sellNames = r.rows.some(x => x && x.sell_rule && x.sell_match) ? await seasonSellingNames() : null;   // #836 판매 연동 행이 있을 때만 판매현황 1회
         const out = [];
         for (const row of r.rows) {
             if (!inRange(md, row.start_md, row.end_md)) continue;
+            if (!seasonSellKeep(row, sellNames)) continue;   // #836 판매 연동(hide_when_selling 이 판매중이면 · only_when_selling 이 판매중 아니면 뺌)
             const tag = (String(row.label || '').match(SEASON_LABEL_TAG_RE) || [])[1] || '';
             if (tag === '자사몰챗' && !isMall) continue;
             if (tag === '네이버' && isMall) continue;
-            const visible = x => { const t = (String(x.label || '').match(SEASON_LABEL_TAG_RE) || [])[1] || ''; return !(t === '자사몰챗' && !isMall) && !(t === '네이버' && isMall); };
+            const visible = x => { const t = (String(x.label || '').match(SEASON_LABEL_TAG_RE) || [])[1] || ''; return !(t === '자사몰챗' && !isMall) && !(t === '네이버' && isMall) && seasonSellKeep(x, sellNames); };   /* #836 전환기 「다음 구간」도 거름 뒤 */
             let text = `(오늘 ${md.replace('-', '/')} 기준 — 이 상품 문의에는 이 '오늘 상태'를 다른 재료보다 우선 반영하세요)\n${row.knowledge}`;
             const gap = mdDiff(md, row.end_md);
             if (gap >= 0 && gap <= 3 && bareLabel(row) !== '공통') {
@@ -10294,10 +10352,11 @@ function seasonNowCompute({ today, rows, products, map, assets, catalog }) {
     const md = String(today).slice(5, 10);
     const cat = (Array.isArray(catalog) && catalog.length ? catalog : SEASON_NOW_CATALOG).filter(e => e && e.key && e.title);
     const names = (Array.isArray(products) ? products : []).map(p => String((p && p.name) || p || ''));
+    const rowsKept = (Array.isArray(rows) ? rows : []).filter(r => seasonSellKeep(r, names));   // #836 판매 연동 거름(규칙 없는 행 = 그대로 · 라우트 일관성)
     const mapObj = (map && map.map && typeof map.map === 'object') ? map.map : ((map && typeof map === 'object') ? map : {});
     const assetBy = {}; for (const a of (Array.isArray(assets) ? assets : [])) if (a && a.label && !assetBy[a.label]) assetBy[a.label] = a;
     const evals = cat.map(e => {
-        const skRows = (Array.isArray(rows) ? rows : []).filter(r => r && r.enabled !== false && !r.deleted_at && (e.sk || []).includes(String(r.item_key || '')) && seasonNowMdOk(r.start_md) && seasonNowMdOk(r.end_md));
+        const skRows = rowsKept.filter(r => r && r.enabled !== false && !r.deleted_at && (e.sk || []).includes(String(r.item_key || '')) && seasonNowMdOk(r.start_md) && seasonNowMdOk(r.end_md));
         const labelOf = r => String(r.label || '');
         const offNow = skRows.some(r => SEASON_NOW_OFF_RE.test(labelOf(r)) && seasonNowInRange(md, r.start_md, r.end_md));
         const sellRows = skRows.filter(r => !SEASON_NOW_OFF_RE.test(labelOf(r)) && !SEASON_NOW_PRE_RE.test(labelOf(r)) && !SEASON_NOW_SKIP_RE.test(labelOf(r)) && (!e.skLabel || new RegExp(e.skLabel).test(labelOf(r))));
@@ -10361,7 +10420,7 @@ app.get('/api/public/season-now', async (req, res) => {
     try {
         const data = await pub832Cached('season-now', async () => {
             const [rows, products, map, assets, cfg] = await Promise.all([
-                pool.query(`SELECT item_key, label, start_md, end_md, knowledge, enabled, deleted_at FROM product_season_knowledge WHERE enabled = true AND deleted_at IS NULL ORDER BY item_key, sort, id`).then(r => r.rows),
+                pool.query(`SELECT item_key, label, start_md, end_md, knowledge, enabled, deleted_at, sell_match, sell_rule FROM product_season_knowledge WHERE enabled = true AND deleted_at IS NULL ORDER BY item_key, sort, id`).then(r => r.rows),   /* #836 */
                 pool.query(`SELECT name FROM bot_products WHERE status = '판매중' AND deleted_at IS NULL`).then(r => r.rows),
                 naverCfgGet('cafe24_sync_map').catch(() => null),
                 pool.query(`SELECT id, label, sha1 FROM lucky_assets WHERE slot = 'brand' AND purged_at IS NULL AND bytes IS NOT NULL ORDER BY id`).then(r => r.rows).catch(() => []),

@@ -13600,6 +13600,26 @@ async function renderSeasonKnowledge() {
     const today = new Date();
     const md = String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
     const inR = (m, s, e) => (s <= e) ? (m >= s && m <= e) : (m >= s || m <= e);
+    /* #836 판매 연동 배지: 서버 GET 이 행마다 sell_now {match, words, hidden} 를 내려 줌(옛 서버 = 없음 → 규칙 글만) · 매칭 글 있는데 0건 = 주황 · 지금 빠짐 표시 · 매칭 글 = 낱말 목록(| 구분 · 글자 비교) */
+    const skTouch = (typeof matchMedia === 'function' && matchMedia('(max-width:960px),(pointer:coarse)').matches) ? ' min-height:44px;' : '';   /* #836 폰·터치 = 닿는 영역 44px */
+    const skRuleName = { hide_when_selling: '판매중이면 숨김', only_when_selling: '판매중일 때만' };
+    const skSellBadge = r => {
+        if (!r.sell_match && !r.sell_rule) return '';
+        const sn = r.sell_now || null, n = (sn && typeof sn.match === 'number') ? sn.match : null;
+        const color = (sn && n === 0) ? '#D97706' : '#5F9E1F';
+        const txt = `판매 연동 · ${skRuleName[r.sell_rule] || '규칙 없음'} · ${(r.sell_match || '(매칭 글 없음)').split('|').join(' / ')}` + (n !== null ? ` · 판매중 매칭 ${n}건` : '') + ((sn && sn.hidden) ? ' · 지금 빠짐' : '');
+        return `<div style="margin-top:4px;"><span class="pill" style="font-size:10.5px; background:${color}; color:#fff;" title="판매현황 「판매중」 상품 이름 기준(#836)">${escapeHtml(txt)}</span></div>`;
+    };
+    const skSellEdit = r => `
+                <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; align-items:center;" title="#836 판매 연동: 판매현황 「판매중」 상품 이름에 들어가는 낱말 · 여러 개는 | 로 · 예: 타이벡 / 노지황금향 · 비우면 연동 없음">
+                    <span style="font-size:11.5px; font-weight:700; color:var(--text-mid,#667085);">판매 연동</span>
+                    <input type="text" id="sk-sell-${r.id}" value="${escapeHtml(r.sell_match || '')}" placeholder="판매중 상품 이름 낱말(예: 타이벡 · 여러 개는 |)" autocomplete="off" style="width:190px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px; font-size:12px;${skTouch}">
+                    <select id="sk-rule-${r.id}" style="padding:5px; border:1px solid var(--border,#ccc); border-radius:7px; font-size:12px;${skTouch}">
+                        <option value=""${!r.sell_rule ? ' selected' : ''}>연동 없음</option>
+                        <option value="hide_when_selling"${r.sell_rule === 'hide_when_selling' ? ' selected' : ''}>판매중이면 이 행 숨김</option>
+                        <option value="only_when_selling"${r.sell_rule === 'only_when_selling' ? ' selected' : ''}>판매중일 때만 이 행 사용</option>
+                    </select>
+                </div>`;
     const rows = skRows.map(r => {
         const now = inR(md, r.start_md, r.end_md);
         const itemCell = `${escapeHtml(r.item_key)}${now ? ' <span class="pill" style="font-size:10px; background:#8CC63E; color:#fff;">오늘</span>' : ''}`;
@@ -13613,7 +13633,7 @@ async function renderSeasonKnowledge() {
                 <input type="text" class="akm-md" id="sk-start-${r.id}" value="${skMdShow(r.start_md)}" autocomplete="off" style="width:66px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;"> ~
                 <input type="text" class="akm-md" id="sk-end-${r.id}" value="${skMdShow(r.end_md)}" autocomplete="off" style="width:66px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;">
             </td>
-            <td><textarea id="sk-know-${r.id}" rows="3" style="width:300px; min-width:220px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(r.knowledge)}</textarea></td>
+            <td><textarea id="sk-know-${r.id}" rows="3" style="width:300px; min-width:220px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(r.knowledge)}</textarea>${skSellEdit(r)}</td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-primary" onclick="saveSeasonKnow(${r.id})">저장</button>
                 <button class="btn-sm btn-outline" onclick="cancelSeasonKnow()">취소</button>
@@ -13625,7 +13645,7 @@ async function renderSeasonKnowledge() {
             <td style="white-space:nowrap;">${itemCell}</td>
             <td style="white-space:nowrap;">${escapeHtml(r.label)}</td>
             <td style="white-space:nowrap;" class="num">${skMdShow(r.start_md)} ~ ${skMdShow(r.end_md)}</td>
-            <td style="max-width:340px; font-size:12px; line-height:1.5;">${escapeHtml(r.knowledge)}</td>
+            <td style="max-width:340px; font-size:12px; line-height:1.5;">${escapeHtml(r.knowledge)}${skSellBadge(r)}</td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="editSeasonKnow(${r.id})">수정</button>
                 <button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonKnow(${r.id})">삭제</button>
@@ -13634,7 +13654,7 @@ async function renderSeasonKnowledge() {
     }).join('');
     el.innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>품목</th><th>구간</th><th>기간(월/일 — 매년 반복)</th><th>이 시기의 맛·상태·안내</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-           <p class="text-muted" style="font-size:12px; margin-top:6px;">초록 행 = 오늘 날짜 구간 (지금 AI 답변에 들어가는 내용). [수정] → 날짜 칸 클릭 시 월/일 달력. 저장 즉시 3채널 반영(톡톡은 봇 캐시 최대 5분).</p>`
+           <p class="text-muted" style="font-size:12px; margin-top:6px;">초록 행 = 오늘 날짜 구간 (지금 AI 답변에 들어가는 내용). [수정] → 날짜 칸 클릭 시 월/일 달력. 저장 즉시 3채널 반영(톡톡은 봇 캐시 최대 5분). 「판매 연동」 = 판매현황 판매중 상품 이름에 들어가는 낱말(여러 개는 | 로 · 예: 타이벡 / 노지황금향 · 공백 무시)이 맞으면 규칙대로 이 행을 넣거나 빼요(예: 타이벡 「오픈 예정」 행에 낱말 타이벡 + 판매중이면 숨김 → 타이벡 판매현황 행이 생기는 날 예정 글이 저절로 빠짐).</p>`
         : '<p class="text-muted">등록된 시기 지식이 없습니다.</p>';
 }
 window.editSeasonKnow = function(id) { skEditingId = id; renderSeasonKnowledge().catch(console.error); };
@@ -13646,10 +13666,12 @@ window.saveSeasonKnow = async function(id) {
     const e2 = skMdSave(document.getElementById('sk-end-' + id).value);
     if (!mdOk(s) || !mdOk(e2)) return showToast('기간은 월/일 형식(예: 05/01)으로 입력하세요', 'error');
     try {
+        const sellEl = document.getElementById('sk-sell-' + id), ruleEl = document.getElementById('sk-rule-' + id);   // #836
         await api('/api/agent-office/season-knowledge/' + id, 'PUT', {
             label: phase,
             start_md: s, end_md: e2,
             knowledge: document.getElementById('sk-know-' + id).value,
+            ...(sellEl ? { sell_match: sellEl.value.trim(), sell_rule: ruleEl ? ruleEl.value : '' } : {}),
         });
         showToast('✅ 시기 지식 저장 완료 — AI 답변에 반영됩니다', 'lime');
         skEditingId = null;
@@ -13744,9 +13766,9 @@ window.seasonWaitPreview = async function(item) {
         </div>
         <pre class="sw-pv-ro" ${canEdit ? 'hidden' : ''} style="white-space:pre-wrap; font:inherit; margin:10px 0 0; padding:10px 12px; background:var(--bg,#F5F6F8); border-radius:10px;"></pre>
         <div class="akm-notice-foot" style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:12px;">
-            <button type="button" class="btn-outline sw-tpl-save" ${canEdit ? '' : 'hidden'}>문구 저장</button>
-            <button type="button" class="btn-primary sw-pv-send">오픈 알림 보내기</button>
-            <button type="button" class="btn-outline akm-notice-ok">닫기</button>
+            <button type="button" class="btn-outline sw-tpl-save" style="min-height:44px;" ${canEdit ? '' : 'hidden'}>문구 저장</button>
+            <button type="button" class="btn-primary sw-pv-send" style="min-height:44px;">오픈 알림 보내기</button>
+            <button type="button" class="btn-outline akm-notice-ok" style="min-height:44px;">닫기</button>
         </div></div>`;
     const q = c => ov.querySelector(c);
     const fill = () => {
@@ -13768,7 +13790,9 @@ window.seasonWaitPreview = async function(item) {
     fill();
     q('.akm-notice-ok').onclick = () => ov.remove();
     q('.sw-tpl-save').onclick = async () => {
-        const btn = q('.sw-tpl-save'); btn.disabled = true;
+        const btn = q('.sw-tpl-save');
+        if (r.group === item && Array.isArray(r.messages) && r.messages.length > 1 && !confirm('이 묶음엔 품목별로 따로 둔 문구가 있어요.\n저장하면 묶음 전체가 이 문구로 나가요(품목별 문구보다 묶음 문구가 먼저).\n계속할까요?')) return;   /* #834 손질 ① */
+        btn.disabled = true;
         try {
             const body = { text: q('.sw-tpl-text').value }; body[r.group === item ? 'group' : 'item'] = item;   // 열쇠 = 설정 묶음 이름이면 group · 아니면 품목 글
             const sv = await api('/api/agent-office/season-waitlist/template', 'PUT', body);

@@ -229,6 +229,8 @@ const authMiddleware = (req, res, next) => { const role = String(req.headers['x-
     r = await put({ item: '레드향', text: '가'.repeat(666) }); ok(r.status === 200 && r.body.bytes === 1998, '1,998바이트 = 저장');
     r = await put({ text: 'x' }); ok(r.status === 400, '열쇠 없음 = 400', r.status);
     r = await put({ item: '레드향', text: 123 }); ok(r.status === 400, '문구가 글 아님 = 400', r.status);
+    r = await put({ item: '레드향', text: '🍊🍊 🎉' }); ok(r.status === 400 && /이모지만/.test(r.body.error) && cfgStore.season_notify.templates['레드향'] === '가'.repeat(666), '이모지만 = 400(삭제 아님 · 종전 문구 유지 · #834 손질 ②)', JSON.stringify(r.body).slice(0, 120));
+    r = await put({ item: '레드향', text: '  \n ' }); ok(r.status === 200 && r.body.deleted === true, '공백만 = 삭제(원문 trim 비었을 때만)', r.status);
     cfgStore = {};
 
     console.log('⑦ 글자 확인');
