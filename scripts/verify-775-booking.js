@@ -331,7 +331,10 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const cases = [
             [{ dispatchProductOrders: [okItem] }, null, '배송 없음 1줄 = 통과'],
             [{ dispatchProductOrders: [{ ...okItem, deliveryCompanyCode: '', trackingNumber: '' }] }, null, '빈 택배사·송장 칸 = 통과'],
-            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'CJGLS', trackingNumber: '123456789012' }] }, 'dispatch_only_nothing', '택배 송장 발송처리 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'CJGLS', trackingNumber: '123456789012' }] }, null, '#838 CJ 택배 송장 발송처리 = 통과'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'HANJIN', trackingNumber: '123456789012' }] }, 'dispatch_company_cj_only', '#838 다른 택배사 = 거절'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'CJGLS', trackingNumber: '1234567890' }] }, null, '#838 CJ 10자리 = 통과'],
+            [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DELIVERY', deliveryCompanyCode: 'CJGLS', trackingNumber: '12345678901' }] }, 'dispatch_tracking_format', '#838 CJ 11자리 = 거절'],
             [{ dispatchProductOrders: [{ ...okItem, deliveryMethod: 'DIRECT_DELIVERY' }] }, 'dispatch_only_nothing', '직접 전달 = 거절'],
             [{ dispatchProductOrders: [{ ...okItem, trackingNumber: '1234' }] }, 'dispatch_no_tracking', 'NOTHING 인데 송장 번호 = 거절'],
             [{ dispatchProductOrders: [{ ...okItem, dispatchDate: '2026-10-20T14:10:00+09:00' }] }, 'dispatch_date_format', '밀리초 없는 날짜 = 거절'],
@@ -343,9 +346,9 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
             [null, 'dispatch_body_not_object', '바디 없음 = 거절'],
         ];
         const res2 = cases.map(([b, want, nm]) => [G.dispatchBodyOk(b) === want, nm, G.dispatchBodyOk(b)]);
-        ok(res2.every(x => x[0]), '바디 검사 12가지', res2.filter(x => !x[0]).map(x => x[1] + '→' + x[2]).join(' · ') || '전부 맞음');
+        ok(res2.every(x => x[0]), '바디 검사 15가지', res2.filter(x => !x[0]).map(x => x[1] + '→' + x[2]).join(' · ') || '전부 맞음');
         ok(G.DISPATCH_PATH_RE.test('/external/v1/pay-order/seller/product-orders/dispatch') && !G.DISPATCH_PATH_RE.test('/external/v1/pay-order/seller/product-orders/dispatch/x'), '경로 정확 일치');
-        ok(/m: 'POST', re: \/\^\\\/external\\\/v1\\\/pay-order\\\/seller\\\/product-orders\\\/dispatch\$\//.test(rsrc) && /if \(DISPATCH_PATH_RE\.test\(path\)\)/.test(rsrc) && /RELAY_VERSION = '2026-10-20\.1'/.test(rsrc), '허용 목록 1줄 · /naver 에서 바디 검사 · RELAY_VERSION 2026-10-20.1');
+        ok(/m: 'POST', re: \/\^\\\/external\\\/v1\\\/pay-order\\\/seller\\\/product-orders\\\/dispatch\$\//.test(rsrc) && /if \(DISPATCH_PATH_RE\.test\(path\)\)/.test(rsrc) && /dispatch_query_not_allowed/.test(rsrc) && /invoice_query_not_allowed/.test(rsrc) && /RELAY_VERSION = '2026-10-24\.1'/.test(rsrc), '허용 목록 1줄 · /naver 에서 바디 검사 · RELAY_VERSION 2026-10-24.1(#838)');
     }
 
     console.log('\n④ 플레이스 메일 수집');

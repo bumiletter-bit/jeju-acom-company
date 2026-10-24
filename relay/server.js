@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-20.1'; // #782 발송처리 POST product-orders/dispatch = 「배송 없음(NOTHING)」 바디만(체험) · 종전 2026-10-18.3 = #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-24.1'; // #838 자동 송장 등록 = 네이버 발송처리에 CJ대한통운 택배 송장(DELIVERY · CJGLS · 숫자 10~12자리) 허용 + 쿠팡 송장업로드(POST v4 orders/invoices · 바디 검사 coupangInvoiceBodyOk) · 종전 2026-10-20.1 = #782 발송처리 POST product-orders/dispatch = 「배송 없음(NOTHING)」 바디만(체험) · 종전 2026-10-18.3 = #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -97,13 +97,15 @@ const ALLOW = [
     { m: 'PUT',  re: /^\/external\/v1\/products\/origin-products\/\d+\/change-status$/ },        // #720 판매 상태·재고 변경(원상품 번호 · 바디 statusType·stockQuantity 만) — 쓰기 5번째
     { m: 'POST', re: /^\/external\/v1\/product-images\/upload$/ },                                // #720 그림 올리기(multipart · MULTIPART_ALLOW 와 짝 · allowed() 를 먼저 타므로 여기도 필요)
     { m: 'POST', re: /^\/external\/v2\/products$/ },                                              // #723 신규 상품 등록(대표 확정 10/17 「2번으로」 · 정확일치 · 뒤에 붙은 경로 없음)
-    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/dispatch$/ },          // #782 발송처리 — 🔴 「배송 없음」(체험) 만 · 바디 검사 dispatchBodyOk(택배 송장 발송처리는 계속 막힘)
+    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/dispatch$/ },          // #782 발송처리 — 바디 검사 dispatchBodyOk = 「배송 없음」(체험) 또는 #838 CJ대한통운 택배 송장만
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 // ── #782 발송처리 바디 검사 시작(verify-782-dispatch.js 가 이 구간을 떼어 시험한다) ──
 //   네이버 발송처리 = POST …/product-orders/dispatch { dispatchProductOrders:[{ productOrderId, deliveryMethod, deliveryCompanyCode?, trackingNumber?, dispatchDate }] }
 //   (개발자포럼 #2114 정상 호출 꼴 · #2170 「NOTHING = 디지털 상품 또는 상품 배송 여부가 '배송없음'일 때만」 · dispatchDate = ISO 8601 + 밀리초 + +09:00)
-//   허용 = 줄마다 deliveryMethod 'NOTHING'(배송 없음) 만 · 택배사·송장 칸은 비었거나 없음 · 한 번에 30줄 · 다른 칸 0 — 택배 송장 발송처리(실물 배송)는 여기서 거절
+//   허용 = 줄마다 ① deliveryMethod 'NOTHING'(배송 없음 · #782 체험) — 택배사·송장 칸은 비었거나 없음
+//        또는 ② #838 'DELIVERY'(택배) — deliveryCompanyCode 'CJGLS'(CJ대한통운) · trackingNumber 숫자 10~12자리(CJ 운송장 · 하이픈 없음)
+//   · 한 번에 30줄(공식 문서 「최대 30개」) · 다른 칸 0 — 다른 택배사·직접 전달·퀵·방문 수령 등은 여기서 거절
 const DISPATCH_PATH_RE = /^\/external\/v1\/pay-order\/seller\/product-orders\/dispatch$/;
 function dispatchBodyOk(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return 'dispatch_body_not_object';
@@ -116,8 +118,12 @@ function dispatchBodyOk(body) {
         if (!x || typeof x !== 'object' || Array.isArray(x)) return 'dispatch_item_not_object';
         if (Object.keys(x).some(k => !OK_KEYS.includes(k))) return 'dispatch_item_keys';
         if (!/^\d{10,30}$/.test(String(x.productOrderId || ''))) return 'dispatch_product_order_id';
-        if (x.deliveryMethod !== 'NOTHING') return 'dispatch_only_nothing';   // 🔴 배송 없음만
-        if ((x.deliveryCompanyCode != null && x.deliveryCompanyCode !== '') || (x.trackingNumber != null && x.trackingNumber !== '')) return 'dispatch_no_tracking';
+        if (x.deliveryMethod === 'DELIVERY') {   // #838 택배 송장 = CJ대한통운만
+            if (x.deliveryCompanyCode !== 'CJGLS') return 'dispatch_company_cj_only';
+            if (typeof x.trackingNumber !== 'string' || !/^(\d{10}|\d{12})$/.test(x.trackingNumber)) return 'dispatch_tracking_format';   // CJ = 10 또는 12자리(11자리 거절)
+        } else if (x.deliveryMethod === 'NOTHING') {   // #782 배송 없음(체험)
+            if ((x.deliveryCompanyCode != null && x.deliveryCompanyCode !== '') || (x.trackingNumber != null && x.trackingNumber !== '')) return 'dispatch_no_tracking';
+        } else return 'dispatch_only_nothing';   // 그 밖 배송 방법(직접 전달·퀵·방문 수령 …) = 거절(종전 오류 이름 유지)
         if (!/^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+09:00$/.test(String(x.dispatchDate || ''))) return 'dispatch_date_format';
     }
     return null;
@@ -190,6 +196,7 @@ app.post('/naver', async (req, res) => {
     }
     // #782 발송처리는 「배송 없음」 바디만 — 아니면 네이버로 보내지 않고 거절
     if (DISPATCH_PATH_RE.test(path)) {
+        if (query && typeof query === 'object' && Object.keys(query).length) { log('차단(발송처리 query)'); return res.status(403).json({ error: 'dispatch_query_not_allowed', method, path }); }   // #838 발송처리는 바디만(쓰는 곳 = 체험·자동 송장 둘 다 query 0)
         const bad = dispatchBodyOk(body);
         if (bad) { log('차단(발송처리 바디)', bad); return res.status(403).json({ error: bad, method, path }); }
     }
@@ -269,7 +276,35 @@ const COUPANG_ALLOW = [
     // #732 브랜드 찾기(대표 10/18 · 윙 「신규 브랜드」 승인됐는데 검색에 안 보임) — 공식 문서 brands/search = POST + 바디 {brandName*, countPerPage(≤10), page} · 읽기만
     //   바디는 이 세 칸만 넘기고 vendorId 는 넣지 않는다(문서에 없는 칸 · bodyKeys)
     { m: 'POST', tpl: CP_MKT + '/brands/search', bodyKeys: ['brandName', 'countPerPage', 'page'] },
+    // #838 송장업로드(상품준비중 → 배송지시 · 공식 문서 uploading-waybills · URL API NAME UPDATE_ORDER_SHIPPING_INFO) — 경로 vendorId 강제 · 바디 vendorId 는 아래 핸들러가 .env 값으로 덮음 · 바디 검사 coupangInvoiceBodyOk
+    { m: 'POST', tpl: '/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices', bodyCheck: 'invoice' },
 ];
+// ── #838 쿠팡 송장업로드 바디 검사 시작(verify 가 이 구간을 떼어 시험한다) ──
+//   공식 바디 = { vendorId, orderSheetInvoiceApplyDtos:[{ shipmentBoxId, orderId, vendorItemId, deliveryCompanyCode, invoiceNumber, splitShipping, preSplitShipped, estimatedShippingDate }] } (8칸 모두 필수)
+//   허용 = 전체배송만(splitShipping false · preSplitShipped false · estimatedShippingDate '') · CJGLS · invoiceNumber 숫자 10~12자리(쿠팡 택배사 코드표 CJGLS 「10 또는 12」)
+//          · 번호 3칸 = 양의 정수(안전 정수) 또는 숫자 글자 1~20자리 · 한 번에 50줄 · 다른 칸 0
+//   한 shipmentBoxId 에 옵션(vendorItemId)이 여럿이면 옵션마다 한 줄(빠지면 쿠팡이 NOT_FOUND_VENDOR_ITEM 「합포장건 중 누락」) — 줄 묶기는 회사프로그램 몫
+const CP_INVOICE_KEYS = ['shipmentBoxId', 'orderId', 'vendorItemId', 'deliveryCompanyCode', 'invoiceNumber', 'splitShipping', 'preSplitShipped', 'estimatedShippingDate'];
+function coupangInvoiceBodyOk(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invoice_body_not_object';
+    if (Object.keys(body).some(k => k !== 'orderSheetInvoiceApplyDtos' && k !== 'vendorId')) return 'invoice_body_keys';
+    const list = body.orderSheetInvoiceApplyDtos;
+    if (!Array.isArray(list) || !list.length || list.length > 50) return 'invoice_count';
+    for (const x of list) {
+        if (!x || typeof x !== 'object' || Array.isArray(x)) return 'invoice_item_not_object';
+        const ks = Object.keys(x);
+        if (ks.length !== CP_INVOICE_KEYS.length || ks.some(k => !CP_INVOICE_KEYS.includes(k))) return 'invoice_item_keys';
+        for (const k of ['shipmentBoxId', 'orderId', 'vendorItemId']) {
+            const v = x[k];
+            if (!((typeof v === 'number' && Number.isSafeInteger(v) && v > 0) || (typeof v === 'string' && /^\d{1,20}$/.test(v)))) return 'invoice_' + k;
+        }
+        if (x.deliveryCompanyCode !== 'CJGLS') return 'invoice_company_cj_only';
+        if (typeof x.invoiceNumber !== 'string' || !/^(\d{10}|\d{12})$/.test(x.invoiceNumber)) return 'invoice_number_format';   // CJGLS = 10 또는 12자리(11자리 거절)
+        if (x.splitShipping !== false || x.preSplitShipped !== false || x.estimatedShippingDate !== '') return 'invoice_split_not_allowed';
+    }
+    return null;
+}
+// ── #838 쿠팡 송장업로드 바디 검사 끝 ──
 const CP_MAX = { '{price}': 10000000, '{quantity}': 999999 };   // 값 자리 상한(0 하나 더 붙인 실수 막기)
 // 요청 path → 허용 규칙 + 실제 경로(vendorId 치환) · 안 맞으면 null
 function coupangMatch(method, reqPath) {
@@ -305,6 +340,12 @@ app.post('/coupang', async (req, res) => {
         return res.status(403).json({ error: 'path_not_allowed', method, path: reqPath });
     }
     const realPath = hit.realPath;
+    // #838 송장업로드는 바디 검사 통과분만 — 아니면 쿠팡으로 보내지 않고 거절
+    if (rule.bodyCheck === 'invoice') {
+        if (query && typeof query === 'object' && Object.keys(query).length) { log('쿠팡 차단(송장업로드 query)'); return res.status(403).json({ error: 'invoice_query_not_allowed', method, path: reqPath }); }   // 송장업로드는 바디만
+        const bad = coupangInvoiceBodyOk(reqBody);
+        if (bad) { log('쿠팡 차단(송장업로드 바디)', bad); return res.status(403).json({ error: bad, method, path: reqPath }); }
+    }
     try {
         // 서명과 실제 요청의 쿼리 문자열은 반드시 동일 바이트 — 같은 문자열을 두 곳에 사용
         const q2 = query && typeof query === 'object' ? (rule.qVendor ? { ...query, vendorId: COUPANG_VENDOR_ID } : query) : (rule.qVendor ? { vendorId: COUPANG_VENDOR_ID } : null);
