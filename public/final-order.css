@@ -196,6 +196,7 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 .fo-chatbadge { background: #EEF0FF; color: #4F46E5; border: 1px solid #C7CBFF; }
 .fo-jeju { margin: 0; font-size: 13.5px; }
 .fo-jeju b { font-variant-numeric: tabular-nums; }
+.fo-settle-note { font-size: 12px; color: var(--f-sub); }
 @media (max-width: 640px) {
     .fo-thread { padding: 10px 10px 12px; }
     .fo-bub.me { max-width: 88%; }

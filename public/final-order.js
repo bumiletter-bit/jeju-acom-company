@@ -1651,7 +1651,7 @@
             files.push({ kind: 'partner', short: p.short, name: `제주아꼼이네송장(${p.short}) ${dot}.xlsx`, wb: pw, partner: p, png: `수량(${p.short}) ${dot}.png` });
         });
         const store = wb.Sheets['발주발송관리'];
-        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
+        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(store), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
         st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result';
         renderResult(D().getElementById('msg-coupang').textContent || '');
         sendLog();   // #525: 전체 지시에 남길 정리 기록 1건(다시 만들면 같은 기록을 고쳐 씀) — 실패해도 파일 만들기는 성공
@@ -1668,6 +1668,7 @@
         const pl = patchLines();
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all" title="엑셀 파일만 받아요. 수량 이미지는 엑셀의 수량 시트에도 있고, 아래 버튼으로 따로 받을 수 있어요">파일 ${st.files.length}개 전부 저장</button></div>
             <p class="fo-jeju" id="fo-jeju-result">제주도 배송: <b>${esc(jejuText())}</b></p>
+            ${settleText() ? `<p class="fo-jeju" id="fo-settle-result">스토어 정산예정: <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}
             ${pl.length ? `<div class="fo-patched" id="fo-patched"><b>말로 바꾼 것 ${pl.length}건</b> (바뀐 칸은 연보라색)<ul>${pl.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
             <div class="fo-files">${ps.map(partner).join('')}${ss.map(store).join('')}</div>
@@ -1971,6 +1972,18 @@
         return m;
     }
     function jejuText() { const m = jejuCount(); return m.size ? [...m].map(([k, n]) => `${k} ${n ? n + '건' : '없음'}`).join(' · ') : '없음'; }
+    // #839(대표 「스토어 양식 안 받아도 되게 · 그 파일에서 보던 정산예정금액을 띄워 줘」): 만든 스토어 시트의 「정산예정금액」 칸(U · 21번째)을 줄마다 더한다 = 파일과 1원까지 같음 · 네이버만(쿠팡·자사몰 칸 없음)
+    function storeSettle(ws) {
+        const XLSX = window.XLSX, out = { sum: 0, n: 0, none: 0 }; if (!ws || !ws['!ref']) return out;
+        const rg = XLSX.utils.decode_range(ws['!ref']);
+        for (let r = 2; r <= rg.e.r; r++) {
+            out.n++; const c = ws[XLSX.utils.encode_cell({ r, c: 20 })];
+            const v = !c ? NaN : c.t === 'n' ? Number(c.v) : String(c.v == null ? '' : c.v).trim() === '' ? NaN : Number(String(c.v).replace(/[^\d.-]/g, ''));
+            if (Number.isFinite(v)) out.sum += v; else out.none++;
+        }
+        out.sum = Math.round(out.sum); return out;
+    }
+    function settleText() { const f = (st.files || []).find(x => x.kind === 'store'); if (!f || !f.settle) return ''; const x = f.settle; return `${x.sum.toLocaleString('ko-KR')}원 · ${x.n}건${x.none ? ` (값 없음 ${x.none}건)` : ''}`; }
     // 말로 바꾼 것 목록 — screen = 화면용(값 포함) · log = 정리 기록용(주소 글자는 넣지 않는다)
     function patchItems() {
         const byKey = new Map(S().merged.map(e => [keyOf(e), e])), out = [], groups = new Map();
@@ -2231,7 +2244,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         // #526: 「미매칭」 = 옵션 글자가 「[미매칭]」으로 시작(단가표에 없는 이름) 또는 거래처 미정. 카드에서 거래처를 골랐어도 이름은 여전히 미매칭이다(실사용에서 0건으로 세어 AI가 못 찾았다고 답함)
         const unAll = going.filter(e => /^\[미매칭\]/.test(optOf(e)) || !partnerShort(optOf(e))), un = unAll.length, unPicked = unAll.filter(e => !!partnerShort(optOf(e))).length;
         return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행`,
-            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, settleText() ? `스토어 정산예정(네이버): ${settleText()}` : '', `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
     }
     // #570(대표 10/7): 줄 끝·맨 아래의 「변경해줘」「다 해줘」 같은 시키는 말만 있는 것은 위 정리 줄들을 가리키는 말 — 그 줄들은 화면이 처리하므로 클코에게 보내지 않는다
     const CMD_TAIL = /\s+(?:다\s*|전부\s*|모두\s*|싹\s*)?(?:변경|수정|적용|반영|표시|처리)?\s*(?:해\s*줘요?|해\s*주세요|해\s*줄래|해\s*주라|부탁해요?|부탁드려요?|부탁)\s*[!.~]*$/;
@@ -2432,6 +2445,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const s = S(), m = s.merged, out = st.out, L = [];
         L.push(out.partners.map(p => `${p.short} ${p.rows.length}건(${p.total}박스)`).join(' · ') || '택배사 양식 0건');
         L.push(`제주도 배송: ${jejuText()}`);
+        if (settleText()) L.push(`스토어 정산예정(네이버): ${settleText()}`);
         L.push(`현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건`);
         const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 통째로 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
         kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) sp.push(`· ${k} ${xs.length}건: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); });

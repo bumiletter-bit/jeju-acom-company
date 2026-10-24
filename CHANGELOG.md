@@ -1,3 +1,9 @@
+## v5.9.621 (2026-10-24) — #839 최종발주 결과에 「스토어 정산예정」 한 줄(대표 「발송처리 자동이니 스토어 양식 안 받아도 되게」 · 워커1 · 워커2 읽기 점검 막을 것 0)
+
+- 결과 화면 「제주도 배송」 아래 「스토어 정산예정: n원 · n건 · 네이버 스토어 양식 기준」 = 만든 발주발송관리 시트의 U칸(정산예정금액) 행 전부 합(입력삭제 노란 줄 포함 · 파일과 1원까지 같음 · 빈 값은 「값 없음 n건」) · 정리 기록·대화 요약에도 같은 줄 · 네이버 파일 없으면 안 나옴 · 쿠팡·자사몰 표시 안 함 · 파일 산출 무변경 · 캐시 final-order.js 43 · css 30.
+- verify-508-ui A 194/194(#838 존재 확인 400 콘솔은 이 검증에서만 200 route).
+- 🔵 네이버 0건이면 「0원 · 0건」 줄이 뜸(무해 · 후보).
+
 ## v5.9.620 (2026-10-24) — #838 자동 송장 등록 2단계(3채널 전송 · 설정 invoice_auto.send_enabled 켤 때만 · 워커3 서버 · 워커1 화면 · 워커2 교차 점검 2회 막을 것 0)
 
 - **서버(invoice-auto.js +178 · server.js +17 transport 주입)**: register {dry:false} + send_enabled true 둘 다일 때만 전송(아니면 409 · 준비만) · 네이버 dispatch 30건씩(5칸 · DELIVERY · CJGLS) · 쿠팡 v4 invoices 상자 단위(옵션마다 한 줄 · 같은 송장 · 50줄) · 카페24 shipments(order_id+order_item_code · 100건 · status shipping · CJ 코드 = 설정 invoice_auto.cafe24_carrier_code · 없으면 보내기 전 failed) · 줄 집기 ready → sending … RETURNING(2중 전송 0) · already = sent·sending·unknown · 4xx failed · 끊김·5xx unknown(다시 안 보냄) · 재시도 429 만 · 네이버 발송 상태 확인 · audit invoice_auto_send · 실패·모름 텔레그램 1회(건수만) · 수기 파일 GET …/manual/:id(네이버 일괄발송 시트 꼴 · 전화·주소 0) · 쿠팡 order_id 없는 옛 결과 = failed · GET …/cafe24-carriers(관리자 · CJ 코드 찾기) · invoice_auto_items 90일 정리 · verify-838-invoice-auto 104/104(⓪ 실DB 롤백 SQL 문법).

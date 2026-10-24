@@ -52,6 +52,8 @@ async function fakeApis(ctx, fx, hits, mode = {}) {
         r.fulfill({ json: { ok: false, message: '시험에서는 AI를 부르지 않아요' } });
     });
     // #525: 정리 기록 라우트는 실DB에 줄을 만든다 → 늘 가로챈다(보낸 내용은 hits.logs 에)
+    // #838 자동 송장 등록 묶음의 존재 확인(빈 파일로 match → 서버 400 = 계약)이 콘솔에 「400」 자원 오류를 남김 → 이 검증에선 200 으로 받아 무회귀 오류 0 항목과 섞이지 않게(묶음 자체 검증 = verify-838-ui)
+    await ctx.route('**/api/agent-office/invoice-auto/match', r => r.fulfill({ json: { ok: true } }));
     await ctx.route('**/api/agent-office/final-order/log', r => { (hits.logs = hits.logs || []).push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, id: 7001 } }); });
     // #528: 주소 검색 프록시도 늘 가짜 응답(기본 0건) — 실제 도로명주소 검색을 부르지 않는다
     await ctx.route('**/api/agent-office/juso*', r => r.fulfill({ json: { results: { common: { errorCode: '0', errorMessage: '정상', totalCount: '0' }, juso: [] } } }));
@@ -286,6 +288,12 @@ async function resolveCards(pg, type) {
             ok(tail.map(r => r[6]).sort().join() === [...fx.expect.individualAfterRejudge].sort().join() && yellow.filter(Boolean).length === tail.length && yellow.slice(-tail.length).every(Boolean), '④ [스토어] 입력삭제 주문 = 노란 줄로 맨 아래', tail.map(r => r[6]).join(','));
             const nvGone = [...fx.expect.excluded, ...(fx.friKind === 'future' ? ['받는30'] : [])];
             ok(body.every(r => /^받는/.test(r[6])) && body.every(r => !nvGone.includes(r[6])) && body.length === 30 - nvGone.length, '④ [스토어] 네이버 주문만 · 오늘 안 나가는 건 없음', `${body.length}행`);
+            // #839 화면 「스토어 정산예정」 = 파일 U칸(정산예정금액) 합 · 줄 수 — 1원까지 같아야 · 정리 기록에도 같은 한 줄
+            const fileSum = body.reduce((s, r) => s + (Number(r[20]) || 0), 0), want = `${fileSum.toLocaleString('ko-KR')}원 · ${body.length}건`;
+            const shown = await pg.evaluate(() => (document.getElementById('fo-settle-result') || {}).textContent || '');
+            ok(body.every(r => typeof r[20] === 'number') && shown.includes('스토어 정산예정: ' + want) && !/값 없음/.test(shown), '④ #839 화면 「스토어 정산예정」 = 파일 정산예정금액 칸 합·줄 수', `${shown} · 파일 ${want}`);
+            await pg.waitForTimeout(500); const lg = (hits.logs || []).slice(-1)[0], lgL = lg ? [].concat(lg.lines || []).join('\n') : '';
+            ok(lgL.includes('스토어 정산예정(네이버): ' + want), '④ #839 정리 기록에도 같은 한 줄', lgL.split('\n').find(x => /정산예정/.test(x)) || '(없음)');
         }
         const pngN = await pg.locator(SEL.png).count(); let pngOk = pngN >= 2;
         for (let i = 0; i < pngN; i++) { const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 20000 }), pg.locator(SEL.png).nth(i).click()]); const f = path.join(TMP, 'q' + i + '.png'); await d.saveAs(f); const b = fs.readFileSync(f); if (!(b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 && b.length > 1000 && /^수량\((효돈|대성)\) \d\d\.\d\d\.png$/.test(d.suggestedFilename()))) pngOk = false; }
