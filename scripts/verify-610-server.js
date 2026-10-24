@@ -103,6 +103,18 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
     await hook(dupEnv); await hook(dupEnv);
     ok((await msgs(P3)).length === 2, '봉투 id 같은 재시도 → 1건만 ' + (await msgs(P3)).length);
     ok((await thread(P3)).status === 'staff_needed' && notes.length === 1, '직원 몫 대화에 다시 옴 → 잠금 유지 · 알림은 5분 1회(두 번째 안 감)');
+    // #837 직원 알림 스위치(staff_notify): false = 알림 0 · 5분 잠금(last_notify_at) 도 안 찍음 · 대화 상태는 그대로 staff_needed / true·없음 = 종전
+    { const P837a = T + '1837', P837b = T + '1838', P837c = T + '1839'; const n837 = notes.length;
+      cfgStore.sms_gateway.staff_notify = false; sms.resetCfg();
+      await hook(env('sms:received', { messageId: 'a837a', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + P837a.slice(1) }));
+      const t837a = await thread(P837a);
+      ok(t837a && t837a.status === 'staff_needed' && notes.length === n837 && t837a.last_notify_at == null, '#837 staff_notify false → createNotification 0회 · last_notify_at 안 찍음 · 대화는 staff_needed 그대로 ' + JSON.stringify({ st: t837a && t837a.status, notes: notes.length - n837, lna: t837a && t837a.last_notify_at }));
+      cfgStore.sms_gateway.staff_notify = true; sms.resetCfg();
+      await hook(env('sms:received', { messageId: 'a837b', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + P837b.slice(1) }));
+      ok((await thread(P837b)).status === 'staff_needed' && notes.length === n837 + 1 && (await thread(P837b)).last_notify_at != null, '#837 staff_notify true → 종전(알림 1 · last_notify_at 찍음)');
+      delete cfgStore.sms_gateway.staff_notify; sms.resetCfg();
+      await hook(env('sms:received', { messageId: 'a837c', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + P837c.slice(1) }));
+      ok(notes.length === n837 + 2 && (await sms.cfg(true)).staff_notify === true, '#837 설정 칸 없음 → 기본 true(종전)'); }
 
     console.log('④ auto 모드 — 규칙/AI 답 · 유예 · 쿨다운 · 하루 1번');
     sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 70, staff_ids: [1], cooldown_min: 30, daily_cap: 1 };

@@ -18,7 +18,7 @@ const crypto = require('crypto');
 
 // #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
 const TYPING_TTL_MS = 30000;   // #683 「입력 중」 표시 = 마지막 신호 뒤 30초(설정 sms_gateway.typing_ttl_sec 5~120)
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, draft_open_hours: 1, context_msgs: 6, draft_daily_cap: 20, history_days: 60 };   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, draft_open_hours: 1, context_msgs: 6, draft_daily_cap: 20, history_days: 60, staff_notify: true };   // staff_notify = 문자 대화의 직원 알림(알림 종 + 폰 푸시 · type 'sms')을 보낼지(#837 대표 10/24 「회사프로그램에 문자 알림 안 뜨게 · 승인 알림이 묻힘 · 미처리는 에이전트 오피스에서 봄」 → 실DB false · 에이전트 오피스 카드·미처리 집계·텔레그램은 무관)   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 // #635(대표 「고」 10/11 · 폰 문자함 구도): 목록 = 안 읽은 글이 있는 대화(staff_read_at 뒤 들어온 글 수) · 열면 0 · 초안은 손님 글이 올 때마다 새로(쿨다운·하루 상한·잠금·되풀이는 자동 발송만 막는다) · 쿨다운 기본 30분
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
@@ -100,6 +100,7 @@ module.exports = function mountSms(app, deps) {
             draft_open_hours: num(v.draft_open_hours, DEFAULT_CFG.draft_open_hours, 0, 720),   // #695 초안만 남은 대화 자동 종료(시간 · 0 = 안 닫음)
             context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
             typing_ttl_sec: num(v.typing_ttl_sec, TYPING_TTL_MS / 1000, 5, 120),   // #683 「입력 중」 표시 유효 시간
+            staff_notify: v.staff_notify !== false,   // #837 행에 false 만 꺼짐 · 없음·그 밖 = true(종전)
         };
     }
     let _cfgCache = null, _cfgAt = 0;
@@ -226,6 +227,7 @@ module.exports = function mountSms(app, deps) {
     }
     // 직원 알림(화면 알림 + 폰 푸시 · type 'sms' · 손님 번호·이름 없이 끝 4자리만)
     async function notifyStaff(c, thread, title, message, opts = {}) {
+        if (c && c.staff_notify === false) return 0;   // #837: 설정 sms_gateway.staff_notify false = 직원 알림(알림 종·폰 푸시) 전부 끔 — 모든 문자 알림이 이 함수 하나를 지나므로 여기서 끊음 · 5분 잠금 UPDATE 도 안 함 · 대화 상태·staff_why·미처리 집계·에이전트 오피스 카드·텔레그램은 무접촉
         if (!deps.testMode) {   // #648: 시험 번호(0999…) 대화는 라이브 서버가 알리지 않는다 — 검증이 넣은 줄을 라이브 틱이 집어 진짜 직원에게 헛알림이 가던 것
             let pd = thread && thread.phone_digits;
             if (!pd && thread && thread.id) { try { pd = ((await pool.query(`SELECT phone_digits FROM sms_threads WHERE id = $1`, [thread.id])).rows[0] || {}).phone_digits; } catch (e) { pd = ''; } }
