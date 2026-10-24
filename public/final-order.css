@@ -761,3 +761,16 @@ html[data-ao-theme="dark"] .fo-ia-files li { background: var(--fd-bg); }
 html[data-ao-theme="dark"] .fo-ia-sum span.warn { border-color: var(--fd-warn-line); background: #262313; color: var(--fd-warn); }
 html[data-ao-theme="dark"] .fo-ia-sum span.warn b { color: var(--fd-warn); }
 html[data-ao-theme="dark"] .fo-ia-confirm { border-color: var(--fd-accent-line); background: var(--f-accent-soft); }
+/* #838-5 실전송 — 보내기 확인(되돌릴 수 없음 = 주황 기운) · 모름 줄 빨강 · 실패 줄 */
+.fo-ia-confirm.send { border-color: #FEC84B; background: #FFFCF5; }
+.fo-ia-scroll td.bad { color: var(--f-err); font-weight: 700; }
+.fo-ia-bad { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fo-ia-bad li { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--f-card-line); border-radius: 10px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.fo-ia-bad li b { font-size: 13px; }
+.fo-ia-bad li span { color: var(--f-sub); font-variant-numeric: tabular-nums; }
+.fo-ia-bad li[data-k="unknown"] { border-color: #FDA29B; background: #FEF3F2; }
+.fo-ia-bad li[data-k="unknown"] b { color: var(--f-err); }
+.fo-ia-bad li[data-k="failed"] b { color: #B54708; }
+html[data-ao-theme="dark"] .fo-ia-confirm.send { border-color: var(--fd-warn-line); background: #262313; }
+html[data-ao-theme="dark"] .fo-ia-bad li[data-k="unknown"] { border-color: var(--fd-err-line); background: var(--fd-err-bg); }
+html[data-ao-theme="dark"] .fo-ia-bad li[data-k="failed"] b { color: var(--fd-warn); }

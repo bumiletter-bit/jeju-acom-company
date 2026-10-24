@@ -11250,6 +11250,23 @@ const invoiceAuto = require('./invoice-auto.js')(app, { pool, authMiddleware, ad
         naver: async days => { if (!naverRelay.configured()) throw new Error('중계서버 환경변수 미설정'); return naverFetchInvoiceOrders(days); },
         coupang: async days => { if (!naverRelay.configured()) throw new Error('중계서버 환경변수 미설정'); return coupangFetchInvoiceOrders(Math.min(days, 31)); },
         cafe24: async days => cafe24.fetchInvoiceOrders(Math.min(days, 90)),
+    },
+    // #838-4 전송(register {dry:false} + 설정 invoice_auto.send_enabled true 일 때만 부름) — 바디는 invoice-auto.js 가 만듦(docs/838/838-api-외부.md) · 여기는 길만
+    //   🔴 relay 바디 검사(2026-10-24.1)가 네이버 DELIVERY CJGLS · 쿠팡 8칸 정확만 통과 · 카페24 = 직접(scope write_order 재승인 뒤)
+    naverCfgGet, notifyTelegram,
+    transport: {
+        naver: body => naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/dispatch', body }),
+        coupang: body => naverRelay.callCoupang({ method: 'POST', path: '/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices', body }, null),
+        cafe24: body => cafe24.apiReq('POST', '/api/v2/admin/shipments', body),
+        naverQuery: async ids => {   // 전송 뒤 상태 확인(읽기 · 상세조회 POST query · 300개씩)
+            const out = {};
+            for (let i = 0; i < ids.length; i += 300) {
+                const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: ids.slice(i, i + 300) } });
+                const list = (r && r.data && Array.isArray(r.data)) ? r.data : ((r && r.data && r.data.data) || []);
+                for (const it of list) { const po = (it && (it.productOrder || (it.content && it.content.productOrder))) || it || {}; if (po.productOrderId) out[String(po.productOrderId)] = String(po.productOrderStatus || ''); }
+            }
+            return out;
+        },
     } });
 
 // ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====

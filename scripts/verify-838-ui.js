@@ -38,7 +38,21 @@ const REG = {
     ],
     manual_file: null,
 };
-const page = (mode, role) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+const SENT = {   // 2-b 전송 응답(보냄 3 · 실패 1 · 모름 1)
+    ok: true, run_id: 17, dry: false, send_enabled: true, ready: { naver: 4, coupang: 1, cafe24: 0 },
+    sent: { naver: 2, coupang: 1, cafe24: 0 }, failed: { naver: 1, coupang: 0, cafe24: 0 }, unknown: { naver: 1, coupang: 0, cafe24: 0 },
+    already: 0, manual: 1, skipped: 0, confirmed: { naver: 2, checked: 2 },
+    items: [
+        { id: 'r1', channel: 'naver', order_key: '2026102400000001', tracking: '612345670001', state: 'sent' },
+        { id: 'r2', channel: 'naver', order_key: '2026102400000002', tracking: '612345670002', state: 'sent' },
+        { id: 'r3', channel: 'naver', order_key: '2026102400000003', tracking: '612345670003', state: 'failed', error: 'INVALID_STATUS 발송 처리할 수 없는 상태' },
+        { id: 'r5', channel: 'naver', order_key: '2026102400000005', tracking: '612345672222', state: 'unknown', error: '응답에 처리 결과 없음' },
+        { id: 'r4', channel: 'coupang', order_key: '2026102400000004', tracking: '612345670004', state: 'sent' },
+        { id: 'r9', channel: 'naver', order_key: '2026102400000009', tracking: null, state: 'manual' },
+    ],
+    manual_file: '/api/agent-office/invoice-auto/manual/17',
+};
+const page =(mode, role) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="file:///${PUB}/styles.css"><link rel="stylesheet" href="file:///${PUB}/theme.css"><link rel="stylesheet" href="file:///${PUB}/final-order.css"><link rel="stylesheet" href="file:///${PUB}/ao-dark.css">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>body{margin:0;font-family:"Pretendard","Malgun Gothic",sans-serif;background:#EEF0F4}</style></head><body>
@@ -53,14 +67,29 @@ window.api = async (url, method, body) => {
   const err = (s, m) => { const e = new Error(m); e.status = s; throw e; };
   if ('${mode}' === 'old' && /invoice-auto/.test(url)) err(404, '서버 오류');
   if (url === '/api/agent-office/invoice-auto/match') { if (!body.files || !body.files.length) err(400, '파일이 없어요'); await new Promise(r => setTimeout(r, 300)); return MATCH; }
-  if (url === '/api/agent-office/invoice-auto/register') { if (currentUser.role !== 'admin') err(403, '관리자만'); return REG; }
+  if (url === '/api/agent-office/invoice-auto/register') {
+    if (currentUser.role !== 'admin') err(403, '관리자만');
+    const M = '${mode}';
+    if (M === 'new') return REG;
+    if (body.dry !== false) return Object.assign({}, REG, { send_enabled: true, manual_file: '/api/agent-office/invoice-auto/manual/17' });
+    if (M === 'off409') { const e = new Error('자동 송장 전송이 꺼져 있어요(설정 invoice_auto.send_enabled) — 준비만 저장했어요'); e.status = 409; e.body = Object.assign({}, REG, { ok: false, dry: true, send_enabled: false }); throw e; }
+    if (M === 'e500') err(500, '등록에 실패했어요 — 보낸 줄이 있을 수 있으니 채널 화면을 먼저 확인해 주세요');
+    return SENT;
+  }
   err(404, 'no mock ' + url);
+};
+const SENT = ${JSON.stringify(SENT)};
+const _f = window.fetch; window.__fetch = [];
+window.fetch = async (u, o) => {   // 수기 파일(2-c) = Authorization 머리 붙은 GET → xlsx blob
+  if (String(u).startsWith('/api/agent-office/invoice-auto/manual/')) { window.__fetch.push({ u: String(u), auth: o && o.headers && o.headers.Authorization }); return new Response(new Uint8Array([80, 75, 3, 4, 1, 2]), { status: 200, headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('자동송장_수기_17.xlsx') } }); }
+  return _f(u, o);
 };
 </script>
 <script src="file:///${PUB}/final-order-core.js"></script><script src="file:///${PUB}/final-order.js"></script></body></html>`;
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v838-'));
 const write = (n, s) => { const p = path.join(OUT, n); fs.writeFileSync(p, s); return 'file:///' + p.split(path.sep).join('/'); };
-const U = { admin: write('admin.html', page('new', 'admin')), user: write('user.html', page('new', 'user')), old: write('old.html', page('old', 'admin')) };
+const U = { admin: write('admin.html', page('new', 'admin')), user: write('user.html', page('new', 'user')), old: write('old.html', page('old', 'admin')),
+    send: write('send.html', page('send', 'admin')), off409: write('off409.html', page('off409', 'admin')), e500: write('e500.html', page('e500', 'admin')) };
 const fakeXlsx = name => ({ name, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('PK fake ' + name) });
 
 (async () => {
@@ -160,6 +189,53 @@ const fakeXlsx = name => ({ name, mimeType: 'application/vnd.openxmlformats-offi
               await pg.selectOption('select[data-ia-pick="r5"]', '612345671111'); await pg.selectOption('select[data-ia-pick="r9"]', 'manual');
               ok(await pg.locator('#fo-ia-reg').isDisabled() && /관리자\(대표·조가영\)만/.test(await pg.textContent('#fo-ia-reg-msg')), tag + ' 직원 = 짝 맞추기·카드는 되고 [등록]은 꺼짐');
               ok(errs.length === 0, tag + ' 직원 콘솔 오류 0', errs); await pg.close(); }
+
+            // ④ #838-5 실전송 — 준비(dry) → send_enabled 켜짐 → [채널에 보내기] → 확인(되돌릴 수 없음) → dry:false → 보낸 결과 · 모름 빨강 · 서버 수기 파일
+            const prep = async url => {
+                const o = await open(url), pg = o.pg;
+                await pg.setInputFiles('#fo-ia-file', [fakeXlsx('송장(효돈).xlsx')]); await tap(pg, '#fo-ia-match'); await pg.waitForSelector('#fo-ia-out:not([hidden]) .fo-ia-sum', { timeout: 8000 });
+                await pg.selectOption('select[data-ia-pick="r5"]', '612345672222'); await pg.selectOption('select[data-ia-pick="r9"]', 'manual');
+                await tap(pg, '#fo-ia-reg'); await tap(pg, '#fo-ia-yes'); await pg.waitForSelector('#fo-ia-result:not([hidden])', { timeout: 5000 });
+                return o;
+            };
+            const sends = pg => pg.evaluate(() => window.__calls.filter(c => /register/.test(c.url) && c.body.dry === false).length);
+            { const { pg, errs } = await prep(U.send);
+              ok(/아직 채널에 보내지 않았어요/.test(await pg.textContent('#fo-ia-result')) && await pg.locator('#fo-ia-send').isVisible() && /5건/.test(await pg.textContent('#fo-ia-send')), tag + ' 전송 켜짐 = 준비 뒤 [채널에 보내기 (5건)]');
+              await tap(pg, '#fo-ia-send');
+              const q = await pg.textContent('#fo-ia-confirm');
+              ok(await pg.locator('#fo-ia-confirm').isVisible() && /채널에 실제로 보내요 · 되돌릴 수 없어요/.test(q) && /네이버 4건 · 쿠팡 1건 · 자사몰 0건 = 5건/.test(q), tag + ' 보내기 확인 글', q);
+              ok(await pg.evaluate(() => { const c = document.getElementById('fo-ia-confirm'), s = document.getElementById('fo-ia-send'); return c.previousElementSibling === s.closest('.fo-acts'); }), tag + ' 확인 창이 [채널에 보내기] 바로 아래');
+              await tap(pg, '#fo-ia-no');
+              ok(await pg.locator('#fo-ia-confirm').isHidden() && await sends(pg) === 0, tag + ' 보내기 취소 = dry:false 요청 0');
+              await tap(pg, '#fo-ia-send'); await tap(pg, '#fo-ia-send-yes');
+              await pg.waitForFunction(() => /보낸 결과/.test((document.getElementById('fo-ia-result') || {}).textContent || ''), null, { timeout: 5000 });
+              const rq = await pg.evaluate(() => window.__calls.filter(c => /register/.test(c.url) && c.body.dry === false).map(c => c.body));
+              ok(rq.length === 1 && rq[0].run_id === 17 && rq[0].picks.r5 === '612345672222' && rq[0].picks.r9 === 'manual', tag + ' dry:false 요청 1번 · 같은 picks', rq);
+              const rt = await pg.$eval('#fo-ia-result', e => e.innerText.replace(/\s+/g, ' '));
+              ok(/보냄 3 · 실패 1 · 모름 1/.test(rt) && /네이버 발송 상태 확인 2\/2건/.test(rt), tag + ' 보낸 결과 표·상태 확인', rt);
+              const unk = await pg.evaluate(() => { const li = document.querySelector('.fo-ia-bad li[data-k="unknown"]'), b = li && li.querySelector('b'); return li ? { t: li.innerText.replace(/\s+/g, ' '), c: getComputedStyle(b).color, err: getComputedStyle(document.querySelector('.fo')).getPropertyValue('--f-err').trim() } : null; });
+              ok(unk && /모름 · 다시 안 보냄 · 채널 화면에서 확인/.test(unk.t) && /6123-4567-2222/.test(unk.t) && /응답에 처리 결과 없음/.test(unk.t), tag + ' 모름 줄 글', unk);
+              ok(unk && /rgb\((180, 35, 24|255, 122, 110)\)/.test(unk.c), tag + ' 모름 줄 빨강', unk && unk.c);
+              ok(/실패 · 다음 \[짝 맞추기\] 때 다시 보낼 수 있어요/.test(await pg.textContent('.fo-ia-bad')) && /INVALID_STATUS/.test(await pg.textContent('.fo-ia-bad')), tag + ' 실패 줄 글·사유');
+              ok(await pg.locator('#fo-ia-send').count() === 0 && await pg.locator('#fo-ia-reg').isDisabled(), tag + ' 보낸 뒤 보내기·등록 다시 못 누름');
+              const [dl] = await Promise.all([pg.waitForEvent('download', { timeout: 8000 }), tap(pg, '#fo-ia-dl')]);
+              const fx = await pg.evaluate(() => window.__fetch);
+              ok(fx.length === 1 && fx[0].u === '/api/agent-office/invoice-auto/manual/17' && fx[0].auth === 'Bearer x' && dl.suggestedFilename() === '자동송장_수기_17.xlsx', tag + ' 서버 수기 파일(Authorization · 이름)', { fx, name: dl.suggestedFilename() });
+              const small = await pg.$$eval('#fo-ia button, #fo-ia select, #fo-ia summary', els => els.filter(e => e.offsetParent).map(e => [e.id || e.className, Math.round(e.getBoundingClientRect().height)]).filter(x => x[1] < 44));
+              const over = await pg.evaluate(() => { const b = document.querySelector('.fo-body'); return b.scrollWidth - b.clientWidth + Math.max(0, document.scrollingElement.scrollWidth - innerWidth); });
+              ok(!small.length && over <= 0, tag + ' 보낸 화면 44px · 넘침 0', { small, over });
+              await pg.locator('#fo-ia-result').screenshot({ path: path.join(OUT, `sent-${w}.png`) });
+              ok(errs.length === 0, tag + ' 전송 콘솔 오류 0', errs); await pg.close(); }
+            { const { pg, errs } = await prep(U.off409);
+              await tap(pg, '#fo-ia-send'); await tap(pg, '#fo-ia-send-yes');
+              await pg.waitForFunction(() => /전송이 꺼져 있어요/.test((document.getElementById('fo-ia-send-msg') || {}).textContent || ''), null, { timeout: 5000 });
+              ok(await pg.locator('#fo-ia-send').count() === 0 && /시험 단계 · 채널로 보낸 것 0/.test(await pg.textContent('#fo-ia-result')), tag + ' 409 전송 꺼짐 = 안내 · 보내기 단추 없어짐');
+              ok(errs.length === 0, tag + ' 409 콘솔 오류 0', errs); await pg.close(); }
+            { const { pg, errs } = await prep(U.e500);
+              await tap(pg, '#fo-ia-send'); await tap(pg, '#fo-ia-send-yes');
+              await pg.waitForFunction(() => /채널 화면을 먼저 확인/.test((document.getElementById('fo-ia-send-msg') || {}).textContent || ''), null, { timeout: 5000 });
+              ok(/다시 누르지 마세요/.test(await pg.textContent('#fo-ia-send-msg')) && await pg.locator('#fo-ia-send').isDisabled(), tag + ' 500 = 채널 화면 먼저 확인 · 보내기 잠김');
+              ok(errs.length === 0, tag + ' 500 콘솔 오류 0', errs); await pg.close(); }
             await ctx.close();
         }
     } finally { await br.close(); }

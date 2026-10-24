@@ -2506,7 +2506,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     const call = (path, body) => window.api(API + path, 'POST', body, { timeoutMs: 180000 });
     const tno = v => { const s = String(v == null ? '' : v), d = s.replace(/\D/g, ''); return d.length === 12 ? d.replace(/(\d{4})(\d{4})(\d{4})/, '$1-$2-$3') : s; };   // 운송장 = 숫자 12자리(서버) → 4-4-4 로 끊어 보이기(값은 그대로)
     const partnerOf = name => { const m = String(name || '').match(/\(([^)]+)\)/); return m ? m[1].trim() : '?'; };   // = 서버 규칙(파일 이름 괄호)
-    const ia = { probed: false, alive: false, busy: false, files: [], res: null, picks: new Map(), reg: null, ask: false };
+    const ia = { probed: false, alive: false, busy: false, files: [], res: null, picks: new Map(), reg: null, ask: false, sent: false };
 
     function html() {
         return `
@@ -2574,9 +2574,10 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         $('fo-ia-match').disabled = ia.busy || !ia.files.length;
         $('fo-ia-pick').disabled = ia.busy;
         const reg = $('fo-ia-reg'); if (reg) reg.disabled = ia.busy || !isAdmin() || todoLeft() > 0 || !!ia.reg;
+        const sb = $('fo-ia-send'); if (sb) sb.disabled = ia.busy || ia.sent;
         $('fo-ia').classList.toggle('busy', ia.busy);
     }
-    function resetOut() { ia.res = null; ia.picks = new Map(); ia.reg = null; ia.ask = false; const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
+    function resetOut() { ia.res = null; ia.picks = new Map(); ia.reg = null; ia.ask = false; ia.sent = false; const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
 
     // ── 짝 맞추기 ────────────────────────────────────────────────────────
     async function match() {
@@ -2648,54 +2649,111 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function regNote() {
         const m = $('fo-ia-reg-msg'); if (!m) return;
         m.classList.remove('err');
-        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : '지금은 시험 단계 — 눌러도 채널에 보내지 않아요';
+        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : '먼저 준비만 해요 — 채널에 보내기 전에 한 번 더 물어요';
     }
     function counts() {
         const rows = (ia.res && ia.res.rows) || [], n = { naver: 0, coupang: 0, cafe24: 0 }; let manual = 0;
         rows.forEach(x => { const v = x.status === 'todo' ? ia.picks.get(x.id) : x.tracking; if (v === 'manual') manual++; else if (v && n[x.channel] != null) n[x.channel]++; });
         return { n, manual };
     }
-    function askConfirm() {
-        const c = counts(), box = $('fo-ia-confirm');
-        box.innerHTML = `<p id="fo-ia-q"><b>송장을 등록할까요?</b> ${CH.map(ch => `${CH_LABEL[ch]} ${c.n[ch]}건`).join(' · ')}${c.manual ? ` · 수기 ${c.manual}건` : ''}. 지금은 시험 단계라 실제로 채널에 보내지는 않아요.</p>
-            <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-yes">등록</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
+    // #838-5 두 단계: [등록] = 준비(dry · 채널 전송 0 · 같은 실행에서 다시 해도 됨) → 서버 설정 send_enabled 가 켜져 있으면 [채널에 보내기] + 확인 한 번(되돌릴 수 없음)
+    function askConfirm(send) {
+        const box = $('fo-ia-confirm');
+        if (send) {
+            const g = ia.reg, rd = (g && g.ready) || {}, tot = CH.reduce((a, c) => a + (rd[c] || 0), 0);
+            box.innerHTML = `<p id="fo-ia-q"><b>채널에 실제로 보내요 · 되돌릴 수 없어요.</b> ${CH.map(ch => `${CH_LABEL[ch]} ${rd[ch] || 0}건`).join(' · ')} = ${tot}건을 발송처리해요. 틀린 송장은 채널에서 취소할 수 없어요.</p>
+                <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-send-yes">보내기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
+            box.classList.add('send'); $('fo-ia-send').closest('.fo-acts').after(box);
+            box.hidden = false; $('fo-ia-send-yes').focus({ preventScroll: true }); return;
+        }
+        const c = counts();
+        box.innerHTML = `<p id="fo-ia-q"><b>등록 준비를 할까요?</b> ${CH.map(ch => `${CH_LABEL[ch]} ${c.n[ch]}건`).join(' · ')}${c.manual ? ` · 수기 ${c.manual}건` : ''}. 이 단계에서는 채널에 보내지 않아요.</p>
+            <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-yes">준비하기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
+        box.classList.remove('send'); $('fo-ia-reg').closest('.fo-acts').after(box);
         box.hidden = false; $('fo-ia-yes').focus({ preventScroll: true });
     }
+    const picksNow = () => { const p = {}; todoRows().forEach(x => { p[x.id] = ia.picks.get(x.id); }); return p; };
     async function register() {
-        const box = $('fo-ia-confirm'); box.hidden = true;
+        $('fo-ia-confirm').hidden = true;
         if (ia.busy || !ia.res || !isAdmin() || todoLeft()) return;
-        ia.busy = true; sync(); const m = $('fo-ia-reg-msg'); m.classList.remove('err'); m.textContent = '등록하는 중';
+        ia.busy = true; sync(); const m = $('fo-ia-reg-msg'); m.classList.remove('err'); m.textContent = '준비하는 중';
         try {
-            const picks = {}; todoRows().forEach(x => { picks[x.id] = ia.picks.get(x.id); });
-            const r = await call('register', { run_id: ia.res.run_id, picks, skip: [], dry: true });
+            const r = await call('register', { run_id: ia.res.run_id, picks: picksNow(), skip: [], dry: true });
             if (!r || !r.ok) throw new Error((r && r.error) || '등록 결과를 받지 못했어요');
             ia.reg = r; m.textContent = ''; drawResult();
         } catch (err) { m.textContent = '⚠️ ' + (err && err.message ? err.message : String(err)); m.classList.add('err'); }
         finally { ia.busy = false; sync(); }
     }
-    // 실패·수기 줄 = 등록 결과에서 준비(ready)·이미 보냄(already) 이 아닌 줄 + 수기로 둔 줄 + 주문 없는 운송장
+    async function send() {
+        $('fo-ia-confirm').hidden = true;
+        if (ia.busy || !ia.reg || ia.sent || !isAdmin()) return;
+        ia.busy = true; ia.sent = true; sync(); const m = $('fo-ia-send-msg'); m.classList.remove('err'); m.textContent = '채널에 보내는 중 — 창을 닫지 마세요';
+        try {
+            const r = await call('register', { run_id: ia.res.run_id, picks: picksNow(), skip: [], dry: false });
+            if (!r || !r.ok) throw Object.assign(new Error((r && r.error) || '결과를 받지 못했어요'), { status: 0 });
+            ia.reg = r; m.textContent = ''; drawResult();
+        } catch (err) {
+            const st = err && err.status, b = (err && err.body) || {};
+            if (st === 409 && b.dry === true && b.send_enabled === false) { ia.sent = false; ia.reg = Object.assign({}, ia.reg, b, { ok: true }); drawResult(); say2('전송이 꺼져 있어요 — 준비만 저장했어요(총괄이 켜면 다시 보낼 수 있어요)'); }
+            else if (st === 409) say2((err && err.message) || '이미 보낸 실행이에요 — 실패 줄은 [짝 맞추기]를 새로 해서 보내세요');
+            else if (st && st >= 400 && st < 500) { ia.sent = false; say2(err.message); }   // 403·404 = 보내기 전에 거절(전송 0)
+            else say2('응답을 못 받았어요 — 보낸 줄이 있을 수 있으니 채널 화면을 먼저 확인해 주세요(다시 누르지 마세요)');
+        } finally { ia.busy = false; sync(); }
+    }
+    function say2(t) { const m = $('fo-ia-send-msg'); if (!m) return; m.textContent = '⚠️ ' + t; m.classList.add('err'); }
+    // 실패·수기 줄(화면에서 만들 때) = 등록 결과에서 준비·보냄·이미 등록·뺌이 아닌 줄 + 수기로 둔 줄 + 주문 없는 운송장
     function failRows() {
-        const r = ia.res, g = ia.reg, byId = new Map(((r && r.rows) || []).map(x => [x.id, x])), out = [];
-        ((g && g.items) || []).filter(it => !/^(ready|already|sent)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', x.recipient_masked || '', x.option || '', it.tracking || '', '전송 안 됨(' + (it.state || '?') + ')']); });
-        todoRows().filter(x => ia.picks.get(x.id) === 'manual').forEach(x => out.push([CH_LABEL[x.channel] || x.channel, x.order_key, x.recipient_masked, x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule)]));
+        const r = ia.res, g = ia.reg, byId = new Map(((r && r.rows) || []).map(x => [x.id, x])), out = [], seen = new Set();
+        const WHY = { failed: '채널이 거절', unknown: '모름 · 다시 안 보냄 · 채널 화면에서 확인', manual: '수기' };
+        ((g && g.items) || []).filter(it => !/^(ready|already|sent|skipped)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; seen.add(it.id); out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', x.recipient_masked || '', x.option || '', it.tracking || '', (WHY[it.state] || '전송 안 됨(' + (it.state || '?') + ')') + (it.error ? ' · ' + it.error : '')]); });
+        todoRows().filter(x => ia.picks.get(x.id) === 'manual' && !seen.has(x.id)).forEach(x => out.push([CH_LABEL[x.channel] || x.channel, x.order_key, x.recipient_masked, x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule)]));
         ((r && r.unmatched) || []).forEach(x => out.push(['', '', x.recipient_masked, x.product || '', x.tracking, x.why || '주문 없음']));
         return out;
     }
     function drawResult() {
         const g = ia.reg, box = $('fo-ia-result'); if (!g) return;
-        const items = g.items || [], per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
-        const fails = failRows();
-        box.innerHTML = `
-            <h3>등록 결과 ${g.dry ? '<small>시험 단계 · 채널로 보낸 것 0</small>' : ''}</h3>
-            <div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
+        const items = g.items || [], byId = new Map(((ia.res && ia.res.rows) || []).map(x => [x.id, x])), fails = failRows();
+        const per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
+        const sum = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0);
+        let head, table, extra = '';
+        if (g.dry === false) {
+            const cf = g.confirmed;
+            head = `<h3>보낸 결과 <small>보냄 ${sum('sent')} · 실패 ${sum('failed')} · 모름 ${sum('unknown')}</small></h3>`;
+            table = `<thead><tr><th>채널</th><th>보냄</th><th>실패</th><th>모름</th><th>이미 등록</th></tr></thead><tbody>
+                ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.sent || {})[c] || 0}</td><td>${(g.failed || {})[c] || 0}</td><td class="${(g.unknown || {})[c] ? 'bad' : ''}">${(g.unknown || {})[c] || 0}</td><td>${st(c, 'already')}</td></tr>`).join('')}
+                <tr class="tot"><td>합계</td><td>${sum('sent')}</td><td>${sum('failed')}</td><td>${sum('unknown')}</td><td>${Number(g.already) || 0} · 수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr></tbody>`;
+            const bad = items.filter(it => it.state === 'failed' || it.state === 'unknown');
+            if (cf && cf.checked) extra += `<p class="fo-hint">네이버 발송 상태 확인 ${Number(cf.naver) || 0}/${cf.checked}건</p>`;
+            else if (cf && cf.error) extra += `<p class="fo-hint">네이버 발송 상태 확인을 못 했어요(${esc(cf.error)}) — 보낸 결과는 위 표 그대로예요</p>`;
+            if (bad.length) extra += `<ul class="fo-ia-bad">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><b>${it.state === 'unknown' ? '모름 · 다시 안 보냄 · 채널 화면에서 확인' : '실패 · 다음 [짝 맞추기] 때 다시 보낼 수 있어요'}</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(x.recipient_masked || '')} · ${esc(it.order_key || '')} · ${esc(tno(it.tracking))}${it.error ? ' · ' + esc(it.error) : ''}</span></li>`; }).join('')}</ul>`;
+        } else {
+            head = `<h3>등록 준비 ${g.send_enabled ? '<small>아직 채널에 보내지 않았어요</small>' : '<small>시험 단계 · 채널로 보낸 것 0</small>'}</h3>`;
+            table = `<thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
                 ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.ready || {})[c] || 0}</td><td>${st(c, 'already')}</td><td>${per(c).length - st(c, 'ready') - st(c, 'already')}</td></tr>`).join('')}
-                <tr class="tot"><td>합계</td><td>${CH.reduce((a, c) => a + ((g.ready || {})[c] || 0), 0)}</td><td>${Number(g.already) || 0}</td><td>수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr>
-            </tbody></table></div>
-            <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}</div>`;
+                <tr class="tot"><td>합계</td><td>${sum('ready')}</td><td>${Number(g.already) || 0}</td><td>수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr></tbody>`;
+            const canSend = g.send_enabled === true && isAdmin() && !ia.sent && sum('ready') > 0;
+            extra = g.send_enabled === true
+                ? `<div class="fo-acts">${canSend ? `<button type="button" class="fo-btn primary" id="fo-ia-send">채널에 보내기 (${sum('ready')}건)</button>` : ''}<span class="fo-msg" id="fo-ia-send-msg" role="status"></span></div>`
+                : `<div class="fo-acts"><span class="fo-msg" id="fo-ia-send-msg" role="status">${ia.sent ? '' : '지금은 채널 전송이 꺼져 있어요 — 준비만 저장했어요'}</span></div>`;
+        }
+        box.innerHTML = `${head}<div class="fo-ia-scroll"><table>${table}</table></div>${extra}
+            <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}<span class="fo-msg" id="fo-ia-dl-msg" role="status"></span></div>`;
         box.hidden = false; regNote();
         box.scrollIntoView({ block: 'nearest' });
     }
-    function download() {
+    // 서버 수기 파일(manual_file · 네이버 일괄발송 시트 꼴)이 있으면 그것 · 없거나 못 받으면 화면에서 만든 표
+    async function download() {
+        const g = ia.reg, msg = $('fo-ia-dl-msg'); if (msg) { msg.textContent = ''; msg.classList.remove('err'); }
+        if (g && g.manual_file && /^\/api\/agent-office\/invoice-auto\/manual\/\d+$/.test(g.manual_file)) {
+            try {
+                const res = await fetch(g.manual_file, { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const blob = await res.blob(), cd = res.headers.get('Content-Disposition') || '', m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+                let name = `자동송장등록_실패줄_${(ia.res && ia.res.ship_date) || ''}.xlsx`; if (m) { try { name = decodeURIComponent(m[1]); } catch (_) { name = m[1]; } }
+                const a = document.createElement('a'), url = URL.createObjectURL(blob); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+                return;
+            } catch (err) { if (msg) msg.textContent = '서버 파일을 못 받아 화면에서 만들었어요(' + (err && err.message ? err.message : err) + ')'; }
+        }
         const rows = failRows(); if (!rows.length || typeof XLSX === 'undefined') return;
         const ws = XLSX.utils.aoa_to_sheet([['채널', '주문번호', '받는 분', '상품', '운송장', '사유'], ...rows]);
         ws['!cols'] = [{ wch: 8 }, { wch: 24 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 40 }];
@@ -2704,9 +2762,11 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     }
     function onOutClick(e) {
         const b = e.target.closest('button'); if (!b || ia.busy) return;
-        if (b.id === 'fo-ia-reg') { if (!b.disabled) askConfirm(); }
+        if (b.id === 'fo-ia-reg') { if (!b.disabled) askConfirm(false); }
         else if (b.id === 'fo-ia-yes') register();
-        else if (b.id === 'fo-ia-no') { $('fo-ia-confirm').hidden = true; $('fo-ia-reg').focus({ preventScroll: true }); }
+        else if (b.id === 'fo-ia-send') askConfirm(true);
+        else if (b.id === 'fo-ia-send-yes') send();
+        else if (b.id === 'fo-ia-no') { $('fo-ia-confirm').hidden = true; const back = $('fo-ia-send') || $('fo-ia-reg'); if (back) back.focus({ preventScroll: true }); }
         else if (b.id === 'fo-ia-dl') download();
     }
 
