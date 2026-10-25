@@ -84,6 +84,15 @@ async function claim(id) {
         foMemo = { payload_path: p3, count: (o.payload.orders || []).length, rules: path.join(ROOT, deskDir3, '최종발주_대화.md'),
             how: '이 지시는 최종발주 화면의 대화 칸에서 직원이 말로 한 요청입니다. rules 문서를 먼저 읽고, payload_path 의 ask(요청 글)·orders(후보 주문)·catalog(품목 이름)·summary(화면이 센 사실)만 보고 결과를 {"kind":"answer","title":"최종발주 대화","answer":"한 줄","data":{"reply":"직원에게 할 말","actions":[…]}} 꼴로 올립니다. DB 조회·수정·발송은 하지 않습니다(화면이 적용합니다). 끝나면 payload_path 파일을 지웁니다.' };
     }
+    // #850 발주 메모함 「발주 메모 읽기」: 규칙으로 못 읽은 메모 글을 같은 꼴(final_order_memo)로 내준다 → 대기 프로그램이 규칙 문서·자료를 미리 넣어 줌(fast.inlineFinalOrder) · 규칙 = ★에이전트오피스/발주메모_정리.md
+    if (o.payload && o.payload.type === 'order_memo') {
+        const deskDir4 = fs.existsSync(path.join(ROOT, '★에이전트오피스')) ? '★에이전트오피스' : '직원창구';
+        const dir4 = path.join(ROOT, deskDir4, '받은파일'); fs.mkdirSync(dir4, { recursive: true });
+        const p4 = path.join(dir4, `${id}_ordermemo.json`);
+        fs.writeFileSync(p4, JSON.stringify(o.payload, null, 1));
+        foMemo = { payload_path: p4, count: String(o.payload.text || '').split('\n').filter(Boolean).length, rules: path.join(ROOT, deskDir4, '발주메모_정리.md'),
+            how: '이 지시는 발주 메모함이 보낸 「발주 메모 읽기」입니다(규칙으로 못 읽은 직원 메모 글). rules 문서를 먼저 읽고, payload_path 의 text(메모 글)·catalog(품목 이름)·today·shipDays·tags 만 보고 결과를 {"kind":"answer","title":"발주 메모 정리","answer":"한 줄 요약","data":{"lines":[…],"cash":[…],"unsure":[…],"sms_draft":""}} 꼴로 올립니다. DB 조회·수정·발송은 하지 않습니다(화면이 사람 확인 뒤 저장합니다). 끝나면 payload_path 파일을 지웁니다.' };
+    }
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {

@@ -118,6 +118,7 @@
                 <section class="fo-sec" id="fo-progress" hidden aria-label="주문 불러오기" aria-live="polite"></section>
                 <!-- #572(대표 10/7 「틀 순서를 불러오기 밑으로 · AI 가 인식 · 이미지도」): 메모 칸은 주문을 불러온 뒤에 — 규칙이 먼저 읽고, 못 읽은 줄만 클코가 틀로 고쳐 쓰고, 사진(폰 메모 캡처)은 클코가 틀 줄로 읽는다 -->
                 <section class="fo-sec" id="fo-memo-sec" hidden aria-label="개별발송 처리 · 지정 발송일">
+                    <div class="fo-om-bar" id="fo-om-bar"><button type="button" class="fo-om-link" id="fo-om-open">발주 메모함 열기</button><span class="fo-om-band" id="fo-om-band" role="status" aria-live="polite" hidden></span></div>
                     <div class="fo-field">
                         <label for="fo-memo">개별발송 처리 · 지정 발송일</label>
                         <textarea id="fo-memo" rows="6" spellcheck="false" placeholder="10/5&#9;010-0000-0000&#9;입력o삭제x&#9;네이버&#10;010-0000-0000 금요일 발송&#10;010-0000-0000 2S사이즈&#10;10/5&#9;010-0000-0000&#9;보내는이 홍길동"></textarea>
@@ -260,6 +261,105 @@
     const clearMsg = () => ['fo-in-msg', 'fo-make-msg'].forEach(id => { $(id).textContent = ''; $(id).classList.remove('err'); });
     // 주문을 불러온 뒤 메모·현금파일·기준 발송일을 바꾸면 판정이 낡는다 → [다시 판정] 전에는 파일을 못 만든다
     function markStale() { if (!st.loaded || st.phase === 'loading') return; st.stale = true; st.out = null; $('fo-result').hidden = true; clearMsg(); syncMake(); syncAi(); syncRejudgeLabel(); }
+    // ── #850 발주 메모함 → 메모 칸·현금 줄 ─────────────────────
+    //   서버 GET /api/order-memo/for-ship?date=(docs/850-api.md 2-7) 의 memo_text·cash_aoa 를 사람이 치는 것과 똑같이 넣을 뿐 — 판정(prepLines·parseCash·cashCheck)은 그대로.
+    //   메모 칸에 글이 있으면 뒤에 붙임 · 현금 = 파일이 없으면 메모함 줄만 · 엑셀을 고르면 엑셀 뒤에 합침 · [빼기] = 넣은 것만 되돌림 · 응답 없음·오류·옛 서버(404) = 지금처럼(아무것도 안 함).
+    //   「넣었다」(used)는 넣은 순간 보내고, 사람이 메모 칸에서 지웠거나 현금이 빠진 줄(현금 [지우기]·「오늘은 없음」·엑셀 합치기 실패)은 비우기 전에 used 를 되돌린다 — 실제로 남은 것만 비워지게(워커3 점검 🔴1)
+    //   AI 메모 읽기·판정이 도는 동안엔 넣지 않는다(LOCKS · 끝나면 syncInput 이 다시 부름)
+    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
+    const omBand = html => { const b = $('fo-om-band'); if (!b) return; b.hidden = !html; b.innerHTML = html || ''; };
+    const omPost = (ids, undo) => ids.length ? window.api('/api/order-memo/used', 'POST', Object.assign({ date: OMF.date, ids }, undo ? { undo: true } : {})).catch(() => {}) : Promise.resolve();
+    function omMergeCash() {
+        if (!OMF.cash.length || OMF.removed || !st.cash || !st.cash.ok) return;
+        const base = st.cash.rows.filter(r => !r.om);
+        st.cash = Object.assign({}, st.cash, { rows: base.concat(OMF.cash.map((r, i) => Object.assign({}, r, { no: base.length + i + 2, om: true }))) });
+    }
+    function omApplyCash() {
+        if (!OMF.cash.length) return;
+        if (st.cash && st.cash.ok) { omMergeCash(); return; }
+        if (st.cash && !st.cash.ok) return;   // 고른 엑셀이 잘못됨 — 그 카드가 먼저(메모함 줄은 엑셀을 고친 뒤 합쳐짐)
+        OMF.prevNone = st.cashNone;
+        st.cash = { ok: true, error: '', errors: [], rows: OMF.cash.map((r, i) => Object.assign({}, r, { no: i + 2, om: true })) }; st.cashName = '발주 메모함'; st.cashNone = false;
+    }
+    // 지금 실제로 남은 메모함 줄 id — 메모 칸에 그 글이 (넣은 만큼) 남아 있고 · 현금은 st.cash 에 그 행이 있을 때만
+    function omLiveIds() {
+        if (OMF.removed) return [];
+        const ta = $('fo-memo'), have = new Map();
+        (ta ? ta.value.split('\n') : []).forEach(l => have.set(l, (have.get(l) || 0) + 1));
+        const out = [];
+        OMF.lines.slice().reverse().forEach(x => { const n = have.get(x.text) || 0; if (n > 0) { have.set(x.text, n - 1); if (x.id != null) out.push(x.id); } });
+        const cashIds = new Set((st.cash && st.cash.ok ? st.cash.rows : []).filter(r => r.om && r.omId != null).map(r => String(r.omId)));
+        OMF.cash.forEach(r => { if (r.omId != null && cashIds.has(String(r.omId))) out.push(r.omId); });
+        return out;
+    }
+    async function omSyncUsed() {   // 넣었다가 빠진 줄은 used 를 되돌림(비우기 전)
+        const live = new Set(omLiveIds().map(String)), gone = OMF.ids.filter(id => !live.has(String(id)));
+        if (gone.length) { await omPost(gone, true); OMF.ids = OMF.ids.filter(id => live.has(String(id))); }
+        return OMF.ids.length;
+    }
+    function omTake() {   // 넣은 것 빼기 — 넣은 줄은 메모 칸 끝에 붙였으므로 뒤에서부터 같은 글을 지운다(앞에 사람이 같은 글을 따로 적었어도 그 줄은 남김)
+        const ta = $('fo-memo');
+        if (ta && OMF.lines.length) { const left = ta.value.split('\n'); OMF.lines.slice().reverse().forEach(x => { const i = left.lastIndexOf(x.text); if (i >= 0) left.splice(i, 1); }); ta.value = left.join('\n').replace(/\n+$/, ''); }
+        if (st.cash && st.cash.ok && st.cash.rows.some(r => r.om)) {
+            const rest = st.cash.rows.filter(r => !r.om);
+            if (!rest.length && st.cashName === '발주 메모함') { st.cash = null; st.cashName = ''; st.cashNone = OMF.prevNone; } else st.cash = Object.assign({}, st.cash, { rows: rest });
+        }
+    }
+    function omReset() {   // 최종발주 [초기화] — 넣은 표시를 되돌리고 처음 상태로(다시 불러오면 다시 들어감)
+        if (OMF.date && OMF.ids.length && !OMF.removed) omPost(OMF.ids.slice(), true);
+        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null }); omBand('');
+    }
+    async function omInsert(force) {
+        const date = ($('fo-ship') || {}).value;
+        if (!date || OMF.busy || st.busy || (st.ai && st.ai.running) || (!force && (OMF.date === date || OMF.removed))) return;
+        let r = OMF.pend && OMF.pend.date === date ? OMF.pend.r : null; OMF.pend = null;
+        if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?date=' + encodeURIComponent(date)); } catch (e) { r = null; } OMF.busy = false; }   // 404·오류 = 지금처럼
+        if (r && r.ok && (st.busy || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
+        if (!r || !r.ok || ($('fo-ship') || {}).value !== date) { if (!r) OMF.date = date; return; }
+        if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
+        OMF.date = date; OMF.removed = false;
+        const lines = Array.isArray(r.lines) ? r.lines : [];
+        OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || '') })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
+        const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
+        OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null })) : [];
+        OMF.ids = Array.isArray(r.ids) ? r.ids.slice() : [];
+        const held = Array.isArray(r.held) ? r.held.length : 0, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
+        if (!OMF.lines.length && !OMF.cash.length) { OMF.ids = []; omBand(held ? `발주 메모함: 확인 안 된 ${held}줄은 안 넣었어요 <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
+        const ta = $('fo-memo');
+        if (ta && OMF.lines.length) { const cur = ta.value.replace(/\s+$/, ''); ta.value = (cur ? cur + '\n' : '') + OMF.lines.map(x => x.text).join('\n'); }
+        omApplyCash();
+        omPost(OMF.ids.slice(), false);
+        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button>`);
+        markStale(); syncInput();
+    }
+    function omResultNote(el) {
+        const n = omLiveIds().length;
+        if (!el || !n || OMF.removed) return;
+        const box = document.createElement('p'); box.className = 'fo-note fo-om-done'; box.id = 'fo-om-done';
+        box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> 이번 발주에 ${n}줄을 넣었어요 <button type="button" class="fo-btn sm" data-om="clear">메모함 비우기</button> <span class="fo-settle-note">날짜 대기 줄 · 확인 안 된 줄은 남아요</span>`;
+        const notes = el.querySelector('.fo-notes'); (notes || el).appendChild(box);
+    }
+    document.addEventListener('click', async e => {
+        const b = e.target.closest('#fo-om-open, [data-om]'); if (!b || !b.closest('#fo-panel, .fo')) return;
+        if (b.id === 'fo-om-open' || b.dataset.om === 'open') { if (window.AkmOrderMemo) window.AkmOrderMemo.open(); else toast('발주 메모함을 불러오지 못했어요', 2500); return; }
+        if (b.dataset.om === 'take') {
+            if (st.busy) return;
+            omTake(); omPost(OMF.ids.slice(), true); OMF.removed = true; OMF.ids = [];
+            omBand(`발주 메모함 줄을 뺐어요 <button type="button" class="fo-om-link" data-om="again">다시 넣기</button>`);
+            markStale(); syncInput(); return;
+        }
+        if (b.dataset.om === 'again') { if (!st.busy) { OMF.removed = false; OMF.date = ''; OMF.ids = []; OMF.lines = []; OMF.cash = []; omInsert(true); } return; }
+        if (b.dataset.om === 'clear') {
+            b.disabled = true;
+            await omSyncUsed();   // 메모 칸에서 지웠거나 현금에서 빠진 줄은 「넣음」을 먼저 되돌림 → 서버는 실제로 들어간 줄만 비움
+            let r = null; try { r = await window.api('/api/order-memo/clear', 'POST', { date: OMF.date }); } catch (er) { r = null; }
+            const box = $('fo-om-done');
+            if (!r || !r.ok) { b.disabled = false; toast('메모함을 비우지 못했어요 · 다시 눌러 주세요', 3000); return; }
+            const left = r.left || {};
+            if (box) box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> ${Number(r.cleared) || 0}줄 비웠어요${left.wait ? ` · 날짜 대기 ${left.wait}줄` : ''}${left.unsure ? ` · 확인 ${left.unsure}줄` : ''}${left.wait || left.unsure ? '은 남았어요' : ''} <span class="fo-settle-note">비운 줄은 30일 동안 되살릴 수 있어요</span>`;
+            OMF.ids = [];
+        }
+    });
     // #575: 버튼 글은 낡음(stale) 상태와 늘 같이 간다 — markStale 에서도, syncInput 에서도 이 한 곳을 부른다(워커1 발견: 메모 입력·기준일 변경 때 글이 안 바뀜)
     function syncRejudgeLabel() { const b = $('fo-rejudge'); if (!b) return; const stale = !!(st.stale || !st.judged); b.textContent = stale ? '다시 판정' : '확인'; b.classList.toggle('stale', stale); const sm = $('fo-stale-msg'); if (sm) sm.hidden = !(st.stale && st.loaded); }   // #583 ④ 빨강 안내는 [확인]·[사진으로 넣기] 옆에
 
@@ -318,12 +418,14 @@
         if (st.cash) note.textContent = st.cash.ok ? `${st.cashName} · ${st.cash.rows.length}행(현금 ${st.cash.rows.filter(r => r.bang).length}행 · 그 밖 ${st.cash.rows.filter(r => !r.bang).length}행)` : `${st.cashName} · ⚠️ ${st.cash.error}`;
         else note.textContent = st.cashNone ? '현금파일 없이 진행해요.' : '현금, 입력삭제 건의 주소 줄이 적힌 엑셀(13칸 양식). 없으면 「오늘은 없음」을 체크해요.';
         note.classList.toggle('err', !!(st.cash && !st.cash.ok));
+        if (st.loaded && !st.busy) omInsert();   // #850 메모 칸이 열린 뒤 = 발주 메모함 오늘 몫을 한 번 넣음(기준 발송일이 바뀌면 바꿔 넣음)
     }
     async function readCash(file) {
         try {
             const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
             const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
             st.cash = core().parseCash(aoa); st.cashName = file.name; st.cashNone = false;
+            omMergeCash();   // #850 엑셀을 (다시) 고르면 메모함 현금 줄을 뒤에 합침
         } catch (err) { st.cash = { ok: false, error: '엑셀을 읽지 못했어요(' + (err && err.message ? err.message : err) + ')', rows: [] }; st.cashName = file.name; st.cashNone = false; }
         markStale(); syncInput();
     }
@@ -1678,6 +1780,7 @@
         cvs.forEach((cv, short) => { const m = st.qtyBlob; cv.toBlob(b => { if (b) m.set(short, b); }, 'image/png'); });   // [그림 복사]가 누르는 순간 바로 쓰게 미리 만들어 둔다
         if (anchorLive()) anchorApply(st.anchor, true);   // #583-j: 카드에서 고쳐서 다시 만든 파일 — 작업하던 카드 자리 그대로
         else el.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        omResultNote(el);   // #850 넣은 메모함 줄이 있으면 [메모함 비우기]
     }
     function saveFile(name) { const f = st.files.find(x => x.name === name); if (!f) return; XLSX.writeFile(f.wb, f.name); }
     function savePng(short) {
@@ -2480,6 +2583,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         if (st.busy) return;
         $('fo-reset-confirm').hidden = true;
         st.ai.running = false; st.chat.running = false; st.autoAi = false;
+        omReset();   // #850 넣은 메모함 줄 표시 되돌림(다시 불러오면 다시 들어감)
         st.busy = true; $('fo-panel').classList.add('busy'); $('fo-reset').disabled = true;
         try {
             $('fo-memo').value = ''; $('fo-chat-input').value = ''; st.lineFixTried = null; st.lineFix = null; st.fixDraft = new Map(); st.memoAsk = false; memoNote(''); band('memo', ''); band('ai', '');   // #572

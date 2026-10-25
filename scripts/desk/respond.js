@@ -49,7 +49,7 @@ async function uploadAttachments(list, runId) {
     const id = parseInt(process.argv[2], 10), file = process.argv[3];
     if (!id || !file) throw new Error('사용: respond.js <지시 id> <결과.json>');
     let j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const o = (await pool.query(`SELECT id, status, run_id, created_by_id, content FROM pending_orders WHERE id = $1 AND is_deleted = false`, [id])).rows[0];
+    const o = (await pool.query(`SELECT id, status, run_id, created_by_id, content, (payload IS NULL) AS no_payload FROM pending_orders WHERE id = $1 AND is_deleted = false`, [id])).rows[0];
     if (!o) throw new Error('없는 지시');
     if (!['처리중', '대기'].includes(o.status)) throw new Error(`'${o.status}' 상태라 결과를 올릴 수 없습니다(처리중만 가능)`); // '대기' = 처리 도중 서버 재시작으로 되돌려진 건
     let status, result, stepText, runStatus = 'done', uploadedIds = [];   // #799 올린 첨부 id(결과를 못 올리면 숨김)
@@ -64,7 +64,8 @@ async function uploadAttachments(list, runId) {
             summary: clean(j.title || j.answer, 80),
         };
         // #518 최종발주 메모 읽기의 판정 결과(화면이 받아 가면 서버가 지운다) — 최종발주 요청에만, 400KB 이하
-        if (j.data && typeof j.data === 'object' && /^(\[검증469\]\s*)?\[최종발주 (?:메모 읽기|대화)\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000) result.data = j.data;
+        if (j.data && typeof j.data === 'object' && /^(\[검증469\]\s*)?\[(?:최종발주 (?:메모 읽기|대화)|발주 메모 읽기)\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000
+            && !(o.no_payload && /^\[발주 메모 읽기\]/.test(o.content || ''))) result.data = j.data;   // #850 발주 메모함도 · 화면이 이미 그만둔(손님 글 지운) 요청에 늦게 온 답은 data 버림
         stepText = '✅ 답변 완료';
     } else if (j.kind === 'question') {
         if (!j.question) throw new Error('question이 비었습니다');

@@ -202,6 +202,7 @@
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-talk" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>톡톡</strong><small>톡톡 문의를 보고 여기서 답해요</small></span><i class="sms-n" id="inb-n-talk" hidden></i></button>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-qna" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>상품문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-qna" hidden></i></button>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-inquiry" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>주문문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-inquiry" hidden></i></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-om-now" data-mk="om"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg></i><span class="desk-mi-t"><strong>발주 메모함</strong><small>손님 글을 붙여 넣으면 다음 최종발주에 들어가요</small></span></button>
                                 </div>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
@@ -1294,7 +1295,7 @@
         const sb = $('desk-sms-now'), sn = $('sms-chip-n'); if (sb) sb.hidden = !hs;
         if (sn) { sn.hidden = !(n.sms > 0); sn.textContent = n.sms > 99 ? '99+' : String(n.sms); }
         INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k), i = $('inb-n-' + k); if (b) b.hidden = !hi; if (i) { i.hidden = !(n[k] > 0); i.textContent = n[k] > 99 ? '99+' : String(n[k]); } });
-        const g = $('desk-plus-cust'); if (g) g.hidden = !hs && !hi;   // 둘 다 없는 서버면 「손님」 묶음째 숨김
+        const g = $('desk-plus-cust'); if (g) g.hidden = !hs && !hi && !window.AkmOrderMemo;   // 둘 다 없는 서버면 「손님」 묶음째 숨김 · #850 발주 메모함은 늘 있음(문자·톡톡이 없어도 묶음을 남김)
         const pn = $('desk-plus-n'); if (pn) { pn.hidden = !(n.total > 0); pn.textContent = n.total > 99 ? '99+' : String(n.total); }
         if (SMS.sumDone && (INB.known || !inbApi())) custSave();
     }
@@ -1641,7 +1642,7 @@
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
-            + `<div class="sms-reply-row"><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`
+            + `<div class="sms-reply-row">${window.AkmOrderMemo ? '<button type="button" class="desk-btn sms-tomemo" id="sms-tomemo" title="손님 글을 발주 메모함으로 정리해요(말풍선을 꾹 눌러도 돼요)">발주 메모로</button>' : ''}<span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #850 발주 메모로 보내기
             + `</form>`;
         TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
         if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
@@ -1969,8 +1970,41 @@
         return (smsDead() ? `<li class="sms-todo dead" data-sms="keep" role="button" tabindex="0"><span>회사폰 전달 앱 연결 끊김</span><b>확인</b><small>${d.gateway.last_ping_at ? '마지막 연결 ' + esc(smsWhen(d.gateway.last_ping_at)) + ' · ' : ''}회사폰이 켜져 있는지 봐 주세요</small></li>` : '')
             + (!noUnread && nd.unread > 0 ? `<li class="sms-todo" data-sms="active" role="button" tabindex="0"><span>${nd.old ? '문자 답할 것' : '안 읽은 문자'}</span><b>${nfmt(nd.unread)}건</b><small>${sub ? sub + ' · ' : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
     }
+    // #850 발주 메모함(ao-ordermemo.js) 입구 — [+] 메뉴 「발주 메모함」 · 문자 대화의 [발주 메모로](마지막 우리 답 뒤 손님 글 · 없으면 마지막 손님 글) · 손님 말풍선 꾹 누르기(PC = 오른쪽 누르기) = 그 글만
+    function omText(only) {
+        if (only) return only;
+        const ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [];
+        let k = ms.length - 1; while (k >= 0 && ms[k].direction === 'out') k--;
+        const tail = []; for (; k >= 0 && ms[k].direction !== 'out'; k--) if (ms[k].body) tail.unshift(ms[k].body);
+        return tail.slice(-6).join('\n');
+    }
+    function omFromSms(only) {
+        const M = window.AkmOrderMemo; if (!M || !SMS.open) return;
+        const text = omText(only); if (!text.trim()) { showToast('손님이 보낸 글이 없어요'); return; }
+        const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {};
+        M.fromText(text, { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) });
+    }
+    function omBind() {
+        const mi = $('desk-om-now'); if (mi) mi.addEventListener('click', () => { plusClose(false); if (window.AkmOrderMemo) hbIdle(() => window.AkmOrderMemo.open()); else showToast('발주 메모함을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });
+        const pane = $('sms-pane'); if (!pane) return;
+        pane.addEventListener('click', e => { if (e.target.closest('#sms-tomemo')) omFromSms(); });
+        let lp = 0, lpAt = null;
+        const bubOf = e => { const b = e.target.closest && e.target.closest('.sms-msg.in .sms-bub'); return b && pane.contains(b) ? b : null; };
+        const stop = () => { clearTimeout(lp); lp = 0; if (lpAt) lpAt.classList.remove('om-press'); lpAt = null; };
+        pane.addEventListener('pointerdown', e => {
+            const b = bubOf(e); if (!b || e.button > 0) return;
+            stop(); lpAt = b; b.classList.add('om-press');
+            const x = e.clientX, y = e.clientY;
+            lp = setTimeout(() => { const t = b.textContent; stop(); try { if (navigator.vibrate) navigator.vibrate(12); } catch (er) { /* 진동 없음 */ } omFromSms(t); }, 550);
+            const mv = ev => { if (Math.abs(ev.clientX - x) > 8 || Math.abs(ev.clientY - y) > 8) { stop(); pane.removeEventListener('pointermove', mv); } };
+            pane.addEventListener('pointermove', mv, { passive: true });
+        });
+        ['pointerup', 'pointercancel', 'pointerleave'].forEach(k => pane.addEventListener(k, stop));
+        pane.addEventListener('contextmenu', e => { const b = bubOf(e); if (!b) return; e.preventDefault(); stop(); omFromSms(b.textContent); });
+    }
     function smsBind() {
         $('desk-sms-now').addEventListener('click', () => custWait(() => SMS.sumDone, () => smsOpen()));   // #653-나: 고르면 항상 연다(닫기는 창의 [닫기]·Esc·뒤로가기)
+        omBind();   // #850 발주 메모함 — [+] 메뉴 · 문자 대화 [발주 메모로] · 손님 말풍선 꾹 누르기
         $('sms-close').addEventListener('click', smsCloseCard);
         INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.addEventListener('click', () => custWait(() => INB.known || inbOk(), () => inbOpen(k))); });
         $('sms-tabs').addEventListener('click', e => { const b = e.target.closest('.sms-tab'); if (b && b.dataset.ch !== INB.ch) inbShow(b.dataset.ch); });
@@ -3513,7 +3547,9 @@
             return 'all';
         } catch (e) { return false; }
     }
-    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id), histIdle: hbIdle, histDepth: () => HB.stack.length };   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
+    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id), histIdle: hbIdle, histDepth: () => HB.stack.length,
+        hbPush, hbDrop,   // #850 발주 메모함 창·카드·옵션 목록도 같은 기록(폰 뒤로가기 = 연 순서대로 닫힘)
+        smsPutReply: (id, text) => { if (!SMS.open || String(SMS.open) !== String(id)) return false; const ta = $('sms-text'); if (!ta) return false; ta.value = String(text || ''); ta.dispatchEvent(new Event('input', { bubbles: true })); return true; } };   // #850 손님께 물어볼 문자 초안 → 답 칸(보내기는 직원)   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
 
     window.aoDeskEnter = async function () {
         mount();

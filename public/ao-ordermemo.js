@@ -1,0 +1,730 @@
+// #850(대표 10/25 「직원이 회사폰 노트에 적던 발주 메모를 에이전트 오피스로 · 최대한 편리하게 · 글 쓰임 복잡하지 않게 · 디자인 · 무회귀」) — 발주 메모함 창
+//   설계 = docs/850-order-memo-design.md · 시안 docs/850-mock-*.png · 서버 계약 = docs/850-api.md(워커2) — 서버 길은 아래 API 한 곳에만(계약이 바뀌면 여기만).
+//   창 = 손님 연락 창과 같은 꼴(폰 = 전체 화면 · PC = 2단: 왼쪽 넣기 + 목록 / 오른쪽 「내일 발주에 들어갈 것」 = for-ship 글 그대로).
+//   겹·뒤로가기 = ao-desk.js 기록(AkmAoDesk.hbPush/hbDrop · #677·#678) — 열린 순서대로 닫힘: 옵션 목록 → 정리 카드 → 미리보기 판 → 메모함.
+//   흐름 = 손님 글 붙여 넣기 → [정리하기](preview · 저장 0) → 정리 결과 카드(칸마다 고침 · ↺ = 처음 정리한 값 · 빈칸 빨강+이유 · 손님께 물어볼 문자 초안) → [저장].
+//   고친 것이 있는데 닫으면(× · 취소 · Esc · 뒤로가기) 「저장 안 하고 닫을까요?」 한 번.
+//   목록 = 한 줄씩 [×] 지우기(되돌리기 6초) · 날짜 지정 줄 = 「10/30 발송 · 대기」 · 누르면 같은 카드로 고치기.
+//   입구 = [+] 메뉴(ao-desk.js) · 최종발주 메모 칸 위 링크(final-order.js) · 문자 대화 [발주 메모로 보내기](AkmOrderMemo.fromText).
+(function () {
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const p2 = n => String(n).padStart(2, '0');
+    const toast = (m, ms) => { if (typeof window.showToast === 'function') window.showToast(m, '', ms); };
+    const phoneW = () => window.matchMedia('(max-width: 720px)').matches;
+    const kstNow = () => new Date(Date.now() + 9 * 3600e3);
+    const todayStr = () => kstNow().toISOString().slice(0, 10);
+    const WD = '일월화수목금토';
+    const md = d => { const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (+m[2]) + '/' + (+m[3]) : ''; };
+    const mdw = d => { const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return ''; const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return (+m[2]) + '/' + (+m[3]) + '(' + WD[dt.getUTCDay()] + ')'; };
+    const hm = t => { if (!t) return ''; const d = new Date(new Date(t).getTime() + 9 * 3600e3); if (isNaN(d)) return ''; const s = p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()); return d.toISOString().slice(0, 10) === todayStr() ? s : (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + ' ' + s; };
+    const digits = s => String(s || '').replace(/\D/g, '');
+    const last4 = s => { const d = digits(s); return d.length >= 4 ? d.slice(-4) : ''; };
+    const nextShip = () => { const d = kstNow(); d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };   // 서버가 기준 발송일을 안 주면 = 내일(일요일 건너뜀)
+    const toIso = s => { const t = String(s || '').trim(); if (!t) return null; let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if (m) return `${m[1]}-${p2(+m[2])}-${p2(+m[3])}`; m = t.match(/(\d{1,2})\s*[\/.월-]\s*(\d{1,2})/); if (!m) return undefined; const now = kstNow(); let y = now.getUTCFullYear(); if (+m[1] < now.getUTCMonth() + 1 - 6) y++; return `${y}-${p2(+m[1])}-${p2(+m[2])}`; };   // undefined = 못 읽음
+    const clone = o => JSON.parse(JSON.stringify(o));
+
+    // ── 칸 정의 ─────────────────────────────────────────
+    //   현금 13칸(최종발주 parseCash 순서 · 계약 1절) — 화면에 보이는 칸만 · need = 비면 빨강(서버 missing 과 같은 번호 3·4·5·6·8)
+    const CASH_FIELDS = [
+        { i: 4, label: '옵션정보', need: true, why: '품목을 못 정했어요', kind: 'option' },
+        { i: 5, label: '수량', need: true, why: '수량이 없어요', kind: 'qty' },
+        { i: 3, label: '받는 분', need: true, why: '받는 분 성함이 없어요' },
+        { i: 6, label: '받는 분 연락처', need: true, why: '받는 분 번호가 없어요', kind: 'tel' },
+        { i: 8, label: '배송지', need: true, why: '주소가 없어요', kind: 'area' },
+        { i: 10, label: '구매자 연락처', kind: 'tel' },
+        { i: 9, label: '배송메세지', ph: '비우면 최종발주가 기본 문구로' },
+        { i: 0, label: '보내는 분(선물)', more: true, kind: 'sender', ph: '예) 홍길동 드림' },
+        { i: 12, label: '보내는 분 주소', more: true },
+    ];
+    const LINE_FIELDS = [
+        { k: 'key', label: '번호', hint: '구매자 번호 · 주문번호', need: true, why: '번호가 없어요', kind: 'tel' },
+        { k: 'note', label: '할 일', need: true, why: '무엇을 할지 못 읽었어요', ph: '예) S사이즈로 · 입력o삭제x · 보내는이 홍길동' },
+        { k: 'plat', label: '판매처', kind: 'platform' },
+    ];
+    const TAGS = [['cash', '현금 손님'], ['indiv', '입력삭제'], ['size', '사이즈'], ['date', '날짜 지정'], ['sender', '보내는이']];
+    const PLATS = ['네이버', '쿠팡', '자사몰'];
+    const RECENT_KEY = 'akm_om_recent_opts';
+    const recentGet = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, 5) : []; } catch (e) { return []; } };
+    const recentPut = v => { if (!v) return; try { const a = [v].concat(recentGet().filter(x => x !== v)).slice(0, 5); localStorage.setItem(RECENT_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 그대로 */ } };
+
+    const OM = { el: null, tab: 'open', list: null, cleared: null, counts: null, err: '', loading: false, shipDate: '', catalog: null, raw: '', tags: new Set(), busy: false,
+        card: null, opt: null, undo: null, undoT: 0, clearAsk: false, prevOpen: false, ship: null, lastFocus: null };
+
+    // ── 서버(계약 = docs/850-api.md) ─────────────────────
+    async function call(url, method, body) {
+        const r = await fetch(url, { method: method || 'GET', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: body ? JSON.stringify(body) : undefined });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401 && typeof window.akmSessionExpired === 'function') window.akmSessionExpired();
+        return { status: r.status, ok: r.ok, body: j || {} };
+    }
+    const safe = p => p.catch(() => ({ ok: false, status: 0, body: {} }));
+    const errText = (res, fb) => { const b = res && res.body; return (b && (b.error_text || b.message || (typeof b.error === 'string' && /[가-힣]/.test(b.error) ? b.error : ''))) || fb || '다시 시도해 주세요'; };
+    const API = {
+        list: st => safe(call('/api/order-memo?state=' + encodeURIComponent(st))),
+        preview: body => safe(call('/api/order-memo/preview', 'POST', body)),
+        previewGet: id => safe(call('/api/order-memo/preview/' + encodeURIComponent(id))),          // 2-1b 창구 정리 기다리기 { state: wait|done|fail }
+        previewDel: id => safe(call('/api/order-memo/preview/' + encodeURIComponent(id), 'DELETE')), // done·fail 직후 · 취소 · 시간 넘김 = 손님 글을 서버에서 지움
+        save: body => safe(call('/api/order-memo', 'POST', body)),
+        update: (id, body) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'PUT', body)),
+        remove: id => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'DELETE')),
+        restore: id => safe(call('/api/order-memo/restore/' + encodeURIComponent(id), 'POST')),
+        clear: body => safe(call('/api/order-memo/clear', 'POST', body)),
+        forShip: date => safe(call('/api/order-memo/for-ship?date=' + encodeURIComponent(date))),
+        catalog: () => safe(call('/api/invoice/catalog')),
+    };
+    // 서버 줄(계약 1절) → 화면 줄 — 칸은 그대로 두고 빠진 것만 채움
+    function normRow(r, entry) {
+        if (!r) return null;
+        const o = { id: r.id != null ? r.id : null, kind: r.kind === 'cash' ? 'cash' : 'line', ship_date: r.ship_date ? String(r.ship_date).slice(0, 10) : null,
+            sure: r.sure === true, check_why: Array.isArray(r.check_why) ? r.check_why.map(String) : (r.check_why ? [String(r.check_why)] : []), src: r.src || '',
+            stale: r.stale === true, indiv: r.indiv === true, state: r.state || 'open', used_on: r.used_on ? String(r.used_on).slice(0, 10) : null, cleared_at: r.cleared_at || '', entry: entry || {} };
+        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; }
+        else { o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); }
+        return o;
+    }
+    const outRow = r => Object.assign(r.kind === 'cash' ? { kind: 'cash', ship_date: r.ship_date || null, cells: r.cells.slice(), indiv: !!r.indiv } : { kind: 'line', ship_date: r.ship_date || null, key: r.key, note: r.note, plat: r.plat, line: r.line }, r.src ? { src: r.src } : {});   // 미리보기에서 받은 src·line 을 그대로(출처 보존 · 고쳤으면 서버가 다시 만듦 · 계약 §6)
+    const putBody = r => r.kind === 'cash' ? { cells: r.cells.slice(), ship_date: r.ship_date || null } : { key: r.key, note: r.note, plat: r.plat, ship_date: r.ship_date || null };
+
+    // ── 줄 판정(화면 표시) ────────────────────────────────
+    const valOf = (r, f) => r.kind === 'cash' ? (r.cells[f.i] || '') : (r[f.k] || '');
+    const blanksOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.need && !String(valOf(r, f)).trim());
+    const isLater = r => !!(r.ship_date && OM.shipDate && r.ship_date > OM.shipDate);
+    const isCheck = r => !r.sure || blanksOf(r).length > 0;
+    const whyOf = r => r.check_why.length ? r.check_why.join(' · ') : blanksOf(r).map(f => f.why).join(' · ');
+    // 카드 안 줄 머리 이유 = 칸 아래 빨간 글과 겹치지 않는 것만(「주소가 없어요」는 배송지 칸 아래에 이미 있음)
+    const nk = s => String(s || '').replace(/[s·]/g, '');
+    const fieldWhy = (r, f) => (r.check_why || []).find(w => nk(w).includes(nk(f.why))) || f.why;   // 서버 이유가 그 칸을 말하면 그 글(「주소가 없어요 · 『어머니댁』만 적혀 있어요」)을 칸 아래에
+    const whyExtra = r => { const own = (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.why).map(f => f.why.replace(/[\s·]/g, '')); return r.check_why.filter(w => { const k = String(w).replace(/[\s·]/g, ''); return !own.some(o => k.includes(o) || o.includes(k)); }); };
+    function pillOf(r) {
+        if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(30일 넘으면 서버가 지움)
+        if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
+        if (r.used_on) return { k: 'used', t: md(r.used_on) + ' 발주에 넣음' };
+        return { k: 'next', t: '내일 발주' };
+    }
+    const senderShow = v => String(v || '').replace(/^\s*!\s*/, '');
+    const nameOf = r => r.kind === 'cash' ? (r.cells[3] || '') : '';
+    const numOf = r => r.kind === 'cash' ? (r.cells[6] || r.cells[10]) : r.key;
+    const shortOpt = s => String(s || '').replace(/\s*\/\s*상품 및 과수:\s*/, ' · ');
+    const previewOf = r => r.kind === 'cash' ? [shortOpt(r.cells[4]), r.cells[5] ? r.cells[5] + '박스' : '', r.cells[8]].filter(Boolean).join(' · ') : String(r.line || '').replace(/\t/g, '   ');
+
+    // ── 창 틀 ─────────────────────────────────────────
+    const ICON_CLIP = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg>';
+    const ICON_X = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    const ICON_UNDO = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h11a5 5 0 0 1 0 10h-3"/><path d="M8 5L4 9l4 4"/></svg>';
+    const ICON_DOWN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+    function mount() {
+        if (OM.el && OM.el.isConnected) return OM.el;
+        const root = document.body;   // body 바로 아래 — 최종발주 겹(z 960) 위에서도 열리게 · 색 토큰은 ao-ordermemo.css 가 한 벌 둔다
+        const sec = document.createElement('section');
+        sec.className = 'om-modal'; sec.id = 'desk-om'; sec.setAttribute('role', 'dialog'); sec.setAttribute('aria-modal', 'true'); sec.setAttribute('aria-labelledby', 'om-title'); sec.hidden = true;
+        sec.innerHTML = `
+          <div class="om-win">
+            <header class="om-head">
+              <button type="button" class="om-back" id="om-close" aria-label="발주 메모함 닫기"><span aria-hidden="true">‹</span><em>닫기</em></button>
+              <h2 id="om-title">발주 메모함</h2>
+              <span class="om-hpill" id="om-hpill" hidden></span>
+            </header>
+            <div class="om-cols">
+              <div class="om-left">
+                <form class="om-in" id="om-in" autocomplete="off">
+                  <div class="om-in-h"><i class="om-in-ic">${ICON_CLIP}</i><div><b>손님 글을 그대로 붙여 넣어요</b><span>이름·번호·주소·품목이 섞여 있어도 돼요 · 정리는 이쪽에서</span></div></div>
+                  <div class="om-in-paper">
+                    <label class="om-sr" for="om-raw">손님 글 · 메모</label>
+                    <textarea id="om-raw" rows="4" maxlength="4000" spellcheck="false" placeholder="예) 현금 손님이에요&#10;홍길동 010-0000-0000&#10;제주시 ○○로 00 · 타이벡 5kg 로얄 2박스 · 29일 도착"></textarea>
+                    <button type="button" class="om-in-clear" id="om-raw-clear" aria-label="글 지우기" hidden>${ICON_X}</button>
+                  </div>
+                  <div class="om-tags" role="group" aria-label="빠른 꼬리표(안 눌러도 글에서 읽어요)">${TAGS.map(t => `<button type="button" class="om-tag" data-tag="${t[0]}" aria-pressed="false">${t[1]}</button>`).join('')}</div>
+                  <div class="om-in-acts">
+                    <button type="button" class="om-btn" id="om-paste">붙여넣기</button>
+                    <button type="submit" class="om-btn primary" id="om-go" disabled>정리하기</button>
+                  </div>
+                  <p class="om-in-note" id="om-in-note" role="status"></p>
+                </form>
+                <div class="om-tabs" role="tablist" aria-label="메모 목록">
+                  <button type="button" class="om-tabb" role="tab" data-tab="open" aria-selected="true">지금 메모 <b id="om-n-open"></b></button>
+                  <button type="button" class="om-tabb" role="tab" data-tab="cleared" aria-selected="false">비운 것(30일)</button>
+                </div>
+                <p class="om-sum" id="om-sum" role="status"></p>
+                <ul class="om-list" id="om-list" aria-live="polite"></ul>
+              </div>
+              <aside class="om-prev" id="om-prev" aria-labelledby="om-prev-t">
+                <div class="om-prev-h"><b id="om-prev-t">내일 발주에 들어갈 것</b><span id="om-prev-d"></span><button type="button" class="om-btn sm om-prev-x" id="om-prev-x">닫기</button></div>
+                <div class="om-prev-b" id="om-prev-b"></div>
+              </aside>
+            </div>
+            <footer class="om-foot" id="om-foot">
+              <button type="button" class="om-btn" id="om-prev-open">내일 발주 미리보기</button>
+              <button type="button" class="om-btn" id="om-clear">메모함 비우기</button>
+            </footer>
+            <div class="om-clearask" id="om-clearask" role="alertdialog" aria-labelledby="om-clearask-t" hidden></div>
+            <div class="om-undo" id="om-undo" role="status" hidden><span id="om-undo-t"></span><button type="button" class="om-btn sm" id="om-undo-b">되돌리기</button></div>
+          </div>
+          <div class="om-card-back" id="om-card-back" hidden></div>
+          <section class="om-card" id="om-card" role="dialog" aria-modal="true" aria-labelledby="om-card-t" hidden></section>
+          <div class="om-optpop" id="om-optpop" role="dialog" aria-modal="true" aria-label="옵션정보 고르기" hidden>
+            <div class="om-optpop-h"><label class="om-sr" for="om-opt-q">품목 찾기</label><input type="search" id="om-opt-q" autocomplete="off" placeholder="품목 찾기 · 예) 타이벡 5kg" role="combobox" aria-expanded="true" aria-controls="om-opt-list" aria-autocomplete="list"><button type="button" class="om-btn sm" id="om-opt-x">닫기</button></div>
+            <ul class="om-opt-list" id="om-opt-list" role="listbox" aria-label="옵션정보"></ul>
+          </div>`;
+        root.appendChild(sec);
+        OM.el = sec;
+        bind();
+        inNote('');
+        return sec;
+    }
+
+    function bind() {
+        const raw = $('om-raw');
+        $('om-close').addEventListener('click', () => close(true));
+        raw.addEventListener('input', () => { OM.raw = raw.value; inState(); });
+        raw.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!$('om-go').disabled) runPreview(); } });
+        $('om-raw-clear').addEventListener('click', () => { raw.value = ''; OM.raw = ''; OM.tags.clear(); syncTags(); inState(); inNote(''); raw.focus(); });
+        $('om-in').addEventListener('submit', e => { e.preventDefault(); runPreview(); });
+        $('om-paste').addEventListener('click', paste);
+        OM.el.querySelector('.om-tags').addEventListener('click', e => {
+            const b = e.target.closest('.om-tag'); if (!b) return;
+            const k = b.dataset.tag; if (OM.tags.has(k)) OM.tags.delete(k); else OM.tags.add(k);
+            syncTags();
+        });
+        OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
+        $('om-list').addEventListener('click', onList);
+        $('om-prev-open').addEventListener('click', () => prevShow(true));
+        $('om-prev-x').addEventListener('click', () => prevShow(false, true));
+        $('om-clear').addEventListener('click', clearAsk);
+        $('om-undo-b').addEventListener('click', undoRun);
+        $('om-card-back').addEventListener('click', () => cardClose());
+        $('om-opt-q').addEventListener('input', () => optRender());
+        $('om-opt-q').addEventListener('keydown', optKey);
+        $('om-opt-x').addEventListener('click', () => optClose(true));
+        $('om-opt-list').addEventListener('click', e => { const li = e.target.closest('[data-v]'); if (li) optPick(li.dataset.v); });
+        // Esc 는 문서 전체에서(먼저) 받는다 — 초점이 창 밖(문자 대화의 [발주 메모로] 등)에 있어도 이 창이 떠 있으면 이 창부터 닫힘(뒤 화면으로 새지 않게)
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Escape' || !OM.el || OM.el.hidden || e.isComposing) return;
+            e.stopPropagation(); e.preventDefault();
+            if (OM.opt) { optClose(true); return; }
+            if (OM.card) { cardClose(); return; }
+            if (OM.prevOpen) { prevShow(false, true); return; }
+            if (OM.clearAsk) { clearAskHide(); return; }
+            close(true);
+        }, true);
+    }
+    // 기록(뒤로가기) — 평소 = ao-desk.js 의 겹 기록(AkmAoDesk.hbPush/hbDrop) · 최종발주 화면 위에서 열면(그 화면은 popstate 한 번에 닫힘 · ao-desk 기록도 멈춤)
+    //   이 창만의 칸을 쌓고, 그 칸의 뒤로가기는 여기서 먼저 받아 최종발주 쪽으로 안 넘긴다(이 파일이 final-order.js 보다 먼저 불려 듣는 순서가 앞)
+    const A = () => window.AkmAoDesk || {};
+    const OWN = { on: false, stack: [], skip: 0 };
+    const ownDepth = () => { try { return (history.state && history.state.omOwn) | 0; } catch (e) { return 0; } };
+    function hbPush(k, fn) {
+        if (OWN.on) { if (OWN.stack.some(e => e.k === k)) return; OWN.stack.push({ k, fn }); try { history.pushState(Object.assign({}, history.state || {}, { omOwn: OWN.stack.length }), ''); } catch (e) { /* 기록 못 쌓아도 단추로 닫힘 */ } return; }
+        const a = A(); if (typeof a.hbPush === 'function') a.hbPush(k, fn);
+    }
+    function hbDrop() {
+        if (OWN.on) { let n = 0; for (const k of arguments) { const i = OWN.stack.findIndex(e => e.k === k); if (i >= 0) { OWN.stack.splice(i, 1); n++; } } if (n) { OWN.skip += n; try { history.go(-n); } catch (e) { OWN.skip = 0; } } return; }
+        const a = A(); if (typeof a.hbDrop === 'function') a.hbDrop.apply(null, arguments);
+    }
+    window.addEventListener('popstate', e => {
+        if (!OWN.on && !OWN.skip) return;
+        if (OWN.skip > 0) { OWN.skip--; e.stopImmediatePropagation(); return; }   // 우리가 단추로 닫으며 되돌린 칸
+        const d = ownDepth(); if (OWN.stack.length <= d) return;
+        e.stopImmediatePropagation();   // 이 창의 칸 = 최종발주는 그대로
+        while (OWN.stack.length > d) { const x = OWN.stack.pop(); try { x.fn(); } catch (er) { console.error(er); } }
+    });
+
+    // ── 넣기 칸 ───────────────────────────────────────
+    function syncTags() { OM.el.querySelectorAll('.om-tag').forEach(b => b.setAttribute('aria-pressed', OM.tags.has(b.dataset.tag) ? 'true' : 'false')); }
+    function inState() {
+        const has = OM.raw.trim().length > 0;
+        const go = $('om-go'); go.disabled = !has || OM.busy; go.classList.toggle('ready', has && !OM.busy);
+        $('om-raw-clear').hidden = !OM.raw;
+        $('om-in').classList.toggle('filled', has);
+    }
+    function inNote(t, k) { const n = $('om-in-note'); if (!n) return; n.textContent = t || '정리하면 내용을 확인하고 [저장]해요 · 저장한 줄은 다음 최종발주에 저절로 들어가요.'; n.dataset.k = k || ''; }
+    async function paste() {
+        const raw = $('om-raw');
+        try {
+            if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error('no');
+            const t = await navigator.clipboard.readText();
+            if (!t || !t.trim()) { inNote('복사해 둔 글이 없어요 · 손님 글을 먼저 복사해 주세요', 'warn'); return; }
+            raw.value = OM.raw.trim() ? OM.raw.replace(/\s*$/, '') + '\n' + t : t; OM.raw = raw.value; inState(); inNote('붙여 넣었어요 · [정리하기]를 눌러 주세요', 'ok');
+            raw.focus({ preventScroll: true });
+        } catch (e) { raw.focus(); inNote('이 기기는 단추로 못 붙여요 · 글 칸을 길게 눌러 [붙여넣기]를 골라 주세요', 'warn'); }
+    }
+    async function runPreview(src) {
+        if (OM.busy) return;
+        const raw = src ? src.text : OM.raw.trim(); if (!raw) return;
+        OM.busy = true; inState(); $('om-go').textContent = '정리하는 중…'; if (!src) inNote('글을 읽고 있어요 · 길면 몇 초 걸려요');
+        const req = { raw, tags: src ? (src.tags || []) : [...OM.tags], source: src ? src.source : 'manual' };
+        if (src && src.phone) req.phone = src.phone;
+        const res = await API.preview(req);
+        OM.busy = false; $('om-go').textContent = '정리하기'; inState();
+        if (!res.ok) {
+            const msg = res.status === 404 ? '서버가 아직 발주 메모함을 몰라요(배포 전)' : res.status === 429 ? '잠시 뒤 다시 해 주세요(정리를 너무 자주 눌렀어요)' : errText(res, '정리하지 못했어요 · 다시 눌러 주세요');
+            if (src) toast(msg); else inNote(msg, 'err');
+            return;
+        }
+        if (!src) inNote('');
+        const b = res.body || {};
+        const rows = (Array.isArray(b.rows) ? b.rows : []).map(r => normRow(r)).filter(Boolean);
+        const desk = b.desk && typeof b.desk === 'object' ? b.desk : null;   // null = 규칙으로 다 읽힘 · wait = 창구가 남은 글 정리 중 · off = 창구 꺼짐(규칙 줄만)
+        const waiting = !!(desk && desk.state === 'wait' && desk.id != null);
+        if (!rows.length && !b.leftover && !waiting) rows.push(blankRow(req.tags.includes('cash') ? 'cash' : 'line', src && src.phone));
+        cardOpen({ mode: 'new', raw, tags: req.tags, source: req.source, rows, leftover: b.leftover || '', ask: b.sms_draft || '', from: src || null,
+            wait: waiting ? { id: desk.id, start: Date.now(), sec: Number(desk.wait_sec) || 30 } : null,
+            deskNote: desk && desk.state === 'off' ? (desk.message || '창구가 꺼져 있어 지금은 규칙으로만 정리했어요 · 남은 글은 직접 채워 주세요') : '' });
+        if (waiting) waitLoop(OM.card);
+    }
+    // ── 창구 정리 기다리기(최종발주 메모 읽기와 같은 꼴 · 2.5초마다 · 최대 3분) ──
+    const WAIT_MAX = 180000;
+    async function waitLoop(c) {
+        while (OM.card === c && c.wait) {
+            await new Promise(r => setTimeout(r, 2500));
+            if (OM.card !== c || !c.wait) return;
+            if (Date.now() - c.wait.start > WAIT_MAX) { waitEnd(c, { state: 'fail', message: '오래 걸려요 — 남은 글은 직접 채워 주세요' }); return; }
+            const res = await API.previewGet(c.wait.id);
+            if (OM.card !== c || !c.wait) return;
+            if (!res.ok) { if (res.status === 404 || res.status === 403) { waitEnd(c, { state: 'fail', message: '정리 요청을 못 찾았어요 — 남은 글은 직접 채워 주세요' }); return; } continue; }   // 잠깐 끊김 = 다음 바퀴
+            const s = res.body || {};
+            if (s.state === 'done' || s.state === 'fail') { waitEnd(c, s); return; }
+        }
+    }
+    function waitEnd(c, s) {
+        const id = c.wait && c.wait.id; c.wait = null;
+        if (id != null) API.previewDel(id);   // 받은 직후 꼭 지움(손님 글·결과)
+        if (OM.card !== c) return;
+        if (s.state === 'done') {
+            const add = (Array.isArray(s.rows) ? s.rows : []).map(r => normRow(r)).filter(Boolean);
+            add.forEach(r => { c.rows.push(r); c.orig.push(clone(r)); });   // ↺ 처음 값 = 창구가 정리한 값
+            if (s.sms_draft) c.ask = s.sms_draft;
+            c.leftover = s.leftover || '';
+            c.deskNote = add.length ? '' : (c.leftover ? '창구가 읽지 못한 글이 있어요 · 직접 채워 주세요' : '');
+            if (!c.rows.length) { const nr = blankRow((c.tags || []).includes('cash') ? 'cash' : 'line', c.from && c.from.phone); c.rows.push(nr); c.orig.push(clone(nr)); }
+        } else {
+            c.leftover = s.leftover || c.leftover || c.raw;
+            c.deskNote = s.message || '창구가 정리하지 못했어요 — 남은 글은 직접 채워 주세요';
+        }
+        renderCard();
+        const f = $('om-card').querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo'); if (f && !phoneW()) f.focus({ preventScroll: true });
+    }
+    function waitTick() {   // 기다리는 초만 고쳐 씀(다시 그리지 않음)
+        const c = OM.card; if (!c || !c.wait) return;
+        const el = $('om-wait-sec'); if (el) el.textContent = String(Math.floor((Date.now() - c.wait.start) / 1000));
+        setTimeout(waitTick, 1000);
+    }
+    function blankRow(kind, phone) {
+        const r = normRow({ kind, sure: false, check_why: [] });
+        if (phone) { if (kind === 'cash') r.cells[10] = phone; else r.key = phone; }
+        return r;
+    }
+
+    // ── 목록 ──────────────────────────────────────────
+    async function load() {
+        OM.loading = true; renderList();
+        const tab = OM.tab, res = await API.list(tab);
+        OM.loading = false;
+        if (tab !== OM.tab) return;
+        if (!res.ok) { OM.err = res.status === 404 ? '서버가 아직 발주 메모함을 몰라요(배포 전)' : errText(res, '목록을 못 불러왔어요'); renderList(); return; }
+        OM.err = '';
+        const b = res.body || {};
+        OM.shipDate = b.ship_date ? String(b.ship_date).slice(0, 10) : (OM.shipDate || nextShip());
+        const rows = []; (Array.isArray(b.entries) ? b.entries : []).forEach(e => (Array.isArray(e.rows) ? e.rows : []).forEach(r => { const x = normRow(r, e); if (x && (tab === 'cleared' ? x.state === 'cleared' : x.state !== 'cleared')) rows.push(x); }));
+        if (tab === 'open') { OM.list = rows; OM.counts = b.counts || null; } else OM.cleared = rows;
+        renderList(); if (tab === 'open') loadShip();
+    }
+    function syncTabs() {
+        OM.el.querySelectorAll('.om-tabb').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === OM.tab ? 'true' : 'false'));
+        $('om-foot').hidden = OM.tab !== 'open';
+    }
+    function renderList() {
+        const ul = $('om-list'), sum = $('om-sum');
+        const rows = OM.tab === 'open' ? OM.list : OM.cleared;
+        const open = OM.list || [];
+        $('om-n-open').textContent = open.length ? String(open.length) : '';
+        const nCheck = open.filter(isCheck).length;
+        const hp = $('om-hpill'); hp.hidden = !nCheck; hp.textContent = '확인 ' + nCheck;
+        if (OM.loading && !rows) { ul.innerHTML = '<li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li>'; sum.textContent = ''; return; }
+        if (OM.err) { ul.innerHTML = `<li class="om-empty err"><b>${esc(OM.err)}</b><button type="button" class="om-btn sm" data-act="reload">다시 불러오기</button></li>`; sum.textContent = ''; return; }
+        if (!rows || !rows.length) {
+            ul.innerHTML = OM.tab === 'open'
+                ? '<li class="om-empty"><b>내일 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>'
+                : '<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 30일 동안 여기서 되살릴 수 있어요.</span></li>';
+            sum.textContent = OM.tab === 'open' ? '' : '';
+            return;
+        }
+        if (OM.tab === 'open') {
+            const ready = open.filter(r => !isCheck(r) && !isLater(r));
+            const nLine = ready.filter(r => r.kind === 'line').length, nCash = ready.filter(r => r.kind === 'cash').length, nLater = open.filter(r => !isCheck(r) && isLater(r)).length;
+            sum.innerHTML = `${esc(mdw(OM.shipDate))} 발주에 <b>메모 ${nLine}줄 · 현금 ${nCash}줄</b>` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
+        } else sum.textContent = '비운 지 30일이 지나면 영구로 지워져요.';
+        const rank = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on ? 3 : 1;   // 확인할 줄 → 내일 발주 → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
+        const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
+        ul.innerHTML = sorted.map(rowHtml).join('');
+    }
+    function rowHtml(r) {
+        const isOpen = OM.tab === 'open';
+        const p = isOpen ? pillOf(r) : { k: 'gone', t: '비움 ' + hm(r.cleared_at) };
+        const nm = nameOf(r), l4 = last4(numOf(r));
+        const who = [r.entry.created_by, hm(r.entry.created_at)].filter(Boolean).join(' · ');
+        const why = isOpen && isCheck(r) ? `<p class="om-why">${esc(whyOf(r))}</p>` : '';
+        const act = isOpen
+            ? `<button type="button" class="om-x" data-act="del" aria-label="${esc((nm || (l4 ? '…' + l4 : '이 줄')) + ' 지우기')}" title="지우기">${ICON_X}</button>`
+            : `<button type="button" class="om-btn sm om-restore" data-act="restore">되살리기</button>`;
+        const label = (nm || (l4 ? '…' + l4 : '메모')) + (isOpen ? ' 열어 고치기' : '');
+        return `<li class="om-item k-${p.k}" data-id="${esc(r.id)}">
+            <div class="om-row">
+              <${isOpen ? 'button type="button" class="om-open" data-act="edit"' : 'div class="om-open"'} aria-label="${esc(label)}">
+                <span class="om-r1">${nm ? `<b class="om-nm">${esc(nm)}</b>` : ''}${l4 ? `<span class="om-l4">…${esc(l4)}</span>` : ''}${r.kind === 'cash' ? (r.indiv ? '<span class="om-pill k-addr">주소 줄</span>' : '<span class="om-pill k-cash">현금</span>') : ''}<span class="om-pill k-${p.k}">${esc(p.t)}</span><span class="om-who">${esc(who)}</span></span>
+                <span class="om-line">${esc(previewOf(r) || '(빈 줄)')}</span>
+              </${isOpen ? 'button' : 'div'}>
+              ${act}
+            </div>${why}</li>`;
+    }
+    const rowById = id => ((OM.tab === 'open' ? OM.list : OM.cleared) || []).find(r => String(r.id) === String(id));
+    async function onList(e) {
+        const b = e.target.closest('[data-act]'); if (!b) return;
+        const act = b.dataset.act;
+        if (act === 'reload') { load(); return; }
+        const li = b.closest('.om-item'); const r = li && rowById(li.dataset.id); if (!r) return;
+        if (act === 'edit') { cardOpen({ mode: 'edit', rows: [clone(r)], raw: r.entry.raw || '', source: r.entry.source || '' }); return; }
+        if (act === 'del') return delRow(r, li);
+        if (act === 'restore') {
+            b.disabled = true; const res = await API.restore(r.id);
+            if (!res.ok) { b.disabled = false; toast(errText(res, '되살리지 못했어요')); return; }
+            OM.cleared = (OM.cleared || []).filter(x => x !== r); renderList(); OM.list = null;
+            toast('되살렸어요 · 「지금 메모」로 돌아갔어요');
+        }
+    }
+    async function delRow(r, li) {
+        li.classList.add('going'); const x = li.querySelector('.om-x'); if (x) x.disabled = true;
+        const res = await API.remove(r.id);
+        if (!res.ok) { li.classList.remove('going'); if (x) x.disabled = false; toast(errText(res, '지우지 못했어요')); return; }
+        OM.list = (OM.list || []).filter(y => y !== r);
+        setTimeout(() => { renderList(); renderPrev(); }, 160);
+        undoShow('지웠어요 · ' + (nameOf(r) || (last4(numOf(r)) ? '…' + last4(numOf(r)) : '한 줄')), async () => { const y = await API.restore(r.id); if (!y.ok) { toast(errText(y, '되돌리지 못했어요')); return; } load(); });
+        loadShip();
+    }
+    function undoShow(t, fn) { clearTimeout(OM.undoT); OM.undo = fn; $('om-undo-t').textContent = t; $('om-undo').hidden = false; OM.undoT = setTimeout(undoHide, 6000); }
+    function undoHide() { clearTimeout(OM.undoT); OM.undo = null; const u = $('om-undo'); if (u) u.hidden = true; }
+    function undoRun() { const fn = OM.undo; undoHide(); if (fn) fn(); }
+
+    // ── 비우기(기본 = 최종발주에 넣은 줄만 · 되묻기는 화면 안 띠) ─────────
+    function clearAsk() {
+        const open = OM.list || [];
+        const used = open.filter(r => r.used_on === OM.shipDate && !(r.kind === 'line' && isLater(r)));   // 서버 clear 와 같은 기준(used_on = 그날 · 뒤 날짜 메모 줄은 남김)
+        const later = open.filter(r => !isCheck(r) && isLater(r)).length, chk = open.filter(isCheck).length;
+        const box = $('om-clearask');
+        const left = [later ? `날짜 대기 ${later}줄` : '', chk ? `확인 ${chk}줄` : ''].filter(Boolean).join(' · ');
+        box.innerHTML = used.length
+            ? `<p id="om-clearask-t"><b>최종발주에 넣은 ${used.length}줄을 비울까요?</b>${left ? ' ' + left + '은 남아요.' : ''} 비운 줄은 30일 동안 되살릴 수 있어요.</p><div class="om-acts"><button type="button" class="om-btn primary" id="om-clear-yes">비우기</button><button type="button" class="om-btn" id="om-clear-no">취소</button></div>`
+            : `<p id="om-clearask-t"><b>아직 최종발주에 넣은 줄이 없어요.</b> 최종발주가 메모함 줄을 넣은 뒤에 비울 수 있어요(지울 줄은 줄마다 ×).</p><div class="om-acts"><button type="button" class="om-btn" id="om-clear-no">닫기</button></div>`;
+        box.hidden = false; OM.clearAsk = true;
+        const yes = $('om-clear-yes'); if (yes) yes.addEventListener('click', clearRun);
+        $('om-clear-no').addEventListener('click', clearAskHide);
+        (yes || $('om-clear-no')).focus();
+    }
+    function clearAskHide() { const b = $('om-clearask'); if (b) b.hidden = true; OM.clearAsk = false; }
+    async function clearRun() {
+        const yes = $('om-clear-yes'); if (yes) { yes.disabled = true; yes.textContent = '비우는 중…'; }
+        const res = await API.clear({ date: OM.shipDate });
+        clearAskHide();
+        if (!res.ok) { toast(errText(res, '비우지 못했어요')); return; }
+        const n = res.body && res.body.cleared;
+        toast(n != null ? `${n}줄 비웠어요 · 「비운 것(30일)」에서 되살릴 수 있어요` : '비웠어요');
+        load();
+    }
+
+    // ── 「내일 발주에 들어갈 것」 = for-ship 그대로(PC 오른쪽 · 폰은 단추로 여는 판) ─────
+    async function loadShip() {
+        if (!OM.shipDate) return;
+        const res = await API.forShip(OM.shipDate);
+        OM.ship = res.ok ? res.body : null; renderPrev();
+    }
+    function renderPrev() {
+        const box = $('om-prev-b'); if (!box) return;
+        $('om-prev-d').textContent = OM.shipDate ? mdw(OM.shipDate) + ' 발주' : '';
+        const s = OM.ship;
+        if (!s) { box.innerHTML = OM.list ? '<p class="om-prev-empty">미리보기를 불러오지 못했어요.</p>' : ''; return; }
+        const memo = String(s.memo_text || ''), aoa = Array.isArray(s.cash_aoa) ? s.cash_aoa : [];
+        const nL = memo ? memo.split('\n').filter(Boolean).length : 0, nC = Math.max(0, aoa.length - 1), held = Array.isArray(s.held) ? s.held.length : 0, wait = Array.isArray(s.waiting) ? s.waiting.length : 0;
+        if (!nL && !nC) { box.innerHTML = '<p class="om-prev-empty">아직 들어갈 줄이 없어요.<br>저장한 메모는 여기 「최종발주 메모 칸에 들어가는 글」 그대로 보여요.</p>' + (held ? `<p class="om-prev-held">확인 안 된 ${held}줄은 안 들어가요.</p>` : ''); return; }
+        const H = aoa[0] || [], show = [3, 4, 5, 6, 8];
+        box.innerHTML = (nL ? `<h3>메모 칸 <small>${nL}줄 · 뒤 날짜 줄은 최종발주가 「오늘 안 나감」으로 빼요</small></h3><pre class="om-prev-memo">${esc(memo.replace(/\t/g, '   '))}</pre>` : '')
+            + (nC ? `<h3>현금 줄 <small>${nC}줄 · 현금파일과 합쳐서 대조해요</small></h3><div class="om-prev-tw" tabindex="0" aria-label="현금 줄 표"><table class="om-prev-t"><thead><tr>${show.map(i => `<th>${esc(H[i] || '')}</th>`).join('')}</tr></thead><tbody>${aoa.slice(1).map(row => `<tr>${show.map(i => `<td${i === 5 || i === 6 ? ' class="n"' : ''}>${esc(i === 4 ? shortOpt(row[i]) : row[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '')
+            + (held || wait ? `<p class="om-prev-held">${[held ? `확인 안 된 ${held}줄은 안 들어가요` : '', wait ? `날짜 대기 현금 ${wait}줄은 그날 들어가요` : ''].filter(Boolean).join(' · ')}</p>` : '');
+    }
+    function prevShow(on, hist) {
+        if (!!on === OM.prevOpen) return;
+        OM.prevOpen = !!on; OM.el.classList.toggle('prev-open', OM.prevOpen);
+        if (on) { renderPrev(); hbPush('omprev', () => prevShow(false, false)); $('om-prev-x').focus({ preventScroll: true }); }
+        else { if (hist) hbDrop('omprev'); const b = $('om-prev-open'); if (b && phoneW()) b.focus({ preventScroll: true }); }
+    }
+
+    // ── 정리 결과 카드 ────────────────────────────────
+    function cardOpen(c) {
+        if (OM.card) cardClose(true);   // 앞 카드가 떠 있으면 먼저 닫음(기다리던 창구 요청은 취소·지움)
+        c.orig = clone(c.rows); c.dirty = false; c.confirm = false;
+        OM.card = c; OM.lastFocus = document.activeElement;
+        if (!OM.catalog) loadCatalog();
+        renderCard();
+        $('om-card').hidden = false; $('om-card-back').hidden = false;
+        hbPush('omcard', () => cardClose(false, true));
+        if (c.wait) setTimeout(waitTick, 1000);
+        requestAnimationFrame(() => { const f = $('om-card').querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || $('om-card-save'); if (f) f.focus({ preventScroll: !phoneW() }); });
+    }
+    // fromHist = 뒤로가기로 이미 기록이 빠진 경우 · force = 묻지 않고 닫기
+    function cardClose(force, fromHist) {
+        const c = OM.card; if (!c) return;
+        if (!force && c.dirty && !c.confirm) {
+            c.confirm = true; renderConfirm();
+            if (fromHist) setTimeout(() => { if (OM.card === c) hbPush('omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
+            return;
+        }
+        optClose(false);
+        if (c.wait) { const id = c.wait.id; c.wait = null; API.previewDel(id); }   // 정리 중에 닫음 = 그 요청 취소(손님 글 지움)
+        OM.card = null;
+        const card = $('om-card'), back = $('om-card-back'); if (card) { card.hidden = true; card.innerHTML = ''; } if (back) back.hidden = true;
+        if (!fromHist) hbDrop('omcard');
+        // 초점은 창 안으로만 되돌린다(문자 대화에서 왔으면 그 단추는 창 뒤 — 거기로 가면 다음 Esc·Tab 이 뒤 화면으로 샘)
+        const ret = OM.lastFocus && OM.lastFocus.isConnected && OM.el.contains(OM.lastFocus) ? OM.lastFocus : (phoneW() ? $('om-close') : $('om-raw'));
+        if (ret && !OM.el.hidden) try { ret.focus({ preventScroll: true }); } catch (e) { /* 그대로 */ }
+    }
+    function renderConfirm() {
+        const f = $('om-card').querySelector('.om-card-f'); if (!f) return;
+        const c = OM.card;
+        f.innerHTML = c.confirm
+            ? `<p class="om-confirm" id="om-confirm-t" role="alert"><b>저장 안 하고 닫을까요?</b> 고친 내용이 사라져요.</p><button type="button" class="om-btn" data-cact="keep">계속 고치기</button><button type="button" class="om-btn danger" data-cact="discard">저장 안 하고 닫기</button>`
+            : footHtml();
+        const d = f.querySelector(c.confirm ? '[data-cact="keep"]' : '#om-card-save'); if (d) d.focus({ preventScroll: true });
+    }
+    async function loadCatalog() {
+        const res = await API.catalog();
+        const set = new Set(); if (res.ok && res.body && res.body.byPartner) Object.values(res.body.byPartner).forEach(a => (a || []).forEach(n => n && set.add(n)));
+        OM.catalog = [...set].sort((a, b) => a.localeCompare(b, 'ko'));
+        if (OM.opt) optRender();
+    }
+    const fid = (ri, f) => `om-f-${ri}-${f.kind === 'shipdate' ? 'date' : f.i != null ? 'c' + f.i : f.k}`;
+    const getV = (r, f) => f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? senderShow(r.cells[0]) : valOf(r, f);
+    function setV(r, f, v) {
+        if (f.kind === 'shipdate') { const iso = toIso(v); r.ship_date = iso === undefined ? r.ship_date : iso; r._dateBad = iso === undefined; }
+        else if (f.kind === 'sender') r.cells[0] = '!' + (String(v).trim() ? ' ' + String(v).trim() : '');
+        else if (r.kind === 'cash') r.cells[f.i] = v; else r[f.k] = v;
+        if (r.kind === 'line') r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t');
+    }
+    const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', ph: '비우면 다음 발주 · 예) 10/30' }]);
+    function fieldHtml(ri, r, f) {
+        const v = getV(r, f), o = getV(OM.card.orig[ri] || r, f), id = fid(ri, f);
+        const blank = f.need && !String(v).trim();
+        const why = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
+        const changed = String(v) !== String(o);
+        const undo = `<button type="button" class="om-undo1" data-cact="undo1" data-ri="${ri}" data-f="${esc(id)}" aria-label="${esc(f.label)} 처음 값으로" title="처음 정리한 값으로"${changed ? '' : ' hidden'}>${ICON_UNDO}<span>처음 값</span></button>`;
+        let input;
+        const aria = `${blank ? ' aria-invalid="true"' : ''} aria-describedby="${id}-w"`;
+        if (f.kind === 'option') {
+            input = `<button type="button" class="om-combo" id="${id}" data-cact="opt" data-ri="${ri}" aria-haspopup="dialog"${aria}><span>${v ? esc(shortOpt(v)) + (OM.catalog && !OM.catalog.includes(v) ? ' <em>목록에 없음</em>' : '') : '<i>품목 고르기</i>'}</span>${ICON_DOWN}</button>`;
+        } else if (f.kind === 'qty') {
+            input = `<div class="om-step"><button type="button" class="om-btn icon" data-cact="step" data-d="-1" data-ri="${ri}" aria-label="수량 하나 빼기">−</button><input id="${id}" inputmode="numeric" pattern="[0-9]*" data-ri="${ri}" data-fi="${f.i}" value="${esc(v)}"${aria}><button type="button" class="om-btn icon" data-cact="step" data-d="1" data-ri="${ri}" aria-label="수량 하나 더하기">+</button></div>`;
+        } else if (f.kind === 'area') {
+            input = `<textarea id="${id}" rows="2" data-ri="${ri}" data-fi="${f.i}"${aria}>${esc(v)}</textarea>`;
+        } else if (f.kind === 'platform') {
+            input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(['']).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p || '모름'}</button>`).join('')}</div>`;
+        } else {
+            const at = f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
+            input = `<input id="${id}" ${f.kind === 'tel' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
+        }
+        const wide = f.kind === 'area' || f.kind === 'option' || f.kind === 'platform' || (r.kind === 'line' && f.k === 'note');
+        return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
+    }
+    const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save">${n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? '고친 대로 저장' : '저장')}</button>`; };
+    const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r).length, 0) : 0;
+    function askText(c) {
+        if (c.ask) return c.ask;
+        const need = new Set(); c.rows.forEach(r => blanksOf(r).forEach(f => need.add(f.i != null ? f.i : f.k)));
+        const want = [];
+        if (need.has(3) || need.has(6)) want.push('받으실 분 성함·연락처');
+        if (need.has(8)) want.push('주소');
+        if (need.has(4) || need.has(5)) want.push('원하시는 품목·수량');
+        if (!want.length) return '';
+        const d = c.rows.map(r => r.ship_date).filter(Boolean)[0];
+        return `안녕하세요 제주아꼼이네입니다. ${want.join('과 ')}를 알려 주시면 ${d ? mdw(d) + '에' : '바로'} 보내 드릴게요.`;
+    }
+    function renderCard() {
+        const c = OM.card; if (!c) return;
+        const card = $('om-card'); const bEl = card.querySelector('.om-card-b'); const sc = bEl ? bEl.scrollTop : 0;
+        const n = blankN();
+        const tags = []; if (c.rows.some(r => r.kind === 'cash' && !r.indiv)) tags.push('<span class="om-pill k-cash">현금 손님</span>'); if (c.rows.some(r => r.kind === 'cash' && r.indiv)) tags.push('<span class="om-pill k-addr">입력삭제 주소 줄</span>');   // indiv = 입력삭제 주문의 주소 줄(「!」 없음 · 서버가 정함)
+        const d = c.rows.map(r => r.ship_date).filter(Boolean)[0]; if (d) tags.push(`<span class="om-pill k-later">${esc(mdw(d))} 발송</span>`);
+        const srcLabel = /^sms/.test(c.source || '') ? '문자 대화에서 가져옴' + (c.from && c.from.phone ? ' · ' + esc(c.from.phone) : '') : '붙여 넣은 글';
+        const ask = askText(c);
+        card.innerHTML = `
+          <header class="om-card-h">
+            <button type="button" class="om-back" data-cact="cancel" aria-label="닫기"><span aria-hidden="true">×</span></button>
+            <h3 id="om-card-t">${c.mode === 'edit' ? '메모 고치기' : '정리 결과 확인'}</h3>
+            <button type="button" class="om-btn sm om-reset" data-cact="reset"${c.dirty ? '' : ' hidden'}>${ICON_UNDO}처음으로</button>
+            <span class="om-hpill${n ? '' : ' ok'}" id="om-card-n">${n ? '빈칸 ' + n : '빈칸 없음'}</span>
+          </header>
+          <div class="om-card-b">
+            ${c.raw ? `<figure class="om-quote"><figcaption>${srcLabel}</figcaption><blockquote>${esc(c.raw)}</blockquote></figure>` : ''}
+            ${c.wait ? `<div class="om-aiband" role="status" aria-live="polite"><i class="om-aiband-dot" aria-hidden="true"></i><b>창구가 남은 글을 정리 중이에요 · ${c.wait.sec}초쯤 걸려요</b><span class="om-aiband-sub">${c.rows.length ? '규칙으로 읽은 줄은 아래에 먼저 · ' : ''}<span id="om-wait-sec">${Math.floor((Date.now() - c.wait.start) / 1000)}</span>초</span><button type="button" class="om-btn sm" data-cact="stopwait">그만 기다리기</button></div>` : ''}
+            ${!c.wait && c.deskNote ? `<div class="om-aiband off" role="status"><b>${esc(c.deskNote)}</b></div>` : ''}
+            ${tags.length ? `<div class="om-card-tags">${tags.join('')}</div>` : ''}
+            ${c.rows.map((r, ri) => `
+              <section class="om-rowcard" aria-labelledby="om-rc-${ri}">
+                <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
+                ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
+                <div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
+                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는 분 바꾸기(선물)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
+                ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(r.line.replace(/\t/g, '   '))}</code></p>` : ''}
+              </section>`).join('')}
+            ${c.leftover ? `<div class="om-left-over"><b>정리 못 한 글</b><p>${esc(c.leftover)}</p><div class="om-acts"><button type="button" class="om-btn sm" data-cact="add" data-k="cash">현금 줄 더하기</button><button type="button" class="om-btn sm" data-cact="add" data-k="line">메모 줄 더하기</button></div></div>` : (c.mode === 'new' ? `<div class="om-addrow"><button type="button" class="om-btn sm ghost" data-cact="add" data-k="line">+ 메모 줄</button><button type="button" class="om-btn sm ghost" data-cact="add" data-k="cash">+ 현금 줄</button></div>` : '')}
+            ${ask ? `<div class="om-ask"><b>손님께 물어볼 문자 초안</b><p id="om-ask-t">${esc(ask)}</p><div class="om-acts"><button type="button" class="om-btn sm" data-cact="copy">복사</button>${c.from && c.from.threadId ? '<button type="button" class="om-btn sm" data-cact="toreply">답 칸에 넣기</button>' : ''}<span>보내기는 직접 · 자동으로 안 나가요</span></div></div>` : ''}
+          </div>
+          <footer class="om-card-f">${c.confirm ? '' : footHtml()}</footer>
+          <p class="om-card-note">${c.mode === 'edit' ? '저장하면 이 줄만 바뀌어요 · 서버가 다시 검사해요.' : '저장 전엔 아무것도 안 남아요 · 저장한 뒤에도 목록에서 고치거나 지울 수 있어요.'}</p>`;
+        if (c.confirm) renderConfirm();
+        if (!card._bound) { card._bound = true; card.addEventListener('click', onCard); card.addEventListener('input', onCardInput); }
+        const nb = card.querySelector('.om-card-b'); if (nb && sc) nb.scrollTop = sc;
+    }
+    // 입력 중엔 다시 그리지 않는다(초점·자판 유지) — 빨강 풀기 · ↺ 보이기 · 머리 숫자 · 저장 단추만
+    function onCardInput(e) {
+        const t = e.target, ri = t.dataset ? Number(t.dataset.ri) : NaN; if (!OM.card || isNaN(ri)) return;
+        const r = OM.card.rows[ri]; if (!r) return;
+        const f = t.dataset.fd ? fieldsOf(r).find(x => x.kind === 'shipdate') : t.dataset.fs ? CASH_FIELDS.find(x => x.kind === 'sender') : t.dataset.fi != null ? CASH_FIELDS.find(x => x.i === Number(t.dataset.fi)) : LINE_FIELDS.find(x => x.k === t.dataset.fk);
+        if (!f) return;
+        setV(r, f, t.value); touched(ri, f);
+    }
+    function touched(ri, f) {
+        const c = OM.card, r = c.rows[ri], id = fid(ri, f), wrap = $('om-card').querySelector(`[data-fwrap="${id}"]`);
+        if (wrap) {
+            const v = getV(r, f), blank = f.need && !String(v).trim();
+            wrap.classList.toggle('blank', blank);
+            const inp = $(id); if (inp) { if (blank) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid'); }
+            const w = $(id + '-w'); if (w) w.textContent = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
+            const u = wrap.querySelector('.om-undo1'); if (u) u.hidden = String(v) === String(getV(c.orig[ri] || r, f));
+        }
+        if (r.kind === 'line') { const lp = $('om-card').querySelectorAll('.om-rowcard')[ri]; const code = lp && lp.querySelector('.om-linepre code'); if (code) code.textContent = r.line.replace(/\t/g, '   '); }
+        c.dirty = JSON.stringify(c.rows.map(stripTmp)) !== JSON.stringify(c.orig.map(stripTmp));
+        const rs = $('om-card').querySelector('.om-reset'); if (rs) rs.hidden = !c.dirty;
+        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
+        const sv = $('om-card-save'); if (sv) sv.innerHTML = n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (c.mode === 'edit' ? '고친 대로 저장' : '저장');
+    }
+    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; return o; };
+    async function onCard(e) {
+        const b = e.target.closest('[data-cact]'); if (!b || !OM.card) return;
+        const a = b.dataset.cact, c = OM.card, ri = Number(b.dataset.ri), r = c.rows[ri];
+        if (a === 'cancel') { cardClose(); return; }
+        if (a === 'keep') { c.confirm = false; renderConfirm(); return; }
+        if (a === 'stopwait') { waitEnd(c, { state: 'fail', leftover: '', message: '기다리지 않기로 했어요 — 남은 글은 직접 채워 주세요(위 원문 참고)' }); return; }
+        if (a === 'discard') { cardClose(true); return; }
+        if (a === 'reset') { c.rows = clone(c.orig); c.dirty = false; renderCard(); toast('처음 정리한 값으로 돌렸어요'); return; }
+        if (a === 'undo1') {
+            const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more)).find(x => fid(ri, x) === b.dataset.f); if (!f) return;
+            setV(r, f, getV(c.orig[ri], f)); if (f.kind === 'shipdate') { r.ship_date = c.orig[ri].ship_date; r._dateBad = false; }
+            const el = $(fid(ri, f));
+            if (f.kind === 'option') { renderCard(); }
+            else if (f.kind === 'platform') renderCard();
+            else if (el) { el.value = getV(r, f); touched(ri, f); }
+            const back = $(fid(ri, f)); if (back) back.focus({ preventScroll: true });
+            return;
+        }
+        if (a === 'step') { const n = Math.max(1, (parseInt(r.cells[5], 10) || 0) + Number(b.dataset.d)); const f = CASH_FIELDS.find(x => x.i === 5); setV(r, f, String(n)); const el = $(fid(ri, f)); if (el) el.value = String(n); touched(ri, f); return; }
+        if (a === 'plat') { const f = LINE_FIELDS.find(x => x.k === 'plat'); setV(r, f, b.dataset.v); b.parentNode.querySelectorAll('.om-seg-b').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); touched(ri, f); return; }
+        if (a === 'opt') { optOpen(ri, b); return; }
+        if (a === 'add') { const nr = blankRow(b.dataset.k, c.from && c.from.phone); c.rows.push(nr); c.orig.push(clone(nr)); c.dirty = true; renderCard(); const last = $('om-card').querySelectorAll('.om-rowcard'); const l = last[last.length - 1]; if (l) { l.scrollIntoView({ block: 'nearest' }); const f = l.querySelector('input, .om-combo'); if (f) f.focus({ preventScroll: true }); } return; }
+        if (a === 'droprow') { c.rows.splice(ri, 1); c.orig.splice(ri, 1); c.dirty = true; renderCard(); return; }
+        if (a === 'copy') { const t = ($('om-ask-t') || {}).textContent || ''; try { await navigator.clipboard.writeText(t); toast('복사했어요'); } catch (er) { toast('복사하지 못했어요 · 글을 길게 눌러 복사해 주세요'); } return; }
+        if (a === 'toreply') { const t = ($('om-ask-t') || {}).textContent || ''; const ok = window.AkmAoDesk && typeof window.AkmAoDesk.smsPutReply === 'function' && window.AkmAoDesk.smsPutReply(c.from.threadId, t); toast(ok ? '답 칸에 넣었어요 · 보내기는 직접' : '문자 답 칸을 못 찾았어요 · [복사]로 넣어 주세요'); return; }
+        if (a === 'save') return cardSave(b);
+    }
+    async function cardSave(btn) {
+        const c = OM.card; if (!c || btn.disabled || c.wait) return;
+        if (!c.rows.length) { cardClose(true); return; }
+        btn.disabled = true; const keep = btn.innerHTML; btn.textContent = '저장하는 중…';
+        let res;
+        if (c.mode === 'edit') res = await API.update(c.rows[0].id, putBody(c.rows[0]));
+        else res = await API.save({ raw: c.raw, tags: c.tags || [], source: c.source || 'manual', rows: c.rows.map(outRow) });
+        if (!res.ok) { btn.disabled = false; btn.innerHTML = keep; toast(res.status === 409 ? errText(res, '비운 줄이에요 — 되살린 뒤 고쳐 주세요') : errText(res, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+        c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(r.cells[4]); });
+        const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
+        const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();
+        if (c.mode !== 'edit' && !c.from) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); syncTags(); inState(); }
+        cardClose(true);
+        inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
+        OM.tab = 'open'; syncTabs(); load();
+    }
+
+    // ── 옵션정보 고르기(찾기 · 최근 고른 것 위) ─────────────
+    function optOpen(ri, btn) {
+        OM.opt = { ri, btn, at: -1 };
+        const pop = $('om-optpop'), q = $('om-opt-q'); q.value = '';
+        optRender(); pop.hidden = false; OM.el.classList.add('opt-open');
+        if (!phoneW()) { const r = btn.getBoundingClientRect(), w = Math.max(r.width, 320); pop.style.left = Math.min(r.left, window.innerWidth - w - 12) + 'px'; pop.style.top = Math.min(r.bottom + 6, window.innerHeight - 340) + 'px'; pop.style.width = w + 'px'; }
+        else { pop.style.left = ''; pop.style.top = ''; pop.style.width = ''; }
+        hbPush('omopt', () => optClose(false, true));
+        q.focus({ preventScroll: true });
+    }
+    function optClose(hist, fromHist) {
+        if (!OM.opt) return;
+        const btn = OM.opt.btn; OM.opt = null; $('om-optpop').hidden = true; OM.el.classList.remove('opt-open');
+        if (hist !== false && !fromHist) hbDrop('omopt'); else if (hist === false && !fromHist) hbDrop('omopt');
+        if (btn && btn.isConnected) btn.focus({ preventScroll: true });
+    }
+    function optRender() {
+        if (!OM.opt) return;
+        const ul = $('om-opt-list'), qs = $('om-opt-q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);   // 띄어 쓴 낱말이 전부 든 품목(「타이벡 10」 = 타이벡 … 10kg)
+        const cur = OM.card && OM.card.rows[OM.opt.ri] ? OM.card.rows[OM.opt.ri].cells[4] : '';
+        if (!OM.catalog) { ul.innerHTML = '<li class="om-opt-empty">품목 목록을 불러오는 중…</li>'; return; }
+        const hit = s => { const t = String(s).replace(/\s+/g, '').toLowerCase(); return qs.every(w => t.includes(w)); };
+        const rec = recentGet().filter(x => OM.catalog.includes(x) && hit(x));
+        const rest = OM.catalog.filter(x => hit(x) && !rec.includes(x));
+        const li = (v, i) => `<li role="option" id="om-opt-${i}" data-v="${esc(v)}" aria-selected="${v === cur ? 'true' : 'false'}"><span>${esc(shortOpt(v))}</span>${v === cur ? '<b aria-hidden="true">✓</b>' : ''}</li>`;
+        let i = 0, html = '';
+        if (rec.length) html += `<li class="om-opt-g" role="presentation">최근 고른 것</li>` + rec.map(v => li(v, i++)).join('');
+        if (rest.length) html += (rec.length ? `<li class="om-opt-g" role="presentation">전체</li>` : '') + rest.map(v => li(v, i++)).join('');
+        ul.innerHTML = html || `<li class="om-opt-empty">「${esc($('om-opt-q').value)}」가 든 품목이 없어요 · 그날 단가표 이름만 고를 수 있어요</li>`;
+        OM.opt.at = -1;
+    }
+    function optKey(e) {
+        const items = [...$('om-opt-list').querySelectorAll('[data-v]')]; if (!OM.opt) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!items.length) return; OM.opt.at = (OM.opt.at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items.forEach((x, j) => x.classList.toggle('act', j === OM.opt.at)); items[OM.opt.at].scrollIntoView({ block: 'nearest' }); $('om-opt-q').setAttribute('aria-activedescendant', items[OM.opt.at].id); }
+        else if (e.key === 'Enter') { e.preventDefault(); const it = items[OM.opt.at] || (items.length === 1 ? items[0] : null); if (it) optPick(it.dataset.v); }
+    }
+    function optPick(v) {
+        if (!OM.opt || !OM.card) return;
+        const ri = OM.opt.ri, r = OM.card.rows[ri], f = CASH_FIELDS.find(x => x.i === 4);
+        setV(r, f, v); optClose(true);
+        const btn = $(fid(ri, f)); if (btn) { btn.querySelector('span').innerHTML = esc(shortOpt(v)); btn.removeAttribute('aria-invalid'); }
+        touched(ri, f);
+        const nx = $(fid(ri, CASH_FIELDS.find(x => x.i === 5))); if (nx) nx.focus({ preventScroll: true });
+    }
+
+    // ── 열기·닫기 ─────────────────────────────────────
+    function open(opts) {
+        mount();
+        const el = OM.el;
+        if (el.hidden) {
+            let fo = false; try { fo = !!(history.state && history.state.foPanel); } catch (e) { fo = false; }
+            OWN.on = fo; OWN.stack = []; OWN.skip = 0;
+            el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
+        }
+        OM.tab = 'open'; syncTabs(); inState(); load();
+        if (!(opts && opts.noFocus)) setTimeout(() => { const t = phoneW() ? $('om-close') : $('om-raw'); if (t) t.focus({ preventScroll: true }); }, 60);
+    }
+    function close(hist) {
+        if (!OM.el || OM.el.hidden) return;
+        if (OM.card && OM.card.dirty && hist !== false) { cardClose(); return; }   // 고친 카드가 있으면 먼저 묻는다
+        if (OM.opt) optClose(false, hist === false);
+        if (OM.card) cardClose(true, hist === false);
+        if (OM.prevOpen) prevShow(false, hist !== false);
+        clearAskHide(); undoHide();
+        OM.el.hidden = true; document.body.classList.remove('om-open');
+        if (hist !== false) hbDrop('om');
+        OWN.on = false; OWN.stack = [];
+    }
+    // 문자 대화에서: 그 글로 바로 정리 → 카드(저장 전엔 DB 0)
+    function fromText(text, o) {
+        o = o || {};
+        open({ noFocus: true });
+        runPreview({ text: String(text || '').trim().slice(0, 4000), tags: o.tags || [], source: o.threadId ? 'sms:' + o.threadId : 'manual', phone: o.phone || '', threadId: o.threadId || '' });
+    }
+
+    window.AkmOrderMemo = { open, close, fromText, isOpen: () => !!(OM.el && !OM.el.hidden), _t: { normRow, outRow, putBody, blanksOf, toIso } };
+})();

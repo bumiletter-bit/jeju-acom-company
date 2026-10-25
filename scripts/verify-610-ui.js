@@ -292,7 +292,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             { const o2 = await buyOf(); ok(o2.days === '최근 14일' && o2.who === '홍**' && o2.trk === '끝 4821' && o2.badge === '배송완료|done' && !(await pg.locator('#sms-order .sms-trk').count()), `[${label}] #644 옛 응답(이름 전체·trackings 없음) = 종전 order 로 물러남(「${o2.days}」) · 받는 분 「${o2.who}」 · 송장 「${o2.trk}」`); }
             await mock('/__mock/set', { trk: true }); await wake(pg);
             await pg.waitForFunction(() => !!document.querySelector('#sms-order .sms-trk'), null, { timeout: 12000 }).catch(() => { });
-            ok(/^부패과가 나왔군요/.test(th.ta) && th.btn === '이대로 보내기' && !th.dis && th.draft && th.btns === '이대로 보내기', `[${label}] 봇 초안이 답 칸에 미리 · 버튼은 「${th.btns}」 하나([처리함]·[대화 끝내기] 없음)`);
+            ok(/^부패과가 나왔군요/.test(th.ta) && th.btn === '이대로 보내기' && !th.dis && th.draft && th.btns.split('|').filter(x => x !== '발주 메모로').join('|') === '이대로 보내기', `[${label}] 봇 초안이 답 칸에 미리 · 버튼은 「${th.btns}」 하나(#850 앞 [발주 메모로]는 메모함 길 · 보내는 단추 아님)([처리함]·[대화 끝내기] 없음)`);
             const o1 = await rowOf(pg, 1);
             ok(o1.un === '' && o1.dun === '0' && !o1.bold && await rows(pg) === 7, `[${label}] 열면 그 줄 배지 0 · 열어 둔 동안은 목록에 그대로(7줄)`);
             ok(await chipIs(pg, '6') && P.sms.slice(g0).some(x => x === 'GET /api/sms/threads/1'), `[${label}] 알약 숫자 7 → 6 · 대화는 peek 없이 읽음(읽음 처리)`);
@@ -629,7 +629,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await mock('/__mock/reset', {});
             const P = await open(PC, false, null, pg => pg.route('**/api/sms/**', r => r.fulfill({ status: 404, contentType: 'text/html', body: '<pre>Cannot GET</pre>' })));
             const g = await P.pg.evaluate(() => ({ sms: document.getElementById('desk-sms-now').hidden, chips: Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => b.textContent.trim()), menu: Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(b => !b.hidden).map(b => b.querySelector('strong').textContent.trim()), dot: document.getElementById('desk-plus-n').hidden, card: document.getElementById('desk-sms').hidden, todo: document.querySelectorAll('.sms-todo').length }));
-            ok(g.sms && g.card && g.todo === 0 && g.dot && g.chips.join('|') === '' && g.menu.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기', `[없는 서버] 문자 항목·바로가기·점 없음 · 나머지 메뉴 그대로(${g.menu.join('|')}) · 바로가기 「${g.chips.join('|')}」`);
+            ok(g.sms && g.card && g.todo === 0 && g.dot && g.chips.join('|') === '' && g.menu.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기|체험 예약|발주 메모함', `[없는 서버] 문자 항목·바로가기·점 없음 · 나머지 메뉴 그대로(${g.menu.join('|')}) · 바로가기 「${g.chips.join('|')}」`);
             await P.pg.waitForTimeout(3000);
             ok(P.sms.length <= 1 && P.errors.length === 0, `[없는 서버] 요약은 한 번만 물어보고 그만둠(${P.sms.length}회) · 화면 오류 ${P.errors.length}`);
             await plusGo(P.pg, '#desk-ship-now'); await P.pg.waitForTimeout(400);

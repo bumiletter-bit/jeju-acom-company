@@ -15053,7 +15053,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         const mine = !history && (req.query.mine === '1' || !seeAll);
         const params = [];
         // #525: 최종발주 화면이 창구에 보낸 중간 요청(메모 읽기·대화 한마디)은 목록에 안 보인다 — 정리 기록(「[최종발주] …」) 1건만 보인다
-        let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'` + deskNoTestSql('o', req.user.id);   // #638 시험 번호 지시는 실제 사용자에게 안 보임
+        let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%' AND o.content NOT LIKE '[발주 메모 읽기]%'` + deskNoTestSql('o', req.user.id);   // #638 시험 번호 지시는 실제 사용자에게 안 보임
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (history) {
             where += ` AND o.content NOT LIKE '[검증%'`;
@@ -15521,7 +15521,7 @@ app.get('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/2
                     COALESCE(r.is_deleted, false) AS run_archived
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
-             WHERE o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'
+             WHERE o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%' AND o.content NOT LIKE '[발주 메모 읽기]%'
                ${onlyMine ? 'AND o.created_by_id = $1' : ''}${deskNoTestSql('o', req.user.id)}
                AND (${showHidden ? 'TRUE' : `
                     o.status IN ('대기', '처리중', '오류', '질문')
@@ -19355,6 +19355,16 @@ const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, admin
     naverConfirmOrders, naverConfirmIsAlready });   // #780 체험 주문 자동 발주확인 = #92 와 같은 함수·같은 중계
 // #814 계산서 발행현황(정산관리 탭 · 표 tax_invoices · 채우기 = 창구 invoice-month.js · 확인 전 숫자는 어느 합계에도 안 섞음)
 require('./tax-invoices.js').mount(app, { pool, authMiddleware, adminOnly, writeAudit, matchItemToPricing, fetchSettlements: require('./agents/세미.js')._fetchSettlements });
+// #850 발주 메모함(표 order_memo_entries·rows · API /api/order-memo/* · 계약 docs/850-api.md) — shipCal = memo-parse 와 같은 달력(정오 전이면 오늘) · 영구 삭제 타이머는 렌더에서만
+//   AI = 창구 경유(대표 「고」 · 최종발주 메모 읽기와 같은 길 · 요청한 계정 = created_by_id 로 대표 요금제/콘솔 가름) · deskAlive = 대기 프로그램 2분 안 소식 + 켜짐(desk-status 와 같은 기준)
+require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminActor, handleErr: handleAdminErr, cfgGet: naverCfgGet, kstToday: () => kstTodayStr(), noTimers: !process.env.RENDER,
+    deskAlive: async () => { const r = (await pool.query(`SELECT value, EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`)).rows[0];
+        return !!(r && r.ago !== null && r.ago < 120 && r.value && r.value.on); },
+    anthropic: process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null,
+    shipCal: async () => { const h = await loadShippingHolidayInfo(), kst = new Date(Date.now() + 9 * 3600e3), realToday = kst.toISOString().slice(0, 10);
+        const isShip = iso => shippingSchedule.isShipDay(new Date(iso + 'T00:00:00Z'), h.set), addD = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
+        const shipDays = []; for (let i = 0, d = realToday; i < 21 && shipDays.length < 7; i++, d = addD(d, 1)) if (isShip(d)) shipDays.push(d);
+        return { realToday, shipDays, suggested: (isShip(realToday) && kst.getUTCHours() < 12) ? realToday : (shipDays.find(x => x > realToday) || realToday) }; } });
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
