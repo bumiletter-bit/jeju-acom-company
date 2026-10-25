@@ -1763,14 +1763,18 @@
         smsDoneSync(t);
         smsBuyRender();
         let day = '', holdShown = false;
-        box.innerHTML = d.messages.length ? d.messages.map(m => {
+        const omK = (m, i) => String(m.id != null ? m.id : 'i' + i + ':' + (m.event_at || ''));   // #852 칩 「넣음」 기억 열쇠
+        if (!SMS.omPut || SMS.omPut.id !== id) SMS.omPut = { id, keys: new Set() };
+        box.innerHTML = d.messages.length ? d.messages.map((m, mi) => {
             const out = m.direction === 'out', dk = smsDay(m.event_at);
             const sep = dk && dk !== day ? `<div class="sms-day"><span>${esc(smsDayLabel(m.event_at))}</span></div>` : ''; day = dk || day;
             const imgs = (Array.isArray(m.image_ids) ? m.image_ids : []).map(i => `<button type="button" class="sms-thumb" data-img="${esc(i)}" aria-label="사진 크게 보기"><img alt="${out ? '보낸' : '손님이 보낸'} 사진" data-img="${esc(i)}"></button>`).join('');
             const meta = [out ? (SMS_WHO[m.sender] || '우리') : '', smsWhen(m.event_at), out ? smsStateLabel(m) : ''].filter(Boolean).map(esc).join(' · ');
             const holdHere = out && m.state === 'queued' && m.sender === 'bot' && !holdShown; if (holdHere) holdShown = true;   // 여러 통으로 나뉜 봇 답이면 단추는 첫 통에만
             const hold = holdHere ? ' <button type="button" class="sms-hold" title="이 봇 답을 보내지 않고, 이 대화는 직원이 맡아요">보내지 않기</button>' : '';   // 유예 중인 봇 답을 사람이 막는다(서버 /handled = 대기 발송 취소 + 직원 답변으로 잠금)
-            return sep + `<div class="sms-msg ${out ? 'out' : 'in'}" data-s="${esc(m.state || '')}" data-who="${esc(m.sender || '')}">${imgs ? `<div class="sms-pics">${imgs}</div>` : ''}${m.body ? `<div class="sms-bub">${esc(m.body)}</div>` : ''}<small>${meta}${hold}</small></div>`;
+            const omOn = !out && String(m.body || '').trim() && window.AkmOrderMemo && typeof window.AkmOrderMemo.appendFromSms === 'function', omDone = omOn && SMS.omPut.keys.has(omK(m, mi));
+            const omc = omOn ? ` <button type="button" class="sms-omchip${omDone ? ' done' : ''}" data-mi="${mi}" data-ok="${esc(omK(m, mi))}" title="이 글을 발주 메모함 입력 칸에 넣어요">${omDone ? '넣음' : '발주메모'}</button>` : '';   // #852 손님 글마다(사진만 = 없음)
+            return sep + `<div class="sms-msg ${out ? 'out' : 'in'}" data-s="${esc(m.state || '')}" data-who="${esc(m.sender || '')}">${imgs ? `<div class="sms-pics">${imgs}</div>` : ''}${m.body ? `<div class="sms-bub">${esc(m.body)}</div>` : ''}<small>${meta}${hold}${omc}</small></div>`;
         }).join('') : '<div class="desk-empty ship-empty">주고받은 문자가 없어요.</div>';
         smsImgs();
         if (first || bottom) box.scrollTop = box.scrollHeight;
@@ -1981,15 +1985,21 @@
     function omFromSms(only) {
         const M = window.AkmOrderMemo; if (!M || !SMS.open) return;
         const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {}, o = { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) };
-        // #850-g [발주 메모로] = 마지막 발주 메모 뒤 손님 글 전부를 입력 칸에 채움(사람이 보고 [정리하기]) · 말풍선 꾹 누르기 = 그 글만 바로 정리(종전)
-        if (!only && typeof M.fillFromSms === 'function') { M.fillFromSms((SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [], o); return; }
+        // [발주 메모로] = 마지막 우리 답 뒤 손님 글(#852 대표 「기존대로」 · #850-g 글 전부 채우기는 뺌) · 말풍선 꾹 누르기 = 그 글만 바로 정리
         const text = omText(only); if (!text.trim()) { showToast('손님이 보낸 글이 없어요'); return; }
         M.fromText(text, o);
     }
     function omBind() {
         const mi = $('desk-om-now'); if (mi) mi.addEventListener('click', () => { plusClose(false); if (window.AkmOrderMemo) hbIdle(() => window.AkmOrderMemo.open()); else showToast('발주 메모함을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });
         const pane = $('sms-pane'); if (!pane) return;
-        pane.addEventListener('click', e => { if (e.target.closest('#sms-tomemo')) omFromSms(); });
+        pane.addEventListener('click', e => {
+            if (e.target.closest('#sms-tomemo')) { omFromSms(); return; }
+            const c = e.target.closest('.sms-omchip'); if (!c || !SMS.open) return;   // #852 말풍선 「발주메모」 칩 = 그 글 한 개를 메모함 입력 칸에 덧붙임
+            const M = window.AkmOrderMemo, ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [], m = ms.find((x, i) => String(x.id != null ? x.id : 'i' + i + ':' + (x.event_at || '')) === c.dataset.ok);   // 자리 번호가 아니라 글 id 로 집음(그 사이 새 글이 와도 같은 글)
+            if (!M || !m || m.direction === 'out' || !String(m.body || '').trim()) return;
+            const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {};
+            if (M.appendFromSms(m.body, { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) }) && SMS.omPut) { SMS.omPut.keys.add(c.dataset.ok); c.classList.add('done'); c.textContent = '넣음'; }
+        });
         let lp = 0, lpAt = null;
         const bubOf = e => { const b = e.target.closest && e.target.closest('.sms-msg.in .sms-bub'); return b && pane.contains(b) ? b : null; };
         const stop = () => { clearTimeout(lp); lp = 0; if (lpAt) lpAt.classList.remove('om-press'); lpAt = null; };

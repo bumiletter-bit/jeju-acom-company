@@ -195,7 +195,7 @@
     function bind() {
         const raw = $('om-raw');
         $('om-close').addEventListener('click', () => close(true));
-        raw.addEventListener('input', () => { OM.raw = raw.value; xUndoHide(); inState(); });
+        raw.addEventListener('input', () => { OM.raw = raw.value; if (!raw.value.trim()) OM.smsSrc = null; xUndoHide(); inState(); });   // #852 칸이 비면 문자 출처도 끊음
         raw.addEventListener('scroll', xLayout, { passive: true });
         if (window.ResizeObserver) new ResizeObserver(() => xLayout()).observe(raw);
         $('om-raw-xs').addEventListener('click', e => { const b = e.target.closest('.om-in-x'); if (b) xDel(Number(b.dataset.ln)); });
@@ -1028,6 +1028,23 @@
         raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ }
         return pick.length;
     }
+    // #852 문자 말풍선 「발주메모」 칩 = 그 글 한 개를 입력 칸 끝 줄에 덧붙임(창이 닫혀 있으면 열고) · 여러 말풍선을 차례로 눌러 모음
+    //   출처·번호 = 칸이 비었거나 같은 대화일 때 그 대화 · 다른 대화 글이 있으면 안 넣음 · 손으로 친 글 뒤면 넣되 출처 manual·번호 없음
+    function appendFromSms(text, o) {
+        o = o || {};
+        const line = String(text || '').trim(); if (!line) return false;
+        open({ noFocus: true });
+        const raw = $('om-raw'), cur = raw.value, empty = !cur.trim();
+        const same = !empty && OM.smsSrc && String(OM.smsSrc.threadId) === String(o.threadId || '');
+        if (!empty && OM.smsSrc && !same) { inNote('다른 손님 글이 칸에 있어요 · 먼저 [정리하기] 하거나 지워 주세요', 'warn'); return false; }   // 번호가 섞이면 남의 번호가 구매자 번호로 들어감
+        raw.value = (empty ? '' : cur.replace(/\n*$/, '\n')) + line; raw.value = raw.value.slice(0, 4000); OM.raw = raw.value; xUndoHide();
+        if (empty) OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true };   // 손으로 친 글 뒤(smsSrc 없음) = 그대로 없음 → manual·번호 없음
+        inState();
+        const n = raw.value.split('\n').filter(s => s.trim()).length;
+        inNote(empty || same ? `문자 글을 넣었어요(${n}줄) · 더 넣거나 [정리하기]` : '직접 친 글과 섞여 번호를 안 붙여요', empty || same ? 'ok' : 'warn');
+        raw.scrollTop = raw.scrollHeight; xLayout();
+        return true;
+    }
     // 문자 대화에서: 그 글로 바로 정리 → 카드(저장 전엔 DB 0)
     function fromText(text, o) {
         o = o || {};
@@ -1035,5 +1052,5 @@
         runPreview({ text: String(text || '').trim().slice(0, 4000), tags: o.tags || [], source: o.threadId ? 'sms:' + o.threadId : 'manual', phone: o.phone || '', threadId: o.threadId || '' });
     }
 
-    window.AkmOrderMemo = { open, close, fromText, fillFromSms, isOpen: () => !!(OM.el && !OM.el.hidden), _t: { normRow, outRow, putBody, blanksOf, toIso } };
+    window.AkmOrderMemo = { open, close, fromText, fillFromSms, appendFromSms, isOpen: () => !!(OM.el && !OM.el.hidden), _t: { normRow, outRow, putBody, blanksOf, toIso } };
 })();
