@@ -72,7 +72,7 @@ function optionKey(parts, pricingNames) {
 // #686: 카페24 동기화 경보의 옵션 열쇠(server.js cafe24OptKey 와 글자 같은 복사 — 한쪽을 고치면 다른 쪽도) = 과일|용도|중량|등급. 설정 cafe24_sync_ignore_opts.keys 가 이 꼴이다
 function cafe24OptKey(s) {
     const t = String(s || '').replace(/\s+/g, '');
-    const fruit = (t.match(/하우스감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';
+    const fruit = (t.match(/하우스감귤|타이벡감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';   // #842 타이벡감귤 = 유라(과일 칸 빈칸)와 열쇠 겹침 막음
     const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
     const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
     const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
