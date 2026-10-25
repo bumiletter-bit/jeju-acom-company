@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT850) || 3458;   // 다른 세션이 3458 을
 const core = require(path.join(ROOT, 'public', 'final-order-core.js'));
 
 const CAT = ['고당도 타이벡감귤 / 상품 및 과수: 가정용 - 5kg(로얄과 2S~M)', '과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 3kg(중소과 17과 전후)'];
-const arr = v => '{' + v.map(x => '"' + String(x).replace(/["\\]/g, '\\$&') + '"').join(',') + '}';
+const arr = v => '{' + v.map(x => x == null ? 'NULL' : '"' + String(x).replace(/["\\]/g, '\\$&') + '"').join(',') + '}';
 function mkPool(db) {
     const conv = v => Array.isArray(v) ? arr(v) : (v && typeof v === 'object' && !(v instanceof Date)) ? JSON.stringify(v) : v;
     const q = async (sql, p = []) => { const r = await db.query(sql, p.map(conv)); return { rows: r.rows, rowCount: r.affectedRows != null ? r.affectedRows : r.rows.length }; };
@@ -133,6 +133,9 @@ function mkPool(db) {
         result JSONB, processed_at TIMESTAMPTZ, is_deleted BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`CREATE TABLE sms_threads (id SERIAL PRIMARY KEY, phone_digits TEXT UNIQUE NOT NULL)`);
     await db.query(`INSERT INTO sms_threads (id, phone_digits) VALUES (55, '01092590977')`);
+    // #850-d 발송 전 주문 표(sms/preorders.js DDL 그대로)
+    for (const q of require(path.join(ROOT, 'sms', 'preorders.js')).DDL) await db.query(q);
+    await db.query("INSERT INTO sms_preorders (channel, order_key, buyer_digits, recipient_digits, recipient_initial, option_text, qty, paid_at) VALUES ('naver', '2026102512345678', '01011112222', '01033334444', '김', '타이벡 5kg', 2, '2026-10-25T03:00:00Z'), ('cafe24', '20261025-0000123|P0001', '01055556666', '01055556666', '박', '황금향 3kg', 1, '2026-10-25T04:00:00Z'), ('coupang', '9000111|7000222', '01077778888', '01099990000', '이', '레몬 2kg', 1, NULL)");
     // cfgVal = 실DB 설정 order_memo 대신 · 앞쪽 시험은 서버 직접 AI(direct) · 창구 경유 시험은 ⑦에서 기본값(direct false)
     let cfgVal = { ai: { direct: true } }, deskOn = false;
     const pool = mkPool(db), audits = []; let today = '2026-10-26', aiCalls = 0, aiOn = true;
@@ -371,6 +374,117 @@ function mkPool(db) {
             const qR = await call('POST', '/api/order-memo/preview', { raw: ['', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '', '', ''].join('\t'), source: 'sms:55' }, U);
             ok(qR.j.rows[0].kind === 'cash' && qR.j.rows[0].cells[10] === '010-9259-0977' && qR.j.rows[0].cells[1] === '010-9259-0977', '미리보기 · 붙여 넣은 현금 행의 빈 K·B = 문자 손님 번호', qR.j.rows[0].cells);
             await call('POST', '/api/order-memo/clear', { all: true }, U);
+        }
+
+        console.log('⑪ 판매처 확인 lookup(#850-d)');
+        {
+            const a0 = audits.length;
+            const L = async (q, who) => call('GET', '/api/order-memo/lookup?' + q, null, who || { uid: 31 });
+            const b1 = await L('key=' + encodeURIComponent('010-1111-2222'));
+            ok(b1.s === 200 && b1.j.found && b1.j.matches.length === 1 && b1.j.matches[0].plat === '네이버' && b1.j.matches[0].as === 'buyer' && b1.j.matches[0].order_no === '2026102512345678' && b1.j.matches[0].option === '타이벡 5kg' && b1.j.matches[0].qty === 2 && b1.j.matches[0].paid_at === '2026-10-25 12:00',
+                '구매자 번호 = as buyer · 네이버 · 주문번호·옵션·수량·결제 시각(KST)', b1.j);
+            const b2 = await L('key=01033334444');
+            ok(b2.j.matches[0].as === 'recv' && b2.j.matches[0].recv_initial === '김' && b2.j.matches[0].recv_name === null && b2.j.matches[0].addr === null, '받는 분 번호 = as recv · 성 한 글자만(이름 전체·주소 = 표에 없음 → null)', b2.j.matches);
+            const b3 = await L('key=01011112222&plat=' + encodeURIComponent('쿠팡'));
+            ok(b3.s === 200 && !b3.j.found && b3.j.matches.length === 0 && /못 찾았어요/.test(b3.j.message) && b3.j.coverage.days === 7, '판매처 지정 = 그 채널만 · 없음 = 「못 찾았어요(…)」 · 덮는 범위 7일', b3.j);
+            const b4 = await L('key=20261025-0000123');
+            ok(b4.j.matches.length === 1 && b4.j.matches[0].plat === '자사몰' && b4.j.matches[0].as === 'order' && b4.j.matches[0].order_no === '20261025-0000123', '자사몰 주문번호 꼴 = 주문번호로', b4.j.matches);
+            const b5 = await L('key=2026102512345678');
+            ok(b5.j.matches.length === 1 && b5.j.matches[0].plat === '네이버' && b5.j.matches[0].as === 'order', '네이버 상품주문번호 = 주문번호로');
+            const b6 = await L('key=010-9999-0000&plat=' + encodeURIComponent('쿠팡'));
+            ok(b6.j.matches[0].as === 'recv' && b6.j.matches[0].paid_at === null, '쿠팡(결제 시각 없음) = 받는 분 번호로 찾음');
+            ok((await L('key=1234')).s === 400 && (await L('key=01011112222&plat=' + encodeURIComponent('옥션'))).s === 400, '짧은 번호·모르는 판매처 = 400');
+            ok(audits.length === a0, '감사 기록 0(개인정보 응답에만)');
+            // checked(판매처 확인 표시) — 꼴만 거름 · 저장 · 목록 · for-ship · 고치기
+            const CK = { plat: '네이버', as: 'buyer', at: '2026-10-25T10:00:00Z', name: '김손님', addr: '서울 어딘가', phone: '01011112222' };
+            const sk = await call('POST', '/api/order-memo', { raw: 'k', rows: [
+                { kind: 'line', src: 'edit', key: '010-1111-2222', note: 'S사이즈로', plat: '네이버', checked: CK },
+                { kind: 'line', src: 'edit', key: '010-3333-4444', note: 'M사이즈로', checked: { plat: '옥션', as: 'buyer' } },
+                { kind: 'cash', src: 'edit', cells: r6.cells, checked: CK } ] }, { uid: 31 });
+            const [k1, k2, k3] = sk.j.rows || [];
+            const dbk = (await db.query(`SELECT checked FROM order_memo_rows WHERE id = $1`, [k1.id])).rows[0].checked;
+            const ckEq = c => !!c && Object.keys(c).sort().join() === 'as,at,plat' && c.plat === '네이버' && c.as === 'buyer' && c.at === '2026-10-25T10:00:00.000Z';   // jsonb 는 칸 순서를 바꿈
+            ok(sk.s === 200 && ckEq(k1.checked) && ckEq(dbk) && k2.checked === null && k3.checked === null,
+                'checked 저장 = {plat, as, at} 꼴만(이름·주소·번호 버림) · 판매처 틀림 = null · 현금 줄 = null', { k1: k1.checked, dbk, k2: k2.checked, k3: k3.checked });
+            const lk = await call('GET', '/api/order-memo', null, { uid: 31 });
+            const fk = await call('GET', '/api/order-memo/for-ship?date=2026-11-10', null, { uid: 31 });
+            ok(lk.j.entries.flatMap(e => e.rows).find(r => r.id === k1.id).checked.plat === '네이버' && fk.j.lines.find(l => l.id === k1.id).checked.as === 'buyer' && fk.j.lines.find(l => l.id === k2.id).checked === null, '목록·for-ship lines[] 에 checked 그대로');
+            const u1 = await call('PUT', `/api/order-memo/rows/${k1.id}`, { note: 'M사이즈로' }, { uid: 31 });
+            ok(u1.j.row.checked && u1.j.row.checked.plat === '네이버', '번호·판매처 그대로 고치기 = checked 유지');
+            const u2 = await call('PUT', `/api/order-memo/rows/${k1.id}`, { plat: '쿠팡' }, { uid: 31 });
+            ok(u2.j.row.checked === null, '판매처 바꿈 = checked 비움');
+            const u3 = await call('PUT', `/api/order-memo/rows/${k1.id}`, { key: '010-5555-6666', checked: { plat: '쿠팡', as: 'recv', at: '2026-10-25T11:00:00Z' } }, { uid: 31 });
+            ok(u3.j.row.checked && u3.j.row.checked.as === 'recv' && u3.j.row.checked.plat === '쿠팡', '번호 바꾸며 새 checked 실음 = 새 값');
+            const u4 = await call('PUT', `/api/order-memo/rows/${k1.id}`, { key: '010-7777-0000' }, { uid: 31 });
+            ok(u4.j.row.checked === null, '번호만 바꿈 = checked 비움');
+            const u5 = await call('PUT', `/api/order-memo/rows/${k2.id}`, { checked: { plat: '자사몰', as: 'order' } }, { uid: 31 });
+            ok(u5.j.row.checked && u5.j.row.checked.plat === '자사몰' && !Number.isNaN(Date.parse(u5.j.row.checked.at)), '번호 그대로 checked 만 실음 = 저장(at 없으면 지금)');
+            await call('POST', '/api/order-memo/clear', { all: true }, { uid: 31 });
+        }
+
+        console.log('⑫ 메모함 발송 전 주문 표(#850-e · 문자 수집기 훅)');
+        {
+            const P = require(path.join(ROOT, 'sms', 'preorders.js'));
+            await api.preEnsure();
+            const NV = (pid, buyer, recv, extra) => Object.assign({ _pid: pid, '구매자명': '구매' + pid.slice(-2), '구매자연락처': buyer, '수취인명': '받는' + pid.slice(-2), '수취인연락처1': recv, '통합배송지': '제주특별자치도 제주시 가짜로 ' + pid.slice(-2), '옵션정보': '타이벡 5kg', '수량': 1, _x: { paymentDate: '2026-10-25T10:00:00.000+09:00' } }, extra || {});
+            let nvRows = [NV('2026102500000011', '010-2222-1111', '010-3333-1111'), NV('2026102500000012', '010-2222-1212', '010-3333-1212')];
+            const cpRows = [{ _orderId: '91000', _shipmentBoxId: '81000', _vendorItemId: '71000', '구매자': '쿠구매', '구매자전화번호': '010-4444-1111', '수취인이름': '쿠받는', '수취인전화번호': '0507-1234-5678', '수취인 주소': '서울시 가짜구 1', '노출상품명(옵션명)': '레몬 2kg', '구매수(수량)': 1, _paidAt: '2026-10-25T01:00:00.000Z' }];
+            const c24Rows = [{ _orderId: '20261025-0000999', _itemCode: 'P1', '주문자명': '자구매', '주문자 휴대전화': '010-5555-1111', '수령인': '자받는', '수령인 휴대전화': '010-5555-2222', '수령인 주소(전체)': '부산시 가짜로 2', '주문상품명(세트상품 포함)': '황금향 3kg', '수량': 2, _paidAt: '2026-10-25T02:00:00.000Z' }];
+            const depsP = { fetchNaver: async () => ({ rows: nvRows }), fetchCoupang: async () => ({ rows: cpRows }), fetchCafe24: async () => ({ rows: c24Rows }) };
+
+            const r1 = await P.collect(pool, depsP);
+            const mem = (await db.query(`SELECT channel, order_key, product_order_no, buyer_name, recv_name, addr, buyer_digits, recv_digits, qty, miss FROM order_memo_preorders ORDER BY channel, order_key`)).rows;
+            ok(r1.ok && mem.length === 4 && mem.find(x => x.order_key === '2026102500000011').buyer_name === '구매11' && mem.find(x => x.order_key === '2026102500000011').recv_name === '받는11' && /가짜로 11$/.test(mem.find(x => x.order_key === '2026102500000011').addr)
+                && mem.find(x => x.channel === 'coupang').product_order_no === '91000' && mem.find(x => x.channel === 'cafe24').qty === 2 && mem.find(x => x.channel === 'cafe24').product_order_no === '20261025-0000999',
+                '문자 수집 1회 = 메모함 표에도 4줄(구매자 이름·받는 분 이름 전체·주소·상품주문번호 · 추가 조회 0)', mem);
+            const smsCols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'sms_preorders' ORDER BY ordinal_position`)).rows.map(x => x.column_name).join();
+            const smsRow = (await db.query(`SELECT * FROM sms_preorders WHERE order_key = '2026102500000011'`)).rows[0];
+            ok(smsCols === 'id,channel,order_key,buyer_digits,recipient_digits,recipient_initial,option_text,qty,paid_at,seen_at,created_at,miss' && smsRow && smsRow.recipient_initial === '받' && !JSON.stringify(smsRow).includes('가짜로') && !JSON.stringify(smsRow).includes('받는11'),
+                '문자 표 sms_preorders = 칸 그대로 · 이름은 한 글자 · 주소·이름 전체 0(#610-G 그대로)', { smsCols, smsRow });
+            const lk1 = await call('GET', '/api/order-memo/lookup?key=010-3333-1111', null, { uid: 41 });
+            ok(lk1.j.coverage.source === 'memo' && lk1.j.matches.length === 1 && lk1.j.matches[0].as === 'recv' && lk1.j.matches[0].recv_name === '받는11' && lk1.j.matches[0].buyer_name === '구매11' && /가짜로 11$/.test(lk1.j.matches[0].addr) && lk1.j.matches[0].order_no === '2026102500000011',
+                'lookup = 메모함 표에서 받는 분 이름 전체·구매자 이름·주소 채움', lk1.j);
+            const lk2 = await call('GET', '/api/order-memo/lookup?key=20261025-0000999', null, { uid: 41 });
+            ok(lk2.j.matches[0].plat === '자사몰' && lk2.j.matches[0].recv_name === '자받는' && lk2.j.matches[0].addr === '부산시 가짜로 2', '자사몰 주문번호 = 메모함 표에서');
+            const lk3 = await call('GET', '/api/order-memo/lookup?key=010-9999-9999', null, { uid: 41 });
+            ok(!lk3.j.found && lk3.j.message === '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요' && lk3.j.coverage.days === 7, '없음 = 「못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요」');
+            // 즉시 조회(merge) = 넣기만 · 큰 수집 두 번 연속 안 보이면 삭제(문자 쪽과 같은 규칙)
+            nvRows = [NV('2026102500000011', '010-2222-1111', '010-3333-1111')];
+            await P.collect(pool, depsP, { days: 2, merge: true });
+            ok((await db.query(`SELECT miss FROM order_memo_preorders WHERE order_key = '2026102500000012'`)).rows[0].miss === 0, 'merge(즉시 조회) = 안 보인 줄 셈 안 함');
+            await P.collect(pool, depsP);
+            const m1 = (await db.query(`SELECT miss FROM order_memo_preorders WHERE order_key = '2026102500000012'`)).rows[0];
+            const lkM = await call('GET', '/api/order-memo/lookup?key=010-3333-1212', null, { uid: 41 });
+            ok(m1.miss === 1 && !lkM.j.found, '큰 수집 1번 안 보임 = miss 1 · lookup 에서 빠짐(발송됐을 수 있음)');
+            await P.collect(pool, depsP);
+            ok((await db.query(`SELECT count(*)::int n FROM order_memo_preorders WHERE order_key = '2026102500000012'`)).rows[0].n === 0 && (await db.query(`SELECT count(*)::int n FROM sms_preorders WHERE order_key = '2026102500000012'`)).rows[0].n === 0, '두 번 연속 안 보임 = 메모함 표·문자 표 둘 다 삭제(같은 규칙)');
+            // 훅이 실패해도 문자 수집은 그대로 · 훅을 빼면 종전과 같음
+            P.setRowsHook(async () => { throw new Error('훅 실패 시험'); });
+            nvRows = [NV('2026102500000013', '010-2222-1313', '010-3333-1313')];
+            const r4 = await P.collect(pool, depsP, { merge: true });
+            ok(r4.ok && (await db.query(`SELECT count(*)::int n FROM sms_preorders WHERE order_key = '2026102500000013'`)).rows[0].n === 1 && (await db.query(`SELECT count(*)::int n FROM order_memo_preorders WHERE order_key = '2026102500000013'`)).rows[0].n === 0, '훅 실패 = 문자 수집은 그대로(문자 표엔 들어감 · 메모함 표만 안 씀)');
+            P.setRowsHook(null);
+            nvRows = [NV('2026102500000014', '010-2222-1414', '010-3333-1414')];
+            await P.collect(pool, depsP, { merge: true });
+            ok((await db.query(`SELECT count(*)::int n FROM order_memo_preorders WHERE order_key = '2026102500000014'`)).rows[0].n === 0, '훅 없음 = 메모함 표 무접촉(종전 동작)');
+            P.setRowsHook(api.preHook);
+            // 워커3 점검 손질: ③ 번호 정규화 = 문자 쪽과 같게 · ④ 세무사 403 · ② 훅 실패 경고 = 오류 코드만 · ① 6시간 정리에 7일 지난 줄
+            nvRows = [NV('2026102500000015', '+82 10-2222-1515', '+82-10-3333-1515')];
+            await P.collect(pool, depsP, { merge: true });
+            const nm = (await db.query(`SELECT buyer_digits, recv_digits FROM order_memo_preorders WHERE order_key = '2026102500000015'`)).rows[0];
+            const ns = (await db.query(`SELECT buyer_digits, recipient_digits FROM sms_preorders WHERE order_key = '2026102500000015'`)).rows[0];
+            ok(nm && ns && nm.buyer_digits === '01022221515' && nm.buyer_digits === ns.buyer_digits && nm.recv_digits === ns.recipient_digits, '③ +82 번호 = 두 표 같은 숫자(01022221515)', { nm, ns });
+            const lkP = await call('GET', '/api/order-memo/lookup?key=' + encodeURIComponent('+82 10-3333-1515'), null, { uid: 41 });
+            ok(lkP.j.found && lkP.j.matches[0].as === 'recv', '③ lookup 도 +82 꼴 번호로 찾음');
+            ok((await call('GET', '/api/order-memo/lookup?key=010-3333-1111', null, { uid: 42, role: 'accountant' })).s === 403, '④ 세무사(accountant) 계정 = 403');
+            const warns = [], ow = console.warn; console.warn = (...x) => warns.push(x);
+            P.setRowsHook(async () => { throw Object.assign(new Error('이름 김가짜 010-1111-2222'), { code: 'XX01' }); });
+            await P.collect(pool, depsP, { merge: true });
+            console.warn = ow; P.setRowsHook(api.preHook);
+            ok(warns.length >= 1 && warns.every(w => w[0] === '[발주 메모함] 발송 전 주문 쓰기 실패:' && w[1] === 'XX01' && w.length === 2), '② 훅 실패 = 경고 한 줄 · 오류 코드만(글·이름·번호 0)', warns);
+            await db.query(`UPDATE order_memo_preorders SET seen_at = NOW() - INTERVAL '8 days' WHERE order_key = '2026102500000011'`);
+            const pgP = await api.purge();
+            ok(pgP.pre === 1 && (await db.query(`SELECT count(*)::int n FROM order_memo_preorders WHERE order_key = '2026102500000011'`)).rows[0].n === 0, '① 6시간 정리 = 7일 넘게 안 보인 발송 전 주문 줄 삭제', pgP);
         }
 
         console.log('⑧ 점검 손질(a 늦은 답 · c 오래된 확인 · d 섞기 · e 출처)');

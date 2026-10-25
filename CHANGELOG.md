@@ -1,3 +1,10 @@
+## v5.9.632 (2026-10-25) — #850-d·e 발주 메모함 주문 찾기 서버(화면은 다음 판)
+
+- GET /api/order-memo/lookup?key=&plat=(로그인 · 세무사 403 · 읽기만 · 번호 = 문자 쪽 normalizePhone · 자사몰 주문번호 꼴 · LIMIT 20) → matches[{plat, as buyer|recv|order, buyer_name, recv_name, addr, option, qty, order_no, paid_at}].
+- 새 표 order_memo_preorders = 문자 발송 전 주문 수집기(sms/preorders · 7일 · 60분 · 즉시 조회)가 받은 원본 행을 훅으로 같이 씀(추가 API 호출 0 · 대표 「요청은 주문 5일 안 · 7일이면 안정」) · 이름 전체·주소·상품주문번호는 이 표에만(sms_preorders 「버림」 원칙·칸 무변경 · verify-610-preorders 63/63) · 삭제 = 수집 두 번 연속 안 보이면 + purge 6시간 7일 넘은 줄 · 로그·audit·텔레그램 0 · 훅 실패 = 경고 한 줄(개인정보 X).
+- order_memo_rows.checked JSONB({plat, as, at} · 메모 줄만 · 번호·판매처 바뀌면 비움) · for-ship lines·목록에 실음. verify-850 145/145 · 워커3 점검(막을 것 1 → 고침).
+- 🔵 청귤 예약 시즌엔 7일 밖 주문을 못 찾음 = 그때 기간 늘리기 후보.
+
 ## v5.9.631 (2026-10-25) — #850-b 발주 메모함 문자 손님 구매자 번호·입금자명(대표 폰 실물)
 
 - 문자 대화에서 가져온 현금 손님(source sms:<id>): 구매자연락처(K)·보내는사람연락처 = 문자 보낸 손님 번호(화면 phone → 없으면 sms_threads 읽기만 · AI 가 sender_phone 을 따로 준 경우만 그 값) · 받는 분 번호는 글 그대로 · 저장 때는 다시 안 채움(사람이 비운 칸 그대로) · manual 번호 무변경.

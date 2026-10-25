@@ -62,6 +62,8 @@ const SQL_UPSERT = `
 // 한 번 모으기 — 돌려주는 값 = { ok, days, channels: { naver: { rows, upserted, missed, removed } | { error } , … }, total }
 const CHANNELS = [['naver', 'fetchNaver'], ['coupang', 'fetchCoupang'], ['cafe24', 'fetchCafe24']];
 const _emptyOnce = {};   // 채널 → 직전 수집이 「0건 유예」였는가
+let _rowsHook = null;    // #850-e (채널, 원본 행, { merge }) → 발주 메모함 표 쓰기 · order-memo.js 가 setRowsHook 으로 건다
+function setRowsHook(fn) { _rowsHook = typeof fn === 'function' ? fn : null; }
 // 부르는 꼴 둘 다 받는다: collect(db, deps, opts) · collect(deps, opts)  (뒤쪽이면 deps.pool 을 쓴다)
 const argsOf = (a, b, c) => (a && typeof a.query === 'function') ? [a, b || {}, c] : [a && (a.pool || a.db), a || {}, b];
 async function collect(a, b, c) {
@@ -69,8 +71,8 @@ async function collect(a, b, c) {
     const days = Math.max(1, Math.min(10, parseInt(opts && opts.days, 10) || 7)); const out = { ok: true, days, channels: {} };
     for (const [ch, fn] of CHANNELS) {
         if (!deps || typeof deps[fn] !== 'function') continue;
-        let rows;
-        try { const r = await deps[fn](days); rows = mapRows(ch, Array.isArray(r) ? r : (r && r.rows)); }
+        let rows, raw;
+        try { const r = await deps[fn](days); raw = Array.isArray(r) ? r : (r && r.rows); rows = mapRows(ch, raw); }
         catch (e) { out.channels[ch] = { error: String(e && (e.reason || e.message) || e).slice(0, 120) }; out.ok = false; continue; }   // 조회 실패 = 이 채널은 건드리지 않는다
         let upserted = 0;
         for (let k = 0; k < rows.length; k += 500) {
@@ -78,6 +80,8 @@ async function collect(a, b, c) {
             upserted += (await db.query(SQL_UPSERT, [ch, p.map(x => x.order_key), p.map(x => x.buyer_digits), p.map(x => x.recipient_digits), p.map(x => x.recipient_initial),
                 p.map(x => x.option_text), p.map(x => x.qty), p.map(x => x.paid_at)])).rowCount;
         }
+        // #850-e 발주 메모함 훅(order-memo.js setRowsHook) — 받은 원본 행을 메모함 표에도(이름·주소는 그쪽 표에만 · 이 표·이 파일의 셈은 무변경) · 훅이 없으면 아무것도 안 함 · 실패해도 문자 수집은 계속
+        if (_rowsHook) { try { await _rowsHook(ch, raw, { merge: !!(opts && opts.merge === true) }); } catch (e) { console.warn('[발주 메모함] 발송 전 주문 쓰기 실패:', (e && e.code) || ''); } }   // 메모함 쓰기 실패 = 문자 수집 무관 · 글엔 오류 코드만(개인정보 0)
         // #665 merge(= 최근 며칠만 받아 얹기 · 문자가 왔는데 주문을 못 찾았을 때의 즉시 조회): 넣기만 하고 「안 보인 줄」 셈·삭제는 하지 않는다(짧은 창이라 옛 주문이 전부 안 보인 것으로 세어지면 안 된다 · 0건 유예 기억도 안 건드림)
         if (opts && opts.merge === true) { out.channels[ch] = { rows: rows.length, upserted, merge: true }; continue; }
         // F4(R3 M4): 조회는 성공했는데 0건이고 표에는 이 채널 줄이 있으면 — 일시적인 빈 응답일 수 있어 한 회는 그대로 둔다(연속 두 번째 0건부터 평소대로 센다 · 셈은 메모리)
@@ -137,4 +141,4 @@ async function lookupPre(db, phone, opts) {
     return out;
 }
 
-module.exports = { DDL, initDB, mapRows, collect, purge, lookupPre, MAPPERS, _resetGrace: () => { for (const k of Object.keys(_emptyOnce)) delete _emptyOnce[k]; } };
+module.exports = { DDL, initDB, mapRows, collect, purge, lookupPre, MAPPERS, setRowsHook, _resetGrace: () => { for (const k of Object.keys(_emptyOnce)) delete _emptyOnce[k]; } };

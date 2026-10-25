@@ -181,6 +181,13 @@ function applySms(rows, smsPhone) {
     return rows;
 }
 
+// #850-d 판매처 확인 표시 = { plat: 네이버|쿠팡|자사몰, as: buyer|recv|order, at: ISO } 꼴만 · 그 밖 값·칸은 버림(이름·주소·번호 안 받음)
+function cleanChecked(v) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    if (!['네이버', '쿠팡', '자사몰'].includes(v.plat) || !['buyer', 'recv', 'order'].includes(v.as)) return null;
+    const t = Date.parse(String(v.at || '')); const at = Number.isFinite(t) && t > Date.parse('2026-01-01') && t < Date.now() + 86400e3 ? new Date(t).toISOString() : new Date().toISOString();
+    return { plat: v.plat, as: v.as, at };
+}
 // ── 최종발주용 고르기(순수 · 검증이 그대로 부름) ──
 function pickForShip(rows, date) {
     const lines = [], cash = [], waiting = [], held = [];
@@ -188,7 +195,7 @@ function pickForShip(rows, date) {
         if (r.state !== 'open') continue;
         const sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null;
         if (!r.sure) { held.push({ id: r.id, kind: r.kind, why: r.check_why || [] }); continue; }
-        if (r.kind === 'line') lines.push({ id: r.id, line: r.line, ship_date: sd, state: !sd ? 'nodate' : sd === date ? 'today' : sd > date ? 'wait' : 'past' });
+        if (r.kind === 'line') lines.push({ id: r.id, line: r.line, ship_date: sd, checked: r.checked || null, state: !sd ? 'nodate' : sd === date ? 'today' : sd > date ? 'wait' : 'past' });
         else if (!sd || sd === date) cash.push(r);
         else if (sd > date) waiting.push({ id: r.id, kind: 'cash', ship_date: sd });
         else held.push({ id: r.id, kind: 'cash', why: ['지난 날짜예요'] });
@@ -241,6 +248,7 @@ function mount(app, deps) {
             sure BOOLEAN NOT NULL DEFAULT false, check_why JSONB NOT NULL DEFAULT '[]', src TEXT NOT NULL DEFAULT 'rule',
             used_on DATE, state TEXT NOT NULL DEFAULT 'open', cleared_at TIMESTAMPTZ, cleared_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_by TEXT)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS order_memo_rows_state ON order_memo_rows (state, entry_id)`);
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS checked JSONB`);   // #850-d 판매처 확인 표시 {plat, as, at}(개인정보 없음)
     })().catch(e => { ready = null; throw e; }));
     ensure().catch(e => console.error('[발주 메모함] 표 만들기 실패(다음 요청 때 다시):', e.message));
 
@@ -352,10 +360,10 @@ function mount(app, deps) {
         key: r.line_key, note: r.note, plat: r.plat, line: r.line, cells: r.cells, sure: r.sure, check_why: r.check_why || [], src: r.src,
         missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
-        cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by,
+        cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
-    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
+    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
     const saveVals = (r) => [r.kind, r.ship_date, r.kind === 'line' ? r.key : null, r.kind === 'line' ? r.note : null, r.kind === 'line' ? r.plat : null, r.kind === 'line' ? r.line : null,
         r.kind === 'cash' ? JSON.stringify(r.cells) : null, r.sure, JSON.stringify(r.check_why), r.src];
     async function getRow(id) {
@@ -405,7 +413,7 @@ function mount(app, deps) {
         const source = /^(manual|photo|sms:\d{1,12})$/.test(String(req.body.source || '')) ? String(req.body.source) : 'manual';
         const ctx = await ctxOf();
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
-            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [] })))).map(r => checkRow(r, ctx));   // 같은 저장 묶음 · 문자 번호 채우기는 미리보기 때만(저장 땐 사람이 비운 칸 그대로 · 워커3 점검)의 입력삭제 줄 ↔ 현금 줄 = 주소 줄
+            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null })))).map(r => Object.assign(checkRow(r, ctx), { checked: r._checked }));   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -413,8 +421,8 @@ function mount(app, deps) {
                 [actorName(req), req.user.id || null, raw || '(줄만 저장)', tags, source])).rows[0];
             const saved = [];
             for (const r of rows) {
-                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req)])).rows[0]);
+                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null])).rows[0]);
             }
             await client.query('COMMIT');
             await audit(req, 'create', e.id, { rows: rows.length, line: rows.filter(r => r.kind === 'line').length, cash: rows.filter(r => r.kind === 'cash').length, unsure: rows.filter(r => !r.sure).length, source: source.replace(/:\d+$/, '') });
@@ -450,8 +458,10 @@ function mount(app, deps) {
             : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [] };
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
-        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12
-            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req)])).rows[0];
+        let checked = null;   // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
+        if (cur.kind === 'line') { const moved = dg(r.key) !== dg(cur.line_key) || String(r.plat || '') !== String(cur.plat || ''); checked = 'checked' in b ? cleanChecked(b.checked) : (moved ? null : (cur.checked || null)); }
+        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13
+            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
         let paired = 0;
         const oldD = cur.ship_date ? String(cur.ship_date).slice(0, 10) : null, newD = r.ship_date || null;
@@ -484,6 +494,117 @@ function mount(app, deps) {
         await audit(req, 'restore', cur.id, { kind: cur.kind });
         res.json({ ok: true, row: rowOut(row) });
     }));
+
+    // #850-d·e 판매처 확인 — 번호(또는 주문번호)로 발송 전 주문 찾기 · 읽기만 · 실시간 3채널 호출 없음(429)
+    //   자료 ① = 메모함 전용 「발송 전 주문」 표 order_memo_preorders(#850-e · 대표 10/25 · 문자 수집기가 받아 온 행을 같이 씀 · 결제 7일 · 구매자 이름·받는 분 이름 전체·주소까지)
+    //        ② = 그 표가 비었으면(수집 꺼짐·배포 직후) 문자용 sms_preorders(7일 · 이름 전체·주소 없음 · #610-G) — 종전 꼴 그대로
+    //   매칭 = 숫자만 · 구매자 번호 = as buyer · 받는 분 번호 = as recv · 자사몰 주문번호(YYYYMMDD-NNNNNNN) · 네이버 상품주문번호 등 긴 숫자 = as order · 개인정보 = 응답에만(로그·감사 0)
+    const PLAT_CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, CH_PLAT = { naver: '네이버', coupang: '쿠팡', cafe24: '자사몰' };
+    app.get('/api/order-memo/lookup', authMiddleware, wrap(async (req, res) => {
+        if (req.user.role === 'accountant') throw err(403, '세무사 계정은 볼 수 없어요');   // 손님 이름·주소(워커3 점검)
+        const key = s(req.query.key, 40).trim(), plat = s(req.query.plat, 10).trim();
+        if (plat && !PLAT_CH[plat]) throw err(400, '판매처는 네이버·쿠팡·자사몰 중 하나예요');
+        const d0 = dg(key), np = PRE_LK ? PRE_LK.normalizePhone(key) : d0, ch = plat ? [PLAT_CH[plat]] : ['naver', 'coupang', 'cafe24'];
+        const mall = /^\d{8}-\d{7}$/.test(key), phone = /^0\d{8,11}$/.test(np) && !mall, orderNo = !phone && !mall && /^\d{10,20}$/.test(d0);
+        const d = phone ? np : d0;   // 번호 = 문자 쪽과 같은 정규화(+82 → 0)
+        if (!phone && !mall && !orderNo) throw err(400, '전화번호(0으로 시작 9~12자리) 또는 주문번호를 주세요');
+        const kv = mall ? key : d;
+        let matches = [], cov = null, src = 'none';
+        try {
+            const have = Number((await pool.query('SELECT count(*)::int AS n FROM order_memo_preorders')).rows[0].n);
+            if (have > 0) {
+                src = 'memo';
+                const where = phone ? '(buyer_digits = $2 OR recv_digits = $2)' : mall ? "channel = 'cafe24' AND split_part(order_key, '|', 1) = $2" : '(split_part(order_key, \'|\', 1) = $2 OR product_order_no = $2)';
+                const rows = (await pool.query("SELECT channel, order_key, product_order_no, buyer_name, buyer_digits, recv_name, recv_digits, addr, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS paid"
+                    + ' FROM order_memo_preorders WHERE channel = ANY($1::text[]) AND miss = 0 AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
+                matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
+                    buyer_name: r.buyer_name || null, recv_name: r.recv_name || null, recv_initial: (String(r.recv_name || '').match(/[가-힣A-Za-z]/) || [''])[0], addr: r.addr || null,
+                    option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], paid_at: r.paid }));
+                cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM order_memo_preorders")).rows[0];
+            }
+        } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+        if (src === 'none') {
+            try {
+                const where = phone ? '(buyer_digits = $2 OR recipient_digits = $2)' : mall ? "channel = 'cafe24' AND split_part(order_key, '|', 1) = $2" : "split_part(order_key, '|', 1) = $2";
+                const rows = (await pool.query("SELECT channel, order_key, buyer_digits, recipient_digits, recipient_initial, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS paid"
+                    + ' FROM sms_preorders WHERE channel = ANY($1::text[]) AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
+                src = 'sms';
+                matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
+                    buyer_name: null, recv_name: null, recv_initial: r.recipient_initial || '', addr: null,   // 이름 전체·주소 = 그 표에 없음(#610-G)
+                    option: r.option_text || '', qty: r.qty || null, order_no: String(r.order_key || '').split('|')[0], paid_at: r.paid }));
+                cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM sms_preorders")).rows[0];
+            } catch (e) { if (!/sms_preorders/.test(String(e.message))) throw e; }   // 표가 없는 서버(문자 기능 꺼짐) = 못 찾음
+        }
+        const days = 7;
+        res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches,
+            message: matches.length ? '' : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
+            coverage: { days, source: src, last_seen: cov ? cov.last_seen : null,
+                note: '발송 전 주문 = 결제 7일 안 · 60분마다 모음(문자 수집기와 같은 회차) · 발송·취소된 주문은 빠짐' } });
+    }));
+
+    // ── #850-e 메모함 전용 발송 전 주문 표(order_memo_preorders) ──────────────────────────────
+    //   대표 10/25 「알림톡·최종발주처럼 이름·주소까지」 + 「요청은 보통 주문 5일 안 · 7일이면 안정 · 호출 오류 없게」 →
+    //   따로 수집·타이머 없음 · 문자 「발송 전 주문」 수집기(sms/preorders.js collect · 7일 · 60분 · #665 즉시 조회 포함)가 이미 받아 온 원본 행을 훅으로 받아 이 표에도 씀(추가 API 호출 0)
+    //   sms_preorders 칸·「받아도 버린다」 원칙은 그대로 · 이 표에 한해 이름·주소를 둠(대표 결정) · 문자 쪽은 이 표를 안 읽음
+    //   삭제 = 큰(merge 아닌) 수집에서 두 번 연속 안 보이면(sms 쪽 miss 규칙과 같게) · 7일 넘게 안 보인 줄도(수집이 멈춰도 손님 정보가 남지 않게) · 로그·감사엔 건수도 안 적음
+    //   🔵 청귤 예약 시즌(결제 뒤 수십 일 뒤 발송)엔 7일 밖이라 못 찾음 = 그때 기간 늘리기 후보(지금 코드 X)
+    const PRE_DDL = [
+        `CREATE TABLE IF NOT EXISTS order_memo_preorders (id BIGSERIAL PRIMARY KEY, channel TEXT NOT NULL, order_key TEXT NOT NULL, product_order_no TEXT,
+            buyer_name TEXT, buyer_digits TEXT NOT NULL DEFAULT '', recv_name TEXT, recv_digits TEXT NOT NULL DEFAULT '', addr TEXT, option_text TEXT, qty INTEGER,
+            paid_at TIMESTAMPTZ, seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), miss SMALLINT NOT NULL DEFAULT 0, UNIQUE (channel, order_key))`,
+        `CREATE INDEX IF NOT EXISTS order_memo_pre_buyer ON order_memo_preorders (buyer_digits) WHERE buyer_digits <> ''`,
+        `CREATE INDEX IF NOT EXISTS order_memo_pre_recv ON order_memo_preorders (recv_digits) WHERE recv_digits <> ''`,
+    ];
+    let preReady = null;
+    const preEnsure = () => preReady || (preReady = (async () => { for (const q of PRE_DDL) await pool.query(q); })().catch(e => { preReady = null; throw e; }));
+    preEnsure().catch(e => console.error('[발주 메모함] 발송 전 주문 표 만들기 실패(다음 수집 때 다시):', e.message));
+    const PRE_EXTRA = {   // 이름·주소·상품주문번호(키·번호·옵션·수량·결제 시각은 문자 수집기와 같은 매퍼 = sms/preorders.js MAPPERS)
+        naver: r => ({ buyer: r['구매자명'], recv: r['수취인명'], addr: r['통합배송지'], pno: r._pid }),
+        coupang: r => ({ buyer: r['구매자'], recv: r['수취인이름'], addr: r['수취인 주소'], pno: r._orderId }),
+        cafe24: r => ({ buyer: r['주문자명'], recv: r['수령인'], addr: r['수령인 주소(전체)'], pno: r._orderId }),
+    };
+    let PRE_MOD = null; try { PRE_MOD = require('./sms/preorders.js'); } catch (_) { PRE_MOD = null; }
+    let PRE_LK = null; try { PRE_LK = require('./sms/lookup.js'); } catch (_) { PRE_LK = null; }
+    function preMap(ch, rows) {
+        const base = PRE_MOD && PRE_MOD.MAPPERS && PRE_MOD.MAPPERS[ch], ex = PRE_EXTRA[ch]; if (!base || !ex) return [];
+        const ph = v => { const t = PRE_LK ? PRE_LK.normalizePhone(v) : dg(v); return (PRE_LK ? PRE_LK.lookupable(t) : /^0\d{8,11}$/.test(t)) ? t : ''; };   // 문자 쪽과 같은 정규화(+82 등) = 두 표 번호 같게(워커3 점검)
+        const out = new Map();
+        for (const r of (Array.isArray(rows) ? rows : [])) {
+            const m = base(r || {}), x = ex(r || {}); const k = String(m.key || '').slice(0, 120); if (!k) continue;
+            const t = Date.parse(String(m.paid || '').replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(:\d{2})?)$/, '$1T$2+09:00'));   // 시간대 없는 글자 = 한국 시각
+            const row = { k, pno: s(x.pno, 40).trim() || null, bn: s(x.buyer, 40).trim() || null, bd: ph(m.buyer), rn: s(x.recv, 40).trim() || null, rd: ph(m.recip),
+                ad: s(x.addr, 300).replace(/\s+/g, ' ').trim() || null, op: s(m.opt, 200).replace(/\s+/g, ' ').trim() || null, q: Math.max(0, parseInt(m.qty, 10) || 0) || null, p: Number.isFinite(t) ? new Date(t).toISOString() : null };
+            const cur = out.get(k); if (cur) cur.q = (cur.q || 0) + (row.q || 0) || null; else out.set(k, row);   // 같은 열쇠 두 번 = 수량만 더함(문자 수집기와 같게)
+        }
+        return [...out.values()];
+    }
+    const PRE_UPSERT = `INSERT INTO order_memo_preorders (channel, order_key, product_order_no, buyer_name, buyer_digits, recv_name, recv_digits, addr, option_text, qty, paid_at, seen_at, miss)
+        SELECT $1, k, pn, bn, bd, rn, rd, ad, op, q, p::timestamptz, NOW(), 0 FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::int[], $11::text[]) AS x(k, pn, bn, bd, rn, rd, ad, op, q, p)
+        ON CONFLICT (channel, order_key) DO UPDATE SET seen_at = NOW(), miss = 0, option_text = EXCLUDED.option_text, qty = EXCLUDED.qty,
+            product_order_no = COALESCE(EXCLUDED.product_order_no, order_memo_preorders.product_order_no), buyer_name = COALESCE(EXCLUDED.buyer_name, order_memo_preorders.buyer_name),
+            buyer_digits = COALESCE(NULLIF(EXCLUDED.buyer_digits, ''), order_memo_preorders.buyer_digits), recv_name = COALESCE(EXCLUDED.recv_name, order_memo_preorders.recv_name),
+            recv_digits = COALESCE(NULLIF(EXCLUDED.recv_digits, ''), order_memo_preorders.recv_digits), addr = COALESCE(EXCLUDED.addr, order_memo_preorders.addr), paid_at = COALESCE(EXCLUDED.paid_at, order_memo_preorders.paid_at)`;
+    const preEmptyOnce = {};
+    // 문자 수집기가 채널마다 부르는 훅 — (채널, 받은 원본 행, { merge }) · 실패해도 문자 수집은 그대로(preorders.js 가 잡음)
+    async function preHook(ch, raw, info) {
+        if (!PRE_EXTRA[ch]) return null;
+        await preEnsure();
+        const rows = preMap(ch, raw), merge = !!(info && info.merge);
+        for (let i = 0; i < rows.length; i += 500) {
+            const p = rows.slice(i, i + 500);
+            await pool.query(PRE_UPSERT, [ch, p.map(x => x.k), p.map(x => x.pno), p.map(x => x.bn), p.map(x => x.bd), p.map(x => x.rn), p.map(x => x.rd), p.map(x => x.ad), p.map(x => x.op), p.map(x => x.q), p.map(x => x.p)]);
+        }
+        if (merge) return { rows: rows.length, merge: true };   // 즉시 조회(짧은 창) = 넣기만
+        if (!rows.length) {   // 일시적인 빈 응답 = 한 번은 그대로(sms 쪽 F4 와 같은 꼴)
+            const have = Number((await pool.query('SELECT count(*)::int AS n FROM order_memo_preorders WHERE channel = $1', [ch])).rows[0].n);
+            if (have > 0 && !preEmptyOnce[ch]) { preEmptyOnce[ch] = true; return { rows: 0, grace: true }; }
+        } else preEmptyOnce[ch] = false;
+        const missed = (await pool.query('UPDATE order_memo_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))', [ch, rows.map(x => x.k)])).rowCount;
+        const removed = (await pool.query('DELETE FROM order_memo_preorders WHERE channel = $1 AND miss >= 2', [ch])).rowCount;
+        await pool.query("DELETE FROM order_memo_preorders WHERE seen_at < NOW() - INTERVAL '7 days'");
+        return { rows: rows.length, missed: missed - removed, removed };
+    }
+    if (PRE_MOD && typeof PRE_MOD.setRowsHook === 'function') PRE_MOD.setRowsHook(preHook);
 
     app.get('/api/order-memo/for-ship', authMiddleware, wrap(async (req, res) => {
         const date = String(req.query.date || '');
@@ -525,11 +646,14 @@ function mount(app, deps) {
         const b = await pool.query(`DELETE FROM order_memo_entries e WHERE NOT EXISTS (SELECT 1 FROM order_memo_rows r WHERE r.entry_id = e.id) AND e.created_at < NOW() - INTERVAL '1 day'`);
         // 화면이 DELETE 를 못 하고 떠난 창구 요청 줄 = 하루 지나면 손님 글·결과만 지움(줄은 남김)
         const d = await pool.query(`UPDATE pending_orders SET payload = NULL, result = CASE WHEN result IS NULL THEN NULL ELSE result - 'data' END, status = CASE WHEN status = '대기' THEN '취소' ELSE status END WHERE content LIKE $1 AND created_at < NOW() - INTERVAL '1 day' AND (payload IS NOT NULL OR result ? 'data')`, [DESK_PREFIX + '%']);   // LIKE 특수 글자는 % _ 뿐(머리글엔 없음)
-        if (a.rowCount || u.rowCount || b.rowCount || d.rowCount) console.log(`[발주 메모함] 비운 지 ${c.keep_days}일 지난 줄 ${a.rowCount} · 확인 ${c.unsure_days}일 넘어 비운 것으로 ${u.rowCount} · 빈 건 ${b.rowCount} 영구 삭제 · 창구 요청 글 ${d.rowCount} 지움`);
-        return { rows: a.rowCount, unsure: u.rowCount, entries: b.rowCount, desk: d.rowCount };
+        // #850-e 발송 전 주문 표 = 7일 넘게 안 보인 줄(문자 수집기가 멈춰 훅이 안 불려도 손님 이름·주소가 남지 않게 · 워커3 점검) · 표가 아직 없으면 넘김
+        let pre = 0;
+        try { pre = (await pool.query(`DELETE FROM order_memo_preorders WHERE seen_at < NOW() - INTERVAL '7 days'`)).rowCount; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+        if (a.rowCount || u.rowCount || b.rowCount || d.rowCount || pre) console.log(`[발주 메모함] 비운 지 ${c.keep_days}일 지난 줄 ${a.rowCount} · 확인 ${c.unsure_days}일 넘어 비운 것으로 ${u.rowCount} · 빈 건 ${b.rowCount} 영구 삭제 · 창구 요청 글 ${d.rowCount} 지움 · 발송 전 주문 7일 지난 ${pre}`);
+        return { rows: a.rowCount, unsure: u.rowCount, entries: b.rowCount, desk: d.rowCount, pre };
     }
     if (!noTimers) { const t = setInterval(() => purge().catch(e => console.error('[발주 메모함] 영구 삭제 실패:', e.message)), 6 * 3600e3); if (t && t.unref) t.unref(); }
-    return { purge, preview, ensure };
+    return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
