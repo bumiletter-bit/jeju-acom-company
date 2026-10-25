@@ -16877,6 +16877,10 @@ const NPW_MAX_CUSTOM = 10;
 //   kg 칸 = productAttributes 중 attributeRealValueUnitCode A02002 하나만(없거나 둘이면 센터에서) · 구간 번호는 같은 분류 상품 실값에서(창구 naver-detail 표)
 const NPW_ATTR_PATH = ['originProduct', 'detailAttribute', 'productAttributes'];
 const NPW_UCAP_PATH = ['originProduct', 'detailAttribute', 'unitCapacity'];
+// #842 검색 설정(seoInfo) — 페이지 제목(pageTitle) · 판매자 태그(sellerTags ≤10 · { text, code? } · code 없으면 직접 입력 태그 = 황금향 「제주도과일」 실값 꼴)
+const NPW_SEO_PATH = ['originProduct', 'detailAttribute', 'seoInfo'];
+const NPW_MAX_TAGS = 10, NPW_MAX_PAGE_TITLE = 100, NPW_MAX_TAG = 30;
+const npwTagsSame = (a, b) => JSON.stringify((a || []).map(t => [t.text, t.code == null ? null : t.code])) === JSON.stringify((b || []).map(t => [t.text, t.code == null ? null : t.code]));
 const npwKgAttrIdx = (j) => { const a = npwGet(j, NPW_ATTR_PATH); if (!Array.isArray(a)) return -1; const ix = a.map((x, i) => x && x.attributeRealValueUnitCode === 'A02002' && x.attributeRealValue != null ? i : -1).filter(i => i >= 0); return ix.length === 1 ? ix[0] : -1; };
 const npwCustoms = (j) => { const a = npwGet(j, NPW_CUSTOM_PATH); return Array.isArray(a) ? a : []; };
 // #773 링크 카드(se-oglink · se-material) 함정(#762·#768 실사고): <a> 안에 div·p 가 든 카드를 통째 PUT 하면 네이버가 그 태그를 「&lt;div class=…&gt;」 글자로 바꿔
@@ -16921,7 +16925,7 @@ function npwFixCards(html) {
     }
     return { ok: true, html: s, n, cards: cards.map(c => ({ kind: c.kind, title: c.title, link: c.link, broken: c.broken })) };
 }
-const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
+const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -17033,6 +17037,13 @@ function npwApplyPatch(j, patch) {
         if (i >= 0) { a[i].attributeRealValue = patch.weight.value; a[i].attributeValueSeq = patch.weight.value_seq; }
         if (u && typeof u === 'object') u.totalCapacityValue = patch.weight.total;
     }
+    if (patch.seo && typeof patch.seo === 'object') {   // #842 검색 설정 — 준 칸만
+        const so = npwGet(j, NPW_SEO_PATH);
+        if (so && typeof so === 'object') {
+            if ('page_title' in patch.seo) so.pageTitle = patch.seo.page_title;
+            if ('seller_tags' in patch.seo) so.sellerTags = patch.seo.seller_tags.map(t => (t.code != null ? { code: t.code, text: t.text } : { text: t.text }));
+        }
+    }
     return j;
 }
 // 결제가 = 판매가 − 즉시할인 + 옵션 추가금 · 즉시할인 PERCENT = floor(판매가 × 값 / 100) · 그 밖 = 값(원) — PERCENT 끝자리는 실조회로 확정 예정(문서 2차-2)
@@ -17069,7 +17080,7 @@ function npwCheckPatch(patch, before) {
     const keys = Object.keys(patch);
     if (!keys.length) return 'patch 가 비었어요';
     if (keys.includes('stock')) return NPW_STOCK_MSG;
-    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight'];
+    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];
     const bad = keys.filter(k => !allowed.includes(k));
     if (bad.length) return '허용되지 않은 칸: ' + bad.join(', ') + ' (허용 = ' + allowed.join(', ') + ')';
     if ('group_names' in patch) {   // #773 옵션 묶음 이름 — 지금 있는 묶음만 · 1~50자
@@ -17098,6 +17109,29 @@ function npwCheckPatch(patch, before) {
             if (!c) return `입력형 옵션 ${id} 은 이 상품에 없어요(입력형 옵션 추가는 센터에서)`;
             if (typeof p.name !== 'string' || !p.name.trim() || p.name.length > NPW_MAX_OPT_NAME) return `입력형 옵션 ${id}: 이름은 1~${NPW_MAX_OPT_NAME}자 글`;
             if (p.name === c.groupName) return `입력형 옵션 ${id}: 지금과 같은 이름이에요`;
+        }
+    }
+    if ('seo' in patch) {   // #842 검색 설정 — 지금 seoInfo 가 있는 상품만 · 페이지 제목 1~100자 · 태그 1~10개(글 1~30자 · 같은 글 두 번 X · code = 양의 정수 또는 없음)
+        const so = patch.seo, cur = npwGet(before, NPW_SEO_PATH);
+        if (!so || typeof so !== 'object' || Array.isArray(so) || !Object.keys(so).length) return 'seo 는 { page_title?, seller_tags? }';
+        const extra = Object.keys(so).filter(k => k !== 'page_title' && k !== 'seller_tags');
+        if (extra.length) return 'seo 칸은 page_title·seller_tags 만: ' + extra.join(', ');
+        if (!cur || typeof cur !== 'object') return '이 상품엔 검색 설정(seoInfo)이 없어요 — 스마트스토어센터에서';
+        if ('page_title' in so) {
+            if (typeof so.page_title !== 'string' || !so.page_title.trim() || so.page_title.length > NPW_MAX_PAGE_TITLE) return `페이지 제목은 1~${NPW_MAX_PAGE_TITLE}자 글`;
+            if (so.page_title === cur.pageTitle) return '페이지 제목이 지금과 같아요';
+        }
+        if ('seller_tags' in so) {
+            const ts = so.seller_tags, seen = new Set();
+            if (!Array.isArray(ts) || !ts.length || ts.length > NPW_MAX_TAGS) return `태그는 1~${NPW_MAX_TAGS}개`;
+            for (const t of ts) {
+                if (!t || typeof t !== 'object' || Object.keys(t).some(k => k !== 'text' && k !== 'code')) return '태그는 { text, code? }';
+                if (typeof t.text !== 'string' || !t.text.trim() || t.text.length > NPW_MAX_TAG || /\s/.test(t.text)) return `태그 「${t && t.text}」: 띄어쓰기 없는 1~${NPW_MAX_TAG}자 글`;
+                if (t.code != null && !(Number.isInteger(t.code) && t.code > 0)) return `태그 「${t.text}」: code 는 양의 정수(태그 사전 번호) 또는 빼기`;
+                if (seen.has(t.text)) return `태그 「${t.text}」 가 두 번 들어 있어요`;
+                seen.add(t.text);
+            }
+            if (npwTagsSame(ts, cur.sellerTags)) return '태그가 지금과 같아요';
         }
     }
     if ('weight' in patch) {   // #842 무게 — kg 칸 하나 · 단위가격 칸이 있는 상품만
@@ -17234,6 +17268,7 @@ function npwExpected(patch, base, allStock) {
     // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름(base 의 자리 번호로)
     for (const k of Object.keys((patch.group_names && typeof patch.group_names === 'object') ? patch.group_names : {})) exp.push(npwPathStr(NPW_GROUP_PATH) + '.optionGroupName' + k.slice(4));
     if ('discount' in patch) exp.push(npwPathStr(NPW_DISC_PATH));
+    if (patch.seo && typeof patch.seo === 'object') { if ('page_title' in patch.seo) exp.push(npwPathStr(NPW_SEO_PATH) + '.pageTitle'); if ('seller_tags' in patch.seo) exp.push(npwPathStr(NPW_SEO_PATH) + '.sellerTags'); }   // #842
     if ('weight' in patch) { const i = npwKgAttrIdx(base || {}); if (i >= 0) exp.push(`${npwPathStr(NPW_ATTR_PATH)}[${i}]`); exp.push(npwPathStr(NPW_UCAP_PATH) + '.totalCapacityValue'); }   // #842
     const cu = npwCustoms(base || {});
     for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) { const i = cu.findIndex(x => String(x.id) === String(p.id)); if (i >= 0) exp.push(`${npwPathStr(NPW_CUSTOM_PATH)}[${i}].groupName`); }
@@ -17670,6 +17705,9 @@ async function naverProductWriteRun(req, deps) {
             // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름이 다시 읽은 상품에 그대로 있는지
             if (patch.group_names) { const g = npwGet(after, NPW_GROUP_PATH) || {}; for (const [k, v] of Object.entries(patch.group_names)) if (g['optionGroupName' + k.slice(4)] !== v) not_applied.push('group_names.' + k); }
             if (patch.discount) { const d = npwDiscount(after); if (d.unitType !== patch.discount.unitType || d.value !== patch.discount.value) not_applied.push('discount'); }
+            if (patch.seo) { const so = npwGet(after, NPW_SEO_PATH) || {};   // #842 태그는 글자·순서로(네이버가 직접 입력 태그에 code 를 붙여 돌려줄 수 있어 code 는 안 봄)
+                if ('page_title' in patch.seo && so.pageTitle !== patch.seo.page_title) not_applied.push('seo.page_title');
+                if ('seller_tags' in patch.seo && JSON.stringify((so.sellerTags || []).map(t => t.text)) !== JSON.stringify(patch.seo.seller_tags.map(t => t.text))) not_applied.push('seo.seller_tags'); }
             if (patch.weight) { const i = npwKgAttrIdx(after), a = i >= 0 ? npwGet(after, NPW_ATTR_PATH)[i] : null, u = npwGet(after, NPW_UCAP_PATH) || {};   // #842
                 if (!a || String(a.attributeRealValue) !== patch.weight.value || a.attributeValueSeq !== patch.weight.value_seq) not_applied.push('weight.value'); if (u.totalCapacityValue !== patch.weight.total) not_applied.push('weight.total'); }
             for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) { const c = npwCustoms(after).find(x => String(x.id) === String(p.id)); if (!c || c.groupName !== p.name) not_applied.push('custom_options.' + p.id); }
@@ -17723,6 +17761,10 @@ async function naverProductWriteRun(req, deps) {
             if (g && typeof g === 'object') for (const k of Object.keys(patch.group_names)) { g['optionGroupName' + k.slice(4)] = bg['optionGroupName' + k.slice(4)]; needPut = true; }
         }
         if (patch.discount) { const d = npwGet(body, NPW_DISC_PATH), bd = npwGet(before, NPW_DISC_PATH); if (d && bd) { d.value = bd.value; d.unitType = bd.unitType; needPut = true; } }
+        if (patch.seo) {   // #842 검색 설정 = 준 칸만 보관본 값으로
+            const so = npwGet(body, NPW_SEO_PATH), bs = npwGet(before, NPW_SEO_PATH);
+            if (so && bs) { if ('page_title' in patch.seo) { so.pageTitle = bs.pageTitle; needPut = true; } if ('seller_tags' in patch.seo) { so.sellerTags = npwClone(bs.sellerTags || []); needPut = true; } }
+        }
         if (patch.weight) {   // #842 무게 = 보관본 값으로
             const i = npwKgAttrIdx(body), bi = npwKgAttrIdx(before), u = npwGet(body, NPW_UCAP_PATH), bu = npwGet(before, NPW_UCAP_PATH);
             if (i >= 0 && bi >= 0) { const a = npwGet(body, NPW_ATTR_PATH)[i], ba = npwGet(before, NPW_ATTR_PATH)[bi]; a.attributeRealValue = ba.attributeRealValue; a.attributeValueSeq = ba.attributeValueSeq; needPut = true; }

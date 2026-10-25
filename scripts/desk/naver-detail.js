@@ -3,7 +3,7 @@
 //   node scripts/desk/naver-detail.js plan <backup_id|상품번호> --detail <html> | --status <값>
 //                                       | --opt <옵션 id> name1=…|price=…|stock=…|usable=… (옵션마다 한 번씩) | --sale-price <원> | --name "<글>"
 //                                       | --add-opt "<이름1>[|<이름2>[|<이름3>]]=<추가금>[=<재고>]" (#733 새 옵션 · 여러 번 · 재고 기본 99999 · 끝에 붙음 · 되돌리기 = 숨김)
-//                                       | --group-name1|2|3 "<묶음 이름>" | --discount <원|n%> | --custom-name <입력형 옵션 id>=<새 이름> (#773 · 여러 번 가능) | --weight <kg>(#842 상품 무게)
+//                                       | --group-name1|2|3 "<묶음 이름>" | --discount <원|n%> | --custom-name <입력형 옵션 id>=<새 이름> (#773 · 여러 번 가능) | --weight <kg>(#842 상품 무게) | --page-title "<글>" --tags "<글#번호,…>"(#842 검색 설정 · 태그는 통째)
 //                                       [--card-fix](상세의 링크 카드를 글 링크로 바꿔 보냄 · 없으면 카드가 있을 때 멈춤) [--accept-impact](묶음 이름 영향 🔴 을 되묻고 「응」 받은 뒤만)
 //                                                                              바뀌는 곳만 전/후 표 + 카드 글(보내지 않음 · 쓰기 0)
 //   node scripts/desk/naver-detail.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 재조회해 바뀐 경로 대조 → 결과 카드
@@ -52,6 +52,8 @@ function parseOpts(args) {
         else if (a === '--dry') o.dry = true;
         else if (a === '--group-name1' || a === '--group-name2' || a === '--group-name3') (o.groupName = o.groupName || {})['name' + a.slice(-1)] = args[++i];   // #773 옵션 묶음 이름
         else if (a === '--discount') o.discount = args[++i];                    // #773 즉시할인 <원|n%>
+        else if (a === '--page-title') o.pageTitle = args[++i];                 // #842 검색 페이지 제목(seoInfo.pageTitle)
+        else if (a === '--tags') o.tags = args[++i];                            // #842 판매자 태그 통째 「글#번호,글,…」(번호 = 태그 사전 · 없으면 직접 입력)
         else if (a === '--weight') o.weight = args[++i];                        // #842 상품 무게 <kg>(상품 속성 · 단위가격 총용량)
         else if (a === '--custom-name') (o.customName = o.customName || []).push(args[++i]);   // #773 입력형 옵션 <id>=<새 이름>
         else if (a === '--card-fix') o.cardFix = true;                          // #773 링크 카드 → 글 링크로 바꿔 보냄
@@ -145,13 +147,25 @@ function buildPatch(o) {
         for (const raw of o.customName) { const m = /^\s*(\d+)\s*=([\s\S]*)$/.exec(String(raw == null ? '' : raw)); const nm = m ? m[2].trim() : ''; if (!m || !nm) errs.push(`--custom-name 「${raw}」: "<id>=<새 이름>" 꼴로(id 는 show 의 입력형 옵션 표)`); else if (nm.length > 50) errs.push(`입력형 옵션 이름은 50자까지예요(${nm.length}자)`); else list.push({ id: Number(m[1]), name: nm }); }
         if (list.length) patch.custom_options = list;
     }
+    if (o.pageTitle != null || o.tags != null) {   // #842 검색 설정 — 페이지 제목 · 태그 통째(지금 태그를 다 적어야 남음)
+        const seo = {};
+        if (o.pageTitle != null) { const t = String(o.pageTitle).trim(); if (!t) errs.push('--page-title 이 비었어요'); else if (t.length > 100) errs.push(`페이지 제목은 100자까지예요(${t.length}자)`); else seo.page_title = t; }
+        if (o.tags != null) {
+            const list = String(o.tags).split(',').map(x => x.trim()).filter(Boolean), out = [];
+            for (const raw of list) { const m = /^([^#\s]{1,30})(?:#(\d{1,12}))?$/.exec(raw); if (!m) { errs.push(`--tags 「${raw}」: 「글」 또는 「글#번호」(띄어쓰기 없이 30자까지)`); continue; } out.push(m[2] ? { text: m[1], code: Number(m[2]) } : { text: m[1] }); }
+            if (!out.length || out.length > 10) errs.push(`태그는 1~10개예요(${out.length}개)`);
+            else if (new Set(out.map(t => t.text)).size !== out.length) errs.push('같은 태그가 두 번 들어 있어요');
+            else seo.seller_tags = out;
+        }
+        if (Object.keys(seo).length) patch.seo = seo;
+    }
     if (o.weight != null) {   // #842 무게 — kg 글 → 구간 번호는 WEIGHT_SEQ(우리 상품 실값) · 총용량 = g(우리 상품 전부 g · 다르면 planRows 가 멈춤)
         const t = String(o.weight).trim().replace(/\s*kg$/i, ''), seq = WEIGHT_SEQ[t];
         if (!seq) errs.push(`--weight 는 ${Object.keys(WEIGHT_SEQ).join('·')} kg 중 하나예요(그 밖 무게는 구간 번호를 몰라 스마트스토어센터에서)`);
         else patch.weight = { value: t, value_seq: seq, total: Math.round(Number(t) * 1000) };
     }
     if (o.name != null) { const t = String(o.name).trim(); if (!t) errs.push('상품명이 비었어요'); else if (t.length > NAME_MAX) errs.push(`상품명은 ${NAME_MAX}자까지예요(${t.length}자)`); else patch.name = t; }
-    if (!errs.length && !Object.keys(patch).length) errs.push('바꿀 것을 주세요: --status <판매중|판매중지|품절> · --opt <옵션 id> <칸>=<값> · --add-opt "<이름1>|<이름2>=<추가금>=<재고>" · --sale-price <원> · --name "<글>" · --detail <html파일> · --group-name1 "<묶음 이름>" · --discount <원|n%> · --custom-name <id>=<새 이름> · --weight <kg>');
+    if (!errs.length && !Object.keys(patch).length) errs.push('바꿀 것을 주세요: --status <판매중|판매중지|품절> · --opt <옵션 id> <칸>=<값> · --add-opt "<이름1>|<이름2>=<추가금>=<재고>" · --sale-price <원> · --name "<글>" · --detail <html파일> · --group-name1 "<묶음 이름>" · --discount <원|n%> · --custom-name <id>=<새 이름> · --weight <kg> · --page-title "<글>" · --tags "<글#번호,글,…>"');
     return { patch, errs };
 }
 
@@ -347,6 +361,19 @@ function planRows(before, patch) {
             if (patch.status === 'OUTOFSTOCK') warns.push(`품절로 바꾸면 네이버가 재고를 0 으로 만들어요${oc.length ? ` — 옵션 ${oc.length}개 재고가 전부 0 · 원래 재고로 돌리는 길은 revert(보관본 재고로 되돌림)` : ''}`);
         }
     }
+    if ('seo' in patch) {   // #842 검색 설정 — 전/후
+        const cur = (op.detailAttribute || {}).seoInfo, so = patch.seo, tl = ts => (ts || []).map(t => t.text + (t.code != null ? '#' + t.code : '')).join(', ');
+        if (!cur) stops.push('이 상품엔 검색 설정(seoInfo)이 없어요 — 스마트스토어센터에서');
+        else {
+            if ('page_title' in so) { if (so.page_title === cur.pageTitle) stops.push('페이지 제목이 이미 그 글이에요'); else rows.push({ field: '검색 페이지 제목', before: cur.pageTitle || '(없음)', after: so.page_title }); }
+            if ('seller_tags' in so) {
+                if (tl(so.seller_tags) === tl(cur.sellerTags)) stops.push('태그가 이미 그대로예요');
+                else { rows.push({ field: '판매자 태그', before: tl(cur.sellerTags) || '(없음)', after: tl(so.seller_tags) });
+                    const gone = (cur.sellerTags || []).filter(t => !so.seller_tags.some(x => x.text === t.text)).map(t => t.text); if (gone.length) warns.push('빠지는 태그: ' + gone.join(', '));
+                    const raw = so.seller_tags.filter(t => t.code == null).map(t => t.text); if (raw.length) warns.push('번호 없는 태그(직접 입력 · 네이버 태그 사전 밖일 수 있음): ' + raw.join(', ')); }
+            }
+        }
+    }
     if ('weight' in patch) {   // #842 무게 — kg 칸 하나 + 단위가격 총용량(g)
         const da = op.detailAttribute || {}, at = (da.productAttributes || []).filter(x => x && x.attributeRealValueUnitCode === 'A02002' && x.attributeRealValue != null), u = da.unitCapacity, w = patch.weight;
         if (at.length !== 1) stops.push('이 상품엔 kg 무게 칸이 하나가 아니에요 — 무게는 스마트스토어센터에서');
@@ -361,7 +388,7 @@ function planRows(before, patch) {
     return { rows: stops.length ? [] : rows, warns, stops };
 }
 // 통째 PUT 을 타는 patch(서버 usesPut 과 같음) — 설정 'naver_product_write'.put_enabled 가 true 일 때만 서버가 받음(#721-B · 판매중지·재개는 늘 열림)
-const PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight'];   // 서버 NPW_PUT_KEYS 와 같게(#773 · #842)
+const PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];   // 서버 NPW_PUT_KEYS 와 같게(#773 · #842)
 const PUT_LOCK_TEXT = '통째 수정은 대표 확정 대기 — 지금은 판매중지/재개만';
 function usesPut(before, patch) {
     const st = (((before || {}).originProduct) || {}).statusType;
@@ -660,7 +687,7 @@ async function main(argv, deps) {
         if (res.custom_after) for (const x of (patch.custom_options || [])) { const b = (res.custom_before || []).find(c => String(c.id) === String(x.id)), a = (res.custom_after || []).find(c => String(c.id) === String(x.id)); extra.push('입력형 옵션(' + x.id + '): ' + (b ? b.name : '(없음)') + ' → ' + (a ? a.name : '(없음)')); }
         if (res.cards_fixed) extra.push('링크 카드 ' + res.cards_fixed + '개를 글 링크로 바꿔 보냈어요: ' + (res.cards_fixed_list || []).map(c => c.title || c.kind).slice(0, 4).join(' · '));
         if ('options_add' in patch && !(res.new_options || []).length) extra.push('🔴 새 옵션이 다시 읽은 상품에 안 보여요 — show 로 확인 · 다시 보내지 말고 총괄에게');
-        if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명', discount: '즉시할인', 'weight.value': '무게', 'weight.total': '단위가격 총용량' })[k] || (/^group_names\./.test(k) ? '묶음 이름 ' + k.slice(-1) + '번' : /^custom_options\./.test(k) ? '입력형 옵션 ' + k.split('.')[1] : null) || (/^options_add\./.test(k) ? '새 옵션 ' + (Number(k.split('.')[1]) + 1) + '번째' + (k.split('.')[2] ? ' ' + ({ price: '추가금', stock: '재고', usable: '판매' })[k.split('.')[2]] : '') : k)).join(' · ')}`);
+        if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명', discount: '즉시할인', 'weight.value': '무게', 'weight.total': '단위가격 총용량', 'seo.page_title': '검색 페이지 제목', 'seo.seller_tags': '판매자 태그' })[k] || (/^group_names\./.test(k) ? '묶음 이름 ' + k.slice(-1) + '번' : /^custom_options\./.test(k) ? '입력형 옵션 ' + k.split('.')[1] : null) || (/^options_add\./.test(k) ? '새 옵션 ' + (Number(k.split('.')[1]) + 1) + '번째' + (k.split('.')[2] ? ' ' + ({ price: '추가금', stock: '재고', usable: '판매' })[k.split('.')[2]] : '') : k)).join(' · ')}`);
         const rowsAfter = res.options_table ? P.rows.filter(r => !/^옵션 「/.test(r.field)).concat(optionRows(res.options_table)) : P.rows;
         const eb = expectBad(patch).concat(res.detail_filtered === true ? ['detail'] : []);
         const sb = saleOkSelf(row.before_json), sa = res.sale_ok || null, sold = !!(sa && sb.ok && (sa.bad || []).filter(b => !eb.includes(b)).length);

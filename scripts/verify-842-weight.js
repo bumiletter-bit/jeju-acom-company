@@ -1,4 +1,4 @@
-// #842 검증 — 네이버 상품 쓰기에 「상품 무게」(상품 속성 kg 칸 · 단위가격 총용량) 칸을 더한 것
+// #842 검증 — 네이버 상품 쓰기에 「상품 무게」 · ⑤ 검색 설정(seo · 페이지 제목·판매자 태그)(상품 속성 kg 칸 · 단위가격 총용량) 칸을 더한 것
 //   server.js 「#720-B 시작」~「#720-B 끝」 러너를 떼어 가짜 deps 로 돌린다(실DB·네이버 호출 0) · 가짜 pool·가짜 네이버는 verify-720-write.js 의 것을 그대로 떼어 씀
 //   + 창구 scripts/desk/naver-detail.js 의 --weight 인자·전/후 표
 //   실행: node scripts/verify-842-weight.js
@@ -113,6 +113,44 @@ const da = (j) => j.originProduct.detailAttribute;
         const kgUnit = clone(PRODUCT); kgUnit.originProduct.detailAttribute.unitCapacity.indicationUnit = 'kg';
         ok(ND.planRows(kgUnit, { weight: W5 }).stops.some(s => /g 단위가 아니에요/.test(s)), '단위가 kg 인 상품 = 멈춤');
         ok(ND.usesPut ? ND.usesPut(PRODUCT, { weight: W5 }) : true, '무게는 통째 PUT 길(put_enabled 잠금 대상)');
+    }
+
+
+    console.log('⑤ #842 검색 설정(seo) — 페이지 제목 · 판매자 태그');
+    {
+        const P2 = clone(PRODUCT); P2.originProduct.detailAttribute.seoInfo = { pageTitle: '제주 감귤 3kg 5kg 노지 하우스 타이벡', metaDescription: '설명 그대로', sellerTags: [{ code: 518727, text: '제주귤' }, { code: 82742, text: '추석선물' }, { text: '제주도과일' }] };
+        const SEO = { page_title: '제주 감귤 3kg 5kg 노지 타이벡', seller_tags: [{ code: 518727, text: '제주귤' }, { text: '타이벡감귤' }, { code: 339357, text: '제주도감귤' }] };
+        const { nv, deps } = mk(P2);
+        const bk = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: bk.backup_id, patch: { seo: SEO } }, deps);
+        ok(ap.ok && ap.unexpected_paths.length === 0 && ap.not_applied.length === 0, 'apply 성공 · unexpected 0 · not_applied 0', { u: ap.unexpected_paths, n: ap.not_applied, e: ap.error });
+        const so = nv.puts[0].originProduct.detailAttribute.seoInfo;
+        ok(so.pageTitle === SEO.page_title && so.metaDescription === '설명 그대로', 'PUT 바디 = 페이지 제목만 바뀌고 설명 그대로');
+        ok(JSON.stringify(so.sellerTags) === JSON.stringify([{ code: 518727, text: '제주귤' }, { text: '타이벡감귤' }, { code: 339357, text: '제주도감귤' }]), '태그 통째 · 번호 없는 태그는 text 만');
+        ok(JSON.stringify(nv.puts[0].originProduct.detailAttribute.optionInfo) === JSON.stringify(P2.originProduct.detailAttribute.optionInfo) && nv.puts[0].originProduct.salePrice === P2.originProduct.salePrice, '옵션·판매가 무접촉');
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: bk.backup_id }, deps);
+        ok(rv.ok && JSON.stringify(nv.product) === JSON.stringify(P2), 'revert = 원본 그대로', rv);
+        const noSeo = clone(PRODUCT);
+        for (const [p, before, re, why] of [
+            [{ seo: SEO }, noSeo, /seoInfo\)이 없어요/, 'seoInfo 없는 상품'],
+            [{ seo: {} }, P2, /page_title\?, seller_tags\?/, '빈 seo'],
+            [{ seo: { meta: 'x' } }, P2, /page_title·seller_tags 만/, '모르는 칸'],
+            [{ seo: { page_title: '' } }, P2, /1~100자/, '빈 제목'],
+            [{ seo: { page_title: P2.originProduct.detailAttribute.seoInfo.pageTitle } }, P2, /지금과 같아요/, '같은 제목'],
+            [{ seo: { seller_tags: [] } }, P2, /1~10개/, '태그 0개'],
+            [{ seo: { seller_tags: Array.from({ length: 11 }, (_, i) => ({ text: 't' + i })) } }, P2, /1~10개/, '태그 11개'],
+            [{ seo: { seller_tags: [{ text: '제주 감귤' }] } }, P2, /띄어쓰기 없는/, '띄어쓰기 태그'],
+            [{ seo: { seller_tags: [{ text: 'a', code: -1 }] } }, P2, /양의 정수/, '음수 번호'],
+            [{ seo: { seller_tags: [{ text: 'a' }, { text: 'a' }] } }, P2, /두 번/, '같은 태그 둘'],
+            [{ seo: { seller_tags: P2.originProduct.detailAttribute.seoInfo.sellerTags } }, P2, /지금과 같아요/, '같은 태그'],
+        ]) ok(re.test(mod.npwCheckPatch(p, before) || ''), '거절: ' + why, mod.npwCheckPatch(p, before));
+        const r = ND.buildPatch(ND.parseOpts(['--page-title', '제주 감귤 3kg 5kg 노지 타이벡', '--tags', '제주귤#518727, 타이벡감귤 ,제주도감귤#339357']).o);
+        const tn = x => JSON.stringify({ p: x.page_title, t: x.seller_tags.map(t => [t.text, t.code == null ? null : t.code]) });
+        ok(!r.errs.length && tn(r.patch.seo) === tn(SEO), '창구 --page-title · --tags → seo', r);
+        ok(ND.buildPatch(ND.parseOpts(['--tags', '제주 감귤']).o).errs.some(e => /띄어쓰기/.test(e)), '창구 --tags 띄어쓰기 = 멈춤');
+        const pr = ND.planRows(P2, { seo: SEO });
+        ok(!pr.stops.length && pr.rows.some(x => x.field === '판매자 태그') && pr.warns.some(w => /빠지는 태그: 추석선물, 제주도과일/.test(w)) && pr.warns.some(w => /번호 없는 태그.*타이벡감귤/.test(w)), '창구 전/후 표 · 빠지는 태그 · 번호 없는 태그 경고', pr);
+        ok(/'seo'/.test((fs.readFileSync(path.join(__dirname, 'desk', 'naver-detail.js'), 'utf8').match(/const PUT_KEYS = \[[^\]]*\]/) || [''])[0]) && /'seo'/.test((src.match(/const NPW_PUT_KEYS = \[[^\]]*\]/) || [''])[0]), '검색 설정은 통째 PUT 길(창구·서버 PUT_KEYS)');
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);
