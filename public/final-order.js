@@ -544,6 +544,18 @@
     //   본 화면 실코드(app.js addSizeSuffix)는 손님 메모에 사이즈 말이 있으면 품목을 가리지 않고 붙인다 — 직원 줄은 대표 뜻대로 귤만.
     function sizeApply() {
         const s = S(), tails = new Map(), res = new Map(), info = [], boxes = new Map(), asks = new Map();
+        // #850-f 같은 주문에 사이즈만 다른 메모 줄 둘(예 S · 2S) — 뒤 줄이 조용히 덮던 것 → 확인 카드에서 고른 것만 붙임(같은 사이즈 둘이면 한 번만)
+        const szWant = new Map();   // 주문 키 → { e, sizes: Set, raws }
+        (st.sizeLines || []).forEach(z => {
+            if (z.parts) return;
+            s.merged.filter(e => ((z.digits.length >= 8 && !NO_TEL.has(z.digits) && buyerTel(e) === z.digits) || idsOf(e).includes(z.key)) && sizeItem(e.conv['옵션정보'])).forEach(e => {
+                const k = keyOf(e), w = szWant.get(k) || { e, sizes: new Set(), raws: [] }; w.sizes.add(String(z.size).toUpperCase()); if (!w.raws.includes(z.raw)) w.raws.push(z.raw); szWant.set(k, w);
+            });
+        });
+        const szDup = new Map();   // 묶음 id → { id, keys, sizes, raws, e }(같은 줄 짝이면 한 카드)
+        szWant.forEach((w, k) => { if (w.sizes.size < 2) return; const sz = [...w.sizes], id = 'lsz:' + w.raws.slice().sort().join('|'); const g = szDup.get(id) || { id, keys: [], sizes: sz, raws: w.raws, es: [] }; g.keys.push(k); g.es.push(w.e); szDup.set(id, g); });
+        const szOf = k => { for (const g of szDup.values()) if (g.keys.includes(k)) { const d = st.dec.get(g.id); return { g, pick: d && d !== 'skip' && g.sizes.includes(d) ? d : null, done: st.dec.has(g.id) }; } return null; };
+        st.sizeDup = [...szDup.values()];
         (st.sizeLines || []).forEach(z => {
             const hit = s.merged.filter(e => (z.digits.length >= 8 && !NO_TEL.has(z.digits) && buyerTel(e) === z.digits) || idsOf(e).includes(z.key));
             if (!hit.length) { const rv = recvMatches(z); res.set(z.srcLine, rv.length ? { k: 'warn', t: '받는 분 번호', rv } : { k: 'none', t: '주문 없음' }); return; }
@@ -564,8 +576,12 @@
                 res.set(z.srcLine, why ? { k: 'warn', t: '박스 수 다름', tip: why, box: true } : note ? { k: 'warn', t: `박스별 사이즈 ${txt} · ${note}`, n: done.length, tip: note, box: true } : { k: 'ok', t: `박스별 사이즈 ${txt}`, n: done.length, box: true });
                 return;
             }
-            const okE = hit.filter(e => sizeItem(e.conv['옵션정보'])), tail = z.size + '사이즈로!';
+            const okAll = hit.filter(e => sizeItem(e.conv['옵션정보'])), tail = z.size + '사이즈로!';
+            const dupOpen = okAll.filter(e => { const x = szOf(keyOf(e)); return x && !x.done; });   // 아직 안 고른 겹침 = 이 줄로는 안 붙임
+            const okE = okAll.filter(e => { const x = szOf(keyOf(e)); return !x || (x.pick && x.pick === String(z.size).toUpperCase()); });
             okE.forEach(e => tails.set(keyOf(e), tail));
+            if (dupOpen.length) { res.set(z.srcLine, { k: 'warn', t: '사이즈 요청 둘 — 고르기', n: dupOpen.length, tip: '같은 손님에 다른 사이즈 줄이 또 있어요 — 아래 카드에서 하나를 골라 주세요' }); return; }
+            if (okAll.length && !okE.length) { const sk = okAll.some(e => { const x = szOf(keyOf(e)); return x && x.done && !x.pick; }); res.set(z.srcLine, { k: 'ok', t: sk ? '사이즈 안 붙임' : '다른 사이즈로 정함', n: okAll.length, tip: '같은 손님의 사이즈 요청 둘 중 다른 쪽을 골랐어요' }); return; }
             const no = new Map(); hit.filter(e => !okE.includes(e)).forEach(e => { const o = core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog); no.set(o, (no.get(o) || 0) + 1); });
             no.forEach((n, o) => info.push({ t: `사이즈 지정 대상 아님: ${o} ${n}건 (메모 줄 「${z.raw}」 — 귤 로얄과 주문에만 붙여요 · 선물용 제외)`, keys: hit.filter(e => !okE.includes(e) && core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog) === o).map(keyOf), line: z.srcLine }));
             if (okE.length) info.push({ t: `메모 줄로 사이즈 지정: ${z.raw} → 귤 주문 ${okE.length}건에 「${tail}」`, keys: okE.map(keyOf), line: z.srcLine });
@@ -811,6 +827,10 @@
             } else if (r.k === 'none') info.push({ t: omChecked(z.srcLine) ? `취소됐을 수 있어요 · 확인 필요: ${z.raw}` : `주문 없음: ${z.raw}`, line: z.srcLine });
             else if (r.k === 'warn' && !r.n) info.push({ t: `사이즈를 붙일 귤 로얄과 주문이 없어요: ${z.raw}`, line: z.srcLine });
         });
+        // #850-f 같은 주문에 사이즈만 다른 메모 줄 둘 — 하나 고르기(고르기 전엔 둘 다 안 붙음)
+        (st.sizeDup || []).forEach(g => cards.push({ id: g.id, type: 'line', tag: '메모 줄', title: `같은 손님에 사이즈 요청이 둘이에요(${g.sizes.join(' · ')})`, keys: g.keys,
+            lines: [...g.raws.map((r, i) => [`메모 줄 ${i + 1}`, r]), ...g.es.slice(0, 4).map((e, i) => [g.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ['처리', '고른 사이즈만 귤 로얄과 주문에 붙여요 · 「안 붙임」이면 사이즈 없이 나가요']],
+            choices: [...g.sizes.map((z, i) => [z, z + '사이즈로!', i ? 0 : 1]), ['skip', '안 붙임']] }));
         // #583 ⑥ 「번호 업그레이드」 줄 — 사이즈를 카드에서 눌러 고른다(귤 로얄과만 · 아니면 이유)
         (st.upLines || []).forEach(u => {
             const r = st.upRes && st.upRes.get(u.srcLine); if (!r) return;
@@ -956,7 +976,7 @@
     const closed = cd => cd.type === 'fix' || st.dec.has(cd.id) || !!patchDec(cd);
     const pending = () => st.cards.filter(cd => !closed(cd));
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
-    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
+    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lsz: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
     // #525: AI가 손님 메모에서 읽은 「품목 뒤에 붙일 말」 입력칸 — 사람이 [이대로 넣기]를 눌러야 옵션 칸 끝에 붙는다(비우면 안 붙임)
     const tailBoxHtml = (cd, d) => (cd.tail ? `<label class="wide">품목 뒤에 붙일 말(옵션 칸 끝에 붙어요 · 비우면 안 붙임)<input type="text" data-f="tail" value="${esc(d && d.tail != null ? d.tail : cd.tail)}" maxlength="80"></label>` : '');

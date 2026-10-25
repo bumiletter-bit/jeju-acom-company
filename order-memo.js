@@ -42,6 +42,8 @@ function loadV2() {
 }
 const V2 = loadV2();
 
+// #850-g 현금 손님 단서 — 받는 분·수령인·주소·입금·계좌·도로명/번지 꼴 · 있으면 규칙 줄로 안 쪼갬
+const CASH_CUE = /받는\s*(?:분|사람|이)|받으(?:실|시는)\s*분|수령인|수취인|주소|입금|계좌|이체|[가-힣]+(?:시|군|구)\s+[가-힣0-9]+(?:대로|로|길)\s*\d|\d+\s*번지/;
 // ── 규칙 정리(무료·즉시) ──
 const INDIV = /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i;
 const SENDER = /보내는\s*(?:이|사람|분)|보낸\s*(?:이|사람|분)|발신/;
@@ -228,7 +230,7 @@ const AI_SCHEMA = {
 const AI_SYSTEM = [
     '너는 제주아꼼이네(제주 과일 농장 직판) 발주 메모 정리 담당이다. 직원이 붙여 넣은 발주 메모를 두 가지로 나눈다.',
     '1) lines = 이미 들어온 온라인 주문에 대한 지시. key = 구매자 전화번호(하이픈 포함 그대로) 또는 상품주문번호. note = 「입력o삭제x」(개별발송·입력삭제) · 「S사이즈로」(2S·S·M 만) · 「보내는이 홍길동」 같은 짧은 지시. plat = 네이버·쿠팡·자사몰 중 적힌 것(없으면 ""). date = 지정 발송일 YYYY-MM-DD(없으면 "").',
-    '2) cash = 주문이 없는 현금 손님(「현금」「계좌이체」「현금파일」 또는 이름·주소·품목이 다 적힌 손님). buyer = 주문한 분 · recv·phone1·addr = 받는 분 · option = 아래 「품목 이름 목록」 글자 그대로 하나(목록에 없으면 "") · qty = 박스 수(없으면 0) · memo = 기사님께 전할 말(문 앞·경비실 등만 · 우리에게 한 말은 넣지 않음) · sender/sender_phone/sender_addr = 보내는이를 바꿔 달라는 경우만 · 「입금 ○○으로 했어요」「○○ 이름으로 입금」처럼 입금자 이름이 있으면 현금건이니 sender = 그 이름(대표 확정) · 문자 대화에서 온 글이면 buyer_phone 은 "" 로 둔다(서버가 문자 온 손님 번호로 채움).',
+    '2) cash = 주문이 없는 현금 손님(「현금」「계좌이체」「현금파일」 또는 이름·주소·품목이 다 적힌 손님). buyer = 주문한 분 · recv·phone1·addr = 받는 분 · option = 아래 「품목 이름 목록」 글자 그대로 하나(목록에 없으면 "") · qty = 박스 수(없으면 0) · memo = 기사님께 전할 말(문 앞·경비실 등만 · 우리에게 한 말은 넣지 않음) · sender/sender_phone/sender_addr = 보내는이를 바꿔 달라는 경우만 · 「입금 ○○으로 했어요」「○○ 이름으로 입금」처럼 입금자 이름이 있으면 현금건이니 sender = 그 이름(대표 확정) · 문자 대화에서 온 글이면 buyer_phone 은 "" 로 둔다(서버가 문자 온 손님 번호로 채움) · 받는 분·주소·연락처 중 하나라도 있으면 품목·수량이 없어도 cash 로 넣고 option ""·qty 0 으로 둔다(unsure 로 돌리지 않음 · 직원이 채움) · 할 일(사이즈·입력삭제·날짜·보내는이) 없는 lines 는 만들지 않는다.',
     '절대 지킬 것: 메모에 없는 이름·번호·주소·날짜를 지어내지 않는다(모르면 ""). 글자는 메모에 적힌 그대로 옮긴다. 품목은 목록 글자 그대로만. 애매하거나 둘 중 무엇인지 모르면 unsure 에 그 글과 이유를 넣는다.',
     '날짜: 우리 발송일은 shipDays 에 있는 날뿐(토요일·발송휴무일 없음). 「○일 발송/보내주세요」 = 그날. 「○일 도착/받고 싶다/까지」 = 도착 희망일 이틀 전(그날이 발송 없는 날이거나 지났으면 하루 전 · 둘 다 안 되면 unsure). 범위(「12~13일 도착」) = 첫 날짜 하루 전. 「○일 배송」처럼 발송인지 도착인지 모르는 말·지난 날짜·요일과 날짜가 안 맞음 = unsure.',
     'sms_draft = cash 손님의 받는 분·주소·연락처·품목·수량 중 빈 것이 있을 때만, 손님께 물어볼 짧은 존댓말 문자 한 개(「안녕하세요 제주아꼼이네입니다.」로 시작 · 이모지 없음). 빈 것이 없으면 "".',
@@ -295,7 +297,8 @@ function mount(app, deps) {
     // AI 결과(창구·직접 같은 꼴 = AI_SCHEMA) → 줄 · 서버가 다시 검사(창구 답도 그대로 믿지 않음)
     function aiDataToRows(d, ctx, extraKeys, opt) {
         const raw = [];
-        (Array.isArray(d && d.lines) ? d.lines : []).slice(0, MAX_ROWS).forEach(x => raw.push({ kind: 'line', key: x && x.key, note: x && x.note, plat: x && x.plat, ship_date: x && isDay(x.date) ? x.date : null, src: 'ai' }));
+        (Array.isArray(d && d.lines) ? d.lines : []).slice(0, MAX_ROWS).filter(x => x && (String(x.note || '').trim() || isDay(x.date))).forEach(x => raw.push(   // #850-g 할 일 없는(비고·날짜 없는) 메모 줄은 안 만듦
+            { kind: 'line', key: x && x.key, note: x && x.note, plat: x && x.plat, ship_date: x && isDay(x.date) ? x.date : null, src: 'ai' }));
         (Array.isArray(d && d.cash) ? d.cash : []).slice(0, MAX_ROWS).forEach(x => raw.push(cashFromAi(x || {}, opt)));
         const rows = markIndiv(raw, extraKeys).map(r => checkRow(r, ctx));
         const un = (Array.isArray(d && d.unsure) ? d.unsure : []).filter(x => x && x.text);
@@ -325,7 +328,9 @@ function mount(app, deps) {
     }
     async function preview(raw, tags, ctx, req, smsPhone) {
         const rows = [], rest = [];
-        for (const ln of raw.split('\n')) { const r = ruleLine(ln, ctx.today); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }
+        // #850-g(대표 폰 실사고) 받는 분·주소·입금 단서가 있는 줄 = 현금 손님 글 → 메모 줄 규칙이 집지 않고 AI(창구)로(엑셀 13칸 붙여넣기는 규칙) ·
+        //   🔴 「번호 입력o삭제x」 같은 주문 지시 줄은 그대로 규칙(같은 묶음의 개별 주소를 주소 줄로 짝짓는 #850 워커3 시험 ① 이 그 줄에 기댐)
+        for (const ln of raw.split('\n')) { const r = CASH_CUE.test(ln) && ln.split('\t').length < 9 ? null : ruleLine(ln, ctx.today); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }
         const ruleRows = markIndiv(applySms(rows, smsPhone)).map(r => checkRow(r, ctx));
         const ruleKeys = [...indivKeysOf(ruleRows).values()];   // 규칙으로 읽은 입력삭제 줄 번호 → AI 현금 줄이 그 주문의 주소 줄인지 가를 때
         const base = { rows: ruleRows, leftover: '', rule_count: ruleRows.length, ai_count: 0, ai: { used: false, why: '남은 글 없음' }, sms_draft: '', desk: null };

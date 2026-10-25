@@ -71,8 +71,7 @@ body.om-open .mobile-menu-btn, body.om-open .mobile-noti-btn { visibility: hidde
 .om-tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .om-tag { min-height: 36px; padding: 0 14px; border: 1px solid var(--d-line); border-radius: 999px; background: var(--d-card); color: var(--d-sub); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: background-color 140ms var(--d-ease), color 140ms var(--d-ease), border-color 140ms var(--d-ease); }
 .om-tag:hover { color: var(--d-ink); border-color: var(--d-dim); }
-.om-tag[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
-.om-tag[aria-pressed="true"]::before { content: "✓ "; }
+.om-tag.flash { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }   /* #850-f 누른 순간만(0.3초) · 켜짐 상태 없음 */
 .om-tag:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
 @media (max-width: 960px), (pointer: coarse) { .om-tag { min-height: 44px; } }
 .om-in-acts { display: flex; gap: 8px; }
@@ -317,3 +316,35 @@ html[data-ao-theme="dark"] .om-indiv.warn { background: rgba(251, 191, 74, .1); 
 .om-lk[data-k="ask"], .om-lk[data-k="warn"] { color: #93370D; }
 html[data-ao-theme="dark"] .om-lk[data-k="ok"] { color: #4ADE80; }
 html[data-ao-theme="dark"] .om-lk[data-k="ask"], html[data-ao-theme="dark"] .om-lk[data-k="warn"] { color: #FBBF4A; }
+/* #850-f 못 읽은 글이 남았을 때만 작은 줄 추가 링크 */
+.om-addlink { margin: 0; font-size: 12.5px; color: #93370D; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.om-link { min-height: 32px; padding: 0 4px; border: 0; background: none; font: inherit; font-weight: 700; color: var(--d-accent, #4F46E5); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+@media (max-width: 960px), (pointer: coarse) { .om-link { min-height: 44px; } }
+html[data-ao-theme="dark"] .om-addlink { color: #FBBF4A; }
+html[data-ao-theme="dark"] .om-link { color: #8C94FF; }
+.om-dup { flex: 1 1 100%; }
+.om-dup ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.om-dup small { display: block; margin-top: 4px; font-size: 12px; }
+.om-dup li b { color: inherit; }
+/* #850-g 현금 줄 주소 확인(최종발주 #528 꼴) */
+.om-addr { margin: 6px 0 0; font-size: 12.5px; font-weight: 700; line-height: 1.45; color: var(--d-sub); overflow-wrap: anywhere; }
+.om-addr:empty { display: none; }
+.om-addr[data-k="ok"] { color: #067647; }
+.om-addr[data-k="warn"] { color: #93370D; }
+.om-addr-c { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.om-addr-c .om-btn { text-align: left; white-space: normal; height: auto; min-height: 36px; padding: 6px 10px; }
+.om-addr-c small { color: var(--d-sub); font-weight: 600; }
+html[data-ao-theme="dark"] .om-addr[data-k="ok"] { color: #4ADE80; }
+html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
+/* #850-f 입력 칸 줄마다 × */
+.om-in textarea.has-xs { padding-right: 44px; }
+.om-in-mirror { position: absolute; left: 0; top: 0; width: 100%; visibility: hidden; pointer-events: none; padding: 12px 44px 12px 16px; font: inherit; font-size: 15px; line-height: 26px; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; box-sizing: border-box; }
+.om-in-xs { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; overflow: hidden; pointer-events: none; border-radius: 0 12px 12px 0; }
+.om-in-x { position: absolute; right: 4px; display: grid; place-items: center; width: 32px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--d-sub); cursor: pointer; pointer-events: auto; }
+.om-in-x svg { width: 14px; height: 14px; }
+.om-in-x:hover { background: var(--d-soft); color: var(--d-ink); }
+.om-in-x:focus-visible { outline: 2px solid var(--d-accent); }
+.om-in-undo { margin-left: 6px; }
+@media (max-width: 960px), (pointer: coarse) {   /* 폰 = 줄 높이 44 = × 단추 44 (붙은 줄끼리 단추가 겹치지 않게) */
+    .om-in textarea { line-height: 44px; background: repeating-linear-gradient(180deg, transparent 0 43px, color-mix(in srgb, var(--d-line) 70%, transparent) 43px 44px) 0 12px / 100% 44px local; }
+    .om-in-mirror { font-size: 16px; line-height: 44px; } .om-in-x { right: 0; width: 44px; height: 44px; } }

@@ -37,8 +37,8 @@
     // ── 칸 정의 ─────────────────────────────────────────
     //   현금 13칸(최종발주 parseCash 순서 · 계약 1절) — 화면에 보이는 칸만 · need = 비면 빨강(서버 missing 과 같은 번호 3·4·5·6·8)
     const CASH_FIELDS = [
-        { i: 4, label: '옵션정보', need: true, why: '품목을 못 정했어요', kind: 'option' },
-        { i: 5, label: '수량', need: true, why: '수량이 없어요', kind: 'qty' },
+        { i: 4, label: '옵션정보', need: true, why: '품목을 골라 주세요', alias: '품목을 못 정했어요', kind: 'option' },   // alias = 서버 이유 글(같은 칸 이유로 묶음)
+        { i: 5, label: '수량', need: true, why: '수량을 넣어 주세요', alias: '수량이 없어요', kind: 'qty' },
         { i: 3, label: '받는 분', need: true, why: '받는 분 성함이 없어요' },
         { i: 6, label: '받는 분 연락처', need: true, why: '받는 분 번호가 없어요', kind: 'tel' },
         { i: 8, label: '배송지', need: true, why: '주소가 없어요', kind: 'area' },
@@ -52,10 +52,10 @@
         { k: 'note', label: '할 일', need: true, why: '무엇을 할지 못 읽었어요', ph: '예) S사이즈로 · 입력o삭제x · 보내는이 홍길동' },
         { k: 'plat', label: '판매처', kind: 'platform', need: true, cardOnly: true, why: '판매처를 골라 주세요' },   // #850-c 「모름」 없앰 · 빈칸은 카드 안에서만 셈(목록 알약은 서버 판정 그대로)
     ];
-    // #850-c ⑤ 꼬리표 = 누르면 메모장에 틀 한 줄 + 번호 자리 선택(바로 번호만 치면 됨) · 「현금 손님」만 틀 없이 꼬리표(대표 정정)
+    // #850-c ⑤ 꼬리표 = 누르면 메모장에 틀 한 줄 + 번호 자리 선택(바로 번호만 치면 됨) · #850-f 「현금 손님」도 상태 없이 「현금 손님」 한 줄(대표 정정) · 단추는 누르는 순간만 깜빡(켜짐 상태 없음)
     //   틀 꼴 = 서버 규칙 줄(order-memo.js · invoice-v2 parseLines · sizeLines)이 그대로 읽는 「번호 + 지시」 꼴
     const TEL_PH = '000-0000-0000';
-    const TAGS = [['cash', '현금 손님'], ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
+    const TAGS = [['cash', '현금 손님', '현금 손님'], ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
     // 틀 자리를 안 고친 채 [정리하기] = 막고 그 자리를 골라 줌
     const TPL_HOLES = [[TEL_PH, '번호를 넣어 주세요 — 000-0000-0000 자리에 손님 번호를 써 주세요'], [/(^|[^0-9])00일/, '발송 날짜를 넣어 주세요 — 00일 자리에 날짜를 써 주세요'], ['보내는이 홍길동', '보내는 분 이름을 넣어 주세요 — 홍길동 자리를 바꿔 주세요']];
     const PLATS = ['네이버', '쿠팡', '자사몰'];
@@ -111,8 +111,8 @@
     const whyOf = r => r.check_why.length ? r.check_why.join(' · ') : blanksOf(r).map(f => f.why).join(' · ');
     // 카드 안 줄 머리 이유 = 칸 아래 빨간 글과 겹치지 않는 것만(「주소가 없어요」는 배송지 칸 아래에 이미 있음)
     const nk = s => String(s || '').replace(/[s·]/g, '');
-    const fieldWhy = (r, f) => (r.check_why || []).find(w => nk(w).includes(nk(f.why))) || f.why;   // 서버 이유가 그 칸을 말하면 그 글(「주소가 없어요 · 『어머니댁』만 적혀 있어요」)을 칸 아래에
-    const whyExtra = r => { const own = (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.why).map(f => f.why.replace(/[\s·]/g, '')); return r.check_why.filter(w => { const k = String(w).replace(/[\s·]/g, ''); return !own.some(o => k.includes(o) || o.includes(k)); }); };
+    const fieldWhy = (r, f) => (r.check_why || []).find(w => nk(w).includes(nk(f.why)) || (f.alias && nk(w).includes(nk(f.alias)))) || f.why;   // 서버 이유가 그 칸을 말하면 그 글(「주소가 없어요 · 『어머니댁』만 적혀 있어요」)을 칸 아래에
+    const whyExtra = r => { const own = (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.why).flatMap(f => [f.why, f.alias].filter(Boolean)).map(w => w.replace(/[\s·]/g, '')); return r.check_why.filter(w => { const k = String(w).replace(/[\s·]/g, ''); return !own.some(o => k.includes(o) || o.includes(k)); }); };
     function pillOf(r) {
         if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(30일 넘으면 서버가 지움)
         if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
@@ -148,15 +148,17 @@
                   <div class="om-in-h"><i class="om-in-ic">${ICON_CLIP}</i><div><b>손님 글을 그대로 붙여 넣어요</b><span>이름·번호·주소·품목이 섞여 있어도 돼요 · 정리는 이쪽에서</span></div></div>
                   <div class="om-in-paper">
                     <label class="om-sr" for="om-raw">손님 글 · 메모</label>
-                    <textarea id="om-raw" rows="4" maxlength="4000" spellcheck="false"></textarea>
+                    <textarea id="om-raw" class="has-xs" rows="4" maxlength="4000" spellcheck="false"></textarea>
+                    <div class="om-in-mirror" id="om-raw-mirror" aria-hidden="true"></div>
+                    <div class="om-in-xs" id="om-raw-xs"></div>
                     <button type="button" class="om-in-clear" id="om-raw-clear" aria-label="글 지우기" hidden>${ICON_X}</button>
                   </div>
-                  <div class="om-tags" role="group" aria-label="빠른 꼬리표(안 눌러도 글에서 읽어요)">${TAGS.map(t => `<button type="button" class="om-tag" data-tag="${t[0]}" aria-pressed="false">${t[1]}</button>`).join('')}</div>
+                  <div class="om-tags" role="group" aria-label="빠른 꼬리표(안 눌러도 글에서 읽어요)">${TAGS.map(t => `<button type="button" class="om-tag" data-tag="${t[0]}">${t[1]}</button>`).join('')}</div>
                   <div class="om-in-acts">
                     <button type="button" class="om-btn" id="om-paste">붙여넣기</button>
                     <button type="submit" class="om-btn primary" id="om-go" disabled>정리하기</button>
                   </div>
-                  <p class="om-in-note" id="om-in-note" role="status"></p>
+                  <p class="om-in-note" id="om-in-note" role="status"></p><button type="button" class="om-link om-in-undo" id="om-raw-undo" hidden>지운 줄 되돌리기</button>
                 </form>
                 <div class="om-tabs" role="tablist" aria-label="메모 목록">
                   <button type="button" class="om-tabb" role="tab" data-tab="open" aria-selected="true">지금 메모 <b id="om-n-open"></b></button>
@@ -193,17 +195,20 @@
     function bind() {
         const raw = $('om-raw');
         $('om-close').addEventListener('click', () => close(true));
-        raw.addEventListener('input', () => { OM.raw = raw.value; inState(); });
+        raw.addEventListener('input', () => { OM.raw = raw.value; xUndoHide(); inState(); });
+        raw.addEventListener('scroll', xLayout, { passive: true });
+        if (window.ResizeObserver) new ResizeObserver(() => xLayout()).observe(raw);
+        $('om-raw-xs').addEventListener('click', e => { const b = e.target.closest('.om-in-x'); if (b) xDel(Number(b.dataset.ln)); });
+        $('om-raw-undo').addEventListener('click', xUndo);
         raw.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!$('om-go').disabled) runPreview(); } });
-        $('om-raw-clear').addEventListener('click', () => { raw.value = ''; OM.raw = ''; OM.tags.clear(); syncTags(); inState(); inNote(''); raw.focus(); });
+        $('om-raw-clear').addEventListener('click', () => { raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); inNote(''); raw.focus(); });
         $('om-in').addEventListener('submit', e => { e.preventDefault(); runPreview(); });
         $('om-paste').addEventListener('click', paste);
         OM.el.querySelector('.om-tags').addEventListener('click', e => {
             const b = e.target.closest('.om-tag'); if (!b) return;
             const k = b.dataset.tag, tpl = (TAGS.find(t => t[0] === k) || [])[2];
-            if (tpl) { tplInsert(tpl); OM.tags.add(k); syncTags(); return; }   // 틀 넣기(누를 때마다 한 줄 더)
-            if (OM.tags.has(k)) OM.tags.delete(k); else OM.tags.add(k);
-            syncTags();
+            b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 320);   // 누른 순간만 표시
+            if (tpl) tplInsert(tpl);
         });
         OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
         $('om-list').addEventListener('click', onList);
@@ -252,11 +257,40 @@
     // 틀 한 줄을 메모장 끝에 넣고 번호 자리(000-0000-0000)를 고른 채 초점 — 자판으로 바로 치면 그 자리가 바뀜
     function tplInsert(tpl) {
         const raw = $('om-raw'), cur = raw.value, pre = cur && !/\n$/.test(cur) ? cur + '\n' : cur;
-        raw.value = pre + tpl; OM.raw = raw.value; inState();
+        const above = cur.split('\n').map(s => s.trim()).filter(Boolean).pop() || '', m = above.match(/^(0\d{1,3}[-\s]?\d{3,4}[-\s]?\d{4})(?=\s|$)/);   // #850-f 바로 윗줄이 진짜 번호로 시작하면 그 번호로(한 손님 요청 2가지 = 번호 한 번)
+        if (!tpl.startsWith(TEL_PH)) { raw.value = pre + tpl; OM.raw = raw.value; inState(); raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ } inNote(`「${tpl}」 줄을 넣었어요`, 'ok'); return; }
+        const line = m && digits(m[1]).length >= 9 ? m[1] + tpl.slice(TEL_PH.length) : tpl;
+        raw.value = pre + line; OM.raw = raw.value; inState();
+        raw.focus({ preventScroll: true });
+        if (line !== tpl) { const e = raw.value.length, h = line.search(/00일|홍길동/), s = h >= 0 ? pre.length + h : e; try { raw.setSelectionRange(s, h >= 0 ? s + (line.slice(h).startsWith('00일') ? 2 : 3) : e); } catch (er) { /* 그대로 */ } inNote('윗줄 번호로 채웠어요', 'ok'); return; }
         const s = pre.length + tpl.indexOf(TEL_PH);
-        raw.focus({ preventScroll: true }); try { raw.setSelectionRange(s, s + TEL_PH.length); } catch (e) { /* 그대로 */ }
+        try { raw.setSelectionRange(s, s + TEL_PH.length); } catch (e) { /* 그대로 */ }
         inNote('번호 자리를 골라 뒀어요 · 손님 번호를 바로 치세요', 'ok');
     }
+    // #850-f 꼬리표(서버로 보내는 tags) = 칸에 그 줄이 있을 때만 · 종전 「누른 단추」 tags 와 같은 값
+    const TAG_RE = { cash: /현금\s*손님/, indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i, size: /사이즈/, date: /\d+\s*일\s*(?:발송|출고)/, sender: /보내는\s*(?:이|분|사람)/ };
+    function tagsFromText() { const lines = String(OM.raw || '').split('\n'); Object.keys(TAG_RE).forEach(k => { if (lines.some(l => TAG_RE[k].test(l))) OM.tags.add(k); else OM.tags.delete(k); }); syncTags(); }
+    // #850-f 입력 칸 줄마다 × — 재는 칸(같은 폭·글꼴)에 줄을 그려 줄 위치를 재고 오른쪽 끝에 놓음 · 빈 줄엔 없음 · 지운 뒤 되돌리기 한 번
+    function xLayout() {
+        const raw = $('om-raw'), mir = $('om-raw-mirror'), box = $('om-raw-xs'); if (!raw || !mir || !box) return;
+        const lines = raw.value.split('\n');
+        mir.style.width = raw.clientWidth + 'px';
+        mir.innerHTML = lines.map(l => `<div>${esc(l) || '&#8203;'}</div>`).join('');
+        const lh = parseFloat(getComputedStyle(raw).lineHeight) || 26, top0 = raw.offsetTop, st = raw.scrollTop, vis = raw.clientHeight;
+        box.style.top = top0 + 'px'; box.style.height = vis + 'px';
+        const ds = mir.children;
+        box.innerHTML = lines.map((l, i) => { if (!l.trim() || !ds[i]) return ''; const y = ds[i].offsetTop - st; if (y + lh < 0 || y > vis) return ''; return `<button type="button" class="om-in-x" data-ln="${i}" style="top:${y + (lh - Math.min(lh, 44)) / 2}px" aria-label="${i + 1}번째 줄 지우기" title="이 줄 지우기">${ICON_X}</button>`; }).join('');
+    }
+    function xDel(i) {
+        const raw = $('om-raw'), lines = raw.value.split('\n'); if (!(i >= 0 && i < lines.length)) return;
+        OM.xUndo = { value: raw.value, smsSrc: OM.smsSrc };
+        lines.splice(i, 1); raw.value = lines.join('\n'); OM.raw = raw.value; inState();
+        const u = $('om-raw-undo'); if (u) u.hidden = false;
+        if (!OM.raw.trim()) OM.smsSrc = null;
+        const nb = $('om-raw-xs').querySelector(`[data-ln="${Math.min(i, lines.length - 1)}"]`) || raw; nb.focus({ preventScroll: true });
+    }
+    function xUndo() { const U = OM.xUndo; if (!U) return; const raw = $('om-raw'); raw.value = U.value; OM.raw = U.value; OM.smsSrc = U.smsSrc; OM.xUndo = null; xUndoHide(); inState(); raw.focus({ preventScroll: true }); }
+    function xUndoHide() { OM.xUndo = null; const u = $('om-raw-undo'); if (u) u.hidden = true; }
     function tplHole(text) {   // 안 고친 틀 자리 → { at, len, msg } | null
         for (const [h, msg] of TPL_HOLES) {
             if (typeof h === 'string') { const at = text.indexOf(h); if (at >= 0) return { at: h === TEL_PH ? at : at + '보내는이 '.length, len: h === TEL_PH ? h.length : '홍길동'.length, msg }; }
@@ -264,11 +298,12 @@
         }
         return null;
     }
-    function syncTags() { OM.el.querySelectorAll('.om-tag').forEach(b => b.setAttribute('aria-pressed', OM.tags.has(b.dataset.tag) ? 'true' : 'false')); }
+    function syncTags() { /* #850-f 단추 켜짐 상태 없음 — 꼬리표(tags)는 글에서 정해 서버로만(tagsFromText) */ }
     function inState() {
         const has = OM.raw.trim().length > 0;
         const go = $('om-go'); go.disabled = !has || OM.busy; go.classList.toggle('ready', has && !OM.busy);
-        $('om-raw-clear').hidden = !OM.raw;
+        $('om-raw-clear').hidden = true;   // #850-f 전체 × 대신 줄마다 ×
+        tagsFromText(); xLayout();
         $('om-in').classList.toggle('filled', has);
     }
     function inNote(t, k) { const n = $('om-in-note'); if (!n) return; n.textContent = t || '정리하면 내용을 확인하고 [저장]해요 · 저장한 줄은 다음 최종발주에 저절로 들어가요.'; n.dataset.k = k || ''; }
@@ -287,8 +322,9 @@
         const raw = src ? src.text : OM.raw.trim(); if (!raw) return;
         if (!src) { const hole = tplHole(OM.raw); if (hole) { inNote(hole.msg, 'err'); const ta = $('om-raw'); ta.focus({ preventScroll: true }); try { ta.setSelectionRange(hole.at, hole.at + hole.len); } catch (e) { /* 그대로 */ } return; } }   // #850-c 틀 자리 안 고침 = 막음
         OM.busy = true; inState(); $('om-go').textContent = '정리하는 중…'; if (!src) inNote('글을 읽고 있어요 · 길면 몇 초 걸려요');
-        const req = { raw, tags: src ? (src.tags || []) : [...OM.tags], source: src ? src.source : 'manual' };
-        if (src && src.phone) req.phone = src.phone;
+        const sms = !src && OM.smsSrc ? OM.smsSrc : null;   // #850-g 문자 대화에서 입력 칸에 채운 글 = 출처·번호는 그 대화
+        const req = { raw, tags: src ? (src.tags || []) : [...OM.tags], source: src ? src.source : sms ? 'sms:' + sms.threadId : 'manual' };
+        if ((src || sms) && (src || sms).phone) req.phone = (src || sms).phone;
         const res = await API.preview(req);
         OM.busy = false; $('om-go').textContent = '정리하기'; inState();
         if (!res.ok) {
@@ -301,8 +337,8 @@
         const rows = (Array.isArray(b.rows) ? b.rows : []).map(r => normRow(r)).filter(Boolean);
         const desk = b.desk && typeof b.desk === 'object' ? b.desk : null;   // null = 규칙으로 다 읽힘 · wait = 창구가 남은 글 정리 중 · off = 창구 꺼짐(규칙 줄만)
         const waiting = !!(desk && desk.state === 'wait' && desk.id != null);
-        if (!rows.length && !b.leftover && !waiting) rows.push(blankRow(req.tags.includes('cash') ? 'cash' : 'line', src && src.phone));
-        cardOpen({ mode: 'new', raw, tags: req.tags, source: req.source, rows, leftover: b.leftover || '', ask: b.sms_draft || '', from: src || null,
+        if (!rows.length && !b.leftover && !waiting) { const e = emptyRow(src || sms); if (e) rows.push(e); }   // #850-g 정리된 줄 0 = 문자 출처만 현금 빈 줄 · 그 밖은 안내만
+        cardOpen({ mode: 'new', raw, tags: req.tags, source: req.source, rows, leftover: b.leftover || '', ask: b.sms_draft || '', from: src || sms || null,
             wait: waiting ? { id: desk.id, start: Date.now(), sec: Number(desk.wait_sec) || 30 } : null,
             deskNote: desk && desk.state === 'off' ? (desk.message || '창구가 꺼져 있어 지금은 규칙으로만 정리했어요 · 남은 글은 직접 채워 주세요') : '' });
         if (waiting) waitLoop(OM.card);
@@ -331,7 +367,7 @@
             if (s.sms_draft) c.ask = s.sms_draft;
             c.leftover = s.leftover || '';
             c.deskNote = add.length ? '' : (c.leftover ? '창구가 읽지 못한 글이 있어요 · 직접 채워 주세요' : '');
-            if (!c.rows.length) { const nr = blankRow((c.tags || []).includes('cash') ? 'cash' : 'line', c.from && c.from.phone); c.rows.push(nr); c.orig.push(clone(nr)); }
+            if (!c.rows.length) { const nr = emptyRow(c.from); if (nr) { c.rows.push(nr); c.orig.push(clone(nr)); } }
         } else {
             c.leftover = s.leftover || c.leftover || c.raw;
             c.deskNote = s.message || '창구가 정리하지 못했어요 — 남은 글은 직접 채워 주세요';
@@ -343,6 +379,11 @@
         const c = OM.card; if (!c || !c.wait) return;
         const el = $('om-wait-sec'); if (el) el.textContent = String(Math.floor((Date.now() - c.wait.start) / 1000));
         setTimeout(waitTick, 1000);
+    }
+    // #850-g 정리 결과가 0줄일 때 = 문자 대화에서 왔으면 현금 빈 줄(받는 분 연락처·구매자 번호 = 문자 번호) · 그 밖은 줄 안 만듦(카드에 「정리된 줄이 없어요」)
+    function emptyRow(src) {
+        if (!(src && src.phone)) return null;
+        const r = blankRow('cash'), p = telShow(src.phone); r.cells[6] = p; r.cells[10] = p; return r;
     }
     function blankRow(kind, phone) {
         const r = normRow({ kind, sure: false, check_why: [] });
@@ -533,6 +574,12 @@
             : footHtml();
         const d = f.querySelector(c.confirm ? '[data-cact="keep"]' : '#om-card-save'); if (d) d.focus({ preventScroll: true });
     }
+    function renderDup() {   // #850-f 같은 번호 같은 종류 줄이 이미 있음 — 바꿀지 묻기(발 칸에)
+        const f = $('om-card').querySelector('.om-card-f'), q = OM.card && OM.card.dupAsk; if (!f || !q) return;
+        const items = q.diff.map(x => `<li><b>${esc(telShow(q.rows[x.i].key))}</b> 이미 ${esc(x.kind)} 줄이 있어요 · 「${esc(lineView(x.olds[0].note))}」${x.olds[0].ship_date ? ' ' + esc(md(x.olds[0].ship_date)) : ''} → 「${esc(lineView(q.rows[x.i].note))}」${q.rows[x.i].ship_date ? ' ' + esc(md(q.rows[x.i].ship_date)) : ''}</li>`).join('');
+        f.innerHTML = `<div class="om-confirm om-dup" role="alert"><b>새 것으로 바꿀까요?</b><ul>${items}</ul>${q.same.length ? `<small>똑같은 줄 ${q.same.length}개는 이미 있어 빼고 저장해요</small>` : ''}</div><button type="button" class="om-btn" data-cact="dupkeep">취소</button><button type="button" class="om-btn primary" data-cact="dupswap">바꾸기</button>`;
+        const d = f.querySelector('[data-cact="dupswap"]'); if (d) d.focus({ preventScroll: true });
+    }
     async function loadCatalog() {
         const res = await API.catalog();
         const set = new Set(); if (res.ok && res.body && res.body.byPartner) Object.values(res.body.byPartner).forEach(a => (a || []).forEach(n => n && set.add(n)));
@@ -549,7 +596,7 @@
     }
     const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', ph: '비우면 다음 발주 · 예) 10/30' }]);
     function fieldHtml(ri, r, f) {
-        const v = getV(r, f), o = getV(OM.card.orig[ri] || r, f), id = fid(ri, f);
+        const v = getV(r, f), o = getV(origOf(ri) || r, f), id = fid(ri, f);
         const blank = !r._new && f.need && !String(v).trim();
         const why = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
         const changed = String(v) !== String(o);
@@ -561,9 +608,9 @@
         } else if (f.kind === 'qty') {
             input = `<div class="om-step"><button type="button" class="om-btn icon" data-cact="step" data-d="-1" data-ri="${ri}" aria-label="수량 하나 빼기">−</button><input id="${id}" inputmode="numeric" pattern="[0-9]*" data-ri="${ri}" data-fi="${f.i}" value="${esc(v)}"${aria}><button type="button" class="om-btn icon" data-cact="step" data-d="1" data-ri="${ri}" aria-label="수량 하나 더하기">+</button></div>`;
         } else if (f.kind === 'area') {
-            input = `<textarea id="${id}" rows="2" data-ri="${ri}" data-fi="${f.i}"${aria}>${esc(v)}</textarea>`;
+            input = `<textarea id="${id}" rows="2" data-ri="${ri}" data-fi="${f.i}"${aria}>${esc(v)}</textarea>` + (r.kind === 'cash' && f.i === 8 ? `<p class="om-addr" id="om-addr-${ri}" role="status" aria-live="polite" data-k="${addrKind(r)}">${addrHtml(r, ri)}</p>` : '');
         } else if (f.kind === 'platform') {
-            input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${esc(lkText(r))}</p>`;
+            input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(OM.card && OM.card.mode === 'edit' ? [] : [CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${esc(lkText(r))}</p>`;
         } else {
             const at = f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
             input = `<input id="${id}" ${f.kind === 'tel' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
@@ -572,7 +619,7 @@
         return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
     const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save">${n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? '고친 대로 저장' : '저장')}</button>`; };
-    const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length, 0) : 0;
+    const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length + (addrBad(r) ? 1 : 0), 0) : 0;   // #850-g 주소 확인 안 됨 = 빈칸 1
     function askText(c) {
         if (c.ask) return c.ask;
         const need = new Set(); c.rows.forEach(r => blanksOf(r).forEach(f => need.add(f.i != null ? f.i : f.k)));
@@ -608,12 +655,13 @@
               <section class="om-rowcard" aria-labelledby="om-rc-${ri}">
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
+                ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
                 <div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c))}</p>` : ''}
                 ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는 분 바꾸기(선물)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
-            ${c.leftover ? `<div class="om-left-over"><b>정리 못 한 글</b><p>${esc(c.leftover)}</p><div class="om-acts"><button type="button" class="om-btn sm" data-cact="add" data-k="line">+ 다른 번호 줄 추가</button><button type="button" class="om-btn sm" data-cact="add" data-k="cash">+ 현금 손님 추가</button></div></div>` : (c.mode === 'new' ? `<div class="om-addrow"><button type="button" class="om-btn sm ghost" data-cact="add" data-k="line">+ 다른 번호 줄 추가</button><button type="button" class="om-btn sm ghost" data-cact="add" data-k="cash">+ 현금 손님 추가</button></div>` : '')}
+            ${c.leftover ? `<div class="om-left-over"><b>정리 못 한 글</b><p>${esc(c.leftover)}</p><p class="om-addlink">못 읽은 글이 있어요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : (!c.rows.length && !c.wait ? `<div class="om-left-over"><b>정리된 줄이 없어요</b><p class="om-addlink">판매처를 골라 직접 넣어 주세요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : '')}
             ${ask ? `<div class="om-ask"><b>손님께 물어볼 문자 초안</b><p id="om-ask-t">${esc(ask)}</p><div class="om-acts"><button type="button" class="om-btn sm" data-cact="copy">복사</button>${c.from && c.from.threadId ? '<button type="button" class="om-btn sm" data-cact="toreply">답 칸에 넣기</button>' : ''}<span>보내기는 직접 · 자동으로 안 나가요</span></div></div>` : ''}
           </div>
           <footer class="om-card-f">${c.confirm ? '' : footHtml()}</footer>
@@ -646,9 +694,10 @@
             wrap.classList.toggle('blank', blank);
             const inp = $(id); if (inp) { if (blank) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid'); }
             const w = $(id + '-w'); if (w) w.textContent = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
-            const u = wrap.querySelector('.om-undo1'); if (u) u.hidden = String(v) === String(getV(c.orig[ri] || r, f));
+            const u = wrap.querySelector('.om-undo1'); if (u) u.hidden = String(v) === String(getV(origOf(ri) || r,f));
         }
         if (r.kind === 'line') indivSync();
+        if (r.kind === 'cash' && f.i === 8) { clearTimeout(r._addrT); r._addrT = setTimeout(() => addrRun(c.rows.indexOf(r)), 700); }   // #850-g 주소 고치면 0.7초 뒤 다시 확인
         if (r.kind === 'line' && f.k === 'key' && (!r._lk || r._lk.key !== digits(r.key))) { r.checked = null; clearTimeout(r._lkT); r._lkT = setTimeout(() => lkRun(c.rows.indexOf(r)), 700); }   // #850-c 번호 고침 = 확인 표시 지우고 잠시 뒤 다시 찾기
         if (r.kind === 'line') { const lp = $('om-card').querySelectorAll('.om-rowcard')[ri]; const code = lp && lp.querySelector('.om-linepre code'); if (code) code.textContent = lineView(r.line); }
         c.dirty = JSON.stringify(c.rows.map(stripTmp)) !== JSON.stringify(c.orig.map(stripTmp));
@@ -664,7 +713,25 @@
     const indivWarn = c => c.mode !== 'edit' && !hasIndivLine(c);
     const indivNote = c => c.mode === 'edit' ? '입력삭제 주문의 주소 줄이에요' : hasIndivLine(c) ? '입력삭제 줄을 지우면 이 주소는 현금 손님이 돼요' : '입력삭제 줄이 빠졌어요 — 저장하면 이 주소는 현금 손님(「!」)으로 들어가요';
     function indivSync() { const c = OM.card; if (!c) return; const w = indivWarn(c); $('om-card').querySelectorAll('.om-indiv').forEach(p => { p.textContent = indivNote(c); p.classList.toggle('warn', w); }); }
-    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
+    // ── #850-f 판매처 「현금」 = 그 메모 줄을 현금 손님 칸(받는 분·연락처·주소·품목·수량·보내는이)으로 · 적힌 번호 = 받는 분 연락처 · 다른 판매처 = 메모 줄로 되돌림(적어 둔 메모 줄 그대로)
+    const CASH_PLAT = '현금';
+    const origOf = ri => { const c = OM.card, o = c && c.orig[ri], r = c && c.rows[ri]; return o && r && o.kind === r.kind ? o : null; };   // 종류가 바뀐 줄은 「처음 값」 없음
+    const platSeg = (ri, v) => `<div class="om-seg" role="radiogroup" aria-label="판매처">${PLATS.concat([CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div>`;
+    function toCashOrBack(ri, v) {
+        const c = OM.card, r = c && c.rows[ri]; if (!r || c.mode === 'edit') return;   // 저장된 줄 고치기 = 종류 못 바꿈(PUT 은 같은 줄만)
+        if (r.kind === 'line' && v === CASH_PLAT) {
+            const n = blankRow('cash'); n.ship_date = r.ship_date || null; n.src = 'edit'; n._fromLine = clone(stripTmp(r));
+            if (isPhoneish(r.key)) n.cells[6] = telShow(r.key);
+            if (String(r.note || '').trim()) n.cells[9] = String(r.note).trim();   // 할 일 글 = 배송메세지 칸으로(되돌리면 메모 줄 그대로)
+            c.rows[ri] = n;
+        } else if (r.kind === 'cash' && v !== CASH_PLAT && r._fromLine) {
+            const back = clone(r._fromLine); back.plat = v; back.ship_date = r.ship_date || back.ship_date || null; back.line = [back.ship_date ? md(back.ship_date) : '', back.key, back.note, back.plat].join('\t');
+            c.rows[ri] = back;
+        } else return;
+        c.dirty = true; renderCard(); if (c.rows[ri].kind === 'line') lkRun(ri);
+        const fx = $('om-card').querySelectorAll('.om-rowcard')[ri]; const t2 = fx && (fx.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || fx.querySelector('.om-seg-b[aria-checked="true"]')); if (t2) t2.focus({ preventScroll: true });
+    }
+    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
     // ── #850-c 판매처 확인 — 번호(또는 주문번호)로 발송 전 주문 찾기(계약 §7 · 7일) · 찾은 판매처 하나면 미리 고름 · 판매처 누르면 그 곳 결과로
     //   r._lk = { state: busy|done|err, key(숫자), matches } · r.checked = 고른 판매처에서 찾았을 때만 { plat, as, at }(§8 · 최종발주 「취소됐을 수 있어요」 근거)
     const canLook = k => { const s = String(k || '').trim(), d = digits(s); return /^\d{8}-\d{7}$/.test(s) || /^0\d{8,11}$/.test(d) || (!/^0/.test(d) && /^\d{10,20}$/.test(d)); };
@@ -717,7 +784,57 @@
         }
         lkCheck(r); lkPaint(i);
     }
-    const lkAll = () => { const c = OM.card; if (c) c.rows.forEach((r, i) => { if (r.kind === 'line' && !r._new) lkRun(i); }); };
+    const lkAll = () => { const c = OM.card; if (c) c.rows.forEach((r, i) => { if (r.kind === 'line' && !r._new) lkRun(i); else if (r.kind === 'cash' && String(r.cells[8] || '').trim()) addrRun(i); }); };
+    // ── #850-g 현금 줄 주소 확인 = 최종발주 #528 꼴(GET /api/agent-office/juso · 주소 정리기 splitAddr·searchBody·exactMatches) · 1건 = 확인됨 · 여러 건 = 고르기 · 못 찾음 = 확인 필요(빈칸으로 셈 · 「이대로 둘게요」)
+    //   상세(동·호수)는 적은 그대로 붙임 · 칸 값은 사람이 [도로명으로 바꾸기]·후보를 눌러야만 바뀜(치는 중에 덮지 않음) · 과호출 = 서버 캐시·상한 그대로
+    const addrText = (j, detail) => String(j.roadAddrPart1 || '').trim() + (detail ? ' ' + detail : '');
+    const addrBad = r => r.kind === 'cash' && !!r._addr && (r._addr.state === 'none' || r._addr.state === 'fail' || r._addr.state === 'multi') && !r._addr.kept && String(r.cells[8] || '').trim() === r._addr.raw;
+    function addrKind(r) { const A = r._addr; if (!A) return ''; if (A.state === 'busy') return 'busy'; if (A.state === 'one') return 'ok'; return A.kept ? '' : 'warn'; }
+    function addrHtml(r, ri) {
+        const A = r._addr; if (!A) return '';
+        if (A.state === 'busy') return '주소 확인 중…';
+        if (A.state === 'one') return `확인됨 · 도로명 ${esc(A.road)}${A.road !== String(r.cells[8] || '').trim() ? ` <button type="button" class="om-link" data-cact="addrset" data-ri="${ri}" data-v="one">도로명으로 바꾸기</button>` : ''}`;
+        if (A.state === 'multi') return `주소 후보가 여러 개예요 · 골라 주세요<span class="om-addr-c">${A.cands.map((x, i) => `<button type="button" class="om-btn sm" data-cact="addrset" data-ri="${ri}" data-v="${i}">${esc(x.road)}${x.bd ? ` <small>${esc(x.bd)}</small>` : ''}</button>`).join('')}<button type="button" class="om-link" data-cact="addrkeep" data-ri="${ri}">적은 그대로</button></span>`;
+        return A.kept ? '적은 주소 그대로 둬요' : `${A.state === 'fail' ? '주소 검색이 안 돼요' + (A.err ? '(' + esc(A.err) + ')' : '') + ' · ' : ''}주소를 확인해 주세요 <button type="button" class="om-link" data-cact="addrkeep" data-ri="${ri}">이대로 둘게요</button>`;
+    }
+    function addrPaint(ri) {
+        const c = OM.card, r = c && c.rows[ri]; if (!r) return;
+        const p = $('om-card').querySelector('#om-addr-' + ri); if (p) { p.innerHTML = addrHtml(r, ri); p.dataset.k = addrKind(r); }
+        const w = $('om-card').querySelector(`[data-fwrap="om-f-${ri}-c8"]`); if (w && String(r.cells[8] || '').trim()) w.classList.toggle('blank', addrBad(r));
+        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
+    }
+    async function addrRun(ri) {
+        const c = OM.card, r = c && c.rows[ri]; if (!r || r.kind !== 'cash') return;
+        const raw = String(r.cells[8] || '').trim(), oo = window.__ooTest; if (!raw) { r._addr = null; addrPaint(ri); return; }
+        const seq = (r._addrSeq = (r._addrSeq || 0) + 1);
+        r._addr = { state: 'busy', raw }; addrPaint(ri);
+        const A = { raw, state: 'none' };
+        try {
+            if (!oo || typeof oo.splitAddr !== 'function') throw new Error('주소 검색 도구를 불러오지 못했어요');
+            const [body, detail] = oo.splitAddr(raw); A.detail = detail || '';
+            const tries = [body]; const sb = oo.searchBody(body); if (sb && sb !== body) tries.push(sb);
+            let list = null, fallback = false, err = '';
+            for (let k = 0; k < tries.length && !list; k++) {
+                const res = await safe(call('/api/agent-office/juso?keyword=' + encodeURIComponent(tries[k]))); const d = res.ok ? res.body : null;
+                if (!res.ok) { err = errText(res, '주소 검색 실패'); continue; }
+                if (d && d.error) { err = d.error === 'NOKEY' ? '주소 검색 승인키가 서버에 없어요' : String(d.error); continue; }
+                const cm = d && d.results && d.results.common; if (!cm) continue;
+                if (cm.errorCode !== '0') { err = cm.errorMessage || cm.errorCode; continue; }
+                const ls = d.results.juso || []; if (ls.length) { list = ls; fallback = k > 0; }
+            }
+            if (!list) { A.state = err ? 'fail' : 'none'; A.err = err; }
+            else {
+                const uniq = [...new Set(list.map(j => j.roadAddrPart1 + '|' + j.zipNo))];
+                const ex = !fallback && uniq.length > 1 ? oo.exactMatches(tries[0], list, A.detail) : [];
+                const one = !fallback && (list.length === 1 || uniq.length === 1) ? list[0] : ex.length === 1 ? ex[0] : null;
+                if (one) { A.state = 'one'; A.road = addrText(one, A.detail); }
+                else { A.state = 'multi'; A.cands = list.slice(0, 7).map(j => ({ road: addrText(j, A.detail), bd: String(j.bdNm || '') })); }
+            }
+        } catch (e) { A.state = 'fail'; A.err = (e && e.message) || String(e); }
+        if (OM.card !== c || r._addrSeq !== seq) return;
+        const i = c.rows.indexOf(r); if (i < 0) return;
+        r._addr = A; addrPaint(i);
+    }
     function markRow(ri) {   // 한 줄의 빨간 칸·이유를 다시 칠함(다시 그리지 않음 — 초점·자판 유지)
         const c = OM.card, r = c && c.rows[ri]; if (!r) return;
         fieldsOf(r).concat(r.kind === 'cash' ? CASH_FIELDS.filter(x => x.more) : []).forEach(f => {
@@ -737,7 +854,7 @@
         if (a === 'discard') { cardClose(true); return; }
         if (a === 'reset') { c.rows = clone(c.orig); c.dirty = false; renderCard(); lkAll(); toast('처음 정리한 값으로 돌렸어요'); return; }
         if (a === 'undo1') {
-            const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more)).find(x => fid(ri, x) === b.dataset.f); if (!f) return;
+            const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more)).find(x => fid(ri, x) === b.dataset.f); if (!f || !origOf(ri)) return;
             setV(r, f, getV(c.orig[ri], f)); if (f.kind === 'shipdate') { r.ship_date = c.orig[ri].ship_date; r._dateBad = false; }
             const el = $(fid(ri, f));
             if (f.kind === 'option') { renderCard(); }
@@ -747,6 +864,7 @@
             return;
         }
         if (a === 'step') { const n = Math.max(1, (parseInt(r.cells[5], 10) || 0) + Number(b.dataset.d)); const f = CASH_FIELDS.find(x => x.i === 5); setV(r, f, String(n)); const el = $(fid(ri, f)); if (el) el.value = String(n); touched(ri, f); return; }
+        if (a === 'plat' && (b.dataset.v === CASH_PLAT || r.kind === 'cash')) { toCashOrBack(ri, b.dataset.v); return; }   // #850-f 「현금」 = 현금 손님 칸으로 · 현금 줄에서 다른 판매처 = 메모 줄로 되돌림
         if (a === 'plat') { const f = LINE_FIELDS.find(x => x.k === 'plat'); setV(r, f, b.dataset.v); if (canLook(r.key) && (!r._lk || r._lk.key !== digits(r.key))) { lkRun(ri); return; } lkCheck(r); lkPaint(ri); return; }   // #850-c 받아 둔 결과로 거름(호출 0) · 번호가 바뀌었으면 다시 찾기
         if (a === 'opt') { optOpen(ri, b); return; }
         if (a === 'add') {   // #850-c 새 빈 줄 = 손대기 전엔 빨간 글·빈칸 셈 없음 · 그 줄 번호 칸에 초점
@@ -759,20 +877,63 @@
         if (a === 'copy') { const t = ($('om-ask-t') || {}).textContent || ''; try { await navigator.clipboard.writeText(t); toast('복사했어요'); } catch (er) { toast('복사하지 못했어요 · 글을 길게 눌러 복사해 주세요'); } return; }
         if (a === 'toreply') { const t = ($('om-ask-t') || {}).textContent || ''; const ok = window.AkmAoDesk && typeof window.AkmAoDesk.smsPutReply === 'function' && window.AkmAoDesk.smsPutReply(c.from.threadId, t); toast(ok ? '답 칸에 넣었어요 · 보내기는 직접' : '문자 답 칸을 못 찾았어요 · [복사]로 넣어 주세요'); return; }
         if (a === 'save') return cardSave(b);
+        if (a === 'addrset' || a === 'addrkeep') {   // #850-g 도로명 고르기 · 적은 그대로
+            const A = r && r._addr; if (!A) return; const f = CASH_FIELDS.find(x => x.i === 8);
+            if (a === 'addrkeep') { A.kept = true; addrPaint(ri); return; }
+            const road = b.dataset.v === 'one' ? A.road : (A.cands[Number(b.dataset.v)] || {}).road; if (!road) return;
+            setV(r, f, road); const el = $(fid(ri, f)); if (el) el.value = road;
+            clearTimeout(r._addrT); r._addr = { state: 'one', raw: road, road, detail: A.detail }; touched(ri, f); clearTimeout(r._addrT); addrPaint(ri); return;
+        }
+        if (a === 'dupswap' || a === 'dupkeep') {   // #850-f 바꾸기 = 옛 줄 지우고 새 것 · 취소 = 카드 그대로(고치거나 그 줄 빼고 다시 저장)
+            const q = c.dupAsk; if (!q) return; c.dupAsk = null;
+            if (a === 'dupkeep') { renderConfirm(); return; }
+            c.dupOk = { rows: q.rows, same: q.same, drop: [...new Set(q.diff.flatMap(x => x.olds.map(o => o.id)).filter(id => id != null))] };
+            renderConfirm(); const sv = $('om-card-save'); if (sv) return cardSave(sv);
+            return;
+        }
+    }
+    // ── #850-f 같은 번호(숫자)에 같은 종류(사이즈·날짜·보내는이·입력삭제) 열린 줄이 이미 있으면 — 같으면 안 넣음 · 다르면 바꿀지 묻기(화면 판정 · 서버 무변경)
+    const DUP_KINDS = [['size', '사이즈', n => /사이즈|(?:^|[\s,·])\d?\s*[SMLsml](?=$|[\s,·])/.test(n)], ['date', '날짜', (n, r) => !!r.ship_date || /\d+\s*일\s*(?:발송|출고|보내)/.test(n)], ['sender', '보내는이', n => /보내는\s*(?:이|분|사람)|드림/.test(n)], ['indiv', '입력삭제', n => INDIV_RE.test(n)]];
+    const dupKinds = r => r.kind !== 'line' ? [] : DUP_KINDS.filter(k => k[2](String(r.note || ''), r));
+    const dupSame = (a, b) => String(a.note || '').replace(/\s+/g, '').toLowerCase() === String(b.note || '').replace(/\s+/g, '').toLowerCase() && (a.ship_date || '') === (b.ship_date || '');
+    async function dupCheck(rows) {
+        const res = await API.list('open'); if (!res.ok) return null;   // 못 읽으면 확인 없이 종전대로 저장
+        const open = []; (Array.isArray(res.body && res.body.entries) ? res.body.entries : []).forEach(e => (Array.isArray(e.rows) ? e.rows : []).forEach(x => { const o = normRow(x, e); if (o && o.kind === 'line' && o.state === 'open') open.push(o); }));
+        const same = new Set(), diff = [];
+        rows.forEach((r, i) => {
+            const d = digits(r.key), ks = dupKinds(r); if (!ks.length || d.length < 8) return;
+            const hit = open.filter(o => digits(o.key) === d && dupKinds(o).some(k => ks.some(k2 => k2[0] === k[0])));
+            if (!hit.length) return;
+            if (hit.some(o => dupSame(o, r))) { same.add(i); return; }
+            diff.push({ i, olds: hit, kind: ks.filter(k => hit.some(o => dupKinds(o).some(k2 => k2[0] === k[0])))[0][1] });
+        });
+        return { same, diff };
     }
     async function cardSave(btn) {
         const c = OM.card; if (!c || btn.disabled || c.wait) return;
-        const rows = c.rows.filter(r => !r._new);   // #850-c 더하고 손대지 않은 빈 줄은 그냥 버림
+        let rows = c.rows.filter(r => !r._new);   // #850-c 더하고 손대지 않은 빈 줄은 그냥 버림
         if (!rows.length) { cardClose(true); return; }
         btn.disabled = true; const keep = btn.innerHTML; btn.textContent = '저장하는 중…';
+        let drop = [], skipped = 0;
+        if (c.mode !== 'edit') {
+            if (!c.dupOk) {
+                const d = await dupCheck(rows);
+                if (OM.card !== c) return;
+                if (d && d.diff.length) { c.dupAsk = { diff: d.diff, same: [...d.same], rows }; btn.disabled = false; btn.innerHTML = keep; renderDup(); return; }
+                if (d && d.same.size) { skipped = d.same.size; rows = rows.filter((r, i) => !d.same.has(i)); }
+            } else { skipped = c.dupOk.same.length; rows = c.dupOk.rows.filter((r, i) => !c.dupOk.same.includes(i)); drop = c.dupOk.drop; }
+            if (!rows.length) { cardClose(true); inNote(`이미 같은 줄이 있어요 · 저장하지 않았어요`, 'warn'); return; }
+        }
         let res;
         if (c.mode === 'edit') res = await API.update(rows[0].id, putBody(rows[0]));
         else res = await API.save({ raw: c.raw, tags: c.tags || [], source: c.source || 'manual', rows: rows.map(outRow) });
-        if (!res.ok) { btn.disabled = false; btn.innerHTML = keep; toast(res.status === 409 ? errText(res, '비운 줄이에요 — 되살린 뒤 고쳐 주세요') : errText(res, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+        if (!res.ok) { btn.disabled = false; btn.innerHTML = keep; c.dupOk = null; toast(res.status === 409 ? errText(res, '비운 줄이에요 — 되살린 뒤 고쳐 주세요') : errText(res, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+        for (const id of drop) await API.remove(id);   // [바꾸기] = 새 줄 저장이 된 뒤 옛 줄을 「비운 것」으로(되살리기 가능)
+        if (skipped || drop.length) toast([skipped ? `같은 줄 ${skipped}개는 이미 있어 뺐어요` : '', drop.length ? `옛 줄 ${drop.length}개를 새 것으로 바꿨어요` : ''].filter(Boolean).join(' · '));
         c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(r.cells[4]); });
         const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
         const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();
-        if (c.mode !== 'edit' && !c.from) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); syncTags(); inState(); }
+        if (c.mode !== 'edit' && (!c.from || c.from.filled)) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
         cardClose(true);
         inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
         OM.tab = 'open'; syncTabs(); load();
@@ -833,6 +994,7 @@
             el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
         }
         OM.tab = 'open'; syncTabs(); inState(); load();
+        requestAnimationFrame(xLayout);   // #850-f 창이 보인 뒤 줄 × 자리
         if (!(opts && opts.noFocus)) setTimeout(() => { const t = phoneW() ? $('om-close') : $('om-raw'); if (t) t.focus({ preventScroll: true }); }, 60);
     }
     function close(hist) {
@@ -846,6 +1008,26 @@
         if (hist !== false) hbDrop('om');
         OWN.on = false; OWN.stack = [];
     }
+    // #850-g 문자 대화 [발주 메모로] = 이 대화로 마지막 발주 메모를 저장한 뒤의 손님 글 전부(우리 답 사이 것도 · 없으면 최근 24시간 · 사진 글 빼고 · 최대 10개 · 시간순)
+    //   → 입력 칸에 채워 사람이 보고 지우거나 고친 뒤 [정리하기](말풍선 꾹 누르기 = 그 글만 바로 정리는 fromText 그대로)
+    async function fillFromSms(msgs, o) {
+        o = o || {};
+        open({ noFocus: true });
+        let since = 0;
+        for (const st of ['open', 'cleared']) {
+            const res = await API.list(st); if (!res.ok) continue;
+            (Array.isArray(res.body && res.body.entries) ? res.body.entries : []).forEach(e => { if (String(e.source || '') === 'sms:' + o.threadId) { const t2 = Date.parse(e.created_at); if (t2 > since) since = t2; } });
+        }
+        const from = since || Date.now() - 24 * 3600e3;
+        const pick = (Array.isArray(msgs) ? msgs : []).filter(m => m && m.direction !== 'out' && String(m.body || '').trim() && Date.parse(m.event_at) > from)
+            .sort((a, b) => Date.parse(a.event_at) - Date.parse(b.event_at)).slice(-10);
+        if (!pick.length) { inNote(since ? '마지막 발주 메모 뒤로 손님이 보낸 글이 없어요' : '최근 24시간 손님이 보낸 글이 없어요', 'warn'); return 0; }
+        const raw = $('om-raw'); raw.value = pick.map(m => String(m.body).trim()).join('\n'); OM.raw = raw.value; OM.tags.clear(); syncTags();
+        OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true }; inState();
+        inNote(`문자 ${pick.length}개를 넣었어요 · 필요 없는 글은 지우고 [정리하기]`, 'ok');
+        raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ }
+        return pick.length;
+    }
     // 문자 대화에서: 그 글로 바로 정리 → 카드(저장 전엔 DB 0)
     function fromText(text, o) {
         o = o || {};
@@ -853,5 +1035,5 @@
         runPreview({ text: String(text || '').trim().slice(0, 4000), tags: o.tags || [], source: o.threadId ? 'sms:' + o.threadId : 'manual', phone: o.phone || '', threadId: o.threadId || '' });
     }
 
-    window.AkmOrderMemo = { open, close, fromText, isOpen: () => !!(OM.el && !OM.el.hidden), _t: { normRow, outRow, putBody, blanksOf, toIso } };
+    window.AkmOrderMemo = { open, close, fromText, fillFromSms, isOpen: () => !!(OM.el && !OM.el.hidden), _t: { normRow, outRow, putBody, blanksOf, toIso } };
 })();

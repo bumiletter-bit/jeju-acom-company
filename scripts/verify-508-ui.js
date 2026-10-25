@@ -63,6 +63,9 @@ async function newCtx(br, fx, hits, viewport, mobile, mode) {
     const ctx = await br.newContext({ acceptDownloads: true, viewport, ...(mobile ? { isMobile: true, hasTouch: true } : {}) });
     await ctx.addInitScript(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); }, [TOKEN, USER]);
     await fakeApis(ctx, fx, hits, mode);
+    // #850-f 실DB 발주 메모함에 열린 줄이 있으면(대표 실사용 10/25~) 메모 칸에 저절로 들어가 판정·AI 버튼이 바뀐다 → 시험에서는 빈 메모함
+    await ctx.route('**/api/order-memo/for-ship*', r => r.fulfill({ json: { ok: true, memo_text: '', lines: [], cash_aoa: [], cash_ids: [], waiting: [], held: [], ids: [] } }));
+    await ctx.route('**/api/order-memo/used', r => r.fulfill({ json: { ok: true, n: 0 } }));
     // 실DB에 대기 중인 정산 확인표가 있으면 그 창(.ao-settle-overlay)이 떠서 시험 클릭을 가린다(10/6 실사고) → 시험에서만 숨긴다
     await ctx.addInitScript(() => { const add = () => { const s = document.createElement('style'); s.textContent = '.ao-settle-overlay{display:none!important}'; (document.head || document.documentElement).appendChild(s); }; if (document.head) add(); else document.addEventListener('DOMContentLoaded', add); });
     return ctx;
@@ -1575,6 +1578,28 @@ async function resolveCards(pg, type) {
                 const lg24 = (x.hits.logs || []).slice(-1)[0];
                 ok(lg24 && lg24.lines.some(l => /메모 줄로 사이즈 지정 4건/.test(l)), '㉔④ 정리 기록에 「메모 줄로 사이즈 지정 N건」', lg24 && lg24.lines.filter(l => /사이즈/.test(l)).join());
                 ok(x.errs.length === 0, '㉔ 오류 0', x.errs.join(' | ')); await x.ctx.close();
+            }
+
+            // ── ㉔-b #850-f(대표 폰 10/25 · 메모함에 같은 번호 「S사이즈로」·「2s사이즈」 두 줄) 같은 주문에 사이즈가 다른 줄 둘 = 조용히 덮지 않고 확인 카드 · 같은 사이즈 둘 = 한 번만 ─────────
+            console.log('\n㉔-b #850-f 같은 손님 사이즈 줄 둘');
+            {
+                const rowsB = [mk('둘가', { tel: '010-8510-1111' }), mk('둘나', { tel: '010-8510-2222' }), mk('둘다')];
+                const w = await mkChat(false, rowsB);
+                w.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(w.pg, null); await startWithMemo(w.pg, ['010-8510-1111 S사이즈로', '010-8510-1111 2s사이즈', '010-8510-2222 s사이즈', '010-8510-2222 S사이즈로'].join('\n')); await w.pg.waitForTimeout(600);
+                const gtB = () => w.pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                let g = await gtB();
+                const dupCard = w.pg.locator(`${SEL.pending}[data-fo-card="line"]`, { hasText: '같은 손님에 사이즈 요청이 둘이에요' });
+                ok((await dupCard.count()) === 1 && /S · 2S|2S · S/.test(await dupCard.innerText()), '㉔-b 사이즈 다른 두 줄(S · 2S) = 확인 카드 1장', (await dupCard.count()) + ' ' + ((await dupCard.count()) ? (await dupCard.innerText()).slice(0, 80) : ''));
+                ok(/사이즈 요청 둘/.test(g[0]) && /사이즈 요청 둘/.test(g[1]), '㉔-b 두 줄 표시 = 「사이즈 요청 둘 — 고르기」(조용히 덮지 않음)', JSON.stringify(g.slice(0, 2)));
+                ok(/사이즈 지정 1건/.test(g[2]) && /사이즈 지정 1건/.test(g[3]) && !(await w.pg.locator(SEL.card, { hasText: '010-8510-2222' }).filter({ hasText: '사이즈 요청이 둘' }).count()), '㉔-b 같은 사이즈 두 줄(s · S) = 카드 없음 · 둘 다 「사이즈 지정 1건」', JSON.stringify(g.slice(2, 4)));
+                const tailsA = await w.pg.evaluate(() => [...window.AkmFinalOrder.state.sizeTail.values()]);
+                ok(tailsA.length === 1 && tailsA[0] === 'S사이즈로!', '㉔-b 고르기 전 = 겹친 주문엔 꼬리 없음 · 같은 사이즈 손님만 「S사이즈로!」 1개', JSON.stringify(tailsA));
+                await dupCard.locator('[data-fo-act="2S"]').click(); await idle(w.pg); await w.pg.waitForTimeout(400); g = await gtB();
+                const tailsB = await w.pg.evaluate(() => [...window.AkmFinalOrder.state.sizeTail.values()].sort());
+                ok(JSON.stringify(tailsB) === JSON.stringify(['2S사이즈로!', 'S사이즈로!']) && /다른 사이즈로 정함/.test(g[0]) && /사이즈 지정 1건/.test(g[1]), '㉔-b 「2S」 고르면 = 2S 만 붙음 · S 줄은 「다른 사이즈로 정함」', JSON.stringify({ tailsB, g: g.slice(0, 2) }));
+                ok((await w.pg.locator(`${SEL.pending}[data-fo-card="line"]`, { hasText: '사이즈 요청이 둘' }).count()) === 0, '㉔-b 고른 뒤 카드 닫힘');
+                ok(w.errs.length === 0, '㉔-b 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
             // ── ㉕ #570(대표 10/7 실사고 「연락처 옆에 요청 사이즈야 다 해줘」) 대화 칸에 「번호 + 사이즈」 줄을 그대로 보냄 ─────────────

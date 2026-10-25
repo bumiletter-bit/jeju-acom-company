@@ -1980,9 +1980,11 @@
     }
     function omFromSms(only) {
         const M = window.AkmOrderMemo; if (!M || !SMS.open) return;
+        const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {}, o = { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) };
+        // #850-g [발주 메모로] = 마지막 발주 메모 뒤 손님 글 전부를 입력 칸에 채움(사람이 보고 [정리하기]) · 말풍선 꾹 누르기 = 그 글만 바로 정리(종전)
+        if (!only && typeof M.fillFromSms === 'function') { M.fillFromSms((SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [], o); return; }
         const text = omText(only); if (!text.trim()) { showToast('손님이 보낸 글이 없어요'); return; }
-        const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {};
-        M.fromText(text, { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) });
+        M.fromText(text, o);
     }
     function omBind() {
         const mi = $('desk-om-now'); if (mi) mi.addEventListener('click', () => { plusClose(false); if (window.AkmOrderMemo) hbIdle(() => window.AkmOrderMemo.open()); else showToast('발주 메모함을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });

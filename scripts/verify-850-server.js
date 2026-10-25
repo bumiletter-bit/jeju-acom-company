@@ -4,7 +4,7 @@
 //   ① 규칙 줄(사이즈·날짜·입력삭제·보내는이·현금 행 붙여넣기) = 최종발주 sizeLines·v2 parseLines 와 같은 결과 ② 현금 13칸 검사 ③ 30일 지정 → 26·27·28 메모 칸 「대기」로 매일 · 현금은 30일만
 //   ④ API 왕복(미리보기 저장 0 · 저장 · 목록 · 고치기 · X 지우기 · 되살리기 · for-ship · used · clear · 영구 삭제) ⑤ 감사 기록에 개인정보 0 ⑥ 최종발주 parseCash 가 cash_aoa 를 그대로 읽음
 'use strict';
-const path = require('path'), http = require('http');
+const path = require('path'), http = require('http'), fs = require('fs');
 const ROOT = path.join(__dirname, '..');
 let pass = 0, failN = 0;
 const ok = (c, name, extra) => { if (c) { pass++; console.log('  ✅', name); } else { failN++; console.log('  ❌', name, extra !== undefined ? JSON.stringify(extra).slice(0, 700) : ''); } };
@@ -491,6 +491,31 @@ function mkPool(db) {
             await db.query(`UPDATE order_memo_preorders SET seen_at = NOW() - INTERVAL '8 days' WHERE order_key = '2026102500000011'`);
             const pgP = await api.purge();
             ok(pgP.pre === 1 && (await db.query(`SELECT count(*)::int n FROM order_memo_preorders WHERE order_key = '2026102500000011'`)).rows[0].n === 0, '① 6시간 정리 = 7일 넘게 안 보인 발송 전 주문 줄 삭제', pgP);
+        }
+
+        console.log('⑬ 실사고 #850-g(문자 현금 손님 · 받는 분·번호·주소·입금자명만)');
+        {
+            const U = { uid: 51 };
+            const G = '입금자명 김택연\n받는분  북경양꼬치  010-8213-7698 \n울산 중구 중앙길 91-1 (북경양꼬치)\n입금했습니다 확인부탁드리겠습니다 \n빠른배송 부탁합니다^*^\n울산 중구 중앙길 91-1(북경양꼬치)';
+            ok(G.split('\n').every(l => OM.ruleLine(l, '2026-10-25') === null), '그 글 6줄 = 규칙이 메모 줄로 하나도 안 집음');
+            deskOn = true; cfgVal = null;
+            const w = await call('POST', '/api/order-memo/preview', { raw: G, source: 'sms:8532', phone: '010-8213-7698' }, U);
+            const pw = (await db.query(`SELECT payload FROM pending_orders WHERE id = $1`, [w.j.desk.id])).rows[0].payload;
+            ok(w.j.rows.length === 0 && w.j.desk.state === 'wait' && pw.text === G && pw.from_sms === true && pw.raw_hint === '김택연', '창구로 글 통째(6줄 그대로) · 규칙 줄 0 · 입금자명 단서 김택연', { rows: w.j.rows, text: pw.text, hint: pw.raw_hint });
+            // 창구가 지시문대로 답한 꼴 + 예전처럼 할 일 없는 메모 줄을 같이 준 경우
+            await db.query(`UPDATE pending_orders SET status = '완료', result = $2 WHERE id = $1`, [w.j.desk.id, JSON.stringify({ type: 'desk_answer', answer: '현금 1명', data: {
+                lines: [{ key: '010-8213-7698', note: '', plat: '', date: '' }],
+                cash: [{ buyer: '', buyer_phone: '', recv: '북경양꼬치', phone1: '010-8213-7698', phone2: '', addr: '울산 중구 중앙길 91-1 (북경양꼬치)', option: '', qty: 0, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }],
+                unsure: [], sms_draft: '' } })]);
+            const g = await call('GET', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
+            const c = g.j.rows && g.j.rows[0];
+            ok(g.j.state === 'done' && g.j.rows.length === 1 && c.kind === 'cash' && c.cells[3] === '북경양꼬치' && c.cells[6] === '010-8213-7698' && c.cells[8] === '울산 중구 중앙길 91-1 (북경양꼬치)'
+                && c.cells[0] === '!김택연 드림' && c.cells[10] === '010-8213-7698' && c.cells[1] === '010-8213-7698' && !c.sure && c.missing.join() === '4,5' && c.check_why.includes('품목을 못 정했어요') && c.check_why.includes('수량이 없어요'),
+                '결과 = 현금 줄 1개(받는 분 북경양꼬치 · 연락처 · 주소 · 「!김택연 드림」 · 구매자 번호 = 문자 번호) · 품목·수량 빈칸 🟠 · 할 일 없는 메모 줄은 버림', g.j.rows);
+            await call('DELETE', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
+            deskOn = false; cfgVal = { ai: { direct: true } };
+            const gsrc = fs.readFileSync(path.join(ROOT, '★에이전트오피스', '발주메모_정리.md'), 'utf8'), osrc = fs.readFileSync(path.join(ROOT, 'order-memo.js'), 'utf8');
+            ok(/받는 분·주소·연락처 중 하나라도 있으면 품목·수량이 없어도 `cash` 로/.test(gsrc) && /받는 분·주소·연락처 중 하나라도 있으면 품목·수량이 없어도 cash 로/.test(osrc), '창구 지시문·서버 AI 지시문 = 「받는 분·주소만 있어도 cash · 품목·수량 빈칸(unsure 아님)」');
         }
 
         console.log('⑧ 점검 손질(a 늦은 답 · c 오래된 확인 · d 섞기 · e 출처)');
