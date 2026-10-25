@@ -53,6 +53,12 @@ function mkPool(db) {
     const v2 = OM.V2.parseLines([r3.line, r4.line].join('\n'), 'naver', T);
     ok(v2.length === 2 && v2.every(x => !x.bad && x.date === '2026-10-30') && v2[0].indiv, 'v2 parseLines 가 메모함 줄을 사람이 친 줄과 같게 읽음(날짜·입력삭제)', v2);
 
+    {   // 틀 자리 번호(워커3 제안) = 🟠 「번호를 넣어 주세요」
+        const H = ['000-0000-0000 S사이즈로', '00000000000 입력o삭제x', '010-0000-0000 S사이즈로'].map(t => OM.checkRow(OM.ruleLine(t, T) || { kind: 'line', key: t.split(' ')[0], note: t.split(' ')[1], src: 'edit' }, { today: T }));
+        ok(H.every(r => r.sure === false && r.check_why.includes('번호를 넣어 주세요') && r.missing.join() === 'key'), '틀 자리 번호(000-0000-0000 · 0만 · 010-0000-0000) = 🟠 「번호를 넣어 주세요」 · missing key', H.map(r => [r.key, r.sure, r.check_why]));
+        const okK = OM.checkRow(OM.ruleLine('010-1000-2000 S사이즈로', T), { today: T });
+        ok(okK.sure, '0 이 섞인 진짜 번호는 그대로 ✅', okK);
+    }
     console.log('② 현금 13칸 검사');
     const ctx = { today: T, catalog: new Set(CAT), origin: 'O' };
     const m1 = OM.checkRow(OM.cashFromAi({ buyer: '이손님', buyer_phone: '01055556666', recv: '박받음', phone1: '', phone2: '', addr: '', option: CAT[1], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }), ctx);

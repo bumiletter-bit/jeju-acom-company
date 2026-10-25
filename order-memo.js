@@ -84,8 +84,10 @@ function checkLine(r, today, keepRaw) {
     const out = { kind: 'line', key: s(r.key, 40).trim(), note: s(r.note, 200).replace(/[\t\n]+/g, ' ').trim(), plat: s(r.plat, 10).trim(), ship_date: isDay(r.ship_date) ? r.ship_date : null, src: r.src || 'edit' };
     const why = (r._bad || []).slice();
     const d = dg(out.key);
-    const keyBad = !out.key || (d.length < 8 && !/\d{8,}/.test(out.key));
-    if (keyBad) why.push('번호가 없거나 8자리보다 짧아요');
+    const keyHole = !!d && (/^0+$/.test(d) || d === '01000000000');   // 틀 자리(000-0000-0000 · 선물하기 자리표시 010-0000-0000) = 번호 아님(워커3 제안)
+    const keyBad = !out.key || keyHole || (d.length < 8 && !/\d{8,}/.test(out.key));
+    if (keyHole) why.push('번호를 넣어 주세요');
+    else if (keyBad) why.push('번호가 없거나 8자리보다 짧아요');
     // 원문 줄(규칙·AI 출처)은 지키되 칸과 어긋나면(화면에서 번호·날짜를 고침) 칸으로 다시 만들고 출처 = edit (#850 점검 e)
     const rawLine = keepRaw && r.line && !/\n/.test(r.line) ? s(r.line, 400).trim() : '';
     let rawOk = !!rawLine;
@@ -358,7 +360,7 @@ function mount(app, deps) {
 
     const rowOut = r => ({ id: r.id, entry_id: r.entry_id, kind: r.kind, ship_date: r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null,
         key: r.line_key, note: r.note, plat: r.plat, line: r.line, cells: r.cells, sure: r.sure, check_why: r.check_why || [], src: r.src,
-        missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
+        missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || /^0+$/.test(dg(r.line_key)) || dg(r.line_key) === '01000000000' || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님

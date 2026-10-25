@@ -23,8 +23,11 @@
     const last4 = s => { const d = digits(s); return d.length >= 4 ? d.slice(-4) : ''; };
     // #850-c 전화번호 = 치는 대로 000-0000-0000(10자리 000-000-0000 · #808 체험 예약 fmtTel 과 같은 꼴) — 0으로 시작하는 11자리 이하 숫자만 · 주문번호(네이버 16자리 · 자사몰 YYYYMMDD-NNNNNNN · 쿠팡)는 그대로
     //   최종발주 메모 칸 대조는 숫자만 본다(invoice-v2 parseLines digits · matchKey) → 하이픈 꼴이어도 판정 무변화
-    const fmtTel = v => { const d = digits(v).slice(0, 11); return d.length < 4 ? d : d.length < 8 ? d.slice(0, 3) + '-' + d.slice(3) : d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7); };
-    const isPhoneish = v => { const s = String(v || '').trim(), d = digits(s); return !!d && d[0] === '0' && d.length <= 11 && !/[A-Za-z가-힣]/.test(s) && !/^\d{8}-\d/.test(s); };
+    // 앞자리 = 02(서울 2자리) · 050x(안심번호 4자리 · 12자리까지) · 그 밖 3자리 · 뒤 = 7자리면 3-4 · 8자리면 4-4(보기만 · 숫자는 그대로)
+    const telHead = d => d.startsWith('02') ? 2 : d.startsWith('050') ? 4 : 3;
+    const telMax = d => d.startsWith('050') ? 12 : 11;
+    const fmtTel = v => { let d = digits(v); d = d.slice(0, telMax(d)); const p = telHead(d), r = d.slice(p); if (!r) return d; if (r.length <= 4) return d.slice(0, p) + '-' + r; const m = r.length <= 7 ? 3 : 4; return d.slice(0, p) + '-' + r.slice(0, m) + '-' + r.slice(m); };
+    const isPhoneish = v => { const s = String(v || '').trim(), d = digits(s); return !!d && d[0] === '0' && d.length <= telMax(d) && !/[A-Za-z가-힣]/.test(s) && !/^\d{8}-\d/.test(s); };
     const telShow = v => isPhoneish(v) && digits(v).length >= 9 ? fmtTel(v) : v;
     const lineView = s => String(s || '').split('\t').map(x => x.trim()).filter(Boolean).join(' ');   // 메모 칸 글 보기 = 칸 사이 한 칸(앞 빈 칸·넓은 탭 없이)
     const nextShip = () => { const d = kstNow(); d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };   // 서버가 기준 발송일을 안 주면 = 내일(일요일 건너뜀)
