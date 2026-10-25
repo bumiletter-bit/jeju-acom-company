@@ -28,7 +28,7 @@ function diff(D, snap, det, nos, ign) {
         const it = D.items.find(x => String(x.no) === no), s = snap.items.find(x => String(x.no) === no);
         if (!s) { out.push({ no, name: it.name.slice(0, 20), error: '스냅샷에 없는 상품' }); continue; }
         const old = {}; (it.opts || []).forEach(o => { old[okey(o)] = o; });
-        const sell = (s.opts || []).filter(o => o && o.usable !== false), kept = sell.filter(o => !SK.ignoredOpt(no, o, ign)), neo = kept.length ? kept : sell, seen = new Set(), ch = [];
+        const all = (s.opts || []).filter(Boolean), keepAll = all.filter(o => !SK.ignoredOpt(no, o, ign)), neo = (keepAll.length ? keepAll : all).filter(o => o.usable !== false), seen = new Set(), ch = [];
         for (const o of neo) { const p = old[okey(o)]; seen.add(okey(o)); if (!p) ch.push(`새 옵션: ${[o.n1, o.n2].filter(Boolean).join(' · ')} (+${o.price || 0})`); else { if ((o.price || 0) !== (p.price || 0)) ch.push(`가격: ${o.n2 || o.n1} +${p.price || 0} → +${o.price || 0}`); if (o.n1 && p.n1 !== o.n1 && (p.nd || p.n1) !== o.n1) ch.push(`표시 이름: ${p.nd || p.n1} → ${o.n1}`); } }
         for (const k of Object.keys(old)) if (!seen.has(k)) ch.push(`빠지는 옵션: ${[old[k].n1, old[k].n2].filter(Boolean).join(' · ')}`);
         if (s.discPrice != null && s.discPrice !== it.discPrice) ch.push(`기준 결제가: ${it.discPrice} → ${s.discPrice}`);

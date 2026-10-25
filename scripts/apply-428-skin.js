@@ -54,12 +54,12 @@ function applySkin(D, snap, det, targets, keepMap, ign) {
   let mapped = 0;
   // mapped = 새 블록 안에서 바꾼 주소 수(imgs 목록은 같은 그림의 두 번째 표기라 안 셈)
   const mapU = (u, count = true) => { const t = MAP.get(ubase(u)); if (!t || t === u) return u; if (count) mapped++; return t; };
-  const mapB = x => {
+  const mapB = (x, count = true) => {
     if (!x || typeof x !== 'object') return x;
     const y = JSON.parse(JSON.stringify(x));
-    if (y.src) y.src = mapU(y.src);
-    if (Array.isArray(y.srcs)) y.srcs = y.srcs.map(u => mapU(u));
-    if (typeof y.html === 'string') y.html = y.html.replace(/(src=")([^"]+)(")/g, (all, p, u, q) => p + mapU(u) + q);
+    if (y.src) y.src = mapU(y.src, count);
+    if (Array.isArray(y.srcs)) y.srcs = y.srcs.map(u => mapU(u, count));
+    if (typeof y.html === 'string') y.html = y.html.replace(/(src=")([^"]+)(")/g, (all, p, u, q) => p + mapU(u, count) + q);
     return y;
   };
 
@@ -75,9 +75,9 @@ function applySkin(D, snap, det, targets, keepMap, ign) {
     if (s.discPrice != null) it.discPrice = s.discPrice;
     if (s.stock != null) it.stock = s.stock;
     const oldByKey = {}; (it.opts || []).forEach(o => { oldByKey[okey(o)] = o; });
-    const sell = s.opts.filter(o => o && o.usable !== false), keep = sell.filter(o => !ignoredOpt(no, o, ign));
-    const src = keep.length ? keep : sell; if (src.length !== sell.length) ignoredOpts.push(...sell.filter(o => !src.includes(o)).map(o => `${no} ${o.n1} ${o.n2}`));
-    it.opts = src.map(o => {
+    const all = (s.opts || []).filter(Boolean), keepAll = all.filter(o => !ignoredOpt(no, o, ign));   // 서버 #689 와 같게 = 전체 옵션에서 거르고 전부 빠질 때만 원본
+    const base = keepAll.length ? keepAll : all; if (base.length !== all.length) ignoredOpts.push(...all.filter(o => !base.includes(o)).map(o => `${no} ${o.n1} ${o.n2}`));
+    it.opts = base.filter(o => o.usable !== false).map(o => {
       const prev = oldByKey[okey(o)];
       if (prev) {
         if (o.price != null) prev.price = o.price;
@@ -98,7 +98,7 @@ function applySkin(D, snap, det, targets, keepMap, ign) {
     const n = det.items[k];
     if (!n || !Array.isArray(n.blocks) || !n.blocks.length) { dMissing.push(k); continue; }
     const blocks = n.blocks.map(mapB);
-    keptBtn += keepButtons(k, (D.detailImages[k] || {}).blocks || [], blocks, mapB);
+    keptBtn += keepButtons(k, (D.detailImages[k] || {}).blocks || [], blocks, x => mapB(x, false));   // 비교용 = 치환 수 안 셈
     const nv = { count: n.count, imgs: Array.isArray(n.imgs) ? n.imgs.map(u => mapU(u, false)) : n.imgs, blocks };
     if (JSON.stringify(D.detailImages[k]) === JSON.stringify(nv)) dSame++; else { dChanged++; D.detailImages[k] = nv; }
   }
