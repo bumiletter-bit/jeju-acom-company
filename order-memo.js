@@ -121,7 +121,8 @@ function checkCash(r, today, catalog, origin) {
     const q = Number(c[5]); c[5] = Number.isInteger(q) && q > 0 ? String(q) : '';
     const missing = Object.keys(REQ_CELLS).map(Number).filter(i => !c[i]);
     const why = missing.map(i => REQ_CELLS[i]);
-    if (c[4] && catalog && !catalog.has(c[4])) { why.push('품목이 단가표 이름과 달라요'); if (!missing.includes(4)) missing.push(4); }
+    // #856 최종발주 꼬리(「…2S사이즈로!」·「…15과로!」)는 떼고 대조
+    if (c[4] && catalog && !catalog.has(core.stripTail(c[4], n => catalog.has(n)))) { why.push('품목이 단가표 이름과 달라요'); if (!missing.includes(4)) missing.push(4); }
     if (c[6] && dg(c[6]).length < 9) { why.push('받는 분 연락처를 다시 확인해 주세요'); if (!missing.includes(6)) missing.push(6); }
     const ship = isDay(r.ship_date) ? r.ship_date : null;
     if (ship && ship < today) why.push('지난 날짜예요');

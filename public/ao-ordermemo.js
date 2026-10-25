@@ -194,7 +194,7 @@
     function bind() {
         const raw = $('om-raw');
         $('om-close').addEventListener('click', () => close(true));
-        raw.addEventListener('input', () => { OM.raw = raw.value; if (!raw.value.trim()) OM.smsSrc = null; xUndoHide(); inState(); });   // #852 칸이 비면 문자 출처도 끊음
+        raw.addEventListener('input', e => { rawTel(raw, e); OM.raw = raw.value; if (!raw.value.trim()) OM.smsSrc = null; xUndoHide(); inState(); });   // #852 칸이 비면 문자 출처도 끊음
         raw.addEventListener('scroll', xLayout, { passive: true });
         if (window.ResizeObserver) new ResizeObserver(() => xLayout()).observe(raw);
         $('om-raw-xs').addEventListener('click', e => { const b = e.target.closest('.om-in-x'); if (b) xDel(Number(b.dataset.ln)); });
@@ -290,6 +290,18 @@
     }
     function xUndo() { const U = OM.xUndo; if (!U) return; const raw = $('om-raw'); raw.value = U.value; OM.raw = U.value; OM.smsSrc = U.smsSrc; OM.xUndo = null; xUndoHide(); inState(); raw.focus({ preventScroll: true }); }
     function xUndoHide() { OM.xUndo = null; const u = $('om-raw-undo'); if (u) u.hidden = true; }
+    // #855 입력 칸 = 사람이 줄 맨 앞 번호 덩어리를 치는 동안만 자동 하이픈(카드 칸 #850-c 와 같은 fmtTel · 커서 = 앞 숫자 개수 기준)
+    //   붙여 넣기·끌어 넣기·한글 조합 중 = 안 건드림 · 그 줄 뒤쪽 글·다른 줄 무접촉 · 0으로 시작하는 전화 꼴만(주문번호 그대로)
+    function rawTel(ta, e) {
+        if (!e || e.isComposing || !/^(insertText|deleteContent)/.test(e.inputType || '')) return;
+        const v = ta.value, pos = ta.selectionStart; if (pos == null || pos !== ta.selectionEnd) return;
+        const ls = v.lastIndexOf('\n', pos - 1) + 1, m = v.slice(ls).match(/^[0-9-]+(?=\s|$)/); if (!m || pos > ls + m[0].length) return;
+        const chunk = m[0]; if (!isPhoneish(chunk)) return;
+        const fv = fmtTel(chunk); if (fv === chunk || digits(fv) !== digits(chunk)) return;   // 자릿수가 넘쳐 잘리면 안 바꿈
+        const nd = digits(v.slice(ls, pos)).length; let cnt = 0, i = 0; while (i < fv.length && cnt < nd) { if (/[0-9]/.test(fv[i])) cnt++; i++; }
+        ta.value = v.slice(0, ls) + fv + v.slice(ls + chunk.length);
+        try { ta.setSelectionRange(ls + i, ls + i); } catch (er) { /* 그대로 */ }
+    }
     function tplHole(text) {   // 안 고친 틀 자리 → { at, len, msg } | null
         for (const [h, msg] of TPL_HOLES) {
             if (typeof h === 'string') { const at = text.indexOf(h); if (at >= 0) return { at: h === TEL_PH ? at : at + '보내는이 '.length, len: h === TEL_PH ? h.length : '홍길동'.length, msg }; }
@@ -527,7 +539,7 @@
         if (OM.card) cardClose(true);   // 앞 카드가 떠 있으면 먼저 닫음(기다리던 창구 요청은 취소·지움)
         c.rows.forEach(r => {   // #850-c 번호 = 000-0000-0000 꼴로 보이게(전화번호 꼴만 · 주문번호 그대로) — 「처음 값」보다 먼저(고친 것으로 안 셈)
             if (r.kind === 'line') { const k = telShow(r.key); if (k !== r.key) { r.key = k; r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t'); } }
-            else [1, 6, 7, 10].forEach(i => { r.cells[i] = telShow(r.cells[i]); });
+            else { [1, 6, 7, 10].forEach(i => { r.cells[i] = telShow(r.cells[i]); }); if (c.mode !== 'edit') tailFromNote(r); }   // #856 손님 글의 사이즈·과수 = 미리 고름(처음 값으로 셈)
         });
         c.orig = clone(c.rows); c.dirty = false; c.confirm = false;
         OM.card = c; OM.lastFocus = document.activeElement;
@@ -583,6 +595,33 @@
         else if (r.kind === 'cash') r.cells[f.i] = v; else r[f.k] = v;
         if (r.kind === 'line') r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t');
     }
+    // #856 현금 줄 품목 꼬리 = 최종발주와 같은 글자(옵션 끝 「 2S사이즈로!」 · 「 15과로!」 · final-order sizeItem·tailNorm 과 같은 규칙)
+    //   사이즈 = 귤 로얄과(선물용 제외) · 과수 = 선물용 만감류(황금향·한라봉·레드향·천혜향 · 카라향·하우스·타이벡 선물 X = jeju-gift-size-rule)
+    const OPT_TAIL = /\s+((?:2S|S|M)사이즈로!|\d{1,2}과로!)\s*$/;
+    const optBase = v => String(v || '').replace(OPT_TAIL, '').trim();
+    const optTail = v => (String(v || '').match(OPT_TAIL) || [])[1] || '';
+    const sizeItem = s => /귤/.test(s) && /로얄과/.test(s) && !/선물용/.test(s);
+    const gwaItem = s => /황금향|한라봉|레드향|천혜향/.test(s) && /선물/.test(s);
+    const tailFits = (base, t) => !t || (/사이즈로!$/.test(t) ? sizeItem(base) : /과로!$/.test(t) ? gwaItem(base) : false);
+    const withOptTail = (base, t) => optBase(base) + (t ? ' ' + t : '');
+    // 손님 글(AI·규칙이 배송메세지 칸에 둔 「S사이즈로」·「15과」)로 미리 고름 → 그 말은 배송메세지에서 뺌(옵션 꼬리로 옮김)
+    function tailFromNote(r) {
+        if (r.kind !== 'cash' || optTail(r.cells[4])) return;
+        const base = optBase(r.cells[4]), note = String(r.cells[9] || '');
+        let m, t = '';
+        if (sizeItem(base) && (m = note.match(/(^|[^0-9A-Za-z])(2S|S|M)\s*사이즈\s*(?:로)?\s*!?/i))) t = m[2].toUpperCase() + '사이즈로!';
+        // 과수 = 「15과」 뒤가 로·수·끝·빈칸·문장부호일 때만(「2 과일상자」는 안 집음)
+        else if (gwaItem(base) && (m = note.match(/(^|[^0-9])(\d{1,2})\s*과수?(?=로|$|[\s!.,])\s*(?:로)?\s*!?/))) t = Number(m[2]) + '과로!';
+        if (!t) return;
+        r.cells[4] = withOptTail(base, t);
+        r.cells[9] = (note.slice(0, m.index) + m[1] + note.slice(m.index + m[0].length)).replace(/\s{2,}/g, ' ').replace(/^[\s·,.]+|[\s·,]+$/g, '').trim();
+    }
+    function tailHtml(ri, r) {
+        const base = optBase(r.cells[4]), t = optTail(r.cells[4]);
+        if (sizeItem(base)) return `<div class="om-tailrow"><span class="om-tail-l" id="om-tl-${ri}">사이즈</span><div class="om-seg om-tail" role="radiogroup" aria-labelledby="om-tl-${ri}">${[['2S사이즈로!', '2S'], ['S사이즈로!', 'S'], ['M사이즈로!', 'M'], ['', '없음']].map(([v, l]) => `<button type="button" role="radio" class="om-seg-b" data-cact="tail" data-ri="${ri}" data-v="${v}" aria-checked="${t === v ? 'true' : 'false'}">${l}</button>`).join('')}</div></div>`;
+        if (gwaItem(base)) return `<div class="om-tailrow"><label class="om-tail-l" for="om-f-${ri}-gwa">과수</label><input id="om-f-${ri}-gwa" class="om-gwa" inputmode="numeric" pattern="[0-9]*" maxlength="2" placeholder="예) 15" data-ri="${ri}" data-ftail="1" value="${esc((t.match(/^(\d+)과로!$/) || [])[1] || '')}"><span class="om-tail-s">과로!</span><small class="om-tail-h">비우면 과수 지정 안 함</small></div>`;
+        return '';
+    }
     const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', ph: '비우면 다음 발주 · 예) 10/30' }]);
     function fieldHtml(ri, r, f) {
         const v = getV(r, f), o = getV(origOf(ri) || r, f), id = fid(ri, f);
@@ -593,7 +632,7 @@
         let input;
         const aria = `${blank ? ' aria-invalid="true"' : ''} aria-describedby="${id}-w"`;
         if (f.kind === 'option') {
-            input = `<button type="button" class="om-combo" id="${id}" data-cact="opt" data-ri="${ri}" aria-haspopup="dialog"${aria}><span>${v ? esc(shortOpt(v)) + (OM.catalog && !OM.catalog.includes(v) ? ' <em>목록에 없음</em>' : '') : '<i>품목 고르기</i>'}</span>${ICON_DOWN}</button>`;
+            input = `<button type="button" class="om-combo" id="${id}" data-cact="opt" data-ri="${ri}" aria-haspopup="dialog"${aria}><span>${v ? esc(shortOpt(optBase(v))) + (OM.catalog && !OM.catalog.includes(optBase(v)) ? ' <em>목록에 없음</em>' : '') : '<i>품목 고르기</i>'}</span>${ICON_DOWN}</button>` + (r.kind === 'cash' ? tailHtml(ri, r) : '');   // #856 사이즈·과수 꼬리
         } else if (f.kind === 'qty') {
             input = `<div class="om-step"><button type="button" class="om-btn icon" data-cact="step" data-d="-1" data-ri="${ri}" aria-label="수량 하나 빼기">−</button><input id="${id}" inputmode="numeric" pattern="[0-9]*" data-ri="${ri}" data-fi="${f.i}" value="${esc(v)}"${aria}><button type="button" class="om-btn icon" data-cact="step" data-d="1" data-ri="${ri}" aria-label="수량 하나 더하기">+</button></div>`;
         } else if (f.kind === 'area') {
@@ -647,7 +686,7 @@
                 ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
                 <div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c))}</p>` : ''}
-                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는 분 바꾸기(선물)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
+                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
             ${c.leftover ? `<div class="om-left-over"><b>정리 못 한 글</b><p>${esc(c.leftover)}</p><p class="om-addlink">못 읽은 글이 있어요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : (!c.rows.length && !c.wait ? `<div class="om-left-over"><b>정리된 줄이 없어요</b><p class="om-addlink">판매처를 골라 직접 넣어 주세요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : '')}
@@ -663,6 +702,12 @@
     function onCardInput(e) {
         const t = e.target, ri = t.dataset ? Number(t.dataset.ri) : NaN; if (!OM.card || isNaN(ri)) return;
         const r = OM.card.rows[ri]; if (!r) return;
+        if (t.dataset.ftail) {   // #856 과수 = 숫자만 → 「15과로!」(final-order tailNorm 과 같은 꼴) · 비우면 뗌
+            if (e.isComposing) return;
+            const d = digits(t.value).slice(0, 2); if (d !== t.value) t.value = d;
+            const fo = CASH_FIELDS.find(x => x.i === 4); setV(r, fo, withOptTail(r.cells[4], d && Number(d) > 0 ? Number(d) + '과로!' : '')); touched(ri, fo);
+            return;
+        }
         const f = t.dataset.fd ? fieldsOf(r).find(x => x.kind === 'shipdate') : t.dataset.fs ? CASH_FIELDS.find(x => x.kind === 'sender') : t.dataset.fi != null ? CASH_FIELDS.find(x => x.i === Number(t.dataset.fi)) : LINE_FIELDS.find(x => x.k === t.dataset.fk);
         if (!f) return;
         if (f.kind === 'tel' && !e.isComposing && isPhoneish(t.value)) {   // #850-c 치는 대로 하이픈 · 커서 = 그 앞 숫자 개수 기준(가운데를 고쳐도 끝으로 안 튐)
@@ -856,6 +901,11 @@
         if (a === 'plat' && (b.dataset.v === CASH_PLAT || r.kind === 'cash')) { toCashOrBack(ri, b.dataset.v); return; }   // #850-f 「현금」 = 현금 손님 칸으로 · 현금 줄에서 다른 판매처 = 메모 줄로 되돌림
         if (a === 'plat') { const f = LINE_FIELDS.find(x => x.k === 'plat'); setV(r, f, b.dataset.v); if (canLook(r.key) && (!r._lk || r._lk.key !== digits(r.key))) { lkRun(ri); return; } lkCheck(r); lkPaint(ri); return; }   // #850-c 받아 둔 결과로 거름(호출 0) · 번호가 바뀌었으면 다시 찾기
         if (a === 'opt') { optOpen(ri, b); return; }
+        if (a === 'tail' && r && r.kind === 'cash') {   // #856 사이즈 고르기(누른 것 다시 누르면 그대로 · 「없음」 = 꼬리 뗌)
+            const f = CASH_FIELDS.find(x => x.i === 4); setV(r, f, withOptTail(r.cells[4], b.dataset.v || '')); touched(ri, f);
+            b.parentNode.querySelectorAll('.om-seg-b').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
+            return;
+        }
         if (a === 'add') {   // #850-c 새 빈 줄 = 손대기 전엔 빨간 글·빈칸 셈 없음 · 그 줄 번호 칸에 초점
             const nr = blankRow(b.dataset.k); nr._new = true; c.rows.push(nr); c.orig.push(clone(nr)); renderCard();
             const ri2 = c.rows.length - 1, f = $(nr.kind === 'cash' ? `om-f-${ri2}-c6` : `om-f-${ri2}-key`);
@@ -919,7 +969,7 @@
         if (!res.ok) { btn.disabled = false; btn.innerHTML = keep; c.dupOk = null; toast(res.status === 409 ? errText(res, '비운 줄이에요 — 되살린 뒤 고쳐 주세요') : errText(res, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
         for (const id of drop) await API.remove(id);   // [바꾸기] = 새 줄 저장이 된 뒤 옛 줄을 「비운 것」으로(되살리기 가능)
         if (skipped || drop.length) toast([skipped ? `같은 줄 ${skipped}개는 이미 있어 뺐어요` : '', drop.length ? `옛 줄 ${drop.length}개를 새 것으로 바꿨어요` : ''].filter(Boolean).join(' · '));
-        c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(r.cells[4]); });
+        c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(optBase(r.cells[4])); });   // #856 최근 목록 = 꼬리 뗀 품목 이름
         const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
         const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();
         if (c.mode !== 'edit' && !c.cash && (!c.from || c.from.filled)) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
@@ -967,9 +1017,9 @@
     function optPick(v) {
         if (!OM.opt || !OM.card) return;
         const ri = OM.opt.ri, r = OM.card.rows[ri], f = CASH_FIELDS.find(x => x.i === 4);
-        setV(r, f, v); optClose(true);
-        const btn = $(fid(ri, f)); if (btn) { btn.querySelector('span').innerHTML = esc(shortOpt(v)); btn.removeAttribute('aria-invalid'); }
-        touched(ri, f);
+        const t0 = optTail(r.cells[4]);   // #856 고른 꼬리는 새 품목에도 맞으면 그대로(안 맞으면 뗌)
+        setV(r, f, tailFits(v, t0) ? withOptTail(v, t0) : v); optClose(true);
+        touched(ri, f); renderCard();   // 사이즈·과수 칸이 품목 따라 보이고 숨음
         const nx = $(fid(ri, CASH_FIELDS.find(x => x.i === 5))); if (nx) nx.focus({ preventScroll: true });
     }
 

@@ -66,6 +66,15 @@ function mkPool(db) {
     const m2 = OM.checkRow(OM.cashFromAi({ buyer: '', buyer_phone: '', recv: '박받음', phone1: '01012341234', phone2: '', addr: '제주시 1', option: '없는 품목', qty: 0, memo: '', sender: '정만웅', sender_phone: '01094020886', sender_addr: '', date: '' }), ctx);
     ok(!m2.sure && m2.missing.includes(4) && m2.missing.includes(5) && m2.cells[0] === '!정만웅 드림' && m2.check_why.includes('품목이 단가표 이름과 달라요'), '단가표에 없는 품목·수량 0 = 🟠 · 보내는이 = 「!이름 드림」', m2);
 
+    {   // #856 현금 줄 옵션 칸에 최종발주 꼬리(「…2S사이즈로!」·「…15과로!」)가 붙어도 단가표 이름으로 대조
+        const base = { buyer: '이손님', buyer_phone: '01055556666', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };
+        const t1 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { option: CAT[0] + ' 2S사이즈로!' })), ctx);
+        const t2 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { option: CAT[1] + ' 15과로!' })), ctx);
+        ok(t1.sure && t2.sure && !t1.check_why.length && t1.cells[4] === CAT[0] + ' 2S사이즈로!', '#856 꼬리 붙은 품목(「…2S사이즈로!」·「…15과로!」) = ✅ · 칸 글자는 그대로', [t1.check_why, t2.check_why]);
+        const t3 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { option: '없는 품목 2S사이즈로!' })), ctx);
+        const t4 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { option: CAT[0] + '로!' })), ctx);
+        ok(!t3.sure && t3.check_why.includes('품목이 단가표 이름과 달라요') && t3.missing.includes(4) && !t4.sure && t4.check_why.includes('품목이 단가표 이름과 달라요'), '#856 엉뚱한 품목 + 꼬리 · 띄어쓰기 없는 꼬리 = 여전히 🟠 「품목이 단가표 이름과 달라요」', [t3.check_why, t4.check_why]);
+    }
     console.log('②-b 문자 출처 현금 손님(#850-b)');
     {
         const SP = '01092590977', base = { buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };

@@ -219,7 +219,7 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 .om-seg-b[aria-checked="true"] { border-color: var(--d-accent); background: var(--d-accent-soft); color: var(--d-accent); }
 .om-seg-b:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
 @media (max-width: 960px), (pointer: coarse) { .om-seg-b { min-height: 44px; } }
-.om-more summary { min-height: 40px; display: flex; align-items: center; color: var(--d-accent); font-size: 13px; font-weight: 700; cursor: pointer; }
+.om-more summary { min-height: 40px; display: flex; align-items: center; color: var(--d-accent); font-size: 15px; font-weight: 800; cursor: pointer; }   /* #856 「보내는이 변경(클릭)」 = 다른 글보다 한 단계 크게 */
 @media (max-width: 960px), (pointer: coarse) { .om-more summary { min-height: 44px; } }
 .om-more summary:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 6px; }
 .om-more .om-grid { margin-top: 6px; }
@@ -348,3 +348,13 @@ html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
 @media (max-width: 960px), (pointer: coarse) {   /* 폰 = 줄 높이 44 = × 단추 44 (붙은 줄끼리 단추가 겹치지 않게) */
     .om-in textarea { line-height: 44px; background: repeating-linear-gradient(180deg, transparent 0 43px, color-mix(in srgb, var(--d-line) 70%, transparent) 43px 44px) 0 12px / 100% 44px local; }
     .om-in-mirror { font-size: 16px; line-height: 44px; } .om-in-x { right: 0; width: 44px; height: 44px; } }
+
+/* #856 현금 줄 품목 꼬리 = 사이즈(귤 로얄과 · 2S·S·M·없음) · 과수(선물용 만감류 · 숫자 → 「15과로!」) — 옵션 칸 바로 아래 */
+.om-tailrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
+.om-tail-l { color: var(--d-sub); font-size: 13px; font-weight: 700; }
+.om-tail .om-seg-b { min-width: 52px; }
+.om-gwa { width: 72px; min-height: 40px; padding: 0 10px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; text-align: center; }
+.om-gwa:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.om-tail-s { color: var(--d-ink); font-size: 14px; font-weight: 700; }
+.om-tail-h { flex-basis: 100%; color: var(--d-sub); font-size: 12px; }
+@media (max-width: 960px), (pointer: coarse) { .om-gwa { min-height: 44px; } }
