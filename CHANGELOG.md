@@ -1,3 +1,7 @@
+## v5.9.626 (2026-10-25) — #842 송장변환 판정기 타이벡 분기(쿠팡 오매칭 막기 · 워커1 · 워커3 점검 · verify-842-match 38/38 · 실자료 170 옛=새)
+
+- app.js PRODUCT_CATALOG 타이벡 6(단가표 #115 이름) · aoInvoiceFeat 과일 목록 타이벡감귤 · matchProductRaw /타이벡/ 분기(용도·중량·등급 → 「고당도 타이벡감귤 / 상품 및 과수: 가정용 - 5kg(로얄과 2S~M)」 꼴 · 등급 글자 없으면 미매칭 · 유라·만감류 이름 섞이면 양보) — 쿠팡 옵션 글에 상품명 「하우스감귤」이 남아 타이벡 주문이 하우스 선물용으로 가던 오매칭 막음 · 캐시 app.js 431.
+- 같이 커밋: 타이벡 오픈 문서(업무지식 6줄 · 카나나 답변 문구 docs/685 3파일) · verify-842-match.js.
 ## v5.9.625 (2026-10-25) — #842 네이버 러너 무게 칸(--weight · 워커2 · 워커3 점검 + 속성 번호 검사 1줄 · verify-842-weight 32/32)
 
 - 네이버 상품 PUT 허용 칸 weight(productAttributes kg 칸 attributeRealValue·구간 번호 + unitCapacity.totalCapacityValue) · 감귤 분류(속성 10014353)만 · 되돌리기·반영 확인 경로 포함 · naver-detail --weight <kg>. 타이벡 오픈(감귤 6400134206 무게 2.5 → 5kg) 용.
