@@ -19,13 +19,16 @@ function targets(args, D) {
     return [...new Set(nos)];
 }
 // 스킨 정본 ↔ 스냅샷 차이(apply-428-skin.js 의 합치기 규칙과 같은 눈으로 · 읽기만)
-function diff(D, snap, det, nos) {
+// #844 ign = apply-428-skin.js 와 같은 네이버 전용 옵션 거름(cafe24_sync_ignore_opts · 연결표 상품만)
+const SK = require('../apply-428-skin.js');
+const ignOf = async () => { const ic = await M.cfgGet('cafe24_sync_ignore_opts'), mc = await M.cfgGet('cafe24_sync_map'); return { keys: new Set(((ic && ic.keys) || []).map(String)), mapped: new Set(Object.keys((mc && mc.map) || {})) }; };
+function diff(D, snap, det, nos, ign) {
     const out = [];
     for (const no of nos) {
         const it = D.items.find(x => String(x.no) === no), s = snap.items.find(x => String(x.no) === no);
         if (!s) { out.push({ no, name: it.name.slice(0, 20), error: '스냅샷에 없는 상품' }); continue; }
         const old = {}; (it.opts || []).forEach(o => { old[okey(o)] = o; });
-        const neo = (s.opts || []).filter(o => o && o.usable !== false), seen = new Set(), ch = [];
+        const sell = (s.opts || []).filter(o => o && o.usable !== false), kept = sell.filter(o => !SK.ignoredOpt(no, o, ign)), neo = kept.length ? kept : sell, seen = new Set(), ch = [];
         for (const o of neo) { const p = old[okey(o)]; seen.add(okey(o)); if (!p) ch.push(`새 옵션: ${[o.n1, o.n2].filter(Boolean).join(' · ')} (+${o.price || 0})`); else { if ((o.price || 0) !== (p.price || 0)) ch.push(`가격: ${o.n2 || o.n1} +${p.price || 0} → +${o.price || 0}`); if (o.n1 && p.n1 !== o.n1 && (p.nd || p.n1) !== o.n1) ch.push(`표시 이름: ${p.nd || p.n1} → ${o.n1}`); } }
         for (const k of Object.keys(old)) if (!seen.has(k)) ch.push(`빠지는 옵션: ${[old[k].n1, old[k].n2].filter(Boolean).join(' · ')}`);
         if (s.discPrice != null && s.discPrice !== it.discPrice) ch.push(`기준 결제가: ${it.discPrice} → ${s.discPrice}`);
@@ -59,7 +62,7 @@ async function liveCheck(nos, tries, waitMs) {
     if (cmd === 'preview') {
         const nos = targets(args, D), snap = await M.latestSnapshot(), det = await M.cfgGet('product_detail_snapshot'), map = C24MAP();
         let srv; try { srv = await M.serverMatches(); } catch (e) { srv = { error: e.message.slice(0, 120) }; }
-        const d = diff(D, snap, det, nos);
+        const d = diff(D, snap, det, nos, await ignOf());
         console.log(JSON.stringify({ targets: d.items, other_products_detail_changed: d.other_detail_changed, snapshot: `#${snap.id} · ${snap.kst} · ${snap.ageMin}분 전`, detail_snapshot_at: det && det.at, server_equals_local: srv.same, server: srv,
             c24_detail: nos.map(n => map[n] ? `${n} → 카페24 c${map[n]} 상세 갱신 대상` : `${n} → 카페24 상세 매핑 없음(스킨 화면만 바뀜 · 카페24 상세는 총괄에게)`),
             steps: ['서버 원본 = 정본 확인', '스냅샷 재수집(최대 6분)', '스킨 정본 갱신', '올림 → 다시 받아 대조', '지정 상품 카페24 상세 갱신', '실화면 확인'],
@@ -80,7 +83,7 @@ async function liveCheck(nos, tries, waitMs) {
         }
         const det = await M.cfgGet('product_detail_snapshot'); const detAge = det && det.at ? Math.round((Date.now() - new Date(det.at).getTime()) / 60000) : null;
         log.push(`② 스냅샷 #${snap.id}(${snap.kst}) · 상세 스냅샷 ${detAge == null ? '없음' : detAge + '분 전'}`);
-        const before = diff(D, snap, det, nos);
+        const before = diff(D, snap, det, nos, await ignOf());
         await M.stepLog(orderId, '자사몰 반영 3/6: 스킨 정본 갱신');
         const sk = runScript('scripts/apply-428-skin.js', [nos.join(','), tag], 120000);
         if (sk.code !== 0 || !/✅ 저장/.test(sk.out)) { if (fs.existsSync(backup)) fs.copyFileSync(backup, M.FILE); return stop('③ 스킨 정본 갱신', '스킨 갱신 스크립트가 멈췄어요(정본은 그대로)', { output: tail(sk.out, 5) }); }

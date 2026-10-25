@@ -16,15 +16,19 @@ const KEEP_MAP_FILE = path.join(__dirname, 'desk', 'skin-keep-map.json');
 const KEEP_RE = /data-(btn802|resv768|map772)=/;   // 자사몰 전용 HTML 버튼(#802 · #768 예약 · #772 지도) — 네이버 쪽 같은 자리는 버튼 그림 한 장
 const ubase = u => String(u || '').split('?')[0];
 const strip = h => String(h || '').replace(/<[^>]+>/g, '').replace(/&nbsp;|\s+/g, ' ').trim();
-const lkey = b => !b ? '-' : b.t === 'i' ? 'i:' + ubase(b.src) : b.t === 'ig' ? 'ig:' + (b.srcs || []).map(ubase).join(',') : b.t === 'x' ? 'x:' + strip(b.html) : JSON.stringify(b);
+// #844 글 열쇠는 공백·「·」(&middot;) 뺀 글자 — 모바일 줄 나누기(단락 쪼개기)로 바뀌는 것은 같은 블록으로 봄
+const tkey = h => strip(String(h || '').replace(/&middot;/g, '·')).replace(/[\s·​]/g, '');
+const lkey = b => !b ? '-' : b.t === 'i' ? 'i:' + ubase(b.src) : b.t === 'ig' ? 'ig:' + (b.srcs || []).map(ubase).join(',') : b.t === 'x' ? 'x:' + tkey(b.html) : JSON.stringify(b);
 const isKeep = b => !!b && b.t === 'x' && KEEP_RE.test(b.html || '');
 // 정본의 전용 버튼 묶음(연속 블록)을 새 블록 배열의 같은 자리에 되돌려 놓음 — 앞뒤 블록(그림 주소·글자)이 같은 곳 · 못 찾으면 멈춤(버튼을 잃느니 갱신 안 함)
-function keepButtons(no, old, neo) {
+// mapB(있으면) = 새 블록에 적용한 지킬 주소 치환 — 옛 정본 앞뒤 블록에도 같이 적용해 비교(#844 · 치환된 그림 옆 버튼)
+function keepButtons(no, old, neo, mapB) {
   let kept = 0;
+  const okey = b => lkey(mapB && b ? mapB(b) : b);
   for (let a = 0; a < old.length; a++) {
     if (!isKeep(old[a])) continue;
     let b = a; while (b + 1 < old.length && isKeep(old[b + 1])) b++;
-    const len = b - a + 1, pk = a > 0 ? lkey(old[a - 1]) : null, nk = b + 1 < old.length ? lkey(old[b + 1]) : null, cand = [];
+    const len = b - a + 1, pk = a > 0 ? okey(old[a - 1]) : null, nk = b + 1 < old.length ? okey(old[b + 1]) : null, cand = [];
     for (let j = -1; j + len < neo.length; j++) {
       if (pk === null ? j !== -1 : (j < 0 || lkey(neo[j]) !== pk)) continue;
       if (nk === null ? j + len + 1 !== neo.length : lkey(neo[j + len + 1]) !== nk) continue;
@@ -37,7 +41,14 @@ function keepButtons(no, old, neo) {
   }
   return kept;
 }
-function applySkin(D, snap, det, targets, keepMap) {
+// ign(있으면) = { keys:Set(cafe24_sync_ignore_opts.keys), mapped:Set(cafe24_sync_map 상품번호) } — server.js storeSnapshotForMall(#689)과 같은 거름:
+//   연결표에 있는 상품의 · 팔리는(usable · 재고 > 0) 옵션 가운데 열쇠(price-check.js cafe24OptKey = 서버와 같은 글자 사본)가 든 것 = 네이버 전용 → 스킨 옵션에 안 넣음 · 전부 빠지면 원본 유지(#844 · 3048·3055 레몬 못난이)
+const ignoredOpt = (no, o, ign) => {
+  if (!ign || !ign.keys || !ign.keys.size || !ign.mapped || !ign.mapped.has(String(no))) return false;
+  if (!o || o.usable === false || !(Number(o.stock) > 0)) return false;
+  return ign.keys.has(require(path.join(__dirname, '..', 'price-check.js')).cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || '')));
+};
+function applySkin(D, snap, det, targets, keepMap, ign) {
   const byNo = {}; for (const x of snap.items) byNo[String(x.no)] = x;
   const MAP = new Map((keepMap || []).map(m => [ubase(m.from), m.to]));
   let mapped = 0;
@@ -55,7 +66,7 @@ function applySkin(D, snap, det, targets, keepMap) {
   // ① 옵션·가격 (mergeSnapshot 동일 규칙)
   const onorm = v => String(v || '').normalize('NFC').replace(/^\d+\.\s*/, '').replace(/\s+/g, ' ').trim();
   const okey = o => onorm(o.n1) + '|' + onorm(o.n2);
-  const optLog = [];
+  const optLog = [], ignoredOpts = [];
   for (const no of targets) {
     const it = D.items.find(x => String(x.no) === no); const s = byNo[no];
     if (!it || !s) throw new Error('항목 없음 ' + no);
@@ -64,7 +75,9 @@ function applySkin(D, snap, det, targets, keepMap) {
     if (s.discPrice != null) it.discPrice = s.discPrice;
     if (s.stock != null) it.stock = s.stock;
     const oldByKey = {}; (it.opts || []).forEach(o => { oldByKey[okey(o)] = o; });
-    it.opts = s.opts.filter(o => o && o.usable !== false).map(o => {
+    const sell = s.opts.filter(o => o && o.usable !== false), keep = sell.filter(o => !ignoredOpt(no, o, ign));
+    const src = keep.length ? keep : sell; if (src.length !== sell.length) ignoredOpts.push(...sell.filter(o => !src.includes(o)).map(o => `${no} ${o.n1} ${o.n2}`));
+    it.opts = src.map(o => {
       const prev = oldByKey[okey(o)];
       if (prev) {
         if (o.price != null) prev.price = o.price;
@@ -85,14 +98,14 @@ function applySkin(D, snap, det, targets, keepMap) {
     const n = det.items[k];
     if (!n || !Array.isArray(n.blocks) || !n.blocks.length) { dMissing.push(k); continue; }
     const blocks = n.blocks.map(mapB);
-    keptBtn += keepButtons(k, (D.detailImages[k] || {}).blocks || [], blocks);
+    keptBtn += keepButtons(k, (D.detailImages[k] || {}).blocks || [], blocks, mapB);
     const nv = { count: n.count, imgs: Array.isArray(n.imgs) ? n.imgs.map(u => mapU(u, false)) : n.imgs, blocks };
     if (JSON.stringify(D.detailImages[k]) === JSON.stringify(nv)) dSame++; else { dChanged++; D.detailImages[k] = nv; }
   }
   if (dChanged) D.detailImagesSource = `naver detailContent snapshot ${det.at} (#833 지정 상품만 · 전용 버튼·지킬 주소 유지)`;
-  return { optLog, dKeys, dChanged, dSame, dMissing, kept_btn802: keptBtn, kept_products: keptProducts, mapped };
+  return { optLog, ignored_opts: ignoredOpts, dKeys, dChanged, dSame, dMissing, kept_btn802: keptBtn, kept_products: keptProducts, mapped };
 }
-module.exports = { applySkin, keepButtons, KEEP_MAP_FILE, KEEP_RE };
+module.exports = { applySkin, keepButtons, ignoredOpt, KEEP_MAP_FILE, KEEP_RE };
 
 if (require.main === module) (async () => {
   require('dotenv').config();
@@ -113,7 +126,11 @@ if (require.main === module) (async () => {
   console.log('스냅샷#', snap.id, snap.run_at, '| 상세 스냅샷', det.at, det.count + '종');
   if (Date.now() - new Date(snap.run_at).getTime() > 2 * 3600 * 1000) throw new Error('스냅샷 2시간 초과 — 재수집 후 실행');
   const keepMap = JSON.parse(fs.readFileSync(KEEP_MAP_FILE, 'utf8')).map;
-  const r = applySkin(D, snap, det, TARGET_NOS, keepMap);
+  const cfg = async k => ((await pool.query(`SELECT value FROM agent_office_config WHERE key=$1`, [k])).rows[0] || {}).value || {};
+  const ignCfg = await cfg('cafe24_sync_ignore_opts'), mapCfg = await cfg('cafe24_sync_map');
+  const ign = { keys: new Set((ignCfg.keys || []).map(String)), mapped: new Set(Object.keys(mapCfg.map || {})) };
+  const r = applySkin(D, snap, det, TARGET_NOS, keepMap, ign);
+  if (r.ignored_opts.length) console.log('#844 네이버 전용 옵션 뺌(cafe24_sync_ignore_opts):', r.ignored_opts.join(' · '));
 
   // 재직렬화 + 검산
   const newL = head + JSON.stringify(D) + tail;

@@ -3,12 +3,12 @@
 //   node scripts/verify-833-skin-keep.js
 const fs = require('fs'), crypto = require('crypto');
 const M = require('./desk/_mall');
-const { applySkin, keepButtons, KEEP_MAP_FILE, KEEP_RE } = require('./apply-428-skin.js');
+const { applySkin, keepButtons, ignoredOpt, KEEP_MAP_FILE, KEEP_RE } = require('./apply-428-skin.js');
 const GAM = '6400134206', LEMON = '5531798664', EXP = '7673020911', BIG = '12957301776';
 const BANNER_NEW = 'https://shop-phinf.pstatic.net/20261018_237/1792311810775hV0kL_GIF/46920627530533613_203719265.gif';   // #749 30,100
 const BANNER_OLD = 'https://shop-phinf.pstatic.net/20260929_174/179066175096160EfG_GIF/';                                      // 33,500 (네이버 품절 상세)
 const LIGHT832 = ['20261024_68/1792772187705EBASE_PNG', '20261024_294/17927721879150GjaK_PNG', '20261024_29/17927721880966Lq7L_GIF'];   // #832 꿀팁·먹는법·체험 GIF
-const EXPECT = { btnA: 2, btnAll: 7, light832: 8, mappedAll: 29 };   // mappedAll = 새 블록 안 주소 치환 수(imgs 목록 안 셈)   // 스냅샷 #129 · 상세 스냅샷 10-23 19:42Z · 정본 9d45e060 기준
+const EXPECT = { btnA: 2, btnAll: 7, light832: 8, mappedAll: 34 };   // mappedAll = 새 블록 안 주소 치환 수(imgs 목록 안 셈)   // 스냅샷 #129 · 상세 스냅샷 10-23 19:42Z · 정본 9d45e060 기준 → #844(10/25) 스냅샷 #143 · 상세 08:10Z · 지킬 주소 31줄 · 정본 = run 3053~3056·레몬 고침 뒤 = 치환 34(정본이 바뀌면 이 숫자도 바뀜)
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else fail++; console.log((c ? '  ✓ ' : '  ✗ ') + m); };
 const J = x => JSON.stringify(x), clone = x => JSON.parse(J(x));
@@ -68,7 +68,7 @@ function oldOpts(D, snap, targets) {
     ok(light832(J(D.detailImages)) >= EXPECT.light832, `#832 경량 주소 ${light832(J(D.detailImages))}곳 ≥ ${EXPECT.light832}(품절 상품 옛 주소도 경량으로)`);
     ok(keepMap.every(m => occ(J(D.detailImages), m.from.split('?')[0]) === 0), '지킬 주소 표의 옛 주소 결과에 0');
     ok(r.mapped === EXPECT.mappedAll, `치환 ${r.mapped} = ${EXPECT.mappedAll}(블록 기준 · 스킨 상품 옛 주소 28 + 배너 1)`);
-    ok(J(D.detailImages[LEMON]) === J(D0.detailImages[LEMON]) && J(D.detailImages[EXP]) === J(D0.detailImages[EXP]), '레몬·체험 상세 = 정본');
+    console.log(`   (참고) 레몬·체험 상세 = 정본? ${J(D.detailImages[LEMON]) === J(D0.detailImages[LEMON])}·${J(D.detailImages[EXP]) === J(D0.detailImages[EXP])} — 네이버 상세가 바뀌면 false 가 정상(#844)`);
     ok(r.kept_products === 0 && r.mapped > 0, `kept_products 0 · mapped ${r.mapped} > 0`);
     ok(J(D.items) === J(oldOpts(R, snap, all)), '옵션·가격 갱신 = 종전 규칙 결과와 같음'); }
 
@@ -76,6 +76,34 @@ function oldOpts(D, snap, targets) {
   { const old = clone(D0.detailImages[GAM].blocks), neo = clone(det.items[GAM].blocks).map(b => b); neo.splice(22, 1);   // 버튼 앞 블록을 없앰
     let threw = false; try { keepButtons(GAM, old, neo); } catch (e) { threw = /#833/.test(e.message); }
     ok(threw, '앞 블록이 없어진 새 상세 → 멈춤(오류)'); }
+
+  console.log('D · #844 비교 열쇠(치환된 그림 옆 버튼 · 줄 나눈 글)');
+  { const BTN = { t: 'x', html: '<div data-btn802="1">버튼</div>' }, OLDU = 'https://shop-phinf.pstatic.net/x/OLD_JPEG/a.jpg', NEWU = 'https://shop-phinf.pstatic.net/x/NEW_JPEG/b.jpg';
+    const mapB = b => b.t === 'i' && b.src === OLDU ? { ...b, src: NEWU } : b;
+    const old1 = [{ t: 'x', html: '<p>앞 글</p>' }, BTN, { t: 'i', src: OLDU }], neo1 = () => [{ t: 'x', html: '<p>앞 글</p>' }, { t: 'i', src: 'btn.png' }, { t: 'i', src: NEWU }];
+    let n1 = neo1(), k1 = 0; try { k1 = keepButtons('T1', old1, n1, mapB); } catch (e) { k1 = -1; }
+    ok(k1 === 1 && J(n1[1]) === J(BTN), '치환표로 주소 바뀐 그림 바로 앞 버튼 → 제자리 유지(mapB 비교)');
+    let t1 = false; try { keepButtons('T1', old1, neo1()); } catch (e) { t1 = /#833/.test(e.message); }
+    ok(t1, '같은 경우 mapB 없이 = 종전처럼 멈춤(대조 근거 확인)');
+    const old2 = [{ t: 'x', html: '<p>👉 11월 1일(일) OPEN &middot; 지금 예약 받고 있어요</p>' }, BTN, { t: 'x', html: '<p>📅 방문 날짜&middot;시간은 예약 · 스토어 구매도 가능해요</p>' }];
+    const n2 = [{ t: 'x', html: '<p>👉 11월 1일(일) OPEN</p>\n<p>지금 예약 받고 있어요</p>' }, { t: 'i', src: 'btn.png' }, { t: 'x', html: '<p>📅 방문 날짜·시간은 예약</p><p>스토어 구매도 가능해요</p>' }];
+    let k2 = 0; try { k2 = keepButtons('T2', old2, n2, mapB); } catch (e) { k2 = -1; }
+    ok(k2 === 1 && J(n2[1]) === J(BTN), '앞뒤 글을 줄 나눔(공백·「·」 빠짐) → 같은 블록으로 보고 버튼 유지');
+    const n3 = [{ t: 'x', html: '<p>👉 11월 2일(월) OPEN</p>' }, { t: 'i', src: 'btn.png' }, old2[2]];
+    let t3 = false; try { keepButtons('T3', old2, n3, mapB); } catch (e) { t3 = /#833/.test(e.message); }
+    ok(t3, '앞 글 내용(글자)이 달라지면 → 여전히 멈춤'); }
+
+  console.log('E · #844 네이버 전용 옵션(cafe24_sync_ignore_opts) 거름');
+  { const ic = await M.cfgGet('cafe24_sync_ignore_opts'), mc = await M.cfgGet('cafe24_sync_map');
+    const ign = { keys: new Set(((ic && ic.keys) || []).map(String)), mapped: new Set(Object.keys((mc && mc.map) || {})) };
+    const sl = (snap.items.find(x => String(x.no) === LEMON) || {}).opts || [], ugly = sl.filter(o => o && o.usable !== false && ignoredOpt(LEMON, o, ign));
+    const D1 = clone(D0), r1 = applySkin(D1, snap, det, [LEMON], keepMap, ign), D2 = clone(D0); applySkin(D2, snap, det, [LEMON], keepMap);
+    const lo = D => D.items.find(x => String(x.no) === LEMON).opts;
+    console.log(`   스냅샷 레몬 판매 옵션 ${sl.filter(o => o && o.usable !== false).length} · 전용 열쇠 해당 ${ugly.length} · 거름 결과 ${lo(D1).length} · 거름 없이 ${lo(D2).length}`);
+    ok(ugly.length === 0 || (lo(D1).length === lo(D2).length - ugly.length && !lo(D1).some(o => ignoredOpt(LEMON, { ...o, usable: true, stock: o.stock }, ign))), '레몬 = 전용 옵션(못난이 5kg) 빠짐 · 나머지 그대로');
+    ok(r1.ignored_opts.length === ugly.length, `결과 ignored_opts ${r1.ignored_opts.length} = ${ugly.length}`);
+    const o0 = { n1: '제주 레몬', n2: '제주 그린레몬 못난이5kg(랜덤과)', usable: true, stock: 5 };
+    ok(ignoredOpt(LEMON, o0, ign) && !ignoredOpt(LEMON, { ...o0, stock: 0 }, ign) && !ignoredOpt('99999', o0, ign) && !ignoredOpt(LEMON, o0, null), '거름 조건 = 연결표 상품 · 재고 > 0 · 열쇠 일치일 때만(서버 #689 와 같음)'); }
 
   const h1 = crypto.createHash('sha1').update(M.readLocal()).digest('hex');
   ok(h1 === h0, '정본 파일 그대로(쓰기 0)');
