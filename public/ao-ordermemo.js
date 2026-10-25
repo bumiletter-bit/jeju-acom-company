@@ -2,7 +2,7 @@
 //   설계 = docs/850-order-memo-design.md · 시안 docs/850-mock-*.png · 서버 계약 = docs/850-api.md(워커2) — 서버 길은 아래 API 한 곳에만(계약이 바뀌면 여기만).
 //   창 = 손님 연락 창과 같은 꼴(폰 = 전체 화면 · PC = 2단: 왼쪽 넣기 + 목록 / 오른쪽 「내일 발주에 들어갈 것」 = for-ship 글 그대로).
 //   겹·뒤로가기 = ao-desk.js 기록(AkmAoDesk.hbPush/hbDrop · #677·#678) — 열린 순서대로 닫힘: 옵션 목록 → 정리 카드 → 미리보기 판 → 메모함.
-//   흐름 = 손님 글 붙여 넣기 → [정리하기](preview · 저장 0) → 정리 결과 카드(칸마다 고침 · ↺ = 처음 정리한 값 · 빈칸 빨강+이유 · 손님께 물어볼 문자 초안) → [저장].
+//   흐름 = 손님 글 붙여 넣기 → [입력하기](preview · 저장 0) → 정리 결과 카드(칸마다 고침 · ↺ = 처음 정리한 값 · 빈칸 빨강+이유 · 손님께 물어볼 문자 초안) → [저장].
 //   고친 것이 있는데 닫으면(× · 취소 · Esc · 뒤로가기) 「저장 안 하고 닫을까요?」 한 번.
 //   목록 = 한 줄씩 [×] 지우기(되돌리기 6초) · 날짜 지정 줄 = 「10/30 발송 · 대기」 · 누르면 같은 카드로 고치기.
 //   입구 = [+] 메뉴(ao-desk.js) · 최종발주 메모 칸 위 링크(final-order.js) · 문자 대화 [발주 메모로 보내기](AkmOrderMemo.fromText).
@@ -56,7 +56,7 @@
     //   틀 꼴 = 서버 규칙 줄(order-memo.js · invoice-v2 parseLines · sizeLines)이 그대로 읽는 「번호 + 지시」 꼴
     const TEL_PH = '000-0000-0000';
     const TAGS = [['cash', '현금 손님', '현금 손님'], ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
-    // 틀 자리를 안 고친 채 [정리하기] = 막고 그 자리를 골라 줌
+    // 틀 자리를 안 고친 채 [입력하기] = 막고 그 자리를 골라 줌
     const TPL_HOLES = [[TEL_PH, '번호를 넣어 주세요 — 000-0000-0000 자리에 손님 번호를 써 주세요'], [/(^|[^0-9])00일/, '발송 날짜를 넣어 주세요 — 00일 자리에 날짜를 써 주세요'], ['보내는이 홍길동', '보내는 분 이름을 넣어 주세요 — 홍길동 자리를 바꿔 주세요']];
     const PLATS = ['네이버', '쿠팡', '자사몰'];
     const RECENT_KEY = 'akm_om_recent_opts';
@@ -145,7 +145,7 @@
             <div class="om-cols">
               <div class="om-left">
                 <form class="om-in" id="om-in" autocomplete="off">
-                  <div class="om-in-h"><i class="om-in-ic">${ICON_CLIP}</i><div><b>손님 글을 그대로 붙여 넣어요</b><span>이름·번호·주소·품목이 섞여 있어도 돼요 · 정리는 이쪽에서</span></div></div>
+                  <div class="om-in-h"><i class="om-in-ic">${ICON_CLIP}</i><div><b>손님 글을 그대로 붙여 넣어요</b><span>이름·번호·주소·품목이 섞여 있어도 돼요 · 칸 나누기는 이쪽에서</span></div></div>
                   <div class="om-in-paper">
                     <label class="om-sr" for="om-raw">손님 글 · 메모</label>
                     <textarea id="om-raw" class="has-xs" rows="4" maxlength="4000" spellcheck="false"></textarea>
@@ -155,8 +155,7 @@
                   </div>
                   <div class="om-tags" role="group" aria-label="빠른 꼬리표(안 눌러도 글에서 읽어요)">${TAGS.map(t => `<button type="button" class="om-tag" data-tag="${t[0]}">${t[1]}</button>`).join('')}</div>
                   <div class="om-in-acts">
-                    <button type="button" class="om-btn" id="om-paste">붙여넣기</button>
-                    <button type="submit" class="om-btn primary" id="om-go" disabled>정리하기</button>
+                    <button type="submit" class="om-btn primary" id="om-go" disabled>입력하기</button>
                   </div>
                   <p class="om-in-note" id="om-in-note" role="status"></p><button type="button" class="om-link om-in-undo" id="om-raw-undo" hidden>지운 줄 되돌리기</button>
                 </form>
@@ -203,11 +202,11 @@
         raw.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!$('om-go').disabled) runPreview(); } });
         $('om-raw-clear').addEventListener('click', () => { raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); inNote(''); raw.focus(); });
         $('om-in').addEventListener('submit', e => { e.preventDefault(); runPreview(); });
-        $('om-paste').addEventListener('click', paste);
         OM.el.querySelector('.om-tags').addEventListener('click', e => {
             const b = e.target.closest('.om-tag'); if (!b) return;
             const k = b.dataset.tag, tpl = (TAGS.find(t => t[0] === k) || [])[2];
             b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 320);   // 누른 순간만 표시
+            if (k === 'cash') { cashCard(); return; }   // #853 현금 손님 = 바로 빈 현금 카드
             if (tpl) tplInsert(tpl);
         });
         OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
@@ -306,27 +305,17 @@
         tagsFromText(); xLayout();
         $('om-in').classList.toggle('filled', has);
     }
-    function inNote(t, k) { const n = $('om-in-note'); if (!n) return; n.textContent = t || '정리하면 내용을 확인하고 [저장]해요 · 저장한 줄은 다음 최종발주에 저절로 들어가요.'; n.dataset.k = k || ''; }
-    async function paste() {
-        const raw = $('om-raw');
-        try {
-            if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error('no');
-            const t = await navigator.clipboard.readText();
-            if (!t || !t.trim()) { inNote('복사해 둔 글이 없어요 · 손님 글을 먼저 복사해 주세요', 'warn'); return; }
-            raw.value = OM.raw.trim() ? OM.raw.replace(/\s*$/, '') + '\n' + t : t; OM.raw = raw.value; inState(); inNote('붙여 넣었어요 · [정리하기]를 눌러 주세요', 'ok');
-            raw.focus({ preventScroll: true });
-        } catch (e) { raw.focus(); inNote('이 기기는 단추로 못 붙여요 · 글 칸을 길게 눌러 [붙여넣기]를 골라 주세요', 'warn'); }
-    }
+    function inNote(t, k) { const n = $('om-in-note'); if (!n) return; n.textContent = t || '입력하면 내용을 확인하고 [저장]해요 · 저장한 줄은 다음 최종발주에 저절로 들어가요.'; n.dataset.k = k || ''; }
     async function runPreview(src) {
         if (OM.busy) return;
         const raw = src ? src.text : OM.raw.trim(); if (!raw) return;
         if (!src) { const hole = tplHole(OM.raw); if (hole) { inNote(hole.msg, 'err'); const ta = $('om-raw'); ta.focus({ preventScroll: true }); try { ta.setSelectionRange(hole.at, hole.at + hole.len); } catch (e) { /* 그대로 */ } return; } }   // #850-c 틀 자리 안 고침 = 막음
-        OM.busy = true; inState(); $('om-go').textContent = '정리하는 중…'; if (!src) inNote('글을 읽고 있어요 · 길면 몇 초 걸려요');
+        OM.busy = true; inState(); $('om-go').textContent = '입력하는 중…'; if (!src) inNote('글을 읽고 있어요 · 길면 몇 초 걸려요');
         const sms = !src && OM.smsSrc ? OM.smsSrc : null;   // #850-g 문자 대화에서 입력 칸에 채운 글 = 출처·번호는 그 대화
         const req = { raw, tags: src ? (src.tags || []) : [...OM.tags], source: src ? src.source : sms ? 'sms:' + sms.threadId : 'manual' };
         if ((src || sms) && (src || sms).phone) req.phone = (src || sms).phone;
         const res = await API.preview(req);
-        OM.busy = false; $('om-go').textContent = '정리하기'; inState();
+        OM.busy = false; $('om-go').textContent = '입력하기'; inState();
         if (!res.ok) {
             const msg = res.status === 404 ? '서버가 아직 발주 메모함을 몰라요(배포 전)' : res.status === 429 ? '잠시 뒤 다시 해 주세요(정리를 너무 자주 눌렀어요)' : errText(res, '정리하지 못했어요 · 다시 눌러 주세요');
             if (src) toast(msg); else inNote(msg, 'err');
@@ -638,11 +627,11 @@
         const tags = []; if (c.rows.some(r => r.kind === 'cash' && !r.indiv)) tags.push('<span class="om-pill k-cash">현금 손님</span>'); if (c.rows.some(r => r.kind === 'cash' && r.indiv)) tags.push('<span class="om-pill k-addr">입력삭제 주소 줄</span>');   // indiv = 입력삭제 주문의 주소 줄(「!」 없음 · 서버가 정함)
         const d = c.rows.map(r => r.ship_date).filter(Boolean)[0]; if (d) tags.push(`<span class="om-pill k-later">${esc(mdw(d))} 발송</span>`);
         const srcLabel = /^sms/.test(c.source || '') ? '문자 대화에서 가져옴' + (c.from && c.from.phone ? ' · ' + esc(c.from.phone) : '') : '붙여 넣은 글';
-        const ask = askText(c);
+        const ask = '';   // #853 「손님께 물어볼 문자 초안」 칸 안 그림(서버 sms_draft 는 받아 둠 · askText 는 남김)
         card.innerHTML = `
           <header class="om-card-h">
             <button type="button" class="om-back" data-cact="cancel" aria-label="닫기"><span aria-hidden="true">×</span></button>
-            <h3 id="om-card-t">${c.mode === 'edit' ? '메모 고치기' : '정리 결과 확인'}</h3>
+            <h3 id="om-card-t">${c.mode === 'edit' ? '메모 고치기' : c.cash ? '현금 손님 입력' : '정리 결과 확인'}</h3>
             <button type="button" class="om-btn sm om-reset" data-cact="reset"${c.dirty ? '' : ' hidden'}>${ICON_UNDO}처음으로</button>
             <span class="om-hpill${n ? '' : ' ok'}" id="om-card-n">${n ? '빈칸 ' + n : '빈칸 없음'}</span>
           </header>
@@ -933,7 +922,7 @@
         c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(r.cells[4]); });
         const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
         const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();
-        if (c.mode !== 'edit' && (!c.from || c.from.filled)) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
+        if (c.mode !== 'edit' && !c.cash && (!c.from || c.from.filled)) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
         cardClose(true);
         inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
         OM.tab = 'open'; syncTabs(); load();
@@ -1009,7 +998,7 @@
         OWN.on = false; OWN.stack = [];
     }
     // #850-g 문자 대화 [발주 메모로] = 이 대화로 마지막 발주 메모를 저장한 뒤의 손님 글 전부(우리 답 사이 것도 · 없으면 최근 24시간 · 사진 글 빼고 · 최대 10개 · 시간순)
-    //   → 입력 칸에 채워 사람이 보고 지우거나 고친 뒤 [정리하기](말풍선 꾹 누르기 = 그 글만 바로 정리는 fromText 그대로)
+    //   → 입력 칸에 채워 사람이 보고 지우거나 고친 뒤 [입력하기](말풍선 꾹 누르기 = 그 글만 바로 정리는 fromText 그대로)
     async function fillFromSms(msgs, o) {
         o = o || {};
         open({ noFocus: true });
@@ -1024,7 +1013,7 @@
         if (!pick.length) { inNote(since ? '마지막 발주 메모 뒤로 손님이 보낸 글이 없어요' : '최근 24시간 손님이 보낸 글이 없어요', 'warn'); return 0; }
         const raw = $('om-raw'); raw.value = pick.map(m => String(m.body).trim()).join('\n'); OM.raw = raw.value; OM.tags.clear(); syncTags();
         OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true }; inState();
-        inNote(`문자 ${pick.length}개를 넣었어요 · 필요 없는 글은 지우고 [정리하기]`, 'ok');
+        inNote(`문자 ${pick.length}개를 넣었어요 · 필요 없는 글은 지우고 [입력하기]`, 'ok');
         raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ }
         return pick.length;
     }
@@ -1036,14 +1025,19 @@
         open({ noFocus: true });
         const raw = $('om-raw'), cur = raw.value, empty = !cur.trim();
         const same = !empty && OM.smsSrc && String(OM.smsSrc.threadId) === String(o.threadId || '');
-        if (!empty && OM.smsSrc && !same) { inNote('다른 손님 글이 칸에 있어요 · 먼저 [정리하기] 하거나 지워 주세요', 'warn'); return false; }   // 번호가 섞이면 남의 번호가 구매자 번호로 들어감
+        if (!empty && OM.smsSrc && !same) { inNote('다른 손님 글이 칸에 있어요 · 먼저 [입력하기] 하거나 지워 주세요', 'warn'); return false; }   // 번호가 섞이면 남의 번호가 구매자 번호로 들어감
         raw.value = (empty ? '' : cur.replace(/\n*$/, '\n')) + line; raw.value = raw.value.slice(0, 4000); OM.raw = raw.value; xUndoHide();
         if (empty) OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true };   // 손으로 친 글 뒤(smsSrc 없음) = 그대로 없음 → manual·번호 없음
         inState();
         const n = raw.value.split('\n').filter(s => s.trim()).length;
-        inNote(empty || same ? `문자 글을 넣었어요(${n}줄) · 더 넣거나 [정리하기]` : '직접 친 글과 섞여 번호를 안 붙여요', empty || same ? 'ok' : 'warn');
+        inNote(empty || same ? `문자 글을 넣었어요(${n}줄) · 더 넣거나 [입력하기]` : '직접 친 글과 섞여 번호를 안 붙여요', empty || same ? 'ok' : 'warn');
         raw.scrollTop = raw.scrollHeight; xLayout();
         return true;
+    }
+    // #853 「현금 손님」 = 정리 결과 카드의 현금 줄 칸 그대로 빈 채로(옵션·수량·받는 분·연락처·배송지(주소 확인)·구매자 연락처·배송메세지·발송일·보내는 분) → [저장] = 사람이 만든 현금 줄 POST(AI 0) · 입력 칸 글 무접촉
+    function cashCard() {
+        open({ noFocus: true });
+        cardOpen({ mode: 'new', cash: true, raw: '', tags: ['cash'], source: 'manual', rows: [blankRow('cash')], leftover: '', ask: '', from: null });
     }
     // 문자 대화에서: 그 글로 바로 정리 → 카드(저장 전엔 DB 0)
     function fromText(text, o) {

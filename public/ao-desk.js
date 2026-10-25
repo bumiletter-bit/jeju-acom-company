@@ -1642,7 +1642,7 @@
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
-            + `<div class="sms-reply-row">${window.AkmOrderMemo ? '<button type="button" class="desk-btn sms-tomemo" id="sms-tomemo" title="손님 글을 발주 메모함으로 정리해요(말풍선을 꾹 눌러도 돼요)">발주 메모로</button>' : ''}<span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #850 발주 메모로 보내기
+            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
             + `</form>`;
         TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
         if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
@@ -1773,7 +1773,7 @@
             const holdHere = out && m.state === 'queued' && m.sender === 'bot' && !holdShown; if (holdHere) holdShown = true;   // 여러 통으로 나뉜 봇 답이면 단추는 첫 통에만
             const hold = holdHere ? ' <button type="button" class="sms-hold" title="이 봇 답을 보내지 않고, 이 대화는 직원이 맡아요">보내지 않기</button>' : '';   // 유예 중인 봇 답을 사람이 막는다(서버 /handled = 대기 발송 취소 + 직원 답변으로 잠금)
             const omOn = !out && String(m.body || '').trim() && window.AkmOrderMemo && typeof window.AkmOrderMemo.appendFromSms === 'function', omDone = omOn && SMS.omPut.keys.has(omK(m, mi));
-            const omc = omOn ? ` <button type="button" class="sms-omchip${omDone ? ' done' : ''}" data-mi="${mi}" data-ok="${esc(omK(m, mi))}" title="이 글을 발주 메모함 입력 칸에 넣어요">${omDone ? '넣음' : '발주메모'}</button>` : '';   // #852 손님 글마다(사진만 = 없음)
+            const omc = omOn ? ` <button type="button" class="sms-omchip${omDone ? ' done' : ''}" data-mi="${mi}" data-ok="${esc(omK(m, mi))}" title="이 글을 발주 메모함 입력 칸에 넣어요">${omDone ? '발주메모 ✓' : '발주메모'}</button>` : '';   // #852 손님 글마다(사진만 = 없음)
             return sep + `<div class="sms-msg ${out ? 'out' : 'in'}" data-s="${esc(m.state || '')}" data-who="${esc(m.sender || '')}">${imgs ? `<div class="sms-pics">${imgs}</div>` : ''}${m.body ? `<div class="sms-bub">${esc(m.body)}</div>` : ''}<small>${meta}${hold}${omc}</small></div>`;
         }).join('') : '<div class="desk-empty ship-empty">주고받은 문자가 없어요.</div>';
         smsImgs();
@@ -1829,6 +1829,7 @@
         { const band = $('sms-draft'), fresh = dr && SMS.newDraft && SMS.newDraft === t.draft_text && v.trim() !== String(t.draft_text).trim(), k = fresh ? 'new' : (dr && SMS.chgAt && Date.now() - SMS.chgAt < 8000 && v.trim() === String(t.draft_text).trim()) ? 'chg' : 'std';
             band.hidden = !dr;
             if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>손님 글이 더 와서 봇이 초안을 새로 만들었어요.</span><button type="button" class="desk-btn sm" id="sms-draft-new">새 초안으로 바꾸기</button>' : k === 'chg' ? '초안이 새로 바뀌었어요. 읽어 보고 보내 주세요.' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; } }
+        { const cl = $('sms-clear'); if (cl) cl.disabled = !has; }   // #853 비어 있으면 흐림
         $('sms-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
         const w = $('sms-warn'), dead = smsDead();
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
@@ -1994,11 +1995,12 @@
         const pane = $('sms-pane'); if (!pane) return;
         pane.addEventListener('click', e => {
             if (e.target.closest('#sms-tomemo')) { omFromSms(); return; }
+            if (e.target.closest('#sms-clear')) { const ta = $('sms-text'); if (ta && ta.value) { ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus({ preventScroll: true }); } return; }   // #853 칸만 비움(서버 초안 무접촉)
             const c = e.target.closest('.sms-omchip'); if (!c || !SMS.open) return;   // #852 말풍선 「발주메모」 칩 = 그 글 한 개를 메모함 입력 칸에 덧붙임
             const M = window.AkmOrderMemo, ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [], m = ms.find((x, i) => String(x.id != null ? x.id : 'i' + i + ':' + (x.event_at || '')) === c.dataset.ok);   // 자리 번호가 아니라 글 id 로 집음(그 사이 새 글이 와도 같은 글)
             if (!M || !m || m.direction === 'out' || !String(m.body || '').trim()) return;
             const t = (SMS.thread && SMS.thread.thread) || SMS.openRow || {};
-            if (M.appendFromSms(m.body, { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) }) && SMS.omPut) { SMS.omPut.keys.add(c.dataset.ok); c.classList.add('done'); c.textContent = '넣음'; }
+            if (M.appendFromSms(m.body, { phone: smsFull(t) ? smsFmtNo(smsFull(t)) : '', threadId: String(SMS.open) }) && SMS.omPut) { SMS.omPut.keys.add(c.dataset.ok); c.classList.add('done'); c.textContent = '발주메모 ✓'; }
         });
         let lp = 0, lpAt = null;
         const bubOf = e => { const b = e.target.closest && e.target.closest('.sms-msg.in .sms-bub'); return b && pane.contains(b) ? b : null; };

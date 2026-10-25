@@ -22,6 +22,8 @@
     --d-ch-talk-bg: #D1FADF; --d-ch-talk-fg: #05603A;
     --d-ch-qna-bg: #FEF0C7; --d-ch-qna-fg: #93370D;
     --d-ch-inquiry-bg: #FCE7F6; --d-ch-inquiry-fg: #9E165F;
+    --d-om-bg: #FFFAEB; --d-om-fg: #93370D; --d-om-line: #F5B53F;     /* #853 발주메모 칩(호박 · 글자 대비 8:1) · 누름 = 채운 색(흰 글자 5.4:1) */
+    --d-om-on-bg: #B54708; --d-om-on-fg: #FFFFFF;
     --d-pf-naver: #067A3A; --d-pf-naver-dot: #03C75A;         /* #758 판매처 색(네이버 = 초록 · 쿠팡 = 빨강 · 자사몰 = 아꼼이 귤색) — 글자는 줄 바탕 4종 위 4.5 이상 · 점은 판매처 본색 */
     --d-pf-coupang: #C4001F; --d-pf-coupang-dot: #E4002B;
     --d-pf-mall: #A64B06; --d-pf-mall-dot: #F08A24;
@@ -1536,6 +1538,8 @@ html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
     --d-ch-talk-bg: #054F31; --d-ch-talk-fg: #A6F4C5;
     --d-ch-qna-bg: #7A2E0E; --d-ch-qna-fg: #FEDF89;
     --d-ch-inquiry-bg: #851651; --d-ch-inquiry-fg: #FCCEEE;
+    --d-om-bg: #3A1D0B; --d-om-fg: #FEDF89; --d-om-line: #B5641A;     /* #853 발주메모 칩 야간(글자 12:1) · 누름 = 호박 채움(짙은 글자 9:1) */
+    --d-om-on-bg: #FDB022; --d-om-on-fg: #3A1D0B;
     --d-pf-naver: #5EE08F; --d-pf-naver-dot: #03C75A;         /* #758 판매처 색 */
     --d-pf-coupang: #FF8A99; --d-pf-coupang-dot: #FF4D63;
     --d-pf-mall: #FFB066; --d-pf-mall-dot: #F08A24;
@@ -2207,12 +2211,13 @@ html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb:hover { background: #
 @media (prefers-reduced-motion: reduce) { .side-theme { transition: none; } }
 html[data-ao-theme="dark"] .side-theme { color: var(--d-warn); }
 /* #852 손님 말풍선 시간 옆 「발주메모」 칩 = 작고 음영 · 누른 칩은 「넣음」 · 보이는 크기는 작게, 누르는 자리는 44px(폰) */
-.sms-omchip { position: relative; margin-left: 6px; min-height: 22px; padding: 0 8px; border: 0; border-radius: 999px; background: var(--d-soft); color: var(--d-sub); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; vertical-align: middle; }
+.sms-omchip { position: relative; margin-left: 6px; min-height: 22px; padding: 0 8px; border: 1px solid var(--d-om-line); border-radius: 999px; background: var(--d-om-bg); color: var(--d-om-fg); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; vertical-align: middle; transition: background-color .15s ease-out, color .15s ease-out; }
 .sms-omchip::after { content: ""; position: absolute; inset: -6px -4px; }
-.sms-omchip:hover { background: var(--d-accent-soft); color: var(--d-accent); }
-.sms-omchip:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
-.sms-omchip.done { background: var(--d-accent-soft); color: var(--d-accent); }
-.sms-omchip.done::before { content: "✓ "; }
+.sms-omchip:hover { border-color: var(--d-om-on-bg); }
+.sms-omchip:active { transform: scale(.97); }
+.sms-omchip:focus-visible { outline: 2px solid var(--d-om-on-bg); outline-offset: 1px; }
+.sms-omchip.done { border-color: var(--d-om-on-bg); background: var(--d-om-on-bg); color: var(--d-om-on-fg); }
 @media (max-width: 960px), (pointer: coarse) { .sms-omchip::after { inset: -11px -6px; } .sms-omchip { margin-left: 8px; } }
-:where(html[data-ao-theme="dark"]) .sms-omchip { background: var(--d-soft); color: var(--d-sub); }
-:where(html[data-ao-theme="dark"]) .sms-omchip.done, :where(html[data-ao-theme="dark"]) .sms-omchip:hover { background: var(--d-accent-soft); color: var(--d-accent); }
+@media (prefers-reduced-motion: reduce) { .sms-omchip { transition: none; } .sms-omchip:active { transform: none; } }
+:where(html[data-ao-theme="dark"]) .sms-omchip { border-color: var(--d-om-line); background: var(--d-om-bg); color: var(--d-om-fg); }
+:where(html[data-ao-theme="dark"]) .sms-omchip.done { border-color: var(--d-om-on-bg); background: var(--d-om-on-bg); color: var(--d-om-on-fg); }
