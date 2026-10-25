@@ -77,7 +77,7 @@ const DEFAULT_CONFIG = Object.freeze({
         { key: 'w100',     label: '물방울 +100',       points: 100, weight: 30 }
     ],
     water_cost: 10,
-    level_thresholds: [0, 5, 15, 30, 50],
+    level_thresholds: [0, 10, 25, 45, 70, 100],   // #849: 귤나무 화면 6단계와 같게(종전 [0, 5, 15, 30, 50])
     daily_spin_limit: 1,            // ⚠️ 스키마상 1 고정 (상단 대표 확인 4번)
     physical_monthly_limit: 30
 });
@@ -534,7 +534,9 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                 `INSERT INTO tree_state (member_id, water_count, level, updated_at) VALUES ($1, 1, 1, now())
                  ON CONFLICT (member_id) DO UPDATE SET water_count = tree_state.water_count + 1, updated_at = now()
                  RETURNING water_count`, [member.id]);
-            return { ledger, waterCount: Number(up.rows[0].water_count) };
+            const waterCount = Number(up.rows[0].water_count);   // #849: 자사몰 길도 레벨 저장(종전엔 내부 /tree/water 만 적어 전원 Lv1)
+            await client.query(`UPDATE tree_state SET level=$1 WHERE member_id=$2`, [calcLevel(cfg.level_thresholds, waterCount), member.id]);
+            return { ledger, waterCount };
         });
         const goal = cfg.level_thresholds.slice(-1)[0] || 100;
         if (out.waterCount === goal && typeof notify === 'function') {

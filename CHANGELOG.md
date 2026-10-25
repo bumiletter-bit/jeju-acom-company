@@ -1,3 +1,9 @@
+## v5.9.628 (2026-10-25) — #849 자사몰 귤나무 레벨 서버 기록(워커2 · 워커1 점검 막을 것 0 · 검증 79/79)
+
+- 자사몰 물주기 공개 길 /pub/tree-water 가 water_count 만 올리고 tree_state.level 을 안 적어 100행 전부 Lv1 이던 것 → 내부 길과 같게 calcLevel 로 level 저장. 손님 화면(farm.html)은 원래 물 횟수로 6단계를 그려 왔음(영향 0).
+- 단계 기본값 = 화면과 같은 [0,10,25,45,70,100](server.js 6010 · mall-api.js DEFAULT_CONFIG) · 배포 뒤 총괄 = 실DB mall_game_config.level_thresholds 같은 값 + 기존 행 재계산.
+- 🔵 후보 = /pub/tree-water 같은 idem 동시 2번 → 500 1번(무해 · 유일 위반 catch) · DEFAULT_CONFIG water_cost 10(데모 값).
+
 ## v5.9.627 (2026-10-25) — #842 네이버 러너 seo 칸(태그·페이지 제목 · 워커2 · 워커1 점검 · verify-842-weight 52/52)
 
 - 상품 PUT 허용 칸 seo = seoInfo.pageTitle(≤100자) · sellerTags(≤10 · {text, code?} · 중복·빈 글·띄어쓰기 거절) · 상품명(name)은 어떤 길로도 안 실림(떼어 실행 = 두 칸 밖 바뀐 바이트 0) · 되돌리기·예상 경로 · naver-detail --page-title · --tags. 감귤 6400134206 철 지난 태그 3(추석선물·명절선물·추석선물세트) → 타이벡감귤·노지감귤·제주도감귤 · 제목 하우스 빼기 용.
