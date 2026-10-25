@@ -194,13 +194,17 @@
     function bind() {
         const raw = $('om-raw');
         $('om-close').addEventListener('click', () => close(true));
-        raw.addEventListener('input', e => { rawTel(raw, e); OM.raw = raw.value; if (!raw.value.trim()) OM.smsSrc = null; xUndoHide(); inState(); });   // #852 칸이 비면 문자 출처도 끊음
+        raw.addEventListener('input', e => { telMark(raw, e); OM.raw = raw.value; if (!raw.value.trim()) OM.smsSrc = null; xUndoHide(); inState(); });   // #852 칸이 비면 문자 출처도 끊음
+        ['keyup', 'click', 'pointerup'].forEach(k => raw.addEventListener(k, () => telLeave(raw)));   // #857 줄을 떠나면(다른 줄로 커서) 그 줄 번호 정리
+        raw.addEventListener('blur', () => telLeave(raw, true));   // #857 칸 밖으로 나가면
+        raw.addEventListener('compositionstart', () => { OM.telComp = true; });
+        raw.addEventListener('compositionend', () => { OM.telComp = false; });
         raw.addEventListener('scroll', xLayout, { passive: true });
         if (window.ResizeObserver) new ResizeObserver(() => xLayout()).observe(raw);
         $('om-raw-xs').addEventListener('click', e => { const b = e.target.closest('.om-in-x'); if (b) xDel(Number(b.dataset.ln)); });
         $('om-raw-undo').addEventListener('click', xUndo);
         raw.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!$('om-go').disabled) runPreview(); } });
-        $('om-raw-clear').addEventListener('click', () => { raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); inNote(''); raw.focus(); });
+        $('om-raw-clear').addEventListener('click', () => { OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); inNote(''); raw.focus(); });
         $('om-in').addEventListener('submit', e => { e.preventDefault(); runPreview(); });
         OM.el.querySelector('.om-tags').addEventListener('click', e => {
             const b = e.target.closest('.om-tag'); if (!b) return;
@@ -255,6 +259,7 @@
     // ── 넣기 칸 ───────────────────────────────────────
     // 틀 한 줄을 메모장 끝에 넣고 번호 자리(000-0000-0000)를 고른 채 초점 — 자판으로 바로 치면 그 자리가 바뀜
     function tplInsert(tpl) {
+        telLeave($('om-raw'), true);   // #857 틀 넣기 전 친 줄 번호 정리
         const raw = $('om-raw'), cur = raw.value, pre = cur && !/\n$/.test(cur) ? cur + '\n' : cur;
         const above = cur.split('\n').map(s => s.trim()).filter(Boolean).pop() || '', m = above.match(/^(0\d{1,3}[-\s]?\d{3,4}[-\s]?\d{4})(?=\s|$)/);   // #850-f 바로 윗줄이 진짜 번호로 시작하면 그 번호로(한 손님 요청 2가지 = 번호 한 번)
         if (!tpl.startsWith(TEL_PH)) { raw.value = pre + tpl; OM.raw = raw.value; inState(); raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ } inNote(`「${tpl}」 줄을 넣었어요`, 'ok'); return; }
@@ -282,25 +287,41 @@
     }
     function xDel(i) {
         const raw = $('om-raw'), lines = raw.value.split('\n'); if (!(i >= 0 && i < lines.length)) return;
-        OM.xUndo = { value: raw.value, smsSrc: OM.smsSrc };
+        telLeave(raw, true); OM.xUndo = { value: raw.value, smsSrc: OM.smsSrc };
         lines.splice(i, 1); raw.value = lines.join('\n'); OM.raw = raw.value; inState();
         const u = $('om-raw-undo'); if (u) u.hidden = false;
         if (!OM.raw.trim()) OM.smsSrc = null;
         const nb = $('om-raw-xs').querySelector(`[data-ln="${Math.min(i, lines.length - 1)}"]`) || raw; nb.focus({ preventScroll: true });
     }
-    function xUndo() { const U = OM.xUndo; if (!U) return; const raw = $('om-raw'); raw.value = U.value; OM.raw = U.value; OM.smsSrc = U.smsSrc; OM.xUndo = null; xUndoHide(); inState(); raw.focus({ preventScroll: true }); }
+    function xUndo() { const U = OM.xUndo; if (!U) return; const raw = $('om-raw'); OM.telLn = null; raw.value = U.value; OM.raw = U.value; OM.smsSrc = U.smsSrc; OM.xUndo = null; xUndoHide(); inState(); raw.focus({ preventScroll: true }); }
     function xUndoHide() { OM.xUndo = null; const u = $('om-raw-undo'); if (u) u.hidden = true; }
-    // #855 입력 칸 = 사람이 줄 맨 앞 번호 덩어리를 치는 동안만 자동 하이픈(카드 칸 #850-c 와 같은 fmtTel · 커서 = 앞 숫자 개수 기준)
-    //   붙여 넣기·끌어 넣기·한글 조합 중 = 안 건드림 · 그 줄 뒤쪽 글·다른 줄 무접촉 · 0으로 시작하는 전화 꼴만(주문번호 그대로)
-    function rawTel(ta, e) {
-        if (!e || e.isComposing || !/^(insertText|deleteContent)/.test(e.inputType || '')) return;
-        const v = ta.value, pos = ta.selectionStart; if (pos == null || pos !== ta.selectionEnd) return;
-        const ls = v.lastIndexOf('\n', pos - 1) + 1, m = v.slice(ls).match(/^[0-9-]+(?=\s|$)/); if (!m || pos > ls + m[0].length) return;
-        const chunk = m[0]; if (!isPhoneish(chunk)) return;
-        const fv = fmtTel(chunk); if (fv === chunk || digits(fv) !== digits(chunk)) return;   // 자릿수가 넘쳐 잘리면 안 바꿈
-        const nd = digits(v.slice(ls, pos)).length; let cnt = 0, i = 0; while (i < fv.length && cnt < nd) { if (/[0-9]/.test(fv[i])) cnt++; i++; }
-        ta.value = v.slice(0, ls) + fv + v.slice(ls + chunk.length);
-        try { ta.setSelectionRange(ls + i, ls + i); } catch (er) { /* 그대로 */ }
+    // #857 입력 칸 번호 정리 = 치는 동안엔 값을 안 바꿈(폰 자판 낱말 추천과 엉킴 · #855 치는 대로 하이픈 뺌)
+    //   사람이 친 줄을 떠날 때(다른 줄로 커서 · 칸 밖 · [입력하기])만 그 줄 맨 앞 번호 덩어리를 fmtTel 로 한 번 + 뒤 글과 붙어 있으면 빈칸 한 칸
+    //   0으로 시작 9~12자리만 · 붙여 넣은 줄·주문번호·날짜·줄 뒤쪽 무접촉
+    const lnAt = (v, p) => v.slice(0, p).split('\n').length - 1;
+    function telMark(ta, e) {
+        const t = (e && e.inputType) || '';
+        if (/^insertFrom/.test(t)) { OM.telLn = null; return; }   // 붙여 넣기·끌어 넣기 = 정리 안 함
+        const ln = lnAt(ta.value, ta.selectionStart);
+        if (/^insert(LineBreak|Paragraph)$/.test(t)) { if (OM.telLn != null) telTidy(ta, ln - 1); OM.telLn = null; return; }   // 줄 바꿈 = 앞줄을 떠남
+        OM.telLn = ln;
+    }
+    function telLeave(ta, all) {
+        if (OM.telLn == null || OM.telComp) return;
+        if (!all && lnAt(ta.value, ta.selectionStart) === OM.telLn) return;
+        const ln = OM.telLn; OM.telLn = null; telTidy(ta, ln);
+    }
+    function telTidy(ta, ln) {
+        const v = ta.value, lines = v.split('\n'); if (!(ln >= 0 && ln < lines.length)) return;
+        const l = lines[ln], m = l.match(/^0[0-9-]*/); if (!m) return;
+        const chunk = m[0], d = digits(chunk); if (d.length < 9 || d.length > 12 || !isPhoneish(chunk)) return;
+        const fv = fmtTel(chunk); if (digits(fv) !== d) return;   // 자릿수가 넘쳐 잘리면 안 바꿈
+        const rest = l.slice(chunk.length), nl = fv + (rest && !/^\s/.test(rest) ? ' ' : '') + rest; if (nl === l) return;
+        const ls = lines.slice(0, ln).join('\n').length + (ln ? 1 : 0), delta = nl.length - l.length, ss = ta.selectionStart, se = ta.selectionEnd;
+        lines[ln] = nl; ta.value = lines.join('\n'); OM.raw = ta.value;
+        const mv = p => (p > ls ? Math.max(ls, p + delta) : p);
+        try { ta.setSelectionRange(mv(ss), mv(se)); } catch (er) { /* 그대로 */ }
+        inState();
     }
     function tplHole(text) {   // 안 고친 틀 자리 → { at, len, msg } | null
         for (const [h, msg] of TPL_HOLES) {
@@ -320,6 +341,7 @@
     function inNote(t, k) { const n = $('om-in-note'); if (!n) return; n.textContent = t || '입력하면 내용을 확인하고 [저장]해요 · 저장한 줄은 다음 최종발주에 저절로 들어가요.'; n.dataset.k = k || ''; }
     async function runPreview(src) {
         if (OM.busy) return;
+        if (!src) { OM.telComp = false; telLeave($('om-raw'), true); }   // #857 [입력하기] = 친 줄 번호 정리 먼저
         const raw = src ? src.text : OM.raw.trim(); if (!raw) return;
         if (!src) { const hole = tplHole(OM.raw); if (hole) { inNote(hole.msg, 'err'); const ta = $('om-raw'); ta.focus({ preventScroll: true }); try { ta.setSelectionRange(hole.at, hole.at + hole.len); } catch (e) { /* 그대로 */ } return; } }   // #850-c 틀 자리 안 고침 = 막음
         OM.busy = true; inState(); $('om-go').textContent = '입력하는 중…'; if (!src) inNote('글을 읽고 있어요 · 길면 몇 초 걸려요');
@@ -972,7 +994,7 @@
         c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(optBase(r.cells[4])); });   // #856 최근 목록 = 꼬리 뗀 품목 이름
         const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
         const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();
-        if (c.mode !== 'edit' && !c.cash && (!c.from || c.from.filled)) { const raw = $('om-raw'); raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
+        if (c.mode !== 'edit' && !c.cash && (!c.from || c.from.filled)) { const raw = $('om-raw'); OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
         cardClose(true);
         inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
         OM.tab = 'open'; syncTabs(); load();
@@ -1061,7 +1083,7 @@
         const pick = (Array.isArray(msgs) ? msgs : []).filter(m => m && m.direction !== 'out' && String(m.body || '').trim() && Date.parse(m.event_at) > from)
             .sort((a, b) => Date.parse(a.event_at) - Date.parse(b.event_at)).slice(-10);
         if (!pick.length) { inNote(since ? '마지막 발주 메모 뒤로 손님이 보낸 글이 없어요' : '최근 24시간 손님이 보낸 글이 없어요', 'warn'); return 0; }
-        const raw = $('om-raw'); raw.value = pick.map(m => String(m.body).trim()).join('\n'); OM.raw = raw.value; OM.tags.clear(); syncTags();
+        const raw = $('om-raw'); OM.telLn = null; raw.value = pick.map(m => String(m.body).trim()).join('\n'); OM.raw = raw.value; OM.tags.clear(); syncTags();
         OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true }; inState();
         inNote(`문자 ${pick.length}개를 넣었어요 · 필요 없는 글은 지우고 [입력하기]`, 'ok');
         raw.focus({ preventScroll: true }); try { raw.setSelectionRange(raw.value.length, raw.value.length); } catch (e) { /* 그대로 */ }
@@ -1076,7 +1098,7 @@
         const raw = $('om-raw'), cur = raw.value, empty = !cur.trim();
         const same = !empty && OM.smsSrc && String(OM.smsSrc.threadId) === String(o.threadId || '');
         if (!empty && OM.smsSrc && !same) { inNote('다른 손님 글이 칸에 있어요 · 먼저 [입력하기] 하거나 지워 주세요', 'warn'); return false; }   // 번호가 섞이면 남의 번호가 구매자 번호로 들어감
-        raw.value = (empty ? '' : cur.replace(/\n*$/, '\n')) + line; raw.value = raw.value.slice(0, 4000); OM.raw = raw.value; xUndoHide();
+        OM.telLn = null; raw.value = (empty ? '' : cur.replace(/\n*$/, '\n')) + line; raw.value = raw.value.slice(0, 4000); OM.raw = raw.value; xUndoHide();
         if (empty) OM.smsSrc = { phone: o.phone || '', threadId: o.threadId || '', filled: true };   // 손으로 친 글 뒤(smsSrc 없음) = 그대로 없음 → manual·번호 없음
         inState();
         const n = raw.value.split('\n').filter(s => s.trim()).length;
