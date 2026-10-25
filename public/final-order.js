@@ -266,6 +266,10 @@
     //   메모 칸에 글이 있으면 뒤에 붙임 · 현금 = 파일이 없으면 메모함 줄만 · 엑셀을 고르면 엑셀 뒤에 합침 · [빼기] = 넣은 것만 되돌림 · 응답 없음·오류·옛 서버(404) = 지금처럼(아무것도 안 함).
     //   「넣었다」(used)는 넣은 순간 보내고, 사람이 메모 칸에서 지웠거나 현금이 빠진 줄(현금 [지우기]·「오늘은 없음」·엑셀 합치기 실패)은 비우기 전에 used 를 되돌린다 — 실제로 남은 것만 비워지게(워커3 점검 🔴1)
     //   AI 메모 읽기·판정이 도는 동안엔 넣지 않는다(LOCKS · 끝나면 syncInput 이 다시 부름)
+    // #850-c 메모함에서 판매처를 확인했던 줄(for-ship lines[].checked)인데 배송준비에 주문이 없음 = 그 사이 취소됐을 수 있음 → 「주문 없음」 대신 주황 「확인 필요」
+    //   짝 = 메모 칸 그 줄 글자가 메모함이 넣은 줄과 같을 때만(사람이 고쳤으면 종전대로 「주문 없음」)
+    function omChecked(i) { if (OMF.removed || !OMF.lines.length) return null; const ta = document.getElementById('fo-memo'), t = ta ? String(ta.value.replace(/\r/g, '').split('\n')[i] || '').trim() : ''; if (!t) return null; const x = OMF.lines.find(y => y.checked && y.text.trim() === t); return x ? x.checked : null; }
+    const omCheckedTip = ck => `메모함에 넣을 때 ${ck.plat} 주문을 ${ck.as === 'recv' ? '받는 분 번호로 ' : ''}찾았던 번호인데 지금 배송준비에 없어요 — 취소·이미 발송인지 확인해 주세요`;
     const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
     const omBand = html => { const b = $('fo-om-band'); if (!b) return; b.hidden = !html; b.innerHTML = html || ''; };
     const omPost = (ids, undo) => ids.length ? window.api('/api/order-memo/used', 'POST', Object.assign({ date: OMF.date, ids }, undo ? { undo: true } : {})).catch(() => {}) : Promise.resolve();
@@ -319,7 +323,7 @@
         if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
         OMF.date = date; OMF.removed = false;
         const lines = Array.isArray(r.lines) ? r.lines : [];
-        OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || '') })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
+        OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || ''), checked: x.checked || null })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
         const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
         OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null })) : [];
         OMF.ids = Array.isArray(r.ids) ? r.ids.slice() : [];
@@ -670,6 +674,7 @@
             if (sd.ambiguous) { const d = st.dec.get('samb-line:' + sd.srcLine + ':' + sd.raw); return put(sd.srcLine, d ? { k: 'ok', t: d.use ? '보내는이 확인' : '넣지 않음', tip: '' } : { k: 'warn', t: '확인 필요', tip: '보내는이 이름·번호·주소를 아래 카드에서 확인해 주세요' }); }
             put(sd.srcLine, { k: 'ok', t: '보내는이 확인', tip: '' });
         });
+        marks.forEach((m, i) => { if (m && m.k === 'none' && m.t === '주문 없음') { const ck = omChecked(i); if (ck) marks[i] = { k: 'warn', t: '취소됐을 수 있어요', tip: omCheckedTip(ck) }; } });   // #850-c
         return marks;
     }
     function renderMemoGut() {
@@ -803,7 +808,7 @@
                     lines: [['이유', '이 번호는 구매자가 아니라 받는 분 번호예요. 메모 줄은 구매자 번호(또는 주문번호)로 찾기 때문에 지금은 어느 주문에도 안 붙었어요.'], ...r.rv.slice(0, 8).map((e, i) => [r.rv.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ['처리', '적용하면 이 줄의 번호를 그 주문의 주문번호로 바꿔 다시 판정해요(사이즈는 귤 주문에만 붙어요).']],
                     choices: [['apply', r.rv.length > 1 ? `${r.rv.length}건 모두 적용` : '이 주문에 적용', 1], ['ok', '넘어감']] });
                 else { cards.push({ id: rid, type: 'line', tag: '메모 줄', title: z.raw, lines: [['이유', '받는 분 번호로 적힌 줄이에요.']], choices: [['apply', '적용', 1], ['ok', '넘어감']] }); info.push(`주문 없음: ${z.raw} (받는 분 번호 — 넘어감)`); }
-            } else if (r.k === 'none') info.push({ t: `주문 없음: ${z.raw}`, line: z.srcLine });
+            } else if (r.k === 'none') info.push({ t: omChecked(z.srcLine) ? `취소됐을 수 있어요 · 확인 필요: ${z.raw}` : `주문 없음: ${z.raw}`, line: z.srcLine });
             else if (r.k === 'warn' && !r.n) info.push({ t: `사이즈를 붙일 귤 로얄과 주문이 없어요: ${z.raw}`, line: z.srcLine });
         });
         // #583 ⑥ 「번호 업그레이드」 줄 — 사이즈를 카드에서 눌러 고른다(귤 로얄과만 · 아니면 이유)
@@ -835,7 +840,7 @@
                         choices: [['apply', rv.length > 1 ? `${rv.length}건 모두 적용` : '이 주문에 적용', 1], ['ok', '넘어감']] });
                 } else {
                     if (rv.length) cards.push({ id: rid, type: 'line', tag: '메모 줄', title: l.line, lines: [['이유', '받는 분 번호로 적힌 줄이에요.']], choices: [['apply', '적용', 1], ['ok', '넘어감']] });   // 넘어간 카드(끝난 것으로 보임 · [바꾸기]로 다시)
-                    info.push({ t: `주문 없음: ${l.line}${rv.length ? ' (받는 분 번호 — 넘어감)' : l.date && l.date < s.today ? ' (지난 날짜 — 이미 처리된 듯)' : ''}`, line: l.srcLine });
+                    info.push({ t: omChecked(l.srcLine) ? `취소됐을 수 있어요 · 확인 필요: ${l.line}` : `주문 없음: ${l.line}${rv.length ? ' (받는 분 번호 — 넘어감)' : l.date && l.date < s.today ? ' (지난 날짜 — 이미 처리된 듯)' : ''}`, line: l.srcLine });
                 }
             }
         });
@@ -1457,7 +1462,7 @@
     }
     const isAiDone = cd => st.dec.has(cd.id) && st.ai.tag.has(cd.id) && !patchDec(cd);
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
-    const INFO_KIND = [[/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
+    const INFO_KIND = [[/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
@@ -1474,7 +1479,7 @@
             .replace(/^(메모 줄(?:\(업그레이드\))?로 (?:박스별 사이즈|사이즈 지정): )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/( → 귤 로얄과 (?:\d+줄 )?)([^<]+)$/, '$1<b class="fo-em">$2</b>')
             .replace(/^(건수 다름: )(.+?)( — )/, '$1<mark class="fo-hl">$2</mark>$3')
-            .replace(/^(주문 없음: |사이즈를 붙일 귤 로얄과 주문이 없어요: )(.+?)(?= \(받는 분 번호|$)/, '$1<mark class="fo-hl">$2</mark>');
+            .replace(/^(주문 없음: |취소됐을 수 있어요 · 확인 필요: |사이즈를 붙일 귤 로얄과 주문이 없어요: )(.+?)(?= \(받는 분 번호|$)/, '$1<mark class="fo-hl">$2</mark>');
         const fromMemo = (typeof it === 'object' && it.line != null) || /메모 줄/.test(t) || /^받는 분 번호로 적은 줄/.test(t);   // #611(대표 10/10): 직원이 메모 칸에 적은 줄에서 나온 참고 줄 — 손님 메모에서 온 줄과 구분
         const badge = (kd ? `<span class="fo-ibadge" data-k="${kd[2]}">${kd[1]}</span>` : '') + (fromMemo ? SRC_BADGE : '');
         return `<li data-info="${i}"${kd ? ` data-info-kind="${kd[2]}"` : ''}${fromMemo ? ' data-info-src="memo"' : ''}>${badge}<span class="fo-itext">${h}</span>${typeof it === 'object' && it.flip && it.keys && it.keys.length ? `<button type="button" class="fo-btn sm fo-igo fo-iflip" data-info-flip="${i}">${it.flip === 'send' ? '오늘 발송으로' : '오늘 발송 제외'}</button>` : ''}${go ? `<button type="button" class="fo-btn sm fo-igo" data-info-go="${i}">${typeof it === 'object' && it.card ? '카드 보기' : typeof it === 'object' && it.keys && it.keys.length ? '고치기' : '줄 보기'}</button>` : ''}</li>`;

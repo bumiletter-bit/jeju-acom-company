@@ -310,3 +310,10 @@ html[data-ao-theme="dark"] .om-aiband.off b { color: #FBBF4A; }
 .om-indiv { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--d-soft); color: var(--d-sub); font-size: 12.5px; font-weight: 700; line-height: 1.45; }
 .om-indiv.warn { background: #FFFAEB; color: #93370D; box-shadow: inset 0 0 0 1px #FEDF89; }
 html[data-ao-theme="dark"] .om-indiv.warn { background: rgba(251, 191, 74, .1); color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .4); }
+/* #850-c 판매처 확인(번호로 발송 전 주문 찾은 결과) */
+.om-lk { margin: 6px 0 0; font-size: 12.5px; font-weight: 700; line-height: 1.45; color: var(--d-sub); overflow-wrap: anywhere; }
+.om-lk:empty { display: none; }
+.om-lk[data-k="ok"] { color: #067647; }
+.om-lk[data-k="ask"], .om-lk[data-k="warn"] { color: #93370D; }
+html[data-ao-theme="dark"] .om-lk[data-k="ok"] { color: #4ADE80; }
+html[data-ao-theme="dark"] .om-lk[data-k="ask"], html[data-ao-theme="dark"] .om-lk[data-k="warn"] { color: #FBBF4A; }
