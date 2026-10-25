@@ -571,6 +571,7 @@
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
                 <div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
+                ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c))}</p>` : ''}
                 ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는 분 바꾸기(선물)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(r.line.replace(/\t/g, '   '))}</code></p>` : ''}
               </section>`).join('')}
@@ -600,12 +601,21 @@
             const w = $(id + '-w'); if (w) w.textContent = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
             const u = wrap.querySelector('.om-undo1'); if (u) u.hidden = String(v) === String(getV(c.orig[ri] || r, f));
         }
+        if (r.kind === 'line') indivSync();
         if (r.kind === 'line') { const lp = $('om-card').querySelectorAll('.om-rowcard')[ri]; const code = lp && lp.querySelector('.om-linepre code'); if (code) code.textContent = r.line.replace(/\t/g, '   '); }
         c.dirty = JSON.stringify(c.rows.map(stripTmp)) !== JSON.stringify(c.orig.map(stripTmp));
         const rs = $('om-card').querySelector('.om-reset'); if (rs) rs.hidden = !c.dirty;
         const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
         const sv = $('om-card-save'); if (sv) sv.innerHTML = n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (c.mode === 'edit' ? '고친 대로 저장' : '저장');
     }
+    // #850-a 입력삭제 주소 줄(indiv) 안내 — 짝인 「입력o삭제x」 메모 줄이 카드에서 빠지면(× · 할 일 칸 비움) 저장 때 서버가 현금 손님(「!」)으로 다시 정한다
+    //   판정 = 서버 order-memo.js 의 INDIV 식 · isIndivLine 과 같게(「입력o삭제x」·「입력0삭제x」·「입력삭제」·「개별발송」 + 번호 8자리 이상)
+    //   고치기(edit) 카드는 줄 하나만 열리므로 짝 줄이 카드에 없는 게 정상 → 주의 글 없이 「입력삭제 주문의 주소 줄이에요」만
+    const INDIV_RE = /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i;
+    const hasIndivLine = c => c.rows.some(x => x.kind === 'line' && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')) && digits(x.key).length >= 8);
+    const indivWarn = c => c.mode !== 'edit' && !hasIndivLine(c);
+    const indivNote = c => c.mode === 'edit' ? '입력삭제 주문의 주소 줄이에요' : hasIndivLine(c) ? '입력삭제 줄을 지우면 이 주소는 현금 손님이 돼요' : '입력삭제 줄이 빠졌어요 — 저장하면 이 주소는 현금 손님(「!」)으로 들어가요';
+    function indivSync() { const c = OM.card; if (!c) return; const w = indivWarn(c); $('om-card').querySelectorAll('.om-indiv').forEach(p => { p.textContent = indivNote(c); p.classList.toggle('warn', w); }); }
     const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; return o; };
     async function onCard(e) {
         const b = e.target.closest('[data-cact]'); if (!b || !OM.card) return;

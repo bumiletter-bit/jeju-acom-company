@@ -124,15 +124,23 @@ function checkCash(r, today, catalog, origin) {
     return { kind: 'cash', cells: c, ship_date: ship, src: r.src || 'edit', sure: !why.length, check_why: why, missing: missing.sort((a, b) => a - b), indiv: !/[!！]/.test(c[0]) };   // indiv = 입력삭제 주문의 주소 줄
 }
 // 같은 묶음 안 「입력o삭제x」 메모 줄의 번호(숫자) — extra = 앞서 규칙으로 읽은 줄의 번호(창구 답을 받을 때)
+//   값 = { key, date } · date = 그 입력삭제 줄의 지정 발송일(#850-a · 짝지은 주소 줄이 같은 날 나가게) · extra = 글자(옛 꼴) 또는 { key, date }
+const isIndivLine = r => !!r && r.kind === 'line' && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8;
 function indivKeysOf(rows, extra) {
-    const m = new Map((extra || []).map(k => [dg(k), k]));
-    (rows || []).forEach(r => { if (r && r.kind === 'line' && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8) m.set(dg(r.key), String(r.key)); });
+    const m = new Map();
+    (extra || []).forEach(k => { const o = k && typeof k === 'object' ? k : { key: k, date: null }; if (dg(o.key).length >= 8) m.set(dg(o.key), { key: String(o.key), date: isDay(o.date) ? o.date : null }); });
+    (rows || []).forEach(r => { if (isIndivLine(r)) m.set(dg(r.key), { key: String(r.key), date: isDay(r.ship_date) ? r.ship_date : null }); });
     return m;
 }
 // 현금 줄의 구매자 번호(K칸 · 없으면 보내는사람연락처)가 입력삭제 줄 번호와 같으면 = 그 주문의 주소 줄(「!」 안 붙임)
 function markIndiv(rows, extra) {
     const keys = indivKeysOf(rows, extra);
-    (rows || []).forEach(r => { if (!r || r.kind !== 'cash') return; const c = r.cells || []; const hit = [c[10], c[1]].map(dg).find(d => d && keys.has(d)); r.indiv = !!hit; r.indivKey = hit ? keys.get(hit) : null; });
+    (rows || []).forEach(r => {
+        if (!r || r.kind !== 'cash') return;
+        const c = r.cells || []; const hit = [c[10], c[1]].map(dg).find(d => d && keys.has(d)); const v = hit ? keys.get(hit) : null;
+        r.indiv = !!hit; r.indivKey = v ? v.key : null;
+        if (v && v.date && !isDay(r.ship_date)) r.ship_date = v.date;   // #850-a 날짜 지정 입력삭제 줄 = 주소 줄도 그날(그 전엔 for-ship waiting · 비우기에도 안 빠짐)
+    });
     return rows;
 }
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
@@ -345,7 +353,7 @@ function mount(app, deps) {
         const text = r.payload && typeof r.payload.text === 'string' ? r.payload.text : '';
         if (!r.payload) return res.json({ ok: true, state: 'fail', leftover: '', message: '그만둔 요청이에요 — 다시 [정리하기] 를 눌러 주세요' });   // #850 점검 a · 받은 뒤·그만둔 뒤엔 창구가 늦게 답해도 안 내줌
         if (state === 'wait') return res.json({ ok: true, state, status: r.status });
-        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60).map(String) : []); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
+        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60) : []); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
         res.json({ ok: true, state: 'fail', leftover: text, message: state === 'done' ? '창구 답에 정리 결과가 없어요 — 남은 글은 직접 채워 주세요' : String(rs.error || rs.question || rs.notice || rs.answer || '창구가 처리하지 못했어요').slice(0, 300) });
     }));
     app.delete('/api/order-memo/preview/:id', authMiddleware, wrap(async (req, res) => {
@@ -411,8 +419,21 @@ function mount(app, deps) {
         const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12
             WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req)])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
-        await audit(req, 'update', cur.id, { kind: r.kind, sure: r.sure });
-        res.json({ ok: true, row: rowOut(row) });
+        let paired = 0;
+        const oldD = cur.ship_date ? String(cur.ship_date).slice(0, 10) : null, newD = r.ship_date || null;
+        if (r.kind === 'line' && isIndivLine(r) && oldD !== newD) {   // #850-a 같은 짝 계산(번호 = K칸 또는 B칸)
+            const opens = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash'`)).rows;
+            for (const c0 of opens) {
+                const c = c0.cells || [], sd = c0.ship_date ? String(c0.ship_date).slice(0, 10) : null;
+                if (/[!！]/.test(String(c[0] || '')) || ![c[10], c[1]].map(dg).includes(dg(r.key)) || (sd && sd !== oldD)) continue;
+                const rc = checkRow({ kind: 'cash', cells: c, ship_date: newD, src: c0.src, indiv: true, indivKey: r.key }, ctx);
+                const u = await pool.query(`UPDATE order_memo_rows SET ship_date=$2, sure=$3, check_why=$4, cells=$5, updated_at=NOW(), updated_by=$6 WHERE id=$1 AND state='open'`,
+                    [c0.id, rc.ship_date, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req)]);
+                paired += u.rowCount;
+            }
+        }
+        await audit(req, 'update', cur.id, { kind: r.kind, sure: r.sure, paired });
+        res.json({ ok: true, row: rowOut(row), paired });
     }));
 
     app.delete('/api/order-memo/rows/:id', authMiddleware, wrap(async (req, res) => {
@@ -477,4 +498,4 @@ function mount(app, deps) {
     return { purge, preview, ensure };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

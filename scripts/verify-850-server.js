@@ -82,6 +82,20 @@ function mkPool(db) {
     const d30 = dayRun('2026-10-30');
     ok(d30.f.lines[0].state === 'today' && d30.f.cash_ids.includes(C30.id) && d30.cl.includes(L30.id) && d30.cl.includes(C30.id), '30일: 메모 줄 「오늘」 · 30일 현금 행 들어감 · 비우기 = 둘 다 비워짐', d30);
     ok(rows.filter(r => r.state === 'open').map(r => r.id).join() === String(U.id), '30일 뒤 남은 줄 = 🟠 하나뿐');
+    {   // #850-a 날짜 지정 입력삭제 줄 + 같은 번호 주소 줄(날짜 없음) → 주소 줄도 그날
+        const P = '010-2101-0013', ctxA = { today: '2026-10-26', catalog: new Set(CAT), origin: 'O' };
+        const lineA = OM.ruleLine('10/30\t' + P + '\t입력o삭제x\t네이버', '2026-10-26');
+        const addrA = { kind: 'cash', src: 'ai', cells: ['', P, '', '강가짜', CAT[0], '1', '010-3201-0013', '', '경기도 가짜시 가짜로 88', '', P, '', ''] };
+        const chk = OM.markIndiv([lineA, addrA]).map(r => OM.checkRow(r, ctxA));
+        let n = 900; const rowsA = chk.map(r => Object.assign({ id: ++n, state: 'open', used_on: null }, r));
+        const f26 = OM.pickForShip(rowsA, '2026-10-26'), f30 = OM.pickForShip(rowsA, '2026-10-30');
+        ok(chk[1].indiv && chk[1].ship_date === '2026-10-30' && f26.lines[0].state === 'wait' && f26.waiting.some(w => w.id === rowsA[1].id) && !f26.cash_ids.includes(rowsA[1].id)
+            && f30.cash_ids.includes(rowsA[1].id) && f30.lines[0].state === 'today', '#850-a 10/30 입력삭제 줄 + 주소 줄 = 10/26 엔 주소 줄 waiting · 10/30 에 현금 행으로', { f26: f26.waiting, f30: f30.cash_ids });
+        f26.ids.forEach(i => { rowsA.find(r => r.id === i).used_on = '2026-10-26'; });
+        ok(OM.pickClear(rowsA, '2026-10-26', false).length === 0, '#850-a 10/26 비우기 = 입력삭제 줄·주소 줄 둘 다 남음');
+        const own = OM.markIndiv([Object.assign({}, lineA), Object.assign({}, addrA, { ship_date: '2026-10-28' })]);
+        ok(own[1].ship_date === '2026-10-28', '#850-a 주소 줄에 따로 적은 날짜는 그대로(덮지 않음)');
+    }
     const pc = core.parseCash(d30.f.cash_aoa);
     ok(pc.ok && pc.rows.length === 1 && pc.rows[0].bang && pc.rows[0].qty === 2, '⑥ 최종발주 parseCash 가 cash_aoa 를 그대로 읽음(머리글 13칸 · 「!」 현금 손님)', pc);
 
@@ -271,13 +285,34 @@ function mkPool(db) {
                 '최종발주 cashCheck = 입력삭제 주문의 「주소 줄 없음」 카드 0 · 현금 손님 1 · 낯선 줄 0', { cc9, bang: pc9.rows.map(r => r.bang) });
             const up9 = await call('PUT', `/api/order-memo/rows/${addrRow.id}`, { cells: Object.assign([], addrRow.cells, { 9: '문 앞' }) });
             ok(up9.j.row.indiv === true && !/[!！]/.test(up9.j.row.cells[0]), '주소 줄 고치기 = 「!」 안 붙음(구분 그대로)', up9.j.row);
+            // #850-a 날짜 지정 입력삭제 줄 저장 → 주소 줄도 그날 · 고치기로 날짜 바꾸면 주소 줄도
+            const PA = '010-4101-0014';
+            const svA = await call('POST', '/api/order-memo', { raw: 'a', rows: [
+                { kind: 'line', src: 'rule', line: '11/3\t' + PA + '\t입력o삭제x\t네이버', key: PA, note: '입력o삭제x', plat: '네이버', ship_date: '2026-11-03' },
+                { kind: 'cash', src: 'ai', cells: ['', PA, '', '오가짜', CAT[0], '1', '010-3201-0014', '', '경기도 가짜시 가짜로 99', '', PA, '', ''] } ] });
+            const [lA, aA] = svA.j.rows || [];
+            const fA1 = await call('GET', '/api/order-memo/for-ship?date=2026-11-01');
+            const fA3 = await call('GET', '/api/order-memo/for-ship?date=2026-11-03');
+            ok(aA.indiv && aA.ship_date === '2026-11-03' && fA1.j.waiting.some(w => w.id === aA.id) && !fA1.j.cash_ids.includes(aA.id) && fA3.j.cash_ids.includes(aA.id), '#850-a 저장 = 주소 줄 11/3 · 11/1 for-ship waiting · 11/3 현금 행', { aA: aA.ship_date, w: fA1.j.waiting });
+            await call('POST', '/api/order-memo/used', { date: '2026-11-01', ids: fA1.j.ids });
+            await call('POST', '/api/order-memo/clear', { date: '2026-11-01' });
+            const stA1 = (await db.query(`SELECT id, state FROM order_memo_rows WHERE id = ANY($1::int[]) ORDER BY id`, [arr([lA.id, aA.id])])).rows.map(r => r.state).join();
+            ok(stA1 === 'open,open', '#850-a 11/1 비우기 = 둘 다 남음', stA1);
+            const upA = await call('PUT', `/api/order-memo/rows/${lA.id}`, { ship_date: '2026-11-04' });
+            const aA2 = (await db.query(`SELECT to_char(ship_date, 'YYYY-MM-DD') AS d FROM order_memo_rows WHERE id = $1`, [aA.id])).rows[0].d;
+            const fA3b = await call('GET', '/api/order-memo/for-ship?date=2026-11-03'), fA4 = await call('GET', '/api/order-memo/for-ship?date=2026-11-04');
+            ok(upA.j.paired === 1 && aA2 === '2026-11-04' && fA3b.j.waiting.some(w => w.id === aA.id) && fA4.j.cash_ids.includes(aA.id) && fA4.j.lines.find(l => l.id === lA.id).state === 'today',
+                '#850-a 입력삭제 줄 날짜 11/3 → 11/4 고침 = 주소 줄도 11/4(paired 1) · 11/3 waiting · 11/4 현금 행', { paired: upA.j.paired, aA2 });
+            const upB = await call('PUT', `/api/order-memo/rows/${lA.id}`, { note: '입력o삭제x 쿠팡' });
+            ok(upB.j.paired === 0, '#850-a 날짜 안 바꾼 고치기 = 주소 줄 무접촉(paired 0)');
+            await call('POST', '/api/order-memo/clear', { all: true });
             // 창구 경유: 규칙으로 읽은 입력삭제 줄 + 창구가 읽은 주소 → 기다리기 결과도 주소 줄
             deskOn = true; cfgVal = null;
             const w9 = await call('POST', '/api/order-memo/preview', { raw: P + ' 입력o삭제x\n받는분 강가짜 010-3201-0013 경기도 가짜시 가짜로 88 로 보내주세요' }, { uid: 1 });
             const p9 = (await db.query(`SELECT payload FROM pending_orders WHERE id = $1`, [w9.j.desk.id])).rows[0].payload;
             await db.query(`UPDATE pending_orders SET status = '완료', result = $2 WHERE id = $1`, [w9.j.desk.id, JSON.stringify({ type: 'desk_answer', answer: 'x', data: { lines: [], cash: [{ buyer: '', buyer_phone: P, recv: '강가짜', phone1: '010-3201-0013', phone2: '', addr: '경기도 가짜시 가짜로 88', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }], unsure: [], sms_draft: '' } })]);
             const g9 = await call('GET', `/api/order-memo/preview/${w9.j.desk.id}`, null, { uid: 1 });
-            ok(w9.j.rows.length === 1 && p9.indiv_keys.join() === P && g9.j.state === 'done' && g9.j.rows[0].indiv === true && !/[!！]/.test(g9.j.rows[0].cells[0]), '창구 경유 = 규칙 입력삭제 줄 번호(payload.indiv_keys)로 창구 주소 줄도 「!」 없이', { p9: p9.indiv_keys, g9: g9.j.rows });
+            ok(w9.j.rows.length === 1 && p9.indiv_keys.map(k => k.key).join() === P && g9.j.state === 'done' && g9.j.rows[0].indiv === true && !/[!！]/.test(g9.j.rows[0].cells[0]), '창구 경유 = 규칙 입력삭제 줄 번호(payload.indiv_keys)로 창구 주소 줄도 「!」 없이', { p9: p9.indiv_keys, g9: g9.j.rows });
             await call('DELETE', `/api/order-memo/preview/${w9.j.desk.id}`, null, { uid: 1 });
             deskOn = false; cfgVal = { ai: { direct: true } };
         }

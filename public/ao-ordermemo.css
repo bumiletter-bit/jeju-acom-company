@@ -306,3 +306,7 @@ html[data-ao-theme="dark"] .om-aiband.off { border-color: rgba(251, 191, 74, .5)
 html[data-ao-theme="dark"] .om-aiband.off b { color: #FBBF4A; }
 @media (prefers-reduced-motion: reduce) { .om-aiband-dot { animation: none; } }
 .om-pill.k-addr { background: var(--d-soft); color: var(--d-ink); box-shadow: inset 0 0 0 1px var(--d-line); }   /* #850 입력삭제 주문의 주소 줄(현금 아님) */
+/* #850-a 입력삭제 주소 줄 안내 — 평소 = 옅은 안내 · 짝 입력삭제 줄이 빠지면 = 주의(호박) */
+.om-indiv { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--d-soft); color: var(--d-sub); font-size: 12.5px; font-weight: 700; line-height: 1.45; }
+.om-indiv.warn { background: #FFFAEB; color: #93370D; box-shadow: inset 0 0 0 1px #FEDF89; }
+html[data-ao-theme="dark"] .om-indiv.warn { background: rgba(251, 191, 74, .1); color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .4); }
