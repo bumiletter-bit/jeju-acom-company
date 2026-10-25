@@ -60,6 +60,32 @@ function mkPool(db) {
     const m2 = OM.checkRow(OM.cashFromAi({ buyer: '', buyer_phone: '', recv: '박받음', phone1: '01012341234', phone2: '', addr: '제주시 1', option: '없는 품목', qty: 0, memo: '', sender: '정만웅', sender_phone: '01094020886', sender_addr: '', date: '' }), ctx);
     ok(!m2.sure && m2.missing.includes(4) && m2.missing.includes(5) && m2.cells[0] === '!정만웅 드림' && m2.check_why.includes('품목이 단가표 이름과 달라요'), '단가표에 없는 품목·수량 0 = 🟠 · 보내는이 = 「!이름 드림」', m2);
 
+    console.log('②-b 문자 출처 현금 손님(#850-b)');
+    {
+        const SP = '01092590977', base = { buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };
+        const a1 = OM.checkRow(OM.cashFromAi(base, { smsPhone: SP, text: '타이벡 5kg 1박스 박받음 010-7777-8888 제주시 1' }), ctx);
+        ok(a1.cells[10] === '010-9259-0977' && a1.cells[1] === '010-9259-0977' && a1.cells[6] === '010-7777-8888' && a1.cells[0] === '!제주아꼼이네' && a1.sure, '문자 출처 · 입금자명 없음 = K·보내는사람연락처 = 문자 손님 번호 · 받는 분 번호 그대로 · 보내는사람 「!제주아꼼이네」', a1.cells);
+        const a2 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님', buyer_phone: '010-5555-6666' }), { smsPhone: SP, text: '입금 김철수으로 했어요 박받음 …' }), ctx);
+        ok(a2.cells[0] === '!김철수 드림' && a2.cells[10] === '010-9259-0977' && a2.cells[1] === '010-9259-0977', '입금자명 있음(「입금 김철수으로 했어요」) = 보내는사람 「!김철수 드림」 · AI 구매자 번호보다 문자 손님 번호', a2.cells);
+        const a3 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님', sender_phone: '010-1212-3434' }), { smsPhone: SP, text: '보내는 사람 번호 010-1212-3434' }), ctx);
+        ok(a3.cells[1] === '010-1212-3434' && a3.cells[10] === '010-9259-0977' && a3.cells[0] === '!김손님(제주아꼼이네)', 'AI 가 sender_phone 따로 주면 보내는사람연락처만 그 값 · 이름 = 구매자(제주아꼼이네)', a3.cells);
+        const a4 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { sender: '이모' }), { smsPhone: SP, text: '입금 김철수로 했어요' }), ctx);
+        ok(a4.cells[0] === '!이모 드림', '보내는이 지정이 입금자명보다 먼저');
+        const a5 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer_phone: '010-5555-6666' }), {}), ctx);
+        ok(a5.cells[10] === '010-5555-6666' && a5.cells[1] === '010-5555-6666' && a5.cells[0] === '!제주아꼼이네', '문자 아님(manual) = 종전 그대로(K = AI 구매자 번호)', a5.cells);
+        // 입금자명 38글(워커3 점검 꼴 · 맞게 읽을 12 + 이름 없음 26)
+        const DEP = [['입금 김철수으로 했어요', '김철수'], ['입금은 김철수로 했습니다', '김철수'], ['입금자명 박영희입니다', '박영희'], ['입금자 이순자', '이순자'], ['입금자명: 최민수', '최민수'], ['입금자는 정하나예요', '정하나'],
+            ['홍길동 이름으로 입금했어요', '홍길동'], ['김철수로 입금했어요', '김철수'], ['이영수 명의로 입금했습니다', '이영수'], ['입금 박지성 이름으로 했어요', '박지성'], ['010-1234-5678 타이벡 5kg 입금 이영수로 했어요', '이영수'], ['입금은 오세훈입니다', '오세훈'],
+            ['입금 먼저 할게요', ''], ['입금 오후에 할게요', ''], ['입금 바로 했어요', ''], ['입금 제가 할게요', ''], ['입금 늦어서 죄송해요', ''], ['입금 금액 알려주세요', ''], ['입금은 아들이 할 거예요', ''],
+            ['입금 남편 이름으로 했어요', ''], ['입금 남편이름으로 했어요', ''], ['입금 엄마 이름으로 할게요', ''], ['입금 회사명으로 할게요', ''], ['카카오뱅크로 입금했어요', ''], ['국민은행으로 입금했어요', ''], ['토스로 입금했어요', ''],
+            ['네이버페이로 입금했어요', ''], ['방금 입금했어요', ''], ['계좌로 입금했어요', ''], ['입금 완료했습니다', ''], ['입금했습니다 감사해요', ''], ['아빠 명의로 입금했어요', ''], ['딸 이름으로 입금할게요', ''],
+            ['부모님 이름으로 입금했어요', ''], ['회사 이름으로 입금했어요', ''], ['입금은 내일 할게요', ''], ['현금으로 입금했어요', ''], ['입금 확인 부탁드려요', ''],
+            ['입금 월요일로 할게요', ''], ['입금 다음주로 할게요', ''], ['입금 내일오전으로', ''], ['입금 시댁으로 했어요', ''], ['입금 김민서로 했어요', '김민서'], ['입금 김민주로 했어요', '김민주'], ['박서준 이름으로 입금했어요', '박서준'], ['입금 이번주로 할게요', ''], ['입금 늦어서 죄송', '']];
+        const depBad = DEP.filter(([t, w]) => OM.depositName(t) !== w).map(([t, w]) => [t, w, OM.depositName(t)]);
+        ok(DEP.length === 47 && !depBad.length, '입금자명 47글(38 + 재점검 9) = 이름 있을 때만(「먼저·오후에·바로·제가·늦어서·금액」·「아들이」·남편/엄마/회사·…뱅크/은행/페이 = 빈칸)', depBad);
+        const m6 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님' }), { text: '입금 이영수로 했어요' }), ctx);
+        ok(m6.cells[0] === '!이영수 드림' && m6.cells[10] === '010-7777-8888', 'manual 붙여 넣기에도 입금자명 = 「!이영수 드림」(현금건 공통) · 번호 채우기는 안 함(K = 받는 분 번호 · 종전)', m6.cells);
+    }
     console.log('③ 30일 지정 — 26·27·28 매일 · 30일 당일');
     let id = 0; const mk = (o) => Object.assign({ id: ++id, state: 'open', sure: true, used_on: null, check_why: [] }, o);
     const L30 = mk({ kind: 'line', line: '10/30\t010-2222-3333\t입력o삭제x\t네이버', ship_date: '2026-10-30' });
@@ -105,6 +131,8 @@ function mkPool(db) {
     await db.query(`INSERT INTO pricing (partner, start_date, end_date, items) VALUES ('대성(시온)', '2026-01-01', '2026-12-31', $1)`, [JSON.stringify(CAT.map(n => ({ name: n, price: 1 })))]);
     await db.query(`CREATE TABLE pending_orders (id SERIAL PRIMARY KEY, content TEXT, payload JSONB, created_by TEXT, created_by_id INTEGER, status TEXT, mine_hidden BOOLEAN DEFAULT false,
         result JSONB, processed_at TIMESTAMPTZ, is_deleted BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await db.query(`CREATE TABLE sms_threads (id SERIAL PRIMARY KEY, phone_digits TEXT UNIQUE NOT NULL)`);
+    await db.query(`INSERT INTO sms_threads (id, phone_digits) VALUES (55, '01092590977')`);
     // cfgVal = 실DB 설정 order_memo 대신 · 앞쪽 시험은 서버 직접 AI(direct) · 창구 경유 시험은 ⑦에서 기본값(direct false)
     let cfgVal = { ai: { direct: true } }, deskOn = false;
     const pool = mkPool(db), audits = []; let today = '2026-10-26', aiCalls = 0, aiOn = true;
@@ -315,6 +343,34 @@ function mkPool(db) {
             ok(w9.j.rows.length === 1 && p9.indiv_keys.map(k => k.key).join() === P && g9.j.state === 'done' && g9.j.rows[0].indiv === true && !/[!！]/.test(g9.j.rows[0].cells[0]), '창구 경유 = 규칙 입력삭제 줄 번호(payload.indiv_keys)로 창구 주소 줄도 「!」 없이', { p9: p9.indiv_keys, g9: g9.j.rows });
             await call('DELETE', `/api/order-memo/preview/${w9.j.desk.id}`, null, { uid: 1 });
             deskOn = false; cfgVal = { ai: { direct: true } };
+        }
+
+        console.log('⑩ 문자 출처 API(#850-b)');
+        {
+            const U = { uid: 21 };
+            cfgVal = { ai: { direct: true } };
+            const t1 = '타이벡 5kg 1박스 박받음 010-7777-8888 제주시 1 입금 김철수로 했어요';
+            const q1 = await call('POST', '/api/order-memo/preview', { raw: t1, source: 'sms:55', phone: '010-9259-0977' }, U);
+            const c1 = q1.j.rows.find(r => r.kind === 'cash');
+            ok(c1 && c1.cells[10] === '010-9259-0977' && c1.cells[1] === '010-9259-0977' && c1.cells[0] === '!김철수 드림' && c1.cells[6] === '010-7777-8888', '미리보기(서버 직접) · 문자 출처 = K·B 문자 손님 번호 · 입금자명 → 「!김철수 드림」 · 받는 분 번호 다름 그대로', c1 && c1.cells);
+            const q2 = await call('POST', '/api/order-memo/preview', { raw: '타이벡 1박스 박받음 제주시 1', source: 'sms:55' }, U);
+            const c2 = q2.j.rows.find(r => r.kind === 'cash');
+            ok(c2 && c2.cells[10] === '010-9259-0977' && c2.cells[0] === '!이손님(제주아꼼이네)', '화면이 번호를 안 보내면 sms_threads 에서 읽음 · 입금자명 없음 = 「구매자(제주아꼼이네)」', c2 && c2.cells);
+            const q3 = await call('POST', '/api/order-memo/preview', { raw: '타이벡 1박스 박받음 제주시 1', source: 'manual', phone: '010-9259-0977' }, U);
+            ok(q3.j.rows.find(r => r.kind === 'cash').cells[10] === '010-5555-6666', 'manual = 문자 번호 안 씀(종전 그대로)');
+            deskOn = true; cfgVal = null;
+            const w = await call('POST', '/api/order-memo/preview', { raw: '박받음 010-7777-8888 제주시 1 입금은 이영수로 했습니다', source: 'sms:55' }, U);
+            const pw = (await db.query(`SELECT payload FROM pending_orders WHERE id = $1`, [w.j.desk.id])).rows[0].payload;
+            await db.query(`UPDATE pending_orders SET status = '완료', result = $2 WHERE id = $1`, [w.j.desk.id, JSON.stringify({ type: 'desk_answer', answer: 'x', data: { lines: [], cash: [{ buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }], unsure: [], sms_draft: '' } })]);
+            const gw = await call('GET', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
+            ok(pw.from_sms === true && gw.j.state === 'done' && gw.j.rows[0].cells[10] === '010-9259-0977' && gw.j.rows[0].cells[0] === '!이영수 드림', '창구 경유 · 문자 출처 = 기다리기 결과도 K = 문자 손님 · 입금자명 「!이영수 드림」(창구가 sender 를 비워도)', gw.j.rows);
+            await call('DELETE', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
+            deskOn = false; cfgVal = { ai: { direct: true } };
+            const sv = await call('POST', '/api/order-memo', { raw: 's', source: 'sms:55', rows: [{ kind: 'cash', src: 'edit', cells: ['', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '', '', ''] }] }, U);
+            ok(sv.j.rows[0].cells[10] === '' && sv.j.rows[0].cells[1] === '', '저장 = 사람이 비운 K·B 칸 그대로(문자 번호 채우기는 미리보기 때만)', sv.j.rows[0].cells);
+            const qR = await call('POST', '/api/order-memo/preview', { raw: ['', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '', '', ''].join('\t'), source: 'sms:55' }, U);
+            ok(qR.j.rows[0].kind === 'cash' && qR.j.rows[0].cells[10] === '010-9259-0977' && qR.j.rows[0].cells[1] === '010-9259-0977', '미리보기 · 붙여 넣은 현금 행의 빈 K·B = 문자 손님 번호', qR.j.rows[0].cells);
+            await call('POST', '/api/order-memo/clear', { all: true }, U);
         }
 
         console.log('⑧ 점검 손질(a 늦은 답 · c 오래된 확인 · d 섞기 · e 출처)');

@@ -146,11 +146,39 @@ function markIndiv(rows, extra) {
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
 
 // AI 가 돌려준 현금 손님 → 13칸
-function cashFromAi(x) {
-    const sender = s(x.sender, 30).trim(), buyer = s(x.buyer, 30).trim();
-    const c0 = sender ? (/드림$/.test(sender) ? sender : sender + ' 드림') : (buyer ? buyer + '(제주아꼼이네)' : '제주아꼼이네');
+// #850-b(대표) 문자 대화에서 온 정리 = 구매자 = 문자 온 손님: K칸(구매자연락처) = 그 번호 · 보내는사람연락처 = 그 번호(AI 가 sender_phone 을 따로 준 경우만 그 값)
+//   보내는사람 이름 = 보내는이 지정 > 입금자명(「입금 ○○으로 했어요」 = 현금건 → 「○○ 드림」 · 대표 확정) > 구매자(제주아꼼이네) > 제주아꼼이네
+//   opt = { smsPhone(숫자 · 문자 출처일 때만), text(손님 글 · 입금자명 찾기) }
+// 입금자 이름이 아닌 낱말(워커3 점검 · 「입금 먼저/오후에/바로/제가/늦어서/금액」「입금은 아들이」「남편·엄마·회사 이름으로」「…뱅크·은행·페이로 입금」)
+const DEP_STOP = new Set(['계좌', '현금', '오늘', '어제', '방금', '지금', '내일', '모레', '이체', '송금', '입금', '확인', '카드', '통장', '완료', '부탁', '먼저', '오후', '오전', '저녁', '바로', '제가', '저희', '본인', '늦어서', '금액', '나중',
+    '남편', '아내', '와이프', '신랑', '엄마', '아빠', '어머니', '아버지', '어머님', '아버님', '부모님', '부모', '아들', '딸', '언니', '오빠', '누나', '동생', '시어머니', '시아버지', '장모님', '장인어른', '할머니', '할아버지', '가족', '친구', '지인', '회사', '회사명', '법인', '사장님', '대표님', '직장', '시댁', '처가', '친정', '본가', '시가', '집']);
+const DEP_SUFFIX = /(?:뱅크|은행|페이|카드|증권|금고|농협|수협|신협|우체국|머니|토스|이름|명의)$/;
+function depositName(text) {
+    const t = String(text || '');
+    const bad = n => !n || n.length < 2 || DEP_STOP.has(n) || DEP_SUFFIX.test(n) || /했|됐|드렸|드리|완료|(?:합|하|해|되)$|요$|다$|어$|에$|이$|가$/.test(n)
+        || /요일$|(?:다음|이번|담|차|저번|지난|다다음)\s*주$|주말$|오전|오후|저녁|아침|낮|밤|이따|나중/.test(n);   // 움직씨 꼴은 끝 글자로만(「정하나」 통과) · 「서」 끝은 안 봄(김민서·박서준 · 「늦어서」는 DEP_STOP) · 때 말 = 빈칸(워커3 재점검 · 「주」는 다음주·이번주 꼴만 = 김민주·이은주 살림)
+    // ① 「입금자/입금자명(은/는/:)」 뒤 = 띄어쓰기만 있어도 이름 ② 「입금(은/는) ○○」 = 꼬리(으로·로·이름으로·명의로·입니다·이에요·예요) 있을 때만 ③ 「○○(님) 이름으로/명의로/으로/로 입금」
+    const pats = [/입금자(?:명)?\s*(?:은|는|:|：)?\s*([가-힣]{2,4}?)\s*님?\s*(?:으로|로|이름으로|명의로|입니다|이에요|예요|(?=[\s.,!~]|$))/g,
+        /입금(?!자)\s*(?:은|는)?\s*([가-힣]{2,4}?)\s*님?\s*(?:이름으로|명의로|으로|로|입니다|이에요|예요)/g,
+        /(?<![가-힣])([가-힣]{2,4}?)\s*님?\s*(?:이름으로|명의로|으로|로)\s*입금/g];
+    for (const re of pats) { let m; while ((m = re.exec(t))) { if (!bad(m[1])) return m[1]; } }
+    return '';
+}
+function cashFromAi(x, opt) {
+    const o = opt || {}, sms = o.smsPhone ? core.fmtPhone(o.smsPhone) : '';
+    const sender = s(x.sender, 30).trim(), buyer = s(x.buyer, 30).trim(), dep = sender ? '' : depositName(o.text);
+    const who = sender || dep;
+    const c0 = who ? (/드림$/.test(who) ? who : who + ' 드림') : (buyer ? buyer + '(제주아꼼이네)' : '제주아꼼이네');
+    const buyerPhone = sms || x.buyer_phone || x.phone1;
     return { kind: 'cash', src: 'ai', ship_date: isDay(x.date) ? x.date : null,
-        cells: ['!' + c0, x.sender_phone || x.buyer_phone || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, x.buyer_phone || x.phone1, '', x.sender_addr] };
+        cells: ['!' + c0, x.sender_phone || (sms || x.buyer_phone) || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, buyerPhone || '', '', x.sender_addr] };
+}
+// 사람이 붙인·고친 현금 줄(규칙·저장)에도 문자 출처면 빈 구매자·보내는사람 번호만 채움(적힌 값은 그대로)
+function applySms(rows, smsPhone) {
+    if (!smsPhone) return rows;
+    const p = core.fmtPhone(smsPhone);
+    (rows || []).forEach(r => { if (r && r.kind === 'cash' && Array.isArray(r.cells)) { if (!String(r.cells[10] || '').trim()) r.cells[10] = p; if (!String(r.cells[1] || '').trim()) r.cells[1] = p; } });
+    return rows;
 }
 
 // ── 최종발주용 고르기(순수 · 검증이 그대로 부름) ──
@@ -191,7 +219,7 @@ const AI_SCHEMA = {
 const AI_SYSTEM = [
     '너는 제주아꼼이네(제주 과일 농장 직판) 발주 메모 정리 담당이다. 직원이 붙여 넣은 발주 메모를 두 가지로 나눈다.',
     '1) lines = 이미 들어온 온라인 주문에 대한 지시. key = 구매자 전화번호(하이픈 포함 그대로) 또는 상품주문번호. note = 「입력o삭제x」(개별발송·입력삭제) · 「S사이즈로」(2S·S·M 만) · 「보내는이 홍길동」 같은 짧은 지시. plat = 네이버·쿠팡·자사몰 중 적힌 것(없으면 ""). date = 지정 발송일 YYYY-MM-DD(없으면 "").',
-    '2) cash = 주문이 없는 현금 손님(「현금」「계좌이체」「현금파일」 또는 이름·주소·품목이 다 적힌 손님). buyer = 주문한 분 · recv·phone1·addr = 받는 분 · option = 아래 「품목 이름 목록」 글자 그대로 하나(목록에 없으면 "") · qty = 박스 수(없으면 0) · memo = 기사님께 전할 말(문 앞·경비실 등만 · 우리에게 한 말은 넣지 않음) · sender/sender_phone/sender_addr = 보내는이를 바꿔 달라는 경우만.',
+    '2) cash = 주문이 없는 현금 손님(「현금」「계좌이체」「현금파일」 또는 이름·주소·품목이 다 적힌 손님). buyer = 주문한 분 · recv·phone1·addr = 받는 분 · option = 아래 「품목 이름 목록」 글자 그대로 하나(목록에 없으면 "") · qty = 박스 수(없으면 0) · memo = 기사님께 전할 말(문 앞·경비실 등만 · 우리에게 한 말은 넣지 않음) · sender/sender_phone/sender_addr = 보내는이를 바꿔 달라는 경우만 · 「입금 ○○으로 했어요」「○○ 이름으로 입금」처럼 입금자 이름이 있으면 현금건이니 sender = 그 이름(대표 확정) · 문자 대화에서 온 글이면 buyer_phone 은 "" 로 둔다(서버가 문자 온 손님 번호로 채움).',
     '절대 지킬 것: 메모에 없는 이름·번호·주소·날짜를 지어내지 않는다(모르면 ""). 글자는 메모에 적힌 그대로 옮긴다. 품목은 목록 글자 그대로만. 애매하거나 둘 중 무엇인지 모르면 unsure 에 그 글과 이유를 넣는다.',
     '날짜: 우리 발송일은 shipDays 에 있는 날뿐(토요일·발송휴무일 없음). 「○일 발송/보내주세요」 = 그날. 「○일 도착/받고 싶다/까지」 = 도착 희망일 이틀 전(그날이 발송 없는 날이거나 지났으면 하루 전 · 둘 다 안 되면 unsure). 범위(「12~13일 도착」) = 첫 날짜 하루 전. 「○일 배송」처럼 발송인지 도착인지 모르는 말·지난 날짜·요일과 날짜가 안 맞음 = unsure.',
     'sms_draft = cash 손님의 받는 분·주소·연락처·품목·수량 중 빈 것이 있을 때만, 손님께 물어볼 짧은 존댓말 문자 한 개(「안녕하세요 제주아꼼이네입니다.」로 시작 · 이모지 없음). 빈 것이 없으면 "".',
@@ -255,10 +283,10 @@ function mount(app, deps) {
     }
 
     // AI 결과(창구·직접 같은 꼴 = AI_SCHEMA) → 줄 · 서버가 다시 검사(창구 답도 그대로 믿지 않음)
-    function aiDataToRows(d, ctx, extraKeys) {
+    function aiDataToRows(d, ctx, extraKeys, opt) {
         const raw = [];
         (Array.isArray(d && d.lines) ? d.lines : []).slice(0, MAX_ROWS).forEach(x => raw.push({ kind: 'line', key: x && x.key, note: x && x.note, plat: x && x.plat, ship_date: x && isDay(x.date) ? x.date : null, src: 'ai' }));
-        (Array.isArray(d && d.cash) ? d.cash : []).slice(0, MAX_ROWS).forEach(x => raw.push(cashFromAi(x || {})));
+        (Array.isArray(d && d.cash) ? d.cash : []).slice(0, MAX_ROWS).forEach(x => raw.push(cashFromAi(x || {}, opt)));
         const rows = markIndiv(raw, extraKeys).map(r => checkRow(r, ctx));
         const un = (Array.isArray(d && d.unsure) ? d.unsure : []).filter(x => x && x.text);
         let sms = s(d && d.sms_draft, 400).trim();
@@ -279,10 +307,16 @@ function mount(app, deps) {
         return subIds.has(Number(uid));
     }
     // 규칙 줄은 즉시 · 남은 글은 ①설정 direct = 서버 AI ②창구 켜짐 = 창구 요청 줄(화면이 GET /preview/:id 로 기다림) ③창구 꺼짐 = 남은 글 그대로
-    async function preview(raw, tags, ctx, req) {
+    // #850-b 문자 출처(source 'sms:<id>') 손님 번호 = 화면이 보낸 번호(숫자 9~12 · 0 시작) → 없으면 sms_threads.phone_digits 읽기만 · 문자 아님 = ''
+    async function smsPhoneOf(source, phone) {
+        const m = /^sms:(\d{1,12})$/.exec(String(source || '')); if (!m) return '';
+        const d = dg(phone); if (/^0\d{8,11}$/.test(d)) return d;
+        try { const r = (await pool.query(`SELECT phone_digits FROM sms_threads WHERE id = $1`, [Number(m[1])])).rows[0]; const t = dg(r && r.phone_digits); return /^0\d{8,11}$/.test(t) ? t : ''; } catch (_) { return ''; }
+    }
+    async function preview(raw, tags, ctx, req, smsPhone) {
         const rows = [], rest = [];
         for (const ln of raw.split('\n')) { const r = ruleLine(ln, ctx.today); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }
-        const ruleRows = markIndiv(rows).map(r => checkRow(r, ctx));
+        const ruleRows = markIndiv(applySms(rows, smsPhone)).map(r => checkRow(r, ctx));
         const ruleKeys = [...indivKeysOf(ruleRows).values()];   // 규칙으로 읽은 입력삭제 줄 번호 → AI 현금 줄이 그 주문의 주소 줄인지 가를 때
         const base = { rows: ruleRows, leftover: '', rule_count: ruleRows.length, ai_count: 0, ai: { used: false, why: '남은 글 없음' }, sms_draft: '', desk: null };
         if (!rest.length) return base;
@@ -294,13 +328,13 @@ function mount(app, deps) {
             const ai = await callAi(text, tags, ctx);
             ai.via = ctx.cfg.ai.direct ? 'direct' : 'staff_direct';
             if (!ai.data) return Object.assign(base, { leftover: text, ai });
-            const x = aiDataToRows(ai.data, ctx, ruleKeys); delete ai.data;
+            const x = aiDataToRows(ai.data, ctx, ruleKeys, { smsPhone, text: raw }); delete ai.data;
             return Object.assign(base, { rows: ruleRows.concat(x.rows), ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft, ai });
         }
         let alive = false; try { alive = await deskAlive(); } catch (_) { alive = false; }
         if (!alive) return Object.assign(base, { leftover: text, ai: { used: false, why: '창구 꺼짐' }, desk: { state: 'off', message: '창구가 꺼져 있어 지금은 규칙으로만 정리했어요 · 남은 글은 직접 채워 주세요' } });
         let cal = null; try { cal = await shipCal(); } catch (_) { /* 달력 없이 */ }
-        const payload = { type: 'order_memo', today: ctx.today, shipDays: (cal && cal.shipDays) || [], tags: tags || [], catalog: [...ctx.catalog].slice(0, 300), text, indiv_keys: ruleKeys };
+        const payload = { type: 'order_memo', today: ctx.today, shipDays: (cal && cal.shipDays) || [], tags: tags || [], catalog: [...ctx.catalog].slice(0, 300), text, indiv_keys: ruleKeys, sms_phone: smsPhone || '', from_sms: !!smsPhone, raw_hint: depositName(raw) };   // sms_phone·raw_hint = 기다리기 결과에 쓸 문자 번호·입금자명(#850-b)
         const row = (await pool.query(`INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
             [`${DESK_PREFIX} 남은 글 ${rest.length}줄`, JSON.stringify(payload), actorName(req), req.user.id || null])).rows[0];
         await audit(req, 'desk_request', row.id, { lines: rest.length });
@@ -342,7 +376,7 @@ function mount(app, deps) {
         if (b.length >= PREVIEW_PER_MIN) throw err(429, '잠시 뒤 다시 해 주세요');
         b.push(now); rate.set(k, b); if (rate.size > 500) rate.clear();
         const tags = (Array.isArray(req.body.tags) ? req.body.tags : []).filter(t => /^(cash|indiv|size|date|sender)$/.test(t)).slice(0, 5);
-        const out = await preview(raw, tags, await ctxOf(), req);
+        const out = await preview(raw, tags, await ctxOf(), req, await smsPhoneOf(req.body.source, req.body.phone));
         res.json(Object.assign({ ok: true }, out));
     }));
 
@@ -353,7 +387,7 @@ function mount(app, deps) {
         const text = r.payload && typeof r.payload.text === 'string' ? r.payload.text : '';
         if (!r.payload) return res.json({ ok: true, state: 'fail', leftover: '', message: '그만둔 요청이에요 — 다시 [정리하기] 를 눌러 주세요' });   // #850 점검 a · 받은 뒤·그만둔 뒤엔 창구가 늦게 답해도 안 내줌
         if (state === 'wait') return res.json({ ok: true, state, status: r.status });
-        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60) : []); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
+        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60) : [], { smsPhone: dg(r.payload.sms_phone), text: r.payload.raw_hint ? '입금 ' + r.payload.raw_hint + '으로 했어요' : r.payload.text }); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
         res.json({ ok: true, state: 'fail', leftover: text, message: state === 'done' ? '창구 답에 정리 결과가 없어요 — 남은 글은 직접 채워 주세요' : String(rs.error || rs.question || rs.notice || rs.answer || '창구가 처리하지 못했어요').slice(0, 300) });
     }));
     app.delete('/api/order-memo/preview/:id', authMiddleware, wrap(async (req, res) => {
@@ -370,8 +404,8 @@ function mount(app, deps) {
         const tags = (Array.isArray(req.body.tags) ? req.body.tags : []).filter(t => /^(cash|indiv|size|date|sender)$/.test(t)).slice(0, 5);
         const source = /^(manual|photo|sms:\d{1,12})$/.test(String(req.body.source || '')) ? String(req.body.source) : 'manual';
         const ctx = await ctxOf();
-        const rows = markIndiv(src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
-            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [] }))).map(r => checkRow(r, ctx));   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄
+        const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
+            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [] })))).map(r => checkRow(r, ctx));   // 같은 저장 묶음 · 문자 번호 채우기는 미리보기 때만(저장 땐 사람이 비운 칸 그대로 · 워커3 점검)의 입력삭제 줄 ↔ 현금 줄 = 주소 줄
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -498,4 +532,4 @@ function mount(app, deps) {
     return { purge, preview, ensure };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
