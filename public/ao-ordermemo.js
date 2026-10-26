@@ -969,7 +969,8 @@
     const lkAll = () => { const c = OM.card; if (c) c.rows.forEach((r, i) => { if (r.kind === 'line' && !r._new) lkRun(i); else if (r.kind === 'cash' && String(r.cells[8] || '').trim()) addrRun(i); }); };
     // ── #850-g 현금 줄 주소 확인 = 최종발주 #528 꼴(GET /api/agent-office/juso · 주소 정리기 splitAddr·searchBody·exactMatches) · 1건 = 확인됨 · 여러 건 = 고르기 · 못 찾음 = 확인 필요(빈칸으로 셈 · 「이대로 둘게요」)
     //   상세(동·호수)는 적은 그대로 붙임 · 칸 값은 사람이 [도로명으로 바꾸기]·후보를 눌러야만 바뀜(치는 중에 덮지 않음) · 과호출 = 서버 캐시·상한 그대로
-    const addrText = (j, detail) => String(j.roadAddrPart1 || '').trim() + (detail ? ' ' + detail : '');
+    //   #871 우리 꼴 = 「도로명 본 주소, 세부주소」(세부가 이미 쉼표로 시작해도 한 번만)
+    const addrText = (j, detail) => { const d = String(detail || '').replace(/^[,\s]+/, '').trim(); return String(j.roadAddrPart1 || '').trim() + (d ? ', ' + d : ''); };
     const addrBad = r => r.kind === 'cash' && !!r._addr && (r._addr.state === 'none' || r._addr.state === 'fail' || r._addr.state === 'multi') && !r._addr.kept && String(r.cells[8] || '').trim() === r._addr.raw;
     function addrKind(r) { const A = r._addr; if (!A) return ''; if (A.state === 'busy') return 'busy'; if (A.state === 'one') return 'ok'; return A.kept ? '' : 'warn'; }
     function addrHtml(r, ri) {
