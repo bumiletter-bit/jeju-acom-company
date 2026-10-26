@@ -73,7 +73,7 @@
     const recentPut = v => { if (!v) return; try { const a = [v].concat(recentGet().filter(x => x !== v)).slice(0, 5); localStorage.setItem(RECENT_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 그대로 */ } };
 
     const OM = { el: null, tab: 'open', list: null, cleared: null, counts: null, err: '', loading: false, shipDate: '', catalog: null, raw: '', tags: new Set(), busy: false,
-        card: null, opt: null, undo: null, undoT: 0, sel: new Set(), delArm: false, delT: 0, delBusy: false, prevOpen: false, ship: null, lastFocus: null };
+        card: null, opt: null, undo: null, undoT: 0, sel: new Set(), csel: new Set(), cq: '', delBusy: false, ask: null, prevOpen: false, ship: null, lastFocus: null };
 
     // ── 서버(계약 = docs/850-api.md) ─────────────────────
     async function call(url, method, body) {
@@ -186,19 +186,32 @@
                   <button type="button" class="om-tabb" role="tab" data-tab="cleared" aria-selected="false">비운 것(30일)</button>
                 </div>
                 <p class="om-sum" id="om-sum" role="status"></p>
-                <div class="om-selbar" id="om-selbar" hidden><label class="om-selall"><input type="checkbox" id="om-selall">전체 선택</label><span class="om-seln" id="om-seln" role="status"></span></div>
+                <div class="om-selbar" id="om-selbar" hidden><label class="om-selall"><input type="checkbox" id="om-selall">전체 선택</label><span class="om-seln" id="om-seln" role="status"></span><button type="button" class="om-btn sm om-del" id="om-ldel" disabled>삭제</button></div>
                 <ul class="om-list" id="om-list" aria-live="polite"></ul>
               </div>
               <aside class="om-prev" id="om-prev" aria-labelledby="om-prev-t">
                 <div class="om-prev-h"><b id="om-prev-t">다음 발주에 들어갈 것</b><span id="om-prev-d"></span><button type="button" class="om-btn sm om-prev-x" id="om-prev-x">닫기</button></div>
-                <div class="om-prev-b" id="om-prev-b"></div>
+                <div class="om-prev-b" id="om-prev-b">
+                  <div id="om-prev-m"></div>
+                  <section class="om-cash" id="om-cash" aria-labelledby="om-cash-t">
+                    <h3 id="om-cash-t">현금 줄 <small id="om-cash-n"></small></h3>
+                    <div class="om-cash-q"><label class="om-sr" for="om-cash-q">현금 줄 찾기</label><input type="search" id="om-cash-q" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
+                    <div class="om-selbar" id="om-cselbar" hidden><label class="om-selall"><input type="checkbox" id="om-cselall">전체 선택</label><span class="om-seln" id="om-cseln" role="status"></span></div>
+                    <ul class="om-list om-clist" id="om-clist" aria-live="polite"></ul>
+                  </section>
+                </div>
               </aside>
             </div>
             <footer class="om-foot" id="om-foot">
               <button type="button" class="om-btn" id="om-prev-open">다음 발주 미리보기</button>
-              <button type="button" class="om-btn om-del" id="om-del" disabled>삭제</button>
+              <button type="button" class="om-btn om-del" id="om-del" disabled>현금 줄 삭제</button>
             </footer>
             <div class="om-undo" id="om-undo" role="status" hidden><span id="om-undo-t"></span><button type="button" class="om-btn sm" id="om-undo-b">되돌리기</button></div>
+          </div>
+          <div class="om-ask-back" id="om-ask-back" hidden></div>
+          <div class="om-ask" id="om-ask" role="alertdialog" aria-modal="true" aria-labelledby="om-ask-h" aria-describedby="om-ask-s" hidden>
+            <b id="om-ask-h"></b><p id="om-ask-s"></p>
+            <div class="om-ask-acts"><button type="button" class="om-btn" id="om-ask-no">취소</button><button type="button" class="om-btn danger" id="om-ask-yes">삭제</button></div>
           </div>
           <div class="om-card-back" id="om-card-back" hidden></div>
           <section class="om-card" id="om-card" role="dialog" aria-modal="true" aria-labelledby="om-card-t" hidden></section>
@@ -247,9 +260,17 @@
         $('om-prev-open').addEventListener('click', () => prevShow(true));
         $('om-prev-x').addEventListener('click', () => prevShow(false, true));
         $('om-list').addEventListener('change', e => { const c = e.target.closest('input[data-act="pick"]'); if (!c) return; const li = c.closest('.om-item'); if (!li) return; if (c.checked) OM.sel.add(String(li.dataset.id)); else OM.sel.delete(String(li.dataset.id)); li.classList.toggle('picked', c.checked); selSync(); });
-        $('om-selall').addEventListener('change', e => { const all = (OM.list || []).map(r => String(r.id)); OM.sel = new Set(e.target.checked ? all : []); renderList(); });
-        $('om-del').addEventListener('click', delClick);
-        document.addEventListener('pointerdown', e => { if (OM.delArm && !e.target.closest('#om-del')) delDisarm(); }, true);   // #859 다른 데 누르면 되돌아감
+        $('om-selall').addEventListener('change', e => { const all = memoRows().map(r => String(r.id)); OM.sel = new Set(e.target.checked ? all : []); renderList(); });   // #878 왼쪽 = 메모 줄만
+        $('om-ldel').addEventListener('click', () => askDel(memoRows().filter(r => OM.sel.has(String(r.id))), $('om-ldel')));
+        $('om-del').addEventListener('click', () => askDel(cashPicked(), $('om-del')));   // #878 맨 아래 [삭제] = 오른쪽 현금 줄 고른 것(찾기에 보이는 것만)
+        $('om-clist').addEventListener('click', onCash);
+        $('om-clist').addEventListener('change', e => { const c = e.target.closest('input[data-act="pick"]'); if (!c) return; const li = c.closest('.om-item'); if (!li) return; if (c.checked) OM.csel.add(String(li.dataset.id)); else OM.csel.delete(String(li.dataset.id)); li.classList.toggle('picked', c.checked); cselSync(); });
+        $('om-cselall').addEventListener('change', e => { cashShown().forEach(r => { const id = String(r.id); if (e.target.checked) OM.csel.add(id); else OM.csel.delete(id); }); renderCash(); });   // 찾은 줄 기준
+        $('om-cash-q').addEventListener('input', e => { OM.cq = e.target.value; renderCash(); });
+        $('om-ask-no').addEventListener('click', () => askClose(true));
+        $('om-ask-back').addEventListener('click', () => askClose(true));
+        $('om-ask-yes').addEventListener('click', askYes);
+        $('om-ask').addEventListener('keydown', e => { if (e.key !== 'Tab') return; const a = $('om-ask-no'), b = $('om-ask-yes'); if (e.shiftKey && document.activeElement === a) { e.preventDefault(); b.focus(); } else if (!e.shiftKey && document.activeElement === b) { e.preventDefault(); a.focus(); } });   // 초점은 두 단추 안에서만
         $('om-undo-b').addEventListener('click', undoRun);
         $('om-card-back').addEventListener('click', () => cardClose());
         $('om-opt-q').addEventListener('input', () => optRender());
@@ -260,11 +281,12 @@
         document.addEventListener('keydown', e => {
             if (e.key !== 'Escape' || !OM.el || OM.el.hidden || e.isComposing) return;
             e.stopPropagation(); e.preventDefault();
+            if (OM.ask) { askClose(true); return; }   // #878 삭제 확인 창 = 취소
+            if (e.target && e.target.id === 'om-cash-q' && e.target.value) { e.target.value = ''; OM.cq = ''; renderCash(); return; }   // #878 찾기 칸 Esc = 값만 비움(메모함 안 닫힘)
             if (OM.opt) { optClose(true); return; }
             if (OM.card) { cardClose(); return; }
             if (OM.tp) { tpClose(true); return; }   // #862 줄 입력판
             if (OM.prevOpen) { prevShow(false, true); return; }
-            if (OM.delArm) { delDisarm(); return; }
             close(true);
         }, true);
     }
@@ -531,37 +553,41 @@
     }
     function syncTabs() {
         OM.el.querySelectorAll('.om-tabb').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === OM.tab ? 'true' : 'false'));
-        $('om-foot').hidden = OM.tab !== 'open'; if (OM.delArm) delDisarm();
+        $('om-foot').hidden = OM.tab !== 'open';
     }
+    // #878(대표 A안 10/27) 왼쪽 「지금 메모」 = 메모 줄(kind line)만 · 현금 줄(현금 손님·입력삭제 주소 줄) = 오른쪽 「현금 줄」 표에서만
+    const memoRows = () => (OM.list || []).filter(r => r.kind !== 'cash');
+    const cashRows = () => (OM.list || []).filter(r => r.kind === 'cash');
+    const rankOf = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on && r.used_on !== OM.shipDate ? 3 : 1;   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
+    const byRank = rows => rows.slice().sort((a, b) => rankOf(a) - rankOf(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
     function renderList() {
         const ul = $('om-list'), sum = $('om-sum');
-        const rows = OM.tab === 'open' ? OM.list : OM.cleared;
-        const open = OM.list || [];
-        $('om-n-open').textContent = open.length ? String(open.length) : '';
+        const isOpenTab = OM.tab === 'open';
+        const open = OM.list || [], memo = memoRows();
+        const rows = isOpenTab ? (OM.list ? memo : null) : OM.cleared;
+        $('om-n-open').textContent = memo.length ? String(memo.length) : '';
         const nCheck = open.filter(isCheck).length;
-        const have = new Set(open.map(r => String(r.id))); OM.sel.forEach(id => { if (!have.has(id)) OM.sel.delete(id); });   // #859 없어진 줄은 고른 것에서 뺌
-        $('om-selbar').hidden = OM.tab !== 'open' || !open.length || !!OM.err; selSync();
+        const have = new Set(memo.map(r => String(r.id))); OM.sel.forEach(id => { if (!have.has(id)) OM.sel.delete(id); });   // #859 없어진 줄은 고른 것에서 뺌
+        $('om-selbar').hidden = !isOpenTab || !memo.length || !!OM.err; selSync();
         const hp = $('om-hpill'); hp.hidden = !nCheck; hp.textContent = '확인 ' + nCheck;
+        renderCash();
         if (OM.loading && !rows) { ul.innerHTML = '<li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li>'; sum.textContent = ''; return; }
         if (OM.err) { ul.innerHTML = `<li class="om-empty err"><b>${esc(OM.err)}</b><button type="button" class="om-btn sm" data-act="reload">다시 불러오기</button></li>`; sum.textContent = ''; return; }
-        if (!rows || !rows.length) {
-            ul.innerHTML = OM.tab === 'open'
-                ? '<li class="om-empty"><b>다음 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>'
-                : '<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 30일 동안 여기서 되살릴 수 있어요.</span></li>';
-            sum.textContent = OM.tab === 'open' ? '' : '';
-            return;
-        }
-        if (OM.tab === 'open') {
+        if (isOpenTab && open.length) {
             const ready = open.filter(r => !isCheck(r) && !isLater(r));
             const nLine = ready.filter(r => r.kind === 'line').length, nCash = ready.filter(r => r.kind === 'cash').length, nLater = open.filter(r => !isCheck(r) && isLater(r)).length;
             sum.innerHTML = `${esc(mdw(OM.shipDate))} 발주에 <b>메모 ${nLine}줄 · 현금 ${nCash}줄</b>` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
-        } else sum.textContent = '비운 지 30일이 지나면 영구로 지워져요.';
-        const rank = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on && r.used_on !== OM.shipDate ? 3 : 1;   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
-        const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
-        ul.innerHTML = sorted.map(rowHtml).join('');
+        } else sum.textContent = isOpenTab ? '' : (rows && rows.length ? '비운 지 30일이 지나면 영구로 지워져요.' : '');
+        if (!rows || !rows.length) {
+            const nc = cashRows().length;
+            ul.innerHTML = isOpenTab
+                ? (nc ? `<li class="om-empty"><b>메모 줄이 없어요</b><span>현금 줄 ${nc}개는 「현금 줄」 표에 있어요${window.matchMedia('(max-width: 899px)').matches ? ' · 아래 [현금 줄 · 미리보기]' : ' · 오른쪽'}</span></li>` : '<li class="om-empty"><b>다음 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>')
+                : '<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 30일 동안 여기서 되살릴 수 있어요.</span></li>';
+            return;
+        }
+        ul.innerHTML = byRank(rows).map(r => rowHtml(r, isOpenTab, OM.sel)).join('');
     }
-    function rowHtml(r) {
-        const isOpen = OM.tab === 'open';
+    function rowHtml(r, isOpen, sel) {
         const p = isOpen ? pillOf(r) : { k: 'gone', t: '비움 ' + hm(r.cleared_at) };
         const nm = nameOf(r), l4 = last4(numOf(r));
         const who = [r.entry.created_by, hm(r.entry.created_at)].filter(Boolean).join(' · ');
@@ -570,7 +596,7 @@
             ? `<button type="button" class="om-x" data-act="del" aria-label="${esc((nm || (l4 ? '…' + l4 : '이 줄')) + ' 지우기')}" title="지우기">${ICON_X}</button>`
             : `<button type="button" class="om-btn sm om-restore" data-act="restore">되살리기</button>`;
         const label = (nm || (l4 ? '…' + l4 : '메모')) + (isOpen ? ' 열어 고치기' : '');
-        const on = isOpen && OM.sel.has(String(r.id));
+        const on = isOpen && sel.has(String(r.id));
         const ck = isOpen ? `<label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc((nm || (l4 ? '…' + l4 : '이 줄')) + ' 고르기')}"${on ? ' checked' : ''}></label>` : '';
         return `<li class="om-item k-${p.k}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <div class="om-row">${ck}
@@ -582,14 +608,15 @@
             </div>${why}</li>`;
     }
     const rowById = id => ((OM.tab === 'open' ? OM.list : OM.cleared) || []).find(r => String(r.id) === String(id));
+    const editOpen = r => cardOpen({ mode: 'edit', rows: [clone(r)], raw: r.entry.raw || '', source: r.entry.source || '' });
     async function onList(e) {
         const b = e.target.closest('[data-act]'); if (!b) return;
         const act = b.dataset.act;
         if (act === 'pick') return;   // #859 고르기 칸 = change 에서
         if (act === 'reload') { load(); return; }
         const li = b.closest('.om-item'); const r = li && rowById(li.dataset.id); if (!r) return;
-        if (act === 'edit') { cardOpen({ mode: 'edit', rows: [clone(r)], raw: r.entry.raw || '', source: r.entry.source || '' }); return; }
-        if (act === 'del') return delRow(r, li);
+        if (act === 'edit') { editOpen(r); return; }
+        if (act === 'del') { askDel([r], b); return; }
         if (act === 'restore') {
             b.disabled = true; const res = await API.restore(r.id);
             if (!res.ok) { b.disabled = false; toast(errText(res, '되살리지 못했어요')); return; }
@@ -597,67 +624,106 @@
             toast('되살렸어요 · 「지금 메모」로 돌아갔어요');
         }
     }
-    async function delRow(r, li) {
-        li.classList.add('going'); const x = li.querySelector('.om-x'); if (x) x.disabled = true;
-        const res = await API.remove(r.id);
-        if (!res.ok) { li.classList.remove('going'); if (x) x.disabled = false; toast(errText(res, '지우지 못했어요')); return; }
-        OM.list = (OM.list || []).filter(y => y !== r);
-        setTimeout(() => { renderList(); renderPrev(); }, 160);
-        undoShow('지웠어요 · ' + (nameOf(r) || (last4(numOf(r)) ? '…' + last4(numOf(r)) : '한 줄')), async () => { const y = await API.restore(r.id); if (!y.ok) { toast(errText(y, '되돌리지 못했어요')); return; } load(); });
-        loadShip();
+    // ── #878 오른쪽 「현금 줄」 표 = 찾기(이름·번호 끝자리·주소·품목) · 줄마다 고르기·× · 줄 누르면 고치기 카드(현금 줄 고치기·도로명·#874 짝 그대로)
+    const cashHay = r => [r.cells[0], r.cells[3], r.cells[4], r.cells[8], r.cells[9]].join(' ').toLowerCase().replace(/\s+/g, '');
+    const cashTels = r => [r.cells[1], r.cells[6], r.cells[10]].map(digits).filter(Boolean);
+    function cashShown() {
+        const q = String(OM.cq || '').trim().toLowerCase().replace(/\s+/g, ''), qd = digits(q);
+        const all = cashRows();
+        if (!q) return all;
+        return all.filter(r => cashHay(r).includes(q) || (qd.length >= 2 && qd === q.replace(/-/g, '') && cashTels(r).some(t => t.includes(qd))));
+    }
+    function renderCash() {
+        const ul = $('om-clist'); if (!ul) return;
+        const all = cashRows(), have = new Set(all.map(r => String(r.id)));
+        OM.csel.forEach(id => { if (!have.has(id)) OM.csel.delete(id); });
+        const shown = byRank(cashShown()), s = OM.ship, nIn = s && Array.isArray(s.cash_ids) ? s.cash_ids.length : null;
+        $('om-cash-n').textContent = all.length ? `${all.length}줄${nIn != null ? ` · ${OM.shipDate ? md(OM.shipDate) + ' ' : ''}발주에 ${nIn}줄` : ''} · 현금파일과 합쳐서 대조해요` : '';
+        $('om-cselbar').hidden = !shown.length;
+        const pb = $('om-prev-open'); if (pb) pb.textContent = all.length ? `현금 줄 ${all.length} · 미리보기` : '다음 발주 미리보기';
+        if (!OM.list) ul.innerHTML = OM.loading ? '<li class="om-skel" aria-hidden="true"></li>' : '';
+        else if (!all.length) ul.innerHTML = '<li class="om-empty"><b>현금 줄이 없어요</b><span>[현금 손님]이나 입력삭제 주소 줄을 넣으면 여기에 쌓여요.</span></li>';
+        else if (!shown.length) ul.innerHTML = `<li class="om-empty"><b>「${esc(OM.cq.trim())}」 찾는 현금 줄이 없어요</b></li>`;
+        else ul.innerHTML = shown.map(r => rowHtml(r, true, OM.csel)).join('');
+        cselSync();
+    }
+    async function onCash(e) {
+        const b = e.target.closest('[data-act]'); if (!b) return;
+        const act = b.dataset.act; if (act === 'pick') return;
+        const li = b.closest('.om-item'), r = li && cashRows().find(x => String(x.id) === String(li.dataset.id)); if (!r) return;
+        if (act === 'edit') { editOpen(r); return; }
+        if (act === 'del') askDel([r], b);
     }
     function undoShow(t, fn) { clearTimeout(OM.undoT); OM.undo = fn; $('om-undo-t').textContent = t; $('om-undo').hidden = false; OM.undoT = setTimeout(undoHide, 6000); }
     function undoHide() { clearTimeout(OM.undoT); OM.undo = null; const u = $('om-undo'); if (u) u.hidden = true; }
     function undoRun() { const fn = OM.undo; undoHide(); if (fn) fn(); }
 
-    // ── #859 고른 줄 삭제(줄 × 와 같은 서버 길 = 비운 것 30일 · 되살리기 가능) · 두 번 눌러야 지움(첫 누름 = 「한 번 더 누르면 n줄 삭제」 주황 · 3초 · 다른 데 누르면 되돌아감) ─────
+    // ── #859 고른 줄 삭제 → #878 줄 ×·고른 것 [삭제] 모두 화면 안 확인 창 한 번 더(종전 두 번 누르기 대신) · 서버 길 = 줄 × 와 같음(비운 것 30일 · 되살리기 가능)
     function selSync() {
-        const open = OM.list || [], n = OM.sel.size, all = $('om-selall'), b = $('om-del');
-        if (all) { all.checked = !!open.length && n === open.length; all.indeterminate = n > 0 && n < open.length; }
+        const memo = memoRows(), n = OM.sel.size, all = $('om-selall'), b = $('om-ldel');
+        if (all) { all.checked = !!memo.length && n === memo.length; all.indeterminate = n > 0 && n < memo.length; }
         const sn = $('om-seln'); if (sn) sn.textContent = n ? n + '줄 고름' : '';
-        if (!n && OM.delArm) delDisarm();
-        if (!b) return;
-        b.disabled = !n || OM.delBusy; b.classList.toggle('armed', OM.delArm);
-        b.textContent = OM.delBusy ? '지우는 중…' : OM.delArm ? `한 번 더 누르면 ${n}줄 삭제` : '삭제';
+        if (b) { b.disabled = !n || OM.delBusy; b.textContent = OM.delBusy ? '지우는 중…' : n ? `삭제 ${n}` : '삭제'; }
     }
-    function delDisarm() { clearTimeout(OM.delT); OM.delArm = false; selSync(); }
-    function delClick() {
-        if (!OM.sel.size || OM.delBusy) return;
-        if (!OM.delArm) { OM.delArm = true; clearTimeout(OM.delT); OM.delT = setTimeout(delDisarm, 3000); selSync(); return; }
-        delRun();
+    // 오른쪽 지우기 대상 = 지금 찾기에 보이는 줄 가운데 고른 것만(찾기 밖에 고른 줄은 안 지움 · 숫자도 보이는 것만)
+    const cashPicked = () => cashShown().filter(r => OM.csel.has(String(r.id)));
+    function cselSync() {
+        const shown = cashShown(), n = OM.csel.size, nv = cashPicked().length, all = $('om-cselall'), b = $('om-del');
+        if (all) { all.checked = !!shown.length && nv === shown.length; all.indeterminate = nv > 0 && nv < shown.length; }
+        const sn = $('om-cseln'); if (sn) sn.textContent = n ? (nv ? nv + '줄 고름' : '') + (nv < n ? `${nv ? ' · ' : ''}찾기 밖 ${n - nv}줄은 안 지워요` : '') : '';
+        if (b) { b.disabled = !nv || OM.delBusy; b.textContent = OM.delBusy ? '지우는 중…' : nv ? `현금 줄 삭제 ${nv}` : '현금 줄 삭제'; }
     }
-    async function delRun() {
-        clearTimeout(OM.delT); OM.delArm = false;
-        const rows = (OM.list || []).filter(r => OM.sel.has(String(r.id))); if (!rows.length) { selSync(); return; }
-        OM.delBusy = true; selSync();
+    function askDel(rows, from) {
+        rows = (rows || []).filter(Boolean); if (!rows.length || OM.delBusy) return;
+        OM.ask = { rows, from: from || document.activeElement };
+        const names = rows.slice(0, 3).map(r => nameOf(r) || (last4(numOf(r)) ? '…' + last4(numOf(r)) : '이름 없는 줄')).join(', ') + (rows.length > 3 ? ` 외 ${rows.length - 3}줄` : '');
+        $('om-ask-h').textContent = `${rows.length}줄을 지우면 다음 발주에서 빠져요. 정말 삭제할까요?`;
+        $('om-ask-s').textContent = names + ' · 「비운 것(30일)」에서 되살릴 수 있어요';
+        $('om-ask-back').hidden = false; $('om-ask').hidden = false;
+        hbPush('omask', () => askClose(false));
+        requestAnimationFrame(() => $('om-ask-no').focus({ preventScroll: true }));
+    }
+    function askClose(hist) {
+        const q = OM.ask; if (!q) return; OM.ask = null;
+        $('om-ask').hidden = true; $('om-ask-back').hidden = true;
+        if (hist) hbDrop('omask');
+        const f = q.from; if (f && f.isConnected && !f.disabled) f.focus({ preventScroll: true });
+    }
+    function askYes() { const q = OM.ask; if (!q) return; askClose(true); delRows(q.rows); }
+    async function delRows(rows) {
+        const ids = new Set(rows.map(r => String(r.id)));
+        document.querySelectorAll('#om-list .om-item, #om-clist .om-item').forEach(li => { if (ids.has(li.dataset.id)) li.classList.add('going'); });
+        OM.delBusy = true; selSync(); cselSync();
         const res = await Promise.all(rows.map(r => API.remove(r.id)));
         OM.delBusy = false;
         const done = rows.filter((r, i) => res[i].ok), bad = rows.length - done.length;
-        done.forEach(r => OM.sel.delete(String(r.id)));
+        done.forEach(r => { OM.sel.delete(String(r.id)); OM.csel.delete(String(r.id)); });
         OM.list = (OM.list || []).filter(r => !done.includes(r));
-        renderList(); renderPrev();
+        renderList();
         if (bad) toast(errText(res.find(x => !x.ok), '지우지 못했어요') + (done.length ? ` · ${done.length}줄은 지웠어요` : ''));
-        if (done.length) undoShow(`${done.length}줄 지웠어요`, async () => { const ys = await Promise.all(done.map(r => API.restore(r.id))); if (ys.some(y => !y.ok)) toast(errText(ys.find(y => !y.ok), '되돌리지 못했어요')); load(); });
+        if (done.length) {
+            const t = done.length === 1 ? '지웠어요 · ' + (nameOf(done[0]) || (last4(numOf(done[0])) ? '…' + last4(numOf(done[0])) : '한 줄')) : `${done.length}줄 지웠어요`;
+            undoShow(t, async () => { const ys = await Promise.all(done.map(r => API.restore(r.id))); if (ys.some(y => !y.ok)) toast(errText(ys.find(y => !y.ok), '되돌리지 못했어요')); load(); });
+        }
         loadShip();
     }
 
-    // ── 「다음 발주에 들어갈 것」 = for-ship 그대로(PC 오른쪽 · 폰은 단추로 여는 판) ─────
+    // ── 「다음 발주에 들어갈 것」 = for-ship 메모 글 그대로 + 현금 줄 표(#878 · 위) (PC 오른쪽 · 폰은 단추로 여는 판) ─────
     async function loadShip() {
         if (!OM.shipDate) return;
         const res = await API.forShip(OM.shipDate);
         OM.ship = res.ok ? res.body : null; renderPrev();
     }
     function renderPrev() {
-        const box = $('om-prev-b'); if (!box) return;
+        const box = $('om-prev-m'); if (!box) return;
         $('om-prev-d').textContent = OM.shipDate ? mdw(OM.shipDate) + ' 발주' : '';
+        renderCash();
         const s = OM.ship;
         if (!s) { box.innerHTML = OM.list ? '<p class="om-prev-empty">미리보기를 불러오지 못했어요.</p>' : ''; return; }
-        const memo = String(s.memo_text || ''), aoa = Array.isArray(s.cash_aoa) ? s.cash_aoa : [];
-        const nL = memo ? memo.split('\n').filter(Boolean).length : 0, nC = Math.max(0, aoa.length - 1), held = Array.isArray(s.held) ? s.held.length : 0, wait = Array.isArray(s.waiting) ? s.waiting.length : 0;
-        if (!nL && !nC) { box.innerHTML = '<p class="om-prev-empty">아직 들어갈 줄이 없어요.<br>저장한 메모는 여기 「최종발주 메모 칸에 들어가는 글」 그대로 보여요.</p>' + (held ? `<p class="om-prev-held">확인 안 된 ${held}줄은 안 들어가요.</p>` : ''); return; }
-        const H = aoa[0] || [], show = [3, 4, 5, 6, 8];
-        box.innerHTML = (nL ? `<h3>메모 칸 <small>${nL}줄 · 뒤 날짜 줄은 최종발주가 「오늘 안 나감」으로 빼요</small></h3><pre class="om-prev-memo">${esc(memo.split('\n').map(lineView).join('\n'))}</pre>` : '')
-            + (nC ? `<h3>현금 줄 <small>${nC}줄 · 현금파일과 합쳐서 대조해요</small></h3><div class="om-prev-tw" tabindex="0" aria-label="현금 줄 표"><table class="om-prev-t"><thead><tr>${show.map(i => `<th>${esc(H[i] || '')}</th>`).join('')}</tr></thead><tbody>${aoa.slice(1).map(row => `<tr>${show.map(i => `<td${i === 5 || i === 6 ? ' class="n"' : ''}>${esc(i === 4 ? shortOpt(row[i]) : row[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '')
+        const memo = String(s.memo_text || '');
+        const nL = memo ? memo.split('\n').filter(Boolean).length : 0, held = Array.isArray(s.held) ? s.held.length : 0, wait = Array.isArray(s.waiting) ? s.waiting.length : 0;
+        box.innerHTML = `<h3>메모 칸 <small>${nL ? nL + '줄 · 뒤 날짜 줄은 최종발주가 「오늘 안 나감」으로 빼요' : ''}</small></h3>`
+            + (nL ? `<pre class="om-prev-memo">${esc(memo.split('\n').map(lineView).join('\n'))}</pre>` : '<p class="om-prev-empty">아직 들어갈 메모 줄이 없어요.</p>')
             + (held || wait ? `<p class="om-prev-held">${[held ? `확인 안 된 ${held}줄은 안 들어가요` : '', wait ? `날짜 대기 현금 ${wait}줄은 그날 들어가요` : ''].filter(Boolean).join(' · ')}</p>` : '');
     }
     function prevShow(on, hist) {
@@ -1285,7 +1351,7 @@
         if (OM.opt) optClose(false, hist === false);
         if (OM.card) cardClose(true, hist === false);
         if (OM.prevOpen) prevShow(false, hist !== false);
-        tpClose(false); OM.sel.clear(); delDisarm(); undoHide();   // #859 닫으면 고른 것도 풂
+        tpClose(false); askClose(hist !== false); OM.sel.clear(); OM.csel.clear(); OM.cq = ''; const q = $('om-cash-q'); if (q) q.value = ''; selSync(); undoHide();   // #859 닫으면 고른 것도 풂 · #878 현금 줄 고른 것·찾기도
         OM.el.hidden = true; document.body.classList.remove('om-open');
         if (hist !== false) hbDrop('om');
         OWN.on = false; OWN.stack = [];

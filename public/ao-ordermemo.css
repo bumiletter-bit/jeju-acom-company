@@ -173,8 +173,6 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 .om-foot[hidden] { display: none; }
 @media (min-width: 900px) { .om-foot { grid-template-columns: auto auto; justify-content: end; } #om-prev-open { display: none; } }
 /* #859 고른 줄 삭제 — 첫 누름 = 주황 「한 번 더 누르면 n줄 삭제」(3초) */
-.om-del.armed { background: #B54708; border-color: #B54708; color: #fff; }
-.om-del.armed:hover { background: #93370D; }
 .om-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .om-acts span { color: var(--d-sub); font-size: 12px; }
 .om-undo { position: absolute; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 4; display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; border-radius: 12px; background: #1D2235; color: #fff; font-size: 13.5px; font-weight: 600; transform: translateX(-50%); box-shadow: 0 12px 28px -10px rgba(16, 24, 40, .5); animation: om-up 200ms var(--d-ease); white-space: nowrap; }
@@ -304,8 +302,6 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 
 /* 야간 — 따로 고른 색만(나머지는 토큰) */
 html[data-ao-theme="dark"] .om-hpill { background: #4A3A12; color: #FBBF4A; }
-html[data-ao-theme="dark"] .om-del.armed { background: #FBBF4A; border-color: #FBBF4A; color: #1C1406; }
-html[data-ao-theme="dark"] .om-del.armed:hover { background: #F5A524; }
 html[data-ao-theme="dark"] .om-hpill.ok { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
 html[data-ao-theme="dark"] .om-pill.k-next { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
 html[data-ao-theme="dark"] .om-pill.k-check { background: #4A3A12; color: #FBBF4A; }
@@ -430,3 +426,29 @@ html[data-ao-theme="dark"] .om-pair { background: rgba(251, 191, 74, .08); box-s
 html[data-ao-theme="dark"] .om-pair > b { color: #FBBF4A; }
 html[data-ao-theme="dark"] .om-pair.ok { background: var(--d-soft); box-shadow: none; }
 html[data-ao-theme="dark"] .om-pair.ok > b { color: var(--d-sub); }
+/* #878 왼쪽 = 메모 줄만 · 오른쪽 「현금 줄」 표(찾기·고르기·×) · 삭제 확인 창(화면 안) */
+.om-selbar .om-del { margin-left: auto; }
+.om-cash { margin-top: 4px; }
+.om-cash > h3 small { font-variant-numeric: tabular-nums; }
+.om-cash-q { margin: 0 0 6px; }
+.om-cash-q input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; }
+.om-cash-q input::placeholder { color: var(--d-dim); }
+.om-cash-q input:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: var(--d-accent); }
+@media (max-width: 960px), (pointer: coarse) { .om-cash-q input { font-size: 16px; } }
+.om-clist .om-empty { background: var(--d-card); }
+.om-ask-back:not([hidden]) { position: fixed; inset: 0; z-index: 980; background: rgba(16, 24, 40, .45); }
+.om-ask:not([hidden]) { box-sizing: border-box; position: fixed; z-index: 981; left: 50%; top: 50%; width: min(400px, calc(100vw - 32px)); display: grid; gap: 8px; padding: 20px; border-radius: 16px; background: var(--d-card); color: var(--d-ink); box-shadow: 0 24px 64px -12px rgba(16, 24, 40, .45), inset 0 0 0 1px var(--d-card-line); transform: translate(-50%, -50%); animation: om-ask-in 160ms var(--d-ease); }
+@keyframes om-ask-in { from { opacity: 0; } to { opacity: 1; } }
+.om-ask > b { font-size: 15.5px; font-weight: 800; line-height: 1.45; word-break: keep-all; }
+.om-ask > p { margin: 0; color: var(--d-sub); font-size: 13.5px; line-height: 1.5; }
+.om-ask-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.om-btn.danger:hover { filter: brightness(.94); }
+.om-btn.danger:focus-visible { outline: 2px solid var(--d-err); outline-offset: 2px; }
+html[data-ao-theme="dark"] .om-btn.danger { background: #D92D20; border-color: #D92D20; color: #fff; }
+@media (prefers-reduced-motion: reduce) { .om-ask:not([hidden]) { animation: none; } }
+@media (max-width: 899px) {
+    .om-foot { position: relative; z-index: 3; }   /* 폰 = 현금 줄 판을 열어도 맨 아래 [현금 줄 삭제]가 보이게 */
+    .om-modal.prev-open .om-foot { grid-template-columns: minmax(0, 1fr); }
+    .om-modal.prev-open #om-prev-open { display: none; }
+    .om-prev-b { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+}
