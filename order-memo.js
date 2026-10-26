@@ -158,6 +158,18 @@ function markIndiv(rows, extra) {
     });
     return rows;
 }
+// #874 저장된 현금(「!」) 줄 하나를 입력삭제 줄(line = 표 행 꼴 · line_key)의 주소 줄로 바꾼 값(순수 · 짝 안 되면 null)
+//   대상 = 「!」 있고 K(구매자연락처) 또는 B(보내는사람연락처) 번호가 그 번호 · K = 그 번호 · B 는 비었거나 옛 K 와 같을 때만 그 번호(사람이 넣은 다른 B 그대로)
+//   날짜 = 줄에 날짜가 없고 입력삭제 줄에 날짜가 있으면 그 날짜(markIndiv 와 같게)
+function pairCash(r, line, ctx) {
+    const c = Array.isArray(r && r.cells) ? r.cells.slice() : [];
+    const key = String((line && line.line_key) || '').trim(), d = dg(key);
+    if (!r || r.kind !== 'cash' || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || ![c[10], c[1]].map(dg).includes(d)) return null;
+    if (!dg(c[1]) || dg(c[1]) === dg(c[10])) c[1] = key;
+    c[10] = key;
+    const own = r.ship_date ? String(r.ship_date).slice(0, 10) : null, ld = line.ship_date ? String(line.ship_date).slice(0, 10) : null;
+    return checkRow({ kind: 'cash', cells: c, ship_date: isDay(own) ? own : (isDay(ld) ? ld : null), src: r.src || 'edit', indiv: true, indivKey: key }, ctx);
+}
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
 
 // AI 가 돌려준 현금 손님 → 13칸
@@ -514,6 +526,47 @@ function mount(app, deps) {
         res.json({ ok: true, row: rowOut(row), paired, rekeyed });
     }));
 
+    // #874(대표 10/27) 이미 저장된 현금 손님(「!」) 줄 → 입력삭제 주소 줄로(사람이 [바꾸기]를 누를 때만 · 자동 없음)
+    //   body { key, ids } = 그 번호의 열린 입력삭제 줄(가장 최근)에 짝 · 고른 줄 가운데 「!」 있고 K·B 번호가 그 번호인 줄만 · 그 줄의 묶음(entry)으로 옮김(#867·#868 짝 계산 = 같은 묶음 기준)
+    //   body { undo: true, rows: [{ id, entry_id, cells, ship_date }] } = 바로 앞 짝짓기 되돌리기(응답의 undo 그대로 · 지금 「!」 없는 주소 줄일 때만)
+    app.post('/api/order-memo/pair', authMiddleware, wrap(async (req, res) => {
+        const b = req.body || {}, ctx = await ctxOf();
+        if (b.undo === true) {
+            const list = (Array.isArray(b.rows) ? b.rows : []).slice(0, 60);
+            let n = 0;
+            for (const u of list) {
+                const id = Number(u && u.id), eid = Number(u && u.entry_id);
+                if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(eid) || eid <= 0 || !Array.isArray(u.cells) || !/[!！]/.test(String(u.cells[0] || ''))) continue;
+                const cur = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = $1`, [id])).rows[0];
+                if (!cur || cur.state !== 'open' || cur.kind !== 'cash' || /[!！]/.test(String((cur.cells || [])[0] || ''))) continue;
+                const ent = (await pool.query(`SELECT id FROM order_memo_entries WHERE id = $1`, [eid])).rows[0];
+                const rc = checkRow({ kind: 'cash', cells: u.cells, ship_date: isDay(u.ship_date) ? u.ship_date : null, src: cur.src, indiv: false }, ctx);
+                const x = await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open'`,
+                    [id, ent ? eid : cur.entry_id, JSON.stringify(rc.cells), rc.ship_date, rc.sure, JSON.stringify(rc.check_why), actorName(req)]);
+                n += x.rowCount;
+            }
+            await audit(req, 'pair_undo', null, { n });
+            return res.json({ ok: true, n });
+        }
+        const key = s(b.key, 40).trim(), d = dg(key);
+        if (d.length < 8) throw err(400, '입력삭제 번호가 없어요');
+        const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 60);
+        if (!ids.length) throw err(400, '바꿀 줄이 없어요');
+        const line = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'line' ORDER BY id DESC`)).rows.find(r => isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key) === d);
+        if (!line) throw err(409, '이 번호 입력삭제 줄이 메모함에 없어요 — 입력삭제 줄을 먼저 저장해 주세요');
+        const cands = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = ANY($1::int[]) AND state = 'open' AND kind = 'cash' ORDER BY id`, [ids])).rows;
+        const out = [], undo = [];
+        for (const r0 of cands) {
+            const p = pairCash(r0, line, ctx); if (!p) continue;
+            const row = (await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
+                [r0.id, line.entry_id, JSON.stringify(p.cells), p.ship_date, p.sure, JSON.stringify(p.check_why), actorName(req)])).rows[0];
+            if (!row) continue;
+            out.push(rowOut(row)); undo.push({ id: r0.id, entry_id: r0.entry_id, cells: r0.cells, ship_date: r0.ship_date || null });
+        }
+        await audit(req, 'pair', line.id, { n: out.length, asked: ids.length, entry: line.entry_id });
+        res.json({ ok: true, n: out.length, skipped: ids.length - out.length, rows: out, undo });
+    }));
+
     app.delete('/api/order-memo/rows/:id', authMiddleware, wrap(async (req, res) => {
         const cur = await getRow(req.params.id);
         if (cur.state === 'cleared') return res.json({ ok: true, already: true });
@@ -692,4 +745,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

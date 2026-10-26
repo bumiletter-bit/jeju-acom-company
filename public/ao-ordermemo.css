@@ -413,3 +413,20 @@ html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
 .om-btn.primary.om-blocked, .om-btn.primary.om-blocked:hover { background: #E4E7EC; border-color: #D0D5DD; color: #475467; cursor: not-allowed; transform: none; box-shadow: none; }
 .om-btn.primary.om-blocked small { opacity: 1; }
 html[data-ao-theme="dark"] .om-btn.primary.om-blocked, html[data-ao-theme="dark"] .om-btn.primary.om-blocked:hover { background: #2A3142; border-color: #39415A; color: #AEB6C6; }
+/* #874 입력삭제 번호 ↔ 현금(「!」) 줄 짝짓기 묻기(카드 안 · 누를 때만 짝) */
+.om-pair { padding: 12px; border-radius: 12px; background: #FFFAEB; box-shadow: inset 0 0 0 1px #FEDF89; display: grid; gap: 8px; }
+.om-pair > b { font-size: 13.5px; color: #93370D; line-height: 1.45; }
+.om-pair.ok { background: var(--d-soft); box-shadow: none; }
+.om-pair.ok > b { color: var(--d-sub); }
+.om-pair-s { margin: 0; font-size: 12.5px; color: var(--d-sub); }
+.om-pair-l { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.om-pair-l li { font-size: 13px; line-height: 1.4; }
+.om-pair-l label { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; }
+.om-pair-l input { width: 18px; height: 18px; flex: none; accent-color: var(--d-accent); }
+.om-pair .om-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.om-pair .om-btn[disabled] { opacity: .5; cursor: not-allowed; }
+@media (max-width: 960px), (pointer: coarse) { .om-pair-l label { min-height: 44px; } }
+html[data-ao-theme="dark"] .om-pair { background: rgba(251, 191, 74, .08); box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .35); }
+html[data-ao-theme="dark"] .om-pair > b { color: #FBBF4A; }
+html[data-ao-theme="dark"] .om-pair.ok { background: var(--d-soft); box-shadow: none; }
+html[data-ao-theme="dark"] .om-pair.ok > b { color: var(--d-sub); }
