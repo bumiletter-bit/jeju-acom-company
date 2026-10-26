@@ -276,6 +276,7 @@ function mount(app, deps) {
             used_on DATE, state TEXT NOT NULL DEFAULT 'open', cleared_at TIMESTAMPTZ, cleared_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_by TEXT)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS order_memo_rows_state ON order_memo_rows (state, entry_id)`);
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS checked JSONB`);   // #850-d 판매처 확인 표시 {plat, as, at}(개인정보 없음)
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS addr_ok JSONB`);   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
     })().catch(e => { ready = null; throw e; }));
     ensure().catch(e => console.error('[발주 메모함] 표 만들기 실패(다음 요청 때 다시):', e.message));
 
@@ -391,9 +392,10 @@ function mount(app, deps) {
         missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || /^0+$/.test(dg(r.line_key)) || dg(r.line_key) === '01000000000' || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
+        addr_ok: r.kind === 'cash' ? (r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : null) : undefined,   // #880-b 현금 줄만(파일·for-ship 엔 안 나감)
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
-    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
+    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
     const saveVals = (r) => [r.kind, r.ship_date, r.kind === 'line' ? r.key : null, r.kind === 'line' ? r.note : null, r.kind === 'line' ? r.plat : null, r.kind === 'line' ? r.line : null,
         r.kind === 'cash' ? JSON.stringify(r.cells) : null, r.sure, JSON.stringify(r.check_why), r.src];
     async function getRow(id) {
@@ -529,6 +531,24 @@ function mount(app, deps) {
     // #874(대표 10/27) 이미 저장된 현금 손님(「!」) 줄 → 입력삭제 주소 줄로(사람이 [바꾸기]를 누를 때만 · 자동 없음)
     //   body { key, ids } = 그 번호의 열린 입력삭제 줄(가장 최근)에 짝 · 고른 줄 가운데 「!」 있고 K·B 번호가 그 번호인 줄만 · 그 줄의 묶음(entry)으로 옮김(#867·#868 짝 계산 = 같은 묶음 기준)
     //   body { undo: true, rows: [{ id, entry_id, cells, ship_date }] } = 바로 앞 짝짓기 되돌리기(응답의 undo 그대로 · 지금 「!」 없는 주소 줄일 때만)
+    // #880-b(대표 10/27) 현금 줄 주소 「이대로 둘게요」 = 서버에 남김(다시 열어도·다른 직원 화면에도 「주소 확인 필요」 안 뜸)
+    //   body { raw } = 화면이 본 배송지 글 · 지금 cells[8](trim)과 같을 때만 저장(다르면 409) · { undo: true } = 지움 · 열린 현금 줄만 · 주소가 나중에 바뀌면 raw 가 달라 화면이 무효로 봄(서버는 안 지움)
+    app.post('/api/order-memo/rows/:id/addr-ok', authMiddleware, wrap(async (req, res) => {
+        const cur = await getRow(req.params.id), b = req.body || {};
+        if (cur.kind !== 'cash') throw err(400, '현금 줄만 돼요');
+        if (cur.state !== 'open') throw err(409, '비운 줄이에요 — 되살린 뒤 해 주세요');
+        let val = null;
+        if (b.undo !== true) {
+            const raw = s(b.raw, 400).trim(), now = String((cur.cells || [])[8] || '').trim();
+            if (!raw || raw !== now) throw err(409, '그사이 주소가 바뀌었어요 — 새로 고친 뒤 다시 눌러 주세요');
+            val = { raw, at: new Date().toISOString(), by_name: s(actorName(req), 40) };
+        }
+        const row = (await pool.query(`UPDATE order_memo_rows SET addr_ok=$2 WHERE id=$1 AND state='open' AND kind='cash' RETURNING ${ROW_COLS}`, [cur.id, val ? JSON.stringify(val) : null])).rows[0];
+        if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
+        await audit(req, val ? 'addr_ok' : 'addr_ok_undo', cur.id, { n: 1 });
+        res.json({ ok: true, row: rowOut(row) });
+    }));
+
     app.post('/api/order-memo/pair', authMiddleware, wrap(async (req, res) => {
         const b = req.body || {}, ctx = await ctxOf();
         if (b.undo === true) {

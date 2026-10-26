@@ -508,3 +508,18 @@ html[data-ao-theme="dark"] .om-ml-why, html[data-ao-theme="dark"] .om-ct-why { c
     .om-ct td.ad { grid-area: ad; padding-bottom: 10px; min-width: 0; overflow-wrap: anywhere; }
     .om-prev-tw { overflow-x: visible; }
 }
+/* #880 입력삭제 주소 줄 알약(현금과 다른 색) · 주소 확인 필요(호박) */
+.om-pill.k-indiv { background: #CCFBF1; color: #115E59; }
+.om-pill.k-addrchk { background: #FEF0C7; color: #93370D; box-shadow: inset 0 0 0 1px #FEC84B; }
+html[data-ao-theme="dark"] .om-pill.k-indiv { background: rgba(45, 212, 191, .16); color: #5EEAD4; }
+html[data-ao-theme="dark"] .om-pill.k-addrchk { background: #4A3A12; color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .45); }
+.om-cafail { margin: 0 0 6px; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }   /* #880 주소 검색 실패 = 회색 한 줄 */
+/* #880-b 주소 확인함(서버에 「이대로 둘게요」 남은 줄) · 「주소 확인 필요 n줄」 보기 단추 */
+.om-ct-ok { display: inline-block; margin-top: 2px; color: var(--d-sub); font-size: 11.5px; font-weight: 600; }
+.om-cselbar .om-cneed { margin-left: auto; min-height: 36px; padding: 0 12px; border-color: #FEC84B; background: #FFFAEB; color: #93370D; font-size: 13px; }
+.om-cselbar .om-cneed[aria-pressed="true"] { background: #FEF0C7; }
+html[data-ao-theme="dark"] .om-cselbar .om-cneed { border-color: rgba(251, 191, 74, .45); background: #2E2610; color: #FBBF4A; }
+html[data-ao-theme="dark"] .om-cselbar .om-cneed[aria-pressed="true"] { background: #4A3A12; }
+@media (max-width: 960px), (pointer: coarse) { .om-cselbar .om-cneed { min-height: 44px; } }
+.om-aseq { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: #FEF0C7; color: #93370D; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; vertical-align: middle; }   /* #880-b 주소 확인 이어서 n/전체 */
+html[data-ao-theme="dark"] .om-aseq { background: #4A3A12; color: #FBBF4A; }
