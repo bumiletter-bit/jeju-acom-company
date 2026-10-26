@@ -1097,7 +1097,7 @@
         const x = m[0], who = x.recv_name || (x.recv_initial ? x.recv_initial + '○' : ''), pd = md(x.paid_at);
         const body = [who ? '받는 분 ' + who : '', optBrief(x.option) + (x.qty ? ` ${x.qty}박스` : ''), pd ? pd + ' 결제' : ''].filter(s => s.trim()).join(' · ') + (m.length > 1 ? ` 외 ${m.length - 1}건` : '');
         if (indivRecv(r)) return `입력삭제는 구매자 번호로 넣어야 송장이 붙어요 · 구매자 번호로 바꿔 주세요${indivBuyer(r) ? '' : ' · 구매자 번호를 번호 칸에 직접 넣어 주세요'} · 지금 번호 = 받는 분 번호 · ${x.plat} · ${body}`;   // #867
-        if (x.as === 'recv') return `수취인 번호로 넣으셨네요 · ${x.plat} · ${body}${x.addr ? ' · 주소 ' + x.addr : ''} · 맞나요?`;   // 이름·주소 = 새 표(#850-e)에 있을 때만 · 없으면 성 한 글자
+        if (x.as === 'recv') { const b = indivBuyer(r); return `수취인 번호로 넣으셨네요 · ${x.plat} · ${body}${x.addr ? ' · 주소 ' + x.addr : ''} · 맞나요?${b ? ` ${telShow(b)}(구매자 연락처) · 맞으면 구매자 연락처로 수정해 주세요` : ''}`; }   // 이름·주소 = 새 표(#850-e)에 있을 때만 · 없으면 성 한 글자 · #884 구매자 번호 하나일 때만 덧붙임(단추 없음 · 직접 수정 · 저장 안 막음)
         return `${x.plat}${x.as === 'order' ? ' 주문번호' : ''} · ${body} · 맞아요`;
     }
     // #867 입력삭제 줄(INDIV_RE)인데 고른 판매처에서 받는 분 번호로만 찾힘 = 저장 막음 · [구매자 번호로 바꾸기](그 주문 구매자 번호 하나일 때만 · 서버 lookup buyer_phone)
