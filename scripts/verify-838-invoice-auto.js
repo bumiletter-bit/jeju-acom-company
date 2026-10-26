@@ -230,7 +230,8 @@ async function xlsxOf(lines, withSheet1) {
 
     console.log('④ register(dry 고정 · 멱등)');
     const run1 = runs[0], todoR = run1.result.rows.find(x => x.order_key === '1010'), todoP = run1.result.rows.find(x => x.order_key === '1012');
-    r = await call('/api/agent-office/invoice-auto/register', { run_id: 1 }, 'staff'); ok(r.status === 403, '직원 = 403');
+    r = await call('/api/agent-office/invoice-auto/register', { run_id: 1 }, 'accountant'); ok(r.status === 403, '#858 세무사(accountant) = 403');
+    r = await call('/api/agent-office/invoice-auto/register', { run_id: 999 }, 'staff'); ok(r.status === 404, '#858 직원(발주컴퓨터 등) = 권한 통과(없는 run = 404 · 쓰기 0)');
     r = await call('/api/agent-office/invoice-auto/register', { run_id: 999 }); ok(r.status === 404, '없는 run = 404');
     r = await call('/api/agent-office/invoice-auto/register', {}); ok(r.status === 400, 'run_id 없음 = 400');
     const skipId = run1.result.rows.find(x => x.order_key === '2005').id;
@@ -367,6 +368,18 @@ async function xlsxOf(lines, withSheet1) {
         c = run([mk(5051, OG5), mk(5052, OH25), nv(5053, { r: '구S', bt: T(91), rt: T(91), opt: OG5, ad: '대구 구구로 9' })],
             [sh('600000004031', PN[2]), sh('600000004032', '모르는 상품'), sh('600000004031', PN[2], '구S', T(91), '대구 구구로 9')], PN);
         ok(c.rows.find(x => x.order_key === '5053').status === 'auto' && c.rows.find(x => x.order_key === '5051').status === 'todo' && c.rows.find(x => x.order_key === '5051').suggest == null, '#841 미리 고를 운송장이 이미 다른 주문(auto)에 붙었으면 suggest 없음', JSON.stringify(c.rows.map(x => [x.order_key, x.status, x.suggest])));
+        {   // #858 10/26 실자료 꼴(김*윤 3218 · 김*수 8739) = 유라·타이벡 같은 무게·등급 = 마지막 칸 글자가 같음 → 단가표 이름으로 가름
+            const PY = '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)', PT = '고당도 타이벡감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)', PN2 = PN.concat([PT]);
+            const OT3 = '아꼼이네 상품선택: 1. (제철)고당도 타이벡감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)';
+            let k = run([mk(5061, OY3), mk(5062, OT3)], [sh('600000004061', PT), sh('600000004062', PY)], PN2); const kr = x => k.rows.find(y => y.order_key === String(x));
+            ok(k.rows.every(x => x.status === 'auto' && x.rule === 'by_product') && kr(5061).tracking === '600000004062' && kr(5062).tracking === '600000004061', '#858 유라 3kg 로얄 + 타이벡 3kg 로얄(같은 분) = 운송장 품목으로 가름 → 둘 다 by_product', JSON.stringify(k.rows.map(x => [x.order_key, x.rule, x.tracking])));
+            k = run([mk(5063, OY3), mk(5064, OT3)], [sh('600000004063', PT + ' S사이즈로!'), sh('600000004064', PY + ' S사이즈로!')], PN2);
+            ok(k.rows.every(x => x.rule === 'by_product') && k.rows.find(y => y.order_key === '5063').tracking === '600000004064', '#858 운송장에 「S사이즈로!」 꼬리 붙어도 가름', JSON.stringify(k.rows.map(x => [x.order_key, x.tracking])));
+            k = run([mk(5065, OY3), mk(5066, OT3)], [sh('600000004065', PY), sh('600000004066', PY)], PN2);
+            ok(k.rows.length === 1 && k.rows[0].order_key === '5065' && k.orders_without_tracking === 1, '#858 운송장 두 장이 다 유라 = 유라 주문에만 붙고 타이벡 주문은 운송장 없음(등록 안 함 · 엉뚱한 장 안 붙임)', JSON.stringify([k.rows.map(x => [x.order_key, x.status, x.rule]), k.orders_without_tracking]));
+            k = run([mk(5067, OY3), mk(5068, OT3)], [sh('600000004067', PY), sh('600000004068', PT)], []);
+            ok(k.rows.every(x => x.rule === 'by_product'), '#858 단가표를 못 읽어도 표준명(matchProductRaw)으로 같은 판정', JSON.stringify(k.rows.map(x => x.rule)));
+        }
         const sp = IA.stripPII(c); ok(!/recipient_name|recipient_tel/.test(JSON.stringify(sp)) && sp.rows[0].suggest === c.rows[0].suggest, 'stripPII = 전체 이름·번호만 빠지고 suggest·가림 유지');
     }
     console.log('⑤ 글자(전송 0 · 장착 · 무회귀)');
@@ -375,7 +388,7 @@ async function xlsxOf(lines, withSheet1) {
     ok(/naver: body => naverCallWithRetry\(\{ method: 'POST', path: '\/external\/v1\/pay-order\/seller\/product-orders\/dispatch', body \}\)/.test(src) && /coupang: body => naverRelay\.callCoupang\(\{ method: 'POST', path: '\/v2\/providers\/openapi\/apis\/api\/v4\/vendors\/\{vendorId\}\/orders\/invoices', body \}, null\)/.test(src) && /cafe24: body => cafe24\.apiReq\('POST', '\/api\/v2\/admin\/shipments', body\)/.test(src), 'server.js transport = 네이버 dispatch(relay) · 쿠팡 v4 invoices({vendorId} = relay 가 채움) · 카페24 admin/shipments(직접)');
     ok(/require\('\.\/invoice-auto\.js'\)\(app, \{ pool, authMiddleware, adminOnly,/.test(src) && /invoiceAuto\.initDB\(\)/.test(src), 'server.js 장착 + initDB 사슬');
     ok(/naver: async days => \{ if \(!naverRelay\.configured\(\)\) throw new Error\('중계서버 환경변수 미설정'\); return naverFetchInvoiceOrders\(days\); \}/.test(src) && /coupangFetchInvoiceOrders\(Math\.min\(days, 31\)\)/.test(src) && /cafe24\.fetchInvoiceOrders\(Math\.min\(days, 90\)\)/.test(src), '재조회 = 종전 불러오기 함수 그대로(쿠팡 31 · 카페24 90)');
-    ok(/app\.post\('\/api\/agent-office\/invoice-auto\/register', authMiddleware, adminOnly,/.test(ia) && /app\.post\('\/api\/agent-office\/invoice-auto\/match', authMiddleware,/.test(ia), '권한 = match 로그인 · register 관리자');
+    ok(/app\.post\('\/api\/agent-office\/invoice-auto\/register', authMiddleware, staffOnly,/.test(ia) && /role !== 'accountant'/.test(ia) && /app\.post\('\/api\/agent-office\/invoice-auto\/match', authMiddleware,/.test(ia), '권한 = match 로그인 · register 직원 전부(세무사 X · #858)');
     ok(!/DEFAULT/.test((ia.match(/CREATE TABLE IF NOT EXISTS invoice_auto_runs[\s\S]*?\)`\);/) || [''])[0].replace(/DEFAULT now\(\)/g, '')), '새 표에 now() 밖 DEFAULT 없음');
     const { execSync } = require('child_process'); let diffFo = '';
     try { diffFo = execSync('git diff --stat -- public/final-order-core.js public/invoice-v2.js', { cwd: ROOT }).toString().trim(); } catch (e) { diffFo = 'git 실패'; }

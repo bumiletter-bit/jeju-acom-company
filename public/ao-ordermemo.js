@@ -64,7 +64,7 @@
     const recentPut = v => { if (!v) return; try { const a = [v].concat(recentGet().filter(x => x !== v)).slice(0, 5); localStorage.setItem(RECENT_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 그대로 */ } };
 
     const OM = { el: null, tab: 'open', list: null, cleared: null, counts: null, err: '', loading: false, shipDate: '', catalog: null, raw: '', tags: new Set(), busy: false,
-        card: null, opt: null, undo: null, undoT: 0, clearAsk: false, prevOpen: false, ship: null, lastFocus: null };
+        card: null, opt: null, undo: null, undoT: 0, sel: new Set(), delArm: false, delT: 0, delBusy: false, prevOpen: false, ship: null, lastFocus: null };
 
     // ── 서버(계약 = docs/850-api.md) ─────────────────────
     async function call(url, method, body) {
@@ -84,7 +84,6 @@
         update: (id, body) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'PUT', body)),
         remove: id => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'DELETE')),
         restore: id => safe(call('/api/order-memo/restore/' + encodeURIComponent(id), 'POST')),
-        clear: body => safe(call('/api/order-memo/clear', 'POST', body)),
         forShip: date => safe(call('/api/order-memo/for-ship?date=' + encodeURIComponent(date))),
         catalog: () => safe(call('/api/invoice/catalog')),
         lookup: (key, plat) => safe(call('/api/order-memo/lookup?key=' + encodeURIComponent(key) + '&plat=' + encodeURIComponent(plat || ''))),   // #850-c 판매처 확인(계약 §7 · 읽기만)
@@ -164,6 +163,7 @@
                   <button type="button" class="om-tabb" role="tab" data-tab="cleared" aria-selected="false">비운 것(30일)</button>
                 </div>
                 <p class="om-sum" id="om-sum" role="status"></p>
+                <div class="om-selbar" id="om-selbar" hidden><label class="om-selall"><input type="checkbox" id="om-selall">전체 선택</label><span class="om-seln" id="om-seln" role="status"></span></div>
                 <ul class="om-list" id="om-list" aria-live="polite"></ul>
               </div>
               <aside class="om-prev" id="om-prev" aria-labelledby="om-prev-t">
@@ -173,9 +173,8 @@
             </div>
             <footer class="om-foot" id="om-foot">
               <button type="button" class="om-btn" id="om-prev-open">내일 발주 미리보기</button>
-              <button type="button" class="om-btn" id="om-clear">메모함 비우기</button>
+              <button type="button" class="om-btn om-del" id="om-del" disabled>삭제</button>
             </footer>
-            <div class="om-clearask" id="om-clearask" role="alertdialog" aria-labelledby="om-clearask-t" hidden></div>
             <div class="om-undo" id="om-undo" role="status" hidden><span id="om-undo-t"></span><button type="button" class="om-btn sm" id="om-undo-b">되돌리기</button></div>
           </div>
           <div class="om-card-back" id="om-card-back" hidden></div>
@@ -217,7 +216,10 @@
         $('om-list').addEventListener('click', onList);
         $('om-prev-open').addEventListener('click', () => prevShow(true));
         $('om-prev-x').addEventListener('click', () => prevShow(false, true));
-        $('om-clear').addEventListener('click', clearAsk);
+        $('om-list').addEventListener('change', e => { const c = e.target.closest('input[data-act="pick"]'); if (!c) return; const li = c.closest('.om-item'); if (!li) return; if (c.checked) OM.sel.add(String(li.dataset.id)); else OM.sel.delete(String(li.dataset.id)); li.classList.toggle('picked', c.checked); selSync(); });
+        $('om-selall').addEventListener('change', e => { const all = (OM.list || []).map(r => String(r.id)); OM.sel = new Set(e.target.checked ? all : []); renderList(); });
+        $('om-del').addEventListener('click', delClick);
+        document.addEventListener('pointerdown', e => { if (OM.delArm && !e.target.closest('#om-del')) delDisarm(); }, true);   // #859 다른 데 누르면 되돌아감
         $('om-undo-b').addEventListener('click', undoRun);
         $('om-card-back').addEventListener('click', () => cardClose());
         $('om-opt-q').addEventListener('input', () => optRender());
@@ -231,7 +233,7 @@
             if (OM.opt) { optClose(true); return; }
             if (OM.card) { cardClose(); return; }
             if (OM.prevOpen) { prevShow(false, true); return; }
-            if (OM.clearAsk) { clearAskHide(); return; }
+            if (OM.delArm) { delDisarm(); return; }
             close(true);
         }, true);
     }
@@ -430,7 +432,7 @@
     }
     function syncTabs() {
         OM.el.querySelectorAll('.om-tabb').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === OM.tab ? 'true' : 'false'));
-        $('om-foot').hidden = OM.tab !== 'open';
+        $('om-foot').hidden = OM.tab !== 'open'; if (OM.delArm) delDisarm();
     }
     function renderList() {
         const ul = $('om-list'), sum = $('om-sum');
@@ -438,6 +440,8 @@
         const open = OM.list || [];
         $('om-n-open').textContent = open.length ? String(open.length) : '';
         const nCheck = open.filter(isCheck).length;
+        const have = new Set(open.map(r => String(r.id))); OM.sel.forEach(id => { if (!have.has(id)) OM.sel.delete(id); });   // #859 없어진 줄은 고른 것에서 뺌
+        $('om-selbar').hidden = OM.tab !== 'open' || !open.length || !!OM.err; selSync();
         const hp = $('om-hpill'); hp.hidden = !nCheck; hp.textContent = '확인 ' + nCheck;
         if (OM.loading && !rows) { ul.innerHTML = '<li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li>'; sum.textContent = ''; return; }
         if (OM.err) { ul.innerHTML = `<li class="om-empty err"><b>${esc(OM.err)}</b><button type="button" class="om-btn sm" data-act="reload">다시 불러오기</button></li>`; sum.textContent = ''; return; }
@@ -467,8 +471,10 @@
             ? `<button type="button" class="om-x" data-act="del" aria-label="${esc((nm || (l4 ? '…' + l4 : '이 줄')) + ' 지우기')}" title="지우기">${ICON_X}</button>`
             : `<button type="button" class="om-btn sm om-restore" data-act="restore">되살리기</button>`;
         const label = (nm || (l4 ? '…' + l4 : '메모')) + (isOpen ? ' 열어 고치기' : '');
-        return `<li class="om-item k-${p.k}" data-id="${esc(r.id)}">
-            <div class="om-row">
+        const on = isOpen && OM.sel.has(String(r.id));
+        const ck = isOpen ? `<label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc((nm || (l4 ? '…' + l4 : '이 줄')) + ' 고르기')}"${on ? ' checked' : ''}></label>` : '';
+        return `<li class="om-item k-${p.k}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
+            <div class="om-row">${ck}
               <${isOpen ? 'button type="button" class="om-open" data-act="edit"' : 'div class="om-open"'} aria-label="${esc(label)}">
                 <span class="om-r1">${nm ? `<b class="om-nm">${esc(nm)}</b>` : ''}${l4 ? `<span class="om-l4">…${esc(l4)}</span>` : ''}${r.kind === 'cash' ? (r.indiv ? '<span class="om-pill k-addr">주소 줄</span>' : '<span class="om-pill k-cash">현금</span>') : ''}<span class="om-pill k-${p.k}">${esc(p.t)}</span><span class="om-who">${esc(who)}</span></span>
                 <span class="om-line">${esc(previewOf(r) || '(빈 줄)')}</span>
@@ -480,6 +486,7 @@
     async function onList(e) {
         const b = e.target.closest('[data-act]'); if (!b) return;
         const act = b.dataset.act;
+        if (act === 'pick') return;   // #859 고르기 칸 = change 에서
         if (act === 'reload') { load(); return; }
         const li = b.closest('.om-item'); const r = li && rowById(li.dataset.id); if (!r) return;
         if (act === 'edit') { cardOpen({ mode: 'edit', rows: [clone(r)], raw: r.entry.raw || '', source: r.entry.source || '' }); return; }
@@ -504,30 +511,35 @@
     function undoHide() { clearTimeout(OM.undoT); OM.undo = null; const u = $('om-undo'); if (u) u.hidden = true; }
     function undoRun() { const fn = OM.undo; undoHide(); if (fn) fn(); }
 
-    // ── 비우기(기본 = 최종발주에 넣은 줄만 · 되묻기는 화면 안 띠) ─────────
-    function clearAsk() {
-        const open = OM.list || [];
-        const used = open.filter(r => r.used_on === OM.shipDate && !(r.kind === 'line' && isLater(r)));   // 서버 clear 와 같은 기준(used_on = 그날 · 뒤 날짜 메모 줄은 남김)
-        const later = open.filter(r => !isCheck(r) && isLater(r)).length, chk = open.filter(isCheck).length;
-        const box = $('om-clearask');
-        const left = [later ? `날짜 대기 ${later}줄` : '', chk ? `확인 ${chk}줄` : ''].filter(Boolean).join(' · ');
-        box.innerHTML = used.length
-            ? `<p id="om-clearask-t"><b>최종발주에 넣은 ${used.length}줄을 비울까요?</b>${left ? ' ' + left + '은 남아요.' : ''} 비운 줄은 30일 동안 되살릴 수 있어요.</p><div class="om-acts"><button type="button" class="om-btn primary" id="om-clear-yes">비우기</button><button type="button" class="om-btn" id="om-clear-no">취소</button></div>`
-            : `<p id="om-clearask-t"><b>아직 최종발주에 넣은 줄이 없어요.</b> 최종발주가 메모함 줄을 넣은 뒤에 비울 수 있어요(지울 줄은 줄마다 ×).</p><div class="om-acts"><button type="button" class="om-btn" id="om-clear-no">닫기</button></div>`;
-        box.hidden = false; OM.clearAsk = true;
-        const yes = $('om-clear-yes'); if (yes) yes.addEventListener('click', clearRun);
-        $('om-clear-no').addEventListener('click', clearAskHide);
-        (yes || $('om-clear-no')).focus();
+    // ── #859 고른 줄 삭제(줄 × 와 같은 서버 길 = 비운 것 30일 · 되살리기 가능) · 두 번 눌러야 지움(첫 누름 = 「한 번 더 누르면 n줄 삭제」 주황 · 3초 · 다른 데 누르면 되돌아감) ─────
+    function selSync() {
+        const open = OM.list || [], n = OM.sel.size, all = $('om-selall'), b = $('om-del');
+        if (all) { all.checked = !!open.length && n === open.length; all.indeterminate = n > 0 && n < open.length; }
+        const sn = $('om-seln'); if (sn) sn.textContent = n ? n + '줄 고름' : '';
+        if (!n && OM.delArm) delDisarm();
+        if (!b) return;
+        b.disabled = !n || OM.delBusy; b.classList.toggle('armed', OM.delArm);
+        b.textContent = OM.delBusy ? '지우는 중…' : OM.delArm ? `한 번 더 누르면 ${n}줄 삭제` : '삭제';
     }
-    function clearAskHide() { const b = $('om-clearask'); if (b) b.hidden = true; OM.clearAsk = false; }
-    async function clearRun() {
-        const yes = $('om-clear-yes'); if (yes) { yes.disabled = true; yes.textContent = '비우는 중…'; }
-        const res = await API.clear({ date: OM.shipDate });
-        clearAskHide();
-        if (!res.ok) { toast(errText(res, '비우지 못했어요')); return; }
-        const n = res.body && res.body.cleared;
-        toast(n != null ? `${n}줄 비웠어요 · 「비운 것(30일)」에서 되살릴 수 있어요` : '비웠어요');
-        load();
+    function delDisarm() { clearTimeout(OM.delT); OM.delArm = false; selSync(); }
+    function delClick() {
+        if (!OM.sel.size || OM.delBusy) return;
+        if (!OM.delArm) { OM.delArm = true; clearTimeout(OM.delT); OM.delT = setTimeout(delDisarm, 3000); selSync(); return; }
+        delRun();
+    }
+    async function delRun() {
+        clearTimeout(OM.delT); OM.delArm = false;
+        const rows = (OM.list || []).filter(r => OM.sel.has(String(r.id))); if (!rows.length) { selSync(); return; }
+        OM.delBusy = true; selSync();
+        const res = await Promise.all(rows.map(r => API.remove(r.id)));
+        OM.delBusy = false;
+        const done = rows.filter((r, i) => res[i].ok), bad = rows.length - done.length;
+        done.forEach(r => OM.sel.delete(String(r.id)));
+        OM.list = (OM.list || []).filter(r => !done.includes(r));
+        renderList(); renderPrev();
+        if (bad) toast(errText(res.find(x => !x.ok), '지우지 못했어요') + (done.length ? ` · ${done.length}줄은 지웠어요` : ''));
+        if (done.length) undoShow(`${done.length}줄 지웠어요`, async () => { const ys = await Promise.all(done.map(r => API.restore(r.id))); if (ys.some(y => !y.ok)) toast(errText(ys.find(y => !y.ok), '되돌리지 못했어요')); load(); });
+        loadShip();
     }
 
     // ── 「내일 발주에 들어갈 것」 = for-ship 그대로(PC 오른쪽 · 폰은 단추로 여는 판) ─────
@@ -1064,7 +1076,7 @@
         if (OM.opt) optClose(false, hist === false);
         if (OM.card) cardClose(true, hist === false);
         if (OM.prevOpen) prevShow(false, hist !== false);
-        clearAskHide(); undoHide();
+        OM.sel.clear(); delDisarm(); undoHide();   // #859 닫으면 고른 것도 풂
         OM.el.hidden = true; document.body.classList.remove('om-open');
         if (hist !== false) hbDrop('om');
         OWN.on = false; OWN.stack = [];

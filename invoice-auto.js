@@ -1,7 +1,7 @@
 // #838-1 자동 송장 등록 — 1단계(외부 쓰기 0) · 설계 정본 docs/838/838-자동송장등록-시공설계(정본).md · 화면 계약 docs/838/838-api.md
 //   POST /api/agent-office/invoice-auto/match    (로그인 누구나) = CJ(LOIS) 운송장 시트 xlsx(base64 JSON) → 3채널 「불러오기」 재조회(읽기) → 짝 맞추기 → 카드 JSON 저장
 //                                                  + 같은 호출에서 delivery_shipments 색인(종전 /api/delivery/shipments/upload 와 같은 upsert · 종전 길 유지)
-//   POST /api/agent-office/invoice-auto/register (관리자) = 짝 결과 + 선택 → 멱등 열쇠로 「전송 준비」 저장 → {dry:false} + 설정 invoice_auto.send_enabled true 일 때만 3채널 발송처리(#838-4)
+//   POST /api/agent-office/invoice-auto/register (직원 전부 · 세무사 X · #858) = 짝 결과 + 선택 → 멱등 열쇠로 「전송 준비」 저장 → {dry:false} + 설정 invoice_auto.send_enabled true 일 때만 3채널 발송처리(#838-4)
 //   GET  /api/agent-office/invoice-auto/manual/:id (로그인) = 실패·모름·수기 줄 엑셀(네이버 시트 「발송처리」 = 센터 엑셀 일괄발송 꼴 · 그 밖 시트 「쿠팡·자사몰」)
 //   #838-4 전송 단위·멱등 열쇠 = 네이버 productOrderId · 쿠팡 shipmentBoxId(상자 안 옵션마다 한 줄 · 같은 송장) · 카페24 order_id|order_item_code(보낼 때 order_id+운송장으로 묶음 · 한 주문 품목이 다른 거래처면 운송장이 달라서)
 //   · 보내기 전에 줄을 집는다(state ready → sending · RETURNING) · 결과 = sent / failed(사유) / unknown(응답에 없음·연결 끊김 = 다시 안 보냄 · 사람이 채널 화면 확인) · already = sent·sending·unknown 만
@@ -59,12 +59,13 @@ function canonOf(text, pricingNames) {
     const m = pcMod(); if (!m || typeof m.optionKey !== 'function' || !String(text || '').trim()) return '';
     try { const r = m.optionKey([String(text)], Array.isArray(pricingNames) ? pricingNames : []); return r && r.by === 'match' ? normProd(r.label) : ''; } catch (e) { return ''; }
 }
-const prodHit = (o, s) => prodMatch(o.option, s.product) || (!!o.canon && o.canon === s.canon);
+// #858(대표 10/26 김*윤 3218 · 김*수 8739): 마지막 칸 「가정용 - 3kg(로얄과 2S~M)」 은 유라·타이벡 둘 다라 글자 비교가 두 장 다 맞힘 → 양쪽 다 단가표 이름이 나오면 그것만 봄(좁히기만) · 한쪽이라도 못 읽으면 종전 글자 비교
+const prodHit = (o, s) => (o.canon && s.canonReal) ? o.canon === s.canon : (prodMatch(o.option, s.product) || (!!o.canon && o.canon === s.canon));
 
 // 짝 맞추기(순수 함수 · 검증이 바로 부름) — 정본 2절 규칙표 · pricingNames = 그날 단가표 이름(#841 · 없으면 종전 글자 비교만 + 표준명)
 function matchShipments({ ships, orders, pricingNames }) {
     for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
-    for (const s of ships) if (s.canon === undefined) s.canon = canonOf(s.product, pricingNames) || normProd(s.product);
+    for (const s of ships) if (s.canon === undefined) { const c = canonOf(s.product, pricingNames); s.canonReal = !!c; s.canon = c || normProd(s.product); }
     const byT = (a, b) => (a.tracking < b.tracking ? -1 : a.tracking > b.tracking ? 1 : 0);
     const cash = ships.filter(s => s.cash).sort(byT), live = ships.filter(s => !s.cash).sort(byT);
     const assign = new Map();   // order_key → { o, ships:[], rule, todo?:[ships] }
@@ -184,6 +185,8 @@ module.exports = function mountInvoiceAuto(app, d) {
     const kstIsoMs = d.kstIsoMs || (() => new Date(Date.now() + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00'));
     const FILE_MAX = 5 * 1024 * 1024, FILES_MAX = 4;
     let _busy = false;
+    // #858(대표 10/26 「발주컴퓨터부터 직원 모두 되야 함」) 등록·채널에 보내기 = 로그인 직원 전부 · 세무사(accountant)만 막음 · 누가 했는지 = audit actor 그대로
+    const staffOnly = (req, res, next) => (req.user && req.user.role && req.user.role !== 'accountant') ? next() : res.status(403).json({ ok: false, error: '직원 계정만 등록할 수 있어요' });
 
     async function initDB() {
         await pool.query(`CREATE TABLE IF NOT EXISTS invoice_auto_runs (
@@ -312,7 +315,7 @@ module.exports = function mountInvoiceAuto(app, d) {
         return out;
     }
 
-    app.post('/api/agent-office/invoice-auto/register', authMiddleware, adminOnly, async (req, res) => {
+    app.post('/api/agent-office/invoice-auto/register', authMiddleware, staffOnly, async (req, res) => {
         try {
             const runId = parseInt(req.body && req.body.run_id, 10); if (!runId) return res.status(400).json({ ok: false, error: 'run_id 가 없어요' });
             const r = await pool.query(`SELECT id, result, register_state FROM invoice_auto_runs WHERE id = $1`, [runId]);

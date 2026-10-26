@@ -474,7 +474,10 @@
     // #583(대표 10/8 「번호 업그레이드」): 사이즈 글자 없이 「업그레이드」만 적은 줄 — 어느 사이즈인지는 화면 카드에서 사람이 고른다(ups).
     //   줄에 번호·날짜·플랫폼·건수 말고 다른 낱말이 있으면(「4kg 업그레이드」) 손대지 않는다 — 종전 규칙이 읽는다.
     const UP_TOK = /^(?:사이즈)?(?:업그레이드|업글|upgrade)(?:로|요)?[!.]*$/i;
-    const UP_OK = /^(?:\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|네이버|자사몰|쿠팡|카페24|스마트스토어)$/;
+    const UP_OK = /^(?:\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|네이버|자사몰|쿠팡|카페24|스마트스토어|스토어)$/;
+    // #858(대표 10/26 실사용): 발주 메모함이 넣는 「번호 2S사이즈로 네이버」 — 사이즈 낱말을 떼고 「번호 네이버」만 남으면 날짜 없는 요청 줄(확인 필요)로 읽혔다.
+    //   사이즈·업그레이드 줄에서 번호 말고 남는 것이 판매처 낱말뿐이면 그 줄은 비운다(사이즈는 번호로 붙이므로 판매처 낱말이 할 일 없음). 날짜 등 다른 글이 있으면 종전 그대로.
+    const PLAT_TOK = /^(?:네이버|스마트스토어|스토어|자사몰|카페24|쿠팡)$/;
     function upLine(line, srcLine) {
         const toks = line.split(/[ \t]+/).filter(Boolean); if (!toks.some(t => UP_TOK.test(t))) return null;
         const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
@@ -487,7 +490,7 @@
             return null;
         }
         let kept = line; toks.filter(t => !keep.includes(t)).forEach(tok => { kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
-        return { up: { srcLine, raw: line.trim(), key, digits: dg(key), expect }, text: keep.length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '') };
+        return { up: { srcLine, raw: line.trim(), key, digits: dg(key), expect }, text: keep.filter(t => !PLAT_TOK.test(t)).length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '') };
     }
     // #601(대표 10/9 「1건 S · 1건 M」): 한 줄에 사이즈 낱말이 둘 이상이면 「사이즈 + 건수」 짝으로 읽는다(박스마다 다른 사이즈).
     //   짝 = 사이즈 바로 뒤 건수 또는 건수 바로 뒤 사이즈(군더더기 낱말은 건너뜀 · 번호·다른 낱말이 끼면 짝이 아니다). 왼쪽부터 차례로 짝짓는다.
@@ -507,6 +510,7 @@
             if (t === key && !keySeen) { keySeen = true; seq.push({ k: 'X' }); return; }
             if (SIZE_CNT.test(t)) { seq.push({ k: 'C', n: parseInt(t.match(SIZE_CNT)[1], 10) }); gone.push(t); return; }
             if (SIZE_FILLER.test(t)) { gone.push(t); return; }
+            if (PLAT_TOK.test(t)) return;   // #858 판매처 낱말 = 짝 판정에선 건너뛰고 줄 글엔 남김(날짜 있는 줄의 판매처를 지우지 않게)
             seq.push({ k: 'X' });
         });
         const pairs = []; let bad = '';
@@ -518,7 +522,7 @@
         if (bad) return { bad };
         const parts = []; pairs.forEach(p => { const hit = parts.find(x => x.size === p.size); if (hit) hit.n += p.n; else parts.push({ size: p.size, n: p.n }); });
         let kept = s; gone.forEach(tok => { kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
-        const text = toks.length - gone.length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');
+        const text = toks.filter(t => !gone.includes(t) && !PLAT_TOK.test(t)).length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');
         return { parts, first: pairs[0].size, expect: pairs.reduce((n, p) => n + p.n, 0), text };
     }
     // #601: 박스별 꼬리 — parts(sizeLines) 를 주문 박스 수(qty)에 맞춰 편다. mk = 사이즈 → 꼬리 글(기본 「○사이즈로!」). 순수 함수 · 입력을 바꾸지 않는다.
@@ -559,7 +563,7 @@
             toks.filter(t => t !== key && SIZE_FILLER.test(t)).forEach(drop);
             if (!ROYAL_SIZE.has(m[2].toUpperCase())) bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: NOT_ROYAL, kind: 'size', size: m[2].toUpperCase() });
             else sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase(), expect });
-            if (toks.length === 1) return '';
+            if (toks.filter(t => !PLAT_TOK.test(t)).length === 1) return '';   // #858 번호 + 판매처 낱말뿐 = 빈 줄
             return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로
         });
         return { text: out.join('\n'), sizes, ups, bad };

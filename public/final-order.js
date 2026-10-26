@@ -270,7 +270,7 @@
     //   짝 = 메모 칸 그 줄 글자가 메모함이 넣은 줄과 같을 때만(사람이 고쳤으면 종전대로 「주문 없음」)
     function omChecked(i) { if (OMF.removed || !OMF.lines.length) return null; const ta = document.getElementById('fo-memo'), t = ta ? String(ta.value.replace(/\r/g, '').split('\n')[i] || '').trim() : ''; if (!t) return null; const x = OMF.lines.find(y => y.checked && y.text.trim() === t); return x ? x.checked : null; }
     const omCheckedTip = ck => `메모함에 넣을 때 ${ck.plat} 주문을 ${ck.as === 'recv' ? '받는 분 번호로 ' : ''}찾았던 번호인데 지금 배송준비에 없어요 — 취소·이미 발송인지 확인해 주세요`;
-    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
+    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
     const omBand = html => { const b = $('fo-om-band'); if (!b) return; b.hidden = !html; b.innerHTML = html || ''; };
     const omPost = (ids, undo) => ids.length ? window.api('/api/order-memo/used', 'POST', Object.assign({ date: OMF.date, ids }, undo ? { undo: true } : {})).catch(() => {}) : Promise.resolve();
     function omMergeCash() {
@@ -311,7 +311,7 @@
     }
     function omReset() {   // 최종발주 [초기화] — 넣은 표시를 되돌리고 처음 상태로(다시 불러오면 다시 들어감)
         if (OMF.date && OMF.ids.length && !OMF.removed) omPost(OMF.ids.slice(), true);
-        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null }); omBand('');
+        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false }); omBand('');
     }
     async function omInsert(force) {
         const date = ($('fo-ship') || {}).value;
@@ -321,7 +321,7 @@
         if (r && r.ok && (st.busy || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
         if (!r || !r.ok || ($('fo-ship') || {}).value !== date) { if (!r) OMF.date = date; return; }
         if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
-        OMF.date = date; OMF.removed = false;
+        OMF.date = date; OMF.removed = false; OMF.cleared = false;
         const lines = Array.isArray(r.lines) ? r.lines : [];
         OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || ''), checked: x.checked || null })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
         const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
@@ -333,12 +333,12 @@
         if (ta && OMF.lines.length) { const cur = ta.value.replace(/\s+$/, ''); ta.value = (cur ? cur + '\n' : '') + OMF.lines.map(x => x.text).join('\n'); }
         omApplyCash();
         omPost(OMF.ids.slice(), false);
-        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button>`);
+        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
         markStale(); syncInput();
     }
     function omResultNote(el) {
         const n = omLiveIds().length;
-        if (!el || !n || OMF.removed) return;
+        if (!el || !n || OMF.removed || OMF.cleared) return;
         const box = document.createElement('p'); box.className = 'fo-note fo-om-done'; box.id = 'fo-om-done';
         box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> 이번 발주에 ${n}줄을 넣었어요 <button type="button" class="fo-btn sm" data-om="clear">메모함 비우기</button> <span class="fo-settle-note">날짜 대기 줄 · 확인 안 된 줄은 남아요</span>`;
         const notes = el.querySelector('.fo-notes'); (notes || el).appendChild(box);
@@ -354,16 +354,31 @@
         }
         if (b.dataset.om === 'again') { if (!st.busy) { OMF.removed = false; OMF.date = ''; OMF.ids = []; OMF.lines = []; OMF.cash = []; omInsert(true); } return; }
         if (b.dataset.om === 'clear') {
-            b.disabled = true;
+            if (b.dataset.arm !== '1') { omArm(b); return; }   // #859 두 번 눌러야 비움(첫 누름 = 주황 안내 · 3초 · 다른 데 누르면 되돌아감)
+            omDisarm(); b.disabled = true;
             await omSyncUsed();   // 메모 칸에서 지웠거나 현금에서 빠진 줄은 「넣음」을 먼저 되돌림 → 서버는 실제로 들어간 줄만 비움
             let r = null; try { r = await window.api('/api/order-memo/clear', 'POST', { date: OMF.date }); } catch (er) { r = null; }
             const box = $('fo-om-done');
             if (!r || !r.ok) { b.disabled = false; toast('메모함을 비우지 못했어요 · 다시 눌러 주세요', 3000); return; }
             const left = r.left || {};
-            if (box) box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> ${Number(r.cleared) || 0}줄 비웠어요${left.wait ? ` · 날짜 대기 ${left.wait}줄` : ''}${left.unsure ? ` · 확인 ${left.unsure}줄` : ''}${left.wait || left.unsure ? '은 남았어요' : ''} <span class="fo-settle-note">비운 줄은 30일 동안 되살릴 수 있어요</span>`;
-            OMF.ids = [];
+            const done = `${Number(r.cleared) || 0}줄 비웠어요${left.wait ? ` · 날짜 대기 ${left.wait}줄` : ''}${left.unsure ? ` · 확인 ${left.unsure}줄` : ''}${left.wait || left.unsure ? '은 남았어요' : ''}`;
+            if (box) box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> ${done} <span class="fo-settle-note">비운 줄은 30일 동안 되살릴 수 있어요</span>`;
+            if (b.closest('#fo-om-band')) omBand(`<b>발주 메모함:</b> ${done} · 비운 줄은 30일 동안 메모함 「비운 것」에서 되살릴 수 있어요`);
+            OMF.ids = []; OMF.cleared = true;
         }
     });
+    // #859 [메모함 비우기] 두 번 누르기 — 첫 누름 = 글이 「…한 번 더 누르세요」로 바뀌고 주황 · 3초 안 다시 = 실행 · 3초 지나거나 다른 데 누르면 되돌아감
+    function omArm(b) {
+        omDisarm(); const n = omLiveIds().length;
+        b.dataset.arm = '1'; b.dataset.label = b.textContent; b.classList.add('fo-om-arm');
+        b.textContent = `누르면 메모함에서 이번 발주 메모${n ? ' ' + n + '줄' : ''}이 지워져요 · 한 번 더 누르세요`;
+        OMF.armB = b; OMF.armT = setTimeout(omDisarm, 3000);
+    }
+    function omDisarm() {
+        clearTimeout(OMF.armT); const b = OMF.armB; OMF.armB = null;
+        if (b && b.dataset.arm === '1') { b.dataset.arm = ''; b.classList.remove('fo-om-arm'); b.textContent = b.dataset.label || '메모함 비우기'; }
+    }
+    document.addEventListener('pointerdown', e => { if (OMF.armB && !OMF.armB.contains(e.target)) omDisarm(); }, true);
     // #575: 버튼 글은 낡음(stale) 상태와 늘 같이 간다 — markStale 에서도, syncInput 에서도 이 한 곳을 부른다(워커1 발견: 메모 입력·기준일 변경 때 글이 안 바뀜)
     function syncRejudgeLabel() { const b = $('fo-rejudge'); if (!b) return; const stale = !!(st.stale || !st.judged); b.textContent = stale ? '다시 판정' : '확인'; b.classList.toggle('stale', stale); const sm = $('fo-stale-msg'); if (sm) sm.hidden = !(st.stale && st.loaded); }   // #583 ④ 빨강 안내는 [확인]·[사진으로 넣기] 옆에
 
@@ -702,6 +717,20 @@
         const cnt = { ok: 0, warn: 0, none: 0 }; marks.forEach(m => { if (m) cnt[m.k]++; });
         const chip = (k, label) => cnt[k] ? `<button type="button" class="${k}" data-k="${k}" title="누르면 그 줄로 가요">${label} <b>${cnt[k]}</b>줄</button>` : '';
         E.bar.innerHTML = cnt.ok + cnt.warn + cnt.none ? chip('warn', '⚠ 확인 필요') + chip('none', '✕ 주문 없음') + chip('ok', '✓ 확인완료') + '<span class="stale-note">내용이 바뀌었어요. [다시 판정]을 누르면 표시가 새로 떠요.</span>' : '';
+        omJudgeNote(E, marks);
+    }
+    // #858 발주 메모함 띠에 판정 결과 한 줄 — 「메모함 n줄 · 확인완료 n」(메모 칸에 남은 메모함 줄만 · 사람이 고친 줄은 안 셈 · 다시 판정 전엔 안 보임)
+    function omJudgeNote(E, marks) {
+        const b = $('fo-om-band'); if (!b) return;
+        const old = b.querySelector('.fo-om-judge'); if (old) old.remove();
+        if (b.hidden || OMF.removed || !OMF.lines.length || !st.judged || st.stale) return;
+        const want = new Map(); OMF.lines.forEach(x => { const t = x.text.trim(); want.set(t, (want.get(t) || 0) + 1); });
+        const c = { n: 0, ok: 0, warn: 0, none: 0 };
+        E.ta.value.replace(/\r/g, '').split('\n').forEach((l, i) => { const t = l.trim(), k = want.get(t); if (!t || !k) return; want.set(t, k - 1); c.n++; const m = marks[i]; if (m) c[m.k]++; });
+        if (!c.n) return;
+        const sp = document.createElement('span'); sp.className = 'fo-om-judge';
+        sp.textContent = ` · 판정: 메모함 ${c.n}줄 · 확인완료 ${c.ok}` + (c.warn ? ` · 확인 필요 ${c.warn}` : '') + (c.none ? ` · 주문 없음 ${c.none}` : '') + ' ';
+        const btn = b.querySelector('[data-om="take"]'); b.insertBefore(sp, btn || null);
     }
     function buildCards() {
         const c = core(), s = S(), cards = [], info = [];
@@ -2647,7 +2676,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     };
     const MAX_FILES = 4, MAX_BYTES = 5 * 1024 * 1024;
     const API = '/api/agent-office/invoice-auto/';
-    const isAdmin = () => typeof currentUser !== 'undefined' && !!currentUser && currentUser.role === 'admin';
+    const canReg = () => typeof currentUser !== 'undefined' && !!currentUser && currentUser.role !== 'accountant';   // #858 등록·보내기 = 직원 전부(서버 권한과 같게) · 세무사만 막음
     const call = (path, body) => window.api(API + path, 'POST', body, { timeoutMs: 180000 });
     const tno = v => { const s = String(v == null ? '' : v), d = s.replace(/\D/g, ''); return d.length === 12 ? d.replace(/(\d{4})(\d{4})(\d{4})/, '$1-$2-$3') : s; };   // 운송장 = 숫자 12자리(서버) → 4-4-4 로 끊어 보이기(값은 그대로)
     // #841 이름·연락처 전체(서버 recipient_name·recipient_tel) · 옛 서버면 마스킹 글
@@ -2659,7 +2688,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         <div class="fo-cards-head"><h3>자동 송장 등록 <small>CJ 운송장 파일을 올리면 그날 주문과 짝을 맞춰요</small></h3></div>
         <div class="fo-ia-drop" id="fo-ia-drop">
             <input type="file" id="fo-ia-file" accept=".xlsx,.xls" multiple hidden>
-            <p>거래처별 운송장 엑셀(시트2 꼴)을 여기에 끌어다 놓거나</p>
+            <p>거래처 운송장 번호를 넣어주세요</p>
             <button type="button" class="fo-btn" id="fo-ia-pick">파일 고르기</button>
             <span class="fo-hint">최대 ${MAX_FILES}개 · 개당 5MB</span>
         </div>
@@ -2719,7 +2748,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function sync() {
         $('fo-ia-match').disabled = ia.busy || !ia.files.length;
         $('fo-ia-pick').disabled = ia.busy;
-        const reg = $('fo-ia-reg'); if (reg) reg.disabled = ia.busy || !isAdmin() || todoLeft() > 0 || !!ia.reg;
+        const reg = $('fo-ia-reg'); if (reg) reg.disabled = ia.busy || !canReg() || todoLeft() > 0 || !!ia.reg;
         const sb = $('fo-ia-send'); if (sb) sb.disabled = ia.busy || ia.sent;
         $('fo-ia').classList.toggle('busy', ia.busy);
     }
@@ -2797,7 +2826,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function regNote() {
         const m = $('fo-ia-reg-msg'); if (!m) return;
         m.classList.remove('err');
-        m.textContent = !isAdmin() ? '등록은 관리자(대표·조가영)만 할 수 있어요' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : (ia.sugg.size ? `미리 고른 ${ia.sugg.size}건(주황)을 확인해 주세요 · ` : '') + '[등록] = 준비만 해요 · 채널에 보내기 전에 한 번 더 물어요';
+        m.textContent = !canReg() ? '' : todoLeft() ? `할 일 ${todoLeft()}건을 먼저 골라 주세요` : ia.reg ? '' : (ia.sugg.size ? `미리 고른 ${ia.sugg.size}건(주황)을 확인해 주세요 · ` : '') + '[등록] = 준비만 해요 · 채널에 보내기 전에 한 번 더 물어요';
     }
     // #838-5 두 단계: [등록] = 준비(dry · 채널 전송 0 · 같은 실행에서 다시 해도 됨) → 서버 설정 send_enabled 가 켜져 있으면 [채널에 보내기] + 확인 한 번(되돌릴 수 없음)
     //   #841(대표 10/25): [등록]은 묻지 않고 바로 준비 조회 · 보내기 확인(주황)만 남김
@@ -2811,7 +2840,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     const picksNow = () => { const p = {}; todoRows().forEach(x => { p[x.id] = ia.picks.get(x.id); }); return p; };
     async function register() {
         $('fo-ia-confirm').hidden = true;
-        if (ia.busy || !ia.res || !isAdmin() || todoLeft()) return;
+        if (ia.busy || !ia.res || !canReg() || todoLeft()) return;
         ia.busy = true; sync(); const m = $('fo-ia-reg-msg'); m.classList.remove('err'); m.textContent = '준비하는 중';
         try {
             const r = await call('register', { run_id: ia.res.run_id, picks: picksNow(), skip: [], dry: true });
@@ -2822,7 +2851,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     }
     async function send() {
         $('fo-ia-confirm').hidden = true;
-        if (ia.busy || !ia.reg || ia.sent || !isAdmin()) return;
+        if (ia.busy || !ia.reg || ia.sent || !canReg()) return;
         ia.busy = true; ia.sent = true; sync(); const m = $('fo-ia-send-msg'); m.classList.remove('err'); m.textContent = '채널에 보내는 중 — 창을 닫지 마세요';
         try {
             const r = await call('register', { run_id: ia.res.run_id, picks: picksNow(), skip: [], dry: false });
@@ -2869,7 +2898,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             table = `<thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
                 ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.ready || {})[c] || 0}</td><td>${st(c, 'already')}</td><td>${per(c).length - st(c, 'ready') - st(c, 'already')}</td></tr>`).join('')}
                 <tr class="tot"><td>합계</td><td>${sum('ready')}</td><td>${Number(g.already) || 0}</td><td>수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr></tbody>`;
-            const canSend = g.send_enabled === true && isAdmin() && !ia.sent && sum('ready') > 0;
+            const canSend = g.send_enabled === true && canReg() && !ia.sent && sum('ready') > 0;
             extra = g.send_enabled === true
                 ? `<div class="fo-acts">${canSend ? `<button type="button" class="fo-btn primary" id="fo-ia-send">채널에 보내기 (${sum('ready')}건)</button>` : ''}<span class="fo-msg" id="fo-ia-send-msg" role="status"></span></div>`
                 : `<div class="fo-acts"><span class="fo-msg" id="fo-ia-send-msg" role="status">${ia.sent ? '' : '지금은 채널 전송이 꺼져 있어요 — 준비만 저장했어요'}</span></div>`;

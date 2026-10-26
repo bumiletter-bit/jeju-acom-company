@@ -117,6 +117,8 @@ function checkCash(r, today, catalog, origin) {
     if (r.indiv) { c[0] = c[0].replace(/^[!！]+\s*/, '') || '제주아꼼이네'; if (r.indivKey) c[10] = r.indivKey; }
     else if (!/[!！]/.test(c[0])) c[0] = '!' + (c[0] || '제주아꼼이네');
     if (!c[2]) c[2] = origin;
+    // #858(대표 10/26 사진 「!제주아꼼이네」·B 빈칸) 보내는사람연락처(B)가 비면 구매자연락처(K) · 사람이 「보내는이 변경」으로 넣은 번호는 그대로 · 이름(A)은 안 건드림
+    if (!c[1] && c[10]) c[1] = c[10];
     [1, 6, 7, 10].forEach(i => { if (c[i]) c[i] = core.fmtPhone(c[i]); });
     const q = Number(c[5]); c[5] = Number.isInteger(q) && q > 0 ? String(q) : '';
     const missing = Object.keys(REQ_CELLS).map(Number).filter(i => !c[i]);
@@ -206,7 +208,7 @@ function pickForShip(rows, date) {
         else held.push({ id: r.id, kind: 'cash', why: ['지난 날짜예요'] });
     }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
-        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => r.cells.slice(0, 13))] : [], cash_ids: cash.map(r => r.id),
+        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K */ : [], cash_ids: cash.map(r => r.id),
         waiting, held, ids: lines.map(l => l.id).concat(cash.map(r => r.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부

@@ -75,6 +75,15 @@ function mkPool(db) {
         const t4 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { option: CAT[0] + '로!' })), ctx);
         ok(!t3.sure && t3.check_why.includes('품목이 단가표 이름과 달라요') && t3.missing.includes(4) && !t4.sure && t4.check_why.includes('품목이 단가표 이름과 달라요'), '#856 엉뚱한 품목 + 꼬리 · 띄어쓰기 없는 꼬리 = 여전히 🟠 「품목이 단가표 이름과 달라요」', [t3.check_why, t4.check_why]);
     }
+    {   // #858 보내는사람연락처(B) 빈칸 = 구매자연락처(K) · 적힌 B·A 는 그대로
+        const cc = (a, b, k) => OM.checkRow({ kind: 'cash', src: 'edit', cells: [a, b, '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', k, '', ''] }, ctx);
+        const b1 = cc('!제주아꼼이네', '', '01055556666'), b2 = cc('!제주아꼼이네', '010-1212-3434', '01055556666'), b3 = cc('!홍길동 드림', '', '010-5555-6666'), b4 = cc('!제주아꼼이네', '', '');
+        ok(b1.cells[1] === '010-5555-6666' && b1.cells[0] === '!제주아꼼이네' && b3.cells[1] === '010-5555-6666' && b3.cells[0] === '!홍길동 드림', '#858 B 빈칸 = K 번호로 채움 · A(「!제주아꼼이네」·「!홍길동 드림」) 그대로', [b1.cells.slice(0, 2), b3.cells.slice(0, 2)]);
+        ok(b2.cells[1] === '010-1212-3434' && b4.cells[1] === '', '#858 사람이 넣은 B 번호는 그대로 · K 도 비면 B 빈칸 그대로', [b2.cells[1], b4.cells[1]]);
+        const fs8 = OM.pickForShip([{ id: 1, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] },
+            { id: 2, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '010-1212-3434', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] }], '2026-10-26');
+        ok(fs8.cash_aoa[1][1] === '010-5555-6666' && fs8.cash_aoa[2][1] === '010-1212-3434' && fs8.cash_aoa[1][0] === '!제주아꼼이네', '#858 이미 저장된 줄(for-ship 내보내기)도 B 빈칸 = K · 적힌 B 그대로', fs8.cash_aoa.slice(1).map(c => c.slice(0, 2)));
+    }
     console.log('②-b 문자 출처 현금 손님(#850-b)');
     {
         const SP = '01092590977', base = { buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };

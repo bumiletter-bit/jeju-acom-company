@@ -71,7 +71,7 @@ window.api = async (url, method, body) => {
   if ('${mode}' === 'old' && /invoice-auto/.test(url)) err(404, '서버 오류');
   if (url === '/api/agent-office/invoice-auto/match') { if (!body.files || !body.files.length) err(400, '파일이 없어요'); await new Promise(r => setTimeout(r, 300)); return MATCH; }
   if (url === '/api/agent-office/invoice-auto/register') {
-    if (currentUser.role !== 'admin') err(403, '관리자만');
+    if (currentUser.role === 'accountant') err(403, '세무사는 못 해요');   // #858 직원 전부 · 세무사만 막음
     const M = '${mode}';
     if (M === 'new') return REG;
     if (body.dry !== false) return Object.assign({}, REG, { send_enabled: true, manual_file: '/api/agent-office/invoice-auto/manual/17' });
@@ -91,7 +91,7 @@ window.fetch = async (u, o) => {   // 수기 파일(2-c) = Authorization 머리 
 <script src="file:///${PUB}/final-order-core.js"></script><script src="file:///${PUB}/final-order.js"></script></body></html>`;
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v838-'));
 const write = (n, s) => { const p = path.join(OUT, n); fs.writeFileSync(p, s); return 'file:///' + p.split(path.sep).join('/'); };
-const U = { admin: write('admin.html', page('new', 'admin')), user: write('user.html', page('new', 'user')), old: write('old.html', page('old', 'admin')),
+const U = { admin: write('admin.html', page('new', 'admin')), user: write('user.html', page('new', 'user')), acct: write('acct.html', page('new', 'accountant')), old: write('old.html', page('old', 'admin')),
     send: write('send.html', page('send', 'admin')), off409: write('off409.html', page('off409', 'admin')), e500: write('e500.html', page('e500', 'admin')), sentok: write('sentok.html', page('sentok', 'admin')) };
 const fakeXlsx = name => ({ name, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('PK fake ' + name) });
 
@@ -193,12 +193,14 @@ const fakeXlsx = name => ({ name, mimeType: 'application/vnd.openxmlformats-offi
             ok(errs.length === 0, tag + ' 콘솔 오류 0', errs);
             await pg.close();
 
-            // ③ 직원 = [등록] 꺼짐 + 안내
-            { const { pg, errs } = await open(U.user);
+            // ③ #858 직원 = [등록] 켜짐(「관리자만」 글 없음) · 세무사 = 꺼짐
+            for (const [who, url, on] of [['직원', U.user, true], ['세무사', U.acct, false]]) { const { pg, errs } = await open(url);
               await pg.setInputFiles('#fo-ia-file', [fakeXlsx('송장(효돈).xlsx')]); await tap(pg, '#fo-ia-match'); await pg.waitForSelector('#fo-ia-out:not([hidden]) .fo-ia-sum', { timeout: 8000 });
               await pg.selectOption('select[data-ia-pick="r5"]', '612345671111'); await pg.selectOption('select[data-ia-pick="r9"]', 'manual');
-              ok(await pg.locator('#fo-ia-reg').isDisabled() && /관리자\(대표·조가영\)만/.test(await pg.textContent('#fo-ia-reg-msg')), tag + ' 직원 = 짝 맞추기·카드는 되고 [등록]은 꺼짐');
-              ok(errs.length === 0, tag + ' 직원 콘솔 오류 0', errs); await pg.close(); }
+              const msg = await pg.textContent('#fo-ia-reg-msg');
+              ok((await pg.locator('#fo-ia-reg').isDisabled()) === !on && !/관리자/.test(msg), tag + ' ' + who + ' = [등록] ' + (on ? '켜짐' : '꺼짐') + ' · 「관리자만」 글 없음', msg);
+              if (on) { await tap(pg, '#fo-ia-reg'); await pg.waitForSelector('#fo-ia-result:not([hidden])', { timeout: 5000 }); ok(true, tag + ' 직원 [등록] = 준비 결과'); }
+              ok(errs.length === 0, tag + ' ' + who + ' 콘솔 오류 0', errs); await pg.close(); }
 
             // ④ #838-5 실전송 — 준비(dry) → send_enabled 켜짐 → [채널에 보내기] → 확인(되돌릴 수 없음) → dry:false → 보낸 결과 · 모름 빨강 · 서버 수기 파일
             const prep = async url => {
