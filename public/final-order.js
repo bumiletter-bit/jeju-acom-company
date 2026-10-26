@@ -922,6 +922,16 @@
             if (sd.ambiguous) cards.push({ id: 'samb-line:' + sd.srcLine + ':' + sd.raw, type: 'sender-edit', tag: '보내는이 메모', title: sd.raw, lines: [['이유', sd.why || '이름, 번호, 주소가 어디까지인지 분명하지 않아요.']], sender: sd });
         });
         sm.nohit.forEach(sd => cards.push({ id: 'snohit:' + sd.srcLine + ':' + sd.raw, type: 'line', tag: '보내는이 메모', title: sd.raw, lines: [['이유', '이 번호의 주문이 배송준비에 없어요. 보내는이를 넣을 주문이 없어요.']], choices: [['ok', '확인함', 1]] }));
+        // #866(대표 10/26 「메모 줄로 바꾼 보내는이가 안 보여」): 메모 줄 보내는이도 사이즈 줄처럼 참고 줄로(확인할 것에 안 셈) — 줄마다 그 줄이 잡은 주문(입력삭제 = 현금파일 줄이 나가므로 뺌)
+        //   카드에서 확정한 애매한 메모 줄(samb-line)도 메모 줄이라 같이 보인다 · 손님 메모 카드(samb:)에서 적은 보내는이는 메모 줄이 아니라 뺀다 · 직접 고친 주문은 그 값이 나가므로 따로 센다
+        { const ords = s.merged.filter(e => !e.individual).map(e => ({ key: keyOf(e), digits: buyerTel(e), ids: idsOf(e), recipient: String(e.conv['수취인명'] || '').trim() }));
+          (st.prep.senders || []).forEach(sd => {
+              const d = sd.ambiguous ? st.dec.get('samb-line:' + sd.srcLine + ':' + sd.raw) : null, x = !sd.ambiguous ? sd : d && d.use && d.name ? { ...sd, name: d.name, phone: d.phone || '', addr: d.addr || '', ambiguous: false } : null;
+              if (!x || !x.name) return;
+              const keys = [...c.applySenders([x], ords).byKey.keys()]; if (!keys.length) return;
+              const nm = /드림$/.test(x.name) ? x.name : x.name + ' 드림', hand = keys.filter(k => { const p = st.patch.get(k); return !!(p && p.sender && p.sender.name); }).length;
+              info.push({ t: `메모 줄로 보내는이 지정: ${sd.raw} → 주문 ${keys.length}건에 「${nm}」${hand ? ` · 그중 ${hand}건은 직접 고친 값으로 나가요` : ''}`, keys, line: sd.srcLine });
+          }); }
         // ⑤ 현금파일 대조
         const orders = s.merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), qty: qtyOf(e), individual: !!e.individual, excluded: !!e.excluded, buyer: buyerName(e) }));
         if (st.cash && !st.cash.ok) cards.push({ id: 'cashfmt', type: 'block', tag: '현금파일', title: st.cashName, lines: [['이유', st.cash.error], ['처리', '파일을 고쳐 다시 고른 뒤 [다시 판정]을 눌러 주세요. 현금파일 없이 하려면 「오늘은 없음」을 체크해요.']], choices: [] });
@@ -972,8 +982,8 @@
         // #583 ⑨: 참고 줄에서 연 「직접 고치기」 카드(카드가 없는 주문) — 확인할 것에 세지 않는다
         { const byK = new Map(s.merged.map(e => [keyOf(e), e])); [...st.fixOpen].forEach(k => { const e = byK.get(k); if (!e) { st.fixOpen.delete(k); return; } if (cards.some(c => c.fix && c.fix.includes(k))) return;
             // #583-h: 입력삭제 주문은 택배사 양식에서 빠지고 현금파일 주소 줄이 나간다 → 여기서는 옵션명 뒤 꼬리만(같은 구매자 번호의 현금파일 줄 옵션 끝에 붙는다)
-            cards.push(e.individual ? { id: 'fix:' + k, type: 'fix', tag: '직접 고치기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['opt'], tailOnly: true, lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)], ['입력삭제', '이 주문은 현금파일의 주소 줄로 나가요. 주소·보내는 분·배송메세지는 현금파일에서 고치고, 여기서는 옵션명 뒤에 붙일 말만 넣어요(같은 구매자 번호의 현금파일 줄 옵션 끝에 붙어요).']], choices: [] }
-                : { id: 'fix:' + k, type: 'fix', tag: '직접 고치기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['name', 'phone', 'addr', 'memo', 'opt'], lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)]], choices: [] }); }); }
+            cards.push(e.individual ? { id: 'fix:' + k, type: 'fix', tag: '주문 열기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['opt'], tailOnly: true, lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)], ['입력삭제', '이 주문은 현금파일의 주소 줄로 나가요. 주소·보내는 분·배송메세지는 현금파일에서 고치고, 여기서는 옵션명 뒤에 붙일 말만 넣어요(같은 구매자 번호의 현금파일 줄 옵션 끝에 붙어요).']], choices: [] }
+                : { id: 'fix:' + k, type: 'fix', tag: '주문 열기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['name', 'phone', 'addr', 'memo', 'opt'], lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)]], choices: [] }); }); }
 (st.sizeBad || []).forEach(b => {   // #601
             const msg = [b.kind === 'size' ? '사이즈' : '박스별 사이즈', BOX_BAD_TIP(b)], cd = cards.find(c => new RegExp('^l[a-z]+:' + b.srcLine + ':').test(c.id));
             if (cd) cd.lines = [msg].concat(cd.lines || []); else cards.push({ id: 'lpbad:' + b.srcLine + ':' + b.raw, type: 'line', tag: '메모 재확인', recheck: true, title: b.raw, lines: [msg], choices: [['ok', '확인함', 1]] });
@@ -1051,6 +1061,25 @@
         if (!p || !(p.fix || []).includes(k) || p.fix.length < 2) return undefined;
         const e = S().merged.find(x => keyOf(x) === k); if (!e) return undefined;
         return Object.assign(subCard(p, k), e.individual || p.tailOnly ? { tailOnly: true, fixF: ['opt'] } : {});
+    }
+    // #866(대표 10/26 「메모 줄로 바뀐 보내는이를 카드에서 모름」): 결과 파일 보내는사람 칸에 지금 들어갈 값과 출처 — make() 의 차례 그대로
+    //   (직접 고침 st.patch → 메모 줄·보내는이 카드 senderMap → 손님 메모 v2 자동(senderOut) → 바꾸지 않음) · 표시만(결과 파일 무관)
+    function senderNow(e, sm) {
+        if (e.individual) return { t: '현금파일 줄 그대로', src: '입력삭제' };
+        const k = keyOf(e), p = st.patch.get(k), nm = (n, ph) => (/드림$/.test(n) ? n : n + ' 드림') + (ph ? ' · ' + ph : '');
+        if (p && p.sender && p.sender.name) return { t: nm(p.sender.name, p.sender.phone), src: '직접 고침' };
+        const b = sm.byKey.get(k);
+        if (b && b.name) return { t: nm(b.name, b.phone), src: sm.line.has(k) ? '메모 줄' : '보내는이 카드' };
+        if (e.sender && !e.sender.ambiguous && e.sender.name) return { t: e.sender.name + ' 드림' + (e.sender.phone ? ' · ' + e.sender.phone : ''), src: '손님 메모' };
+        return { t: '', src: '주문자 그대로' };
+    }
+    function sendNowHtml(cd) {
+        if (!cd || !cd.fix || !cd.fixF) return '';
+        const byK = new Map(S().merged.map(e => [keyOf(e), e])), es = cd.fix.map(k => byK.get(k)).filter(Boolean); if (!es.length) return '';
+        const sm = senderMap(), ws = es.map(e => senderNow(e, sm)), one = w => (w.t ? `<b class="fo-em">${esc(w.t)}</b> · ${esc(w.src)}` : esc(w.src));
+        const same = ws.every(w => w.t === ws[0].t && w.src === ws[0].src);
+        const body = same ? one(ws[0]) + (es.length > 1 ? ` (묶인 ${es.length}건 모두)` : '') : '주문마다 달라요 — ' + ws.map((w, i) => `${esc(es[i].conv['수취인명'] || '')} ${one(w)}`).join(' / ');
+        return `<div class="fo-line" data-send-now="1"><span>지금 보내는 분</span><p>${body}</p></div>`;
     }
     function fixCur(cd) {
         const byKey = new Map(S().merged.map(e => [keyOf(e), e])), es = (cd.fix || []).map(k => byKey.get(k)).filter(Boolean); if (!es.length) return null;
@@ -1472,12 +1501,13 @@
             const lab = byBtn && v === 'excl' ? '오늘 발송 제외(사람)' : cd.type === 'order' || cd.type === 'split' ? ((cd.choices.find(c => c[0] === v) || [])[1] || (v === 'send' ? '오늘 발송' : '제외'))
                 : cd.type === 'sender-order' ? `보내는이 ${/드림$/.test(v.name) ? v.name : v.name + ' 드림'}${v.phone ? ' · ' + v.phone : ''}${typeof v.memo === 'string' ? ` · 배송메세지 「${v.memo || '기본 문구'}」` : ''}${v.tail ? ` · 품목 뒤 「${v.tail}」` : ''}`
                 : `배송메세지 「${v.memo || '기본 문구'}」${v.tail ? ` · 품목 뒤 「${v.tail}」` : ''}`;
-            return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}" data-fo-done="1" data-by-chat="1" data-type="${cd.type}" data-state="done"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b><span class="fo-aibadge fo-chatbadge" data-chat-badge="1">${byBtn ? '사람이 정함' : '말로 정함'}</span></div><div class="fo-card-acts"><span class="fo-done">${esc(lab)} · ${byBtn ? '사람이 정함' : '말로 정함'}</span><button type="button" class="fo-btn sm" data-unpatch-card="${esc(cd.id)}">바꾸기</button></div>${cd.type === 'order' && (cd.fix || []).some(k => st.fixOpen.has(k)) ? fixHtml(Object.assign({}, cd, { fixF: ['name', 'phone', 'addr', 'memo', 'opt'] }), { flip: true, open: true }) : ''}</article>`;
+            return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}" data-fo-done="1" data-by-chat="1" data-type="${cd.type}" data-state="done"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b><span class="fo-aibadge fo-chatbadge" data-chat-badge="1">${byBtn ? '사람이 정함' : '말로 정함'}</span></div><div class="fo-card-acts"><span class="fo-done">${esc(lab)} · ${byBtn ? '사람이 정함' : '말로 정함'}</span><button type="button" class="fo-btn sm" data-unpatch-card="${esc(cd.id)}">바꾸기</button></div>${cd.type === 'order' && (cd.fix || []).some(k => st.fixOpen.has(k)) ? `<div class="fo-card-body">${sendNowHtml(cd)}</div>` + fixHtml(Object.assign({}, cd, { fixF: ['name', 'phone', 'addr', 'memo', 'opt'] }), { flip: true, open: true }) : ''}</article>`;
         }
         // #520: AI가 입력칸을 채워 둔 열린 카드에는 그 사실과 이유를 한 줄로(사람이 눌러야 끝난다)
         const aiNote = !done && st.ai.hint && st.ai.hint.has(cd.id) ? `<div class="fo-line fo-ai-note" data-ai-note="1"><span>AI</span><p>${esc(st.ai.hint.get(cd.id))}</p></div>` : '';
         const aiDone = done && st.ai.tag.has(cd.id);   // #583 ①: AI가 닫은 카드는 접지 않는다 — 손님 메모(형광)와 「무엇을 어떻게 바꿨는지」 한 줄
-        const lines = cd.lines.map(([k, t]) => `<div class="fo-line"${k === '손님 메모' ? ' data-memo-line="1"' : ''}><span>${esc(k)}</span><p>${lineMark(k, t)}</p></div>`).join('') + aiNote + (aiDone ? `<div class="fo-line fo-ai-did" data-ai-did="1"><span>AI 처리</span><p>${textMark(esc(aiDid(cd, v)))}</p></div>` : '');
+        const showFix = !done || aiDone || cd.type === 'fix' || (cd.fix || []).some(k => st.fixOpen.has(k)), sn = showFix ? sendNowHtml(cd) : '';   // #866
+        const lines = cd.lines.map(([k, t]) => `<div class="fo-line"${k === '손님 메모' ? ' data-memo-line="1"' : ''}><span>${esc(k)}</span><p>${lineMark(k, t)}</p></div>`).join('') + sn + aiNote + (aiDone ? `<div class="fo-line fo-ai-did" data-ai-did="1"><span>AI 처리</span><p>${textMark(esc(aiDid(cd, v)))}</p></div>` : '');
         let acts = '';
         if (cd.type === 'pick') {
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
@@ -1515,7 +1545,7 @@
             acts = ordBox + cd.choices.map(([val, lab, pri]) => `<button type="button" class="fo-btn sm${pri ? ' primary' : ''}" data-choice="${esc(val)}" data-fo-act="${esc(val)}" data-id="${esc(cd.id)}">${esc(lab)}</button>`).join('') || '<span class="fo-wait">고친 뒤 [다시 판정]을 눌러야 넘어가요</span>';
         }
         acts = acts.replace(/(<span class="fo-done">)([^<]*)(<\/span>)/g, (m0, a, t, c) => a + doneMark(t) + c);   // #604 끝난 카드의 결과 글
-        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''}${cd.recheck ? ' data-recheck="1"' : ''}${aiDone ? ' data-ai-done="1"' : ''} data-type="${cd.type}" data-state="${done || cd.type === 'fix' ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.recheck ? 'recheck' : cd.type}">${esc(cd.tag)}</span>${memoCard(cd) ? SRC_BADGE : ''}${aiDone ? '<span class="fo-aibadge" data-ai-badge>AI가 처리</span>' : ''}<b>${cd.type === 'line' || cd.type === 'sizeup' ? `<mark class="fo-hl">${esc(cd.title)}</mark>` : esc(cd.title)}</b></div>${done && !aiDone && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' && cd.type !== 'fix' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div>${!done || aiDone || cd.type === 'fix' || (cd.fix || []).some(k => st.fixOpen.has(k)) ? fixHtml(cd) : ''}</article>`;
+        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''}${cd.recheck ? ' data-recheck="1"' : ''}${aiDone ? ' data-ai-done="1"' : ''} data-type="${cd.type}" data-state="${done || cd.type === 'fix' ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.recheck ? 'recheck' : cd.type}">${esc(cd.tag)}</span>${memoCard(cd) ? SRC_BADGE : ''}${aiDone ? '<span class="fo-aibadge" data-ai-badge>AI가 처리</span>' : ''}<b>${cd.type === 'line' || cd.type === 'sizeup' ? `<mark class="fo-hl">${esc(cd.title)}</mark>` : esc(cd.title)}</b></div>${done && !aiDone && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' && cd.type !== 'fix' ? (sn ? `<div class="fo-card-body">${sn}</div>` : '') : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div>${showFix ? fixHtml(cd) : ''}</article>`;
     }
     // 다시 그리기 전에, 아직 확정하지 않은 카드의 입력칸 글을 떠 둔다(워커1 관찰: 다른 카드를 누르면 적다 만 글이 사라졌다)
     function saveDrafts() {
@@ -1528,7 +1558,7 @@
     }
     const isAiDone = cd => st.dec.has(cd.id) && st.ai.tag.has(cd.id) && !patchDec(cd);
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
-    const INFO_KIND = [[/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
+    const INFO_KIND = [[/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
@@ -1542,7 +1572,7 @@
         let h = esc(body).replace(/손님 메모 「([^」]*)」/g, '손님 메모 <mark class="fo-hl">$1</mark>').replace(/→ 「([^」]*)」/g, '→ <b class="fo-em">$1</b>').replace(/에 「([^」]*)」/g, '에 <b class="fo-em">$1</b>');
         // #603(대표 10/9): 직원 메모 줄에서 온 참고 줄도 같은 꼴 — 메모 줄 원문 = 형광 · 결과 = 굵게
         h = h.replace(/메모 줄 요청일 [^\s<]+/g, x => '<mark class="fo-hl">' + x + '</mark>').replace(/메모 줄 「([^」]*)」/g, '메모 줄 <mark class="fo-hl">$1</mark>')
-            .replace(/^(메모 줄(?:\(업그레이드\))?로 (?:박스별 사이즈|사이즈 지정): )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
+            .replace(/^(메모 줄(?:\(업그레이드\))?로 (?:박스별 사이즈|사이즈 지정|보내는이 지정): )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/( → 귤 로얄과 (?:\d+줄 )?)([^<]+)$/, '$1<b class="fo-em">$2</b>')
             .replace(/^(건수 다름: )(.+?)( — )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/^(주문 없음: |취소됐을 수 있어요 · 확인 필요: |사이즈를 붙일 귤 로얄과 주문이 없어요: )(.+?)(?= \(받는 분 번호|$)/, '$1<mark class="fo-hl">$2</mark>');
