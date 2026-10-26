@@ -818,6 +818,10 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* #598(대표 10/9): 되묻기 카드 [이대로 진행] · 중간발주 「직접 추가」 — 자리·크기만(색은 기존 .desk-btn · .ship-q · .desk-note 그대로) */
 .desk-plan .desk-btn { min-height: 44px; height: auto; max-width: 100%; padding-top: 6px; padding-bottom: 6px; white-space: normal; text-align: left; overflow-wrap: anywhere; }
 .qty-extra { margin-top: 14px; }
+/* #860 중간발주 = 발주 메모함 한 줄 · 현금파일 칸 */
+.qty-om { margin-top: 6px; }
+.qty-cash { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 12.5px; }
+.qty-cash .desk-note { min-width: 0; overflow-wrap: anywhere; }
 .qty-extra > summary { padding: 12px 0; cursor: pointer; font-size: 14px; font-weight: 700; }
 .qty-extra > summary .desk-note { margin: 0 0 0 6px; font-weight: 500; }
 .qty-extra > .desk-note { margin-top: 0; }

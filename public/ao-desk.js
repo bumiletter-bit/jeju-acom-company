@@ -191,6 +191,7 @@
                                 <div class="desk-plus-g" role="group" aria-label="발주"><b>발주</b>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-qty-now" data-mk="qty"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i><span class="desk-mi-t"><strong>중간발주</strong><small>들어온 주문을 거래처별로 바로 집계해요</small></span></button>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-final-now" data-mk="final"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V10z"/><path d="M9 5v5H4"/><path d="M9 14l2 2 4-4"/></svg></i><span class="desk-mi-t"><strong>최종발주</strong><small>현금파일 · 메모로 택배사 양식을 만들어요</small></span></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-om-now" data-mk="om"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg></i><span class="desk-mi-t"><strong>발주 메모함</strong><small>손님 글을 붙여 넣으면 다음 최종발주에 들어가요</small></span></button>
                                 </div>
                                 <div class="desk-plus-g" role="group" aria-label="확인"><b>확인</b>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-ship-now" data-mk="ship"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg></i><span class="desk-mi-t"><strong>배송조회 확인하기</strong><small>발송한 택배가 어디까지 갔는지 물어봐요</small></span></button>
@@ -202,7 +203,6 @@
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-talk" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>톡톡</strong><small>톡톡 문의를 보고 여기서 답해요</small></span><i class="sms-n" id="inb-n-talk" hidden></i></button>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-qna" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>상품문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-qna" hidden></i></button>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-inb-inquiry" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>주문문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-inquiry" hidden></i></button>
-                                    <button type="button" class="desk-mi" role="menuitem" id="desk-om-now" data-mk="om"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg></i><span class="desk-mi-t"><strong>발주 메모함</strong><small>손님 글을 붙여 넣으면 다음 최종발주에 들어가요</small></span></button>
                                 </div>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
@@ -865,7 +865,7 @@
     //   주문 조회·옵션 매칭·사이즈 꼬리·색·거래처 판정은 app.js 의 송장변환 함수를 그대로 부른다(addSizeSuffix · matchProduct · qtyCategory · aoItemPartner · aoLoadInvoicePricing — 복사하지 않는다).
     //   표 모양·묶는 법은 종전 그림(scripts/desk/qty-image.js)과 같다: 거래처별 한 장 · 이름 가나다순 · 사이즈 요청은 따로 줄 · 미매칭은 따로 한 장 · 최근 20일.
     //   「효돈 것만」「지난주 것」처럼 조건이 붙은 말은 종전대로 채팅(창구)으로 보낸다.
-    const QTY = { busy: false, urls: [], blobs: new Map(), base: null, extra: [], draft: null, xday: '', xopen: false };
+    const QTY = { busy: false, urls: [], blobs: new Map(), base: null, extra: [], draft: null, xday: '', xopen: false, src: null, om: null, cash: null, cashName: '', stat: null };   // #860 src = 불러온 3채널 · om = 메모함 for-ship · cash = 올린 현금파일(parseCash)
     const QTY_DAYS = 20;
     const QTY_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', pink: '#F4CCCC', none: '#FFFFFF' };   // 거래처에 보내는 그림 색(styles.css .qty-cat-* 와 같은 값 · 야간에도 그대로)
     const QTY_SIZE = /^(.*?)\s+(2S|S|M)사이즈로!$/;
@@ -896,6 +896,73 @@
         line(rows.length, '', total, QTY_BG.yellow, QTY_BG.yellow, '#000000');
         return new Promise((res, rej) => c.toBlob(b => { if (!b) return rej(new Error('그림을 만들지 못했어요')); b.cssW = W; b.cssH = H; res(b); }, 'image/png'));
     }
+    // ── #860 순수 도우미 시작(verify 가 떼어 실행) — 메모 줄 칸 읽기 = invoice-v2 parseLines · 주문 짝 = v2 matchKey(구매자 번호 전체 또는 주문번호 · 수취인 지정 줄은 이름까지) · 줄 고르기 = v2 applyLines rank(오늘 > 뒤 날짜 > 지난 날짜 > 날짜 없음)
+    const QTY_PH = new Set(['01000000000', '0000000000', '00000000000']);
+    const qtyChOf = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;
+    const qtyTel = (ch, r) => String((r || {})[ch === 'naver' ? '구매자연락처' : ch === 'cafe24' ? '주문자 휴대전화' : '구매자전화번호'] || '').replace(/\D/g, '');
+    const qtyIds = r => { r = r || {}; return [r._orderId, r._pid, r['주문번호'], r['상품주문번호'], r._x && r._x.orderId, r._x && r._x.productOrderId].filter(Boolean).map(String); };
+    const qtyRecv = (ch, r) => String((r || {})[ch === 'naver' ? '수취인명' : ch === 'cafe24' ? '수령인' : '수취인이름'] || '').trim();
+    function qtyOmLines(om) {   // for-ship lines[] → 칸(날짜 판정은 서버 state·ship_date 그대로)
+        const pd = (window.FinalOrderCore || {}).parseDate, base = om.date || '';
+        return (om.lines || []).map(x => {
+            const line = String(x.line || '').replace(/\r/g, '').trim(); if (!line || /^요청일자|전화번호 또는 상품주문번호|^플[렛랫]폼/.test(line)) return null;
+            let key = '', note = '', plat = '';
+            if (line.includes('\t')) { const c = line.split('\t').map(v => v.trim()); const dt = pd ? pd(c[0], base) : null; key = c[1] || ''; note = c[2] || ''; plat = c[3] || '';
+                if (!dt && c[0] && /\d{8,}/.test(c[0].replace(/\D/g, ''))) { key = c[0]; note = [c[1], c[2]].filter(Boolean).join(' '); plat = c[3] || c[2] || ''; } }
+            else { const t = line.split(/\s+/); if (pd && pd(t[0], base)) { key = t[1] || ''; note = t.slice(2).join(' '); } else { key = t[0]; note = t.slice(1).join(' '); } }
+            const digits = key.replace(/\D/g, ''); if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) return null;
+            const ch = qtyChOf(plat) || qtyChOf(note) || (/^\d{8}-\d{7}$/.test(key) ? 'cafe24' : 'naver'), rec = note.match(/수취인\s*[:：]?\s*([가-힣]{2,5})/), sd = x.ship_date || null;
+            const state = x.state || 'nodate', rank = state === 'today' ? 0 : state === 'wait' ? 1e15 + Date.parse(sd) : state === 'past' ? 2e15 - Date.parse(sd) : 3e15;
+            return { key, digits, ch, recipient: rec ? rec[1] : null, partial: !rec && /\d+\s*건\s*중|만\s*\)|만$/.test(note), state, rank };   // partial = v2 와 같은 「부분 지정」(수취인 이름 없이 n건 중·만) → 확인 몫이라 안 뺌
+        }).filter(Boolean);
+    }
+    function qtyOmOut(ch, r, ml) {   // 이 주문에 걸린 메모 줄 중 맨 앞(v2 rank)이 뒤 날짜 줄이면 = 이번 발송에서 빠짐(최종발주 「삭제완료 · n/n 발송분」과 같음)
+        const tel = qtyTel(ch, r), ids = qtyIds(r), recv = qtyRecv(ch, r);
+        const c = ml.filter(l => l.ch === ch && ((l.digits.length >= 8 && !QTY_PH.has(l.digits) && tel === l.digits) || (l.key && ids.includes(l.key))) && (!l.recipient || recv === l.recipient));
+        if (!c.length) return false; c.sort((a, b) => a.rank - b.rank); return c[0].state === 'wait' && !c[0].partial;
+    }
+    // 현금 줄 중 더할 것: 「!」 = 주문 없는 현금 손님 → 더함 · 「!」 없음 = 입력삭제 주소 줄 → 그 구매자(K칸 번호) 주문이 집계에 있으면 박스가 이미 들어 있으니 안 더함(주문이 없으면 그 줄이 나가므로 더함)
+    const qtyCashPick = (rows, tels) => (rows || []).filter(r => r && r.qty > 0 && String(r.opt || '').trim() && (r.bang || !(r.digits && r.digits.length >= 8 && !QTY_PH.has(r.digits) && tels.has(r.digits))));
+    // 현금 줄 품목 → 그림 줄 이름·거래처(최종발주 partnerOf 와 같은 판정 · 꼬리를 떼고 단가표) · 이름은 최종발주 수량표처럼 옵션 글자 그대로(사이즈 꼬리 = 「이름 X사이즈로!」 줄)
+    function qtyCashItem(opt, byPartner, core) {
+        const o = String(opt || '').trim(); if (!o || !core) return null;
+        const p = core.partnerOf(o, byPartner); return p ? { name: o, partner: p } : null;
+    }
+    // ── #860 순수 도우미 끝
+    // #860(대표 10/26 「완벽한 중간발주 흐름」) 묶기 = 종전 본문 그대로 + 발주 메모함(미래 날짜 줄의 주문 뺌 · 현금 줄 더함) + 올린 현금파일. 메모함·파일이 없으면 종전과 같은 표
+    function qtyBuild() {
+        const { nv, cp, cf } = QTY.src || {}; if (!nv) return false;
+        const om = QTY.om && QTY.om.ok ? QTY.om : null, ml = om ? qtyOmLines(om) : [], tels = new Set(), cashPart = new Map();
+        const omCash = om && Array.isArray(om.cash_aoa) && om.cash_aoa.length > 1 && window.FinalOrderCore ? ((p => (p.ok ? p.rows.map(r => Object.assign({}, r, { om: true })) : []))(window.FinalOrderCore.parseCash(om.cash_aoa))) : [];
+        const st = { lines: om ? (om.lines || []).length : 0, wait: ml.filter(l => l.state === 'wait').length, out: 0, outQty: 0, cashRows: 0, cashSkip: 0, cashQty: 0 };
+        // 채널별 (옵션 원문 + 손님 메모의 사이즈 요청 꼬리) → 수량
+        const lines = [];
+        const add = (ch, opt, memo, qty, r) => { if (ml.length && qtyOmOut(ch, r, ml)) { st.out++; st.outQty += parseInt(qty) || 1; return; } let o = String(opt || ''); try { o = addSizeSuffix(o, String(memo || '').trim()); } catch (e) { /* 꼬리 없이 */ } lines.push({ ch, opt: o, qty: parseInt(qty) || 1 }); const d = qtyTel(ch, r); if (d) tels.add(d); };   // #860 메모함 미래 날짜 줄의 주문 = 뺌
+        if (nv.ok) (nv.rows || []).forEach(r => add('naver', r['옵션정보'], r['배송메세지'], r['수량'], r));
+        if (cf.ok) (cf.rows || []).forEach(r => add('cafe24', r['주문상품명(세트상품 포함)'], r['배송메시지'], r['수량'], r));
+        if (cp.ok) (cp.rows || []).forEach(r => add('coupang', r['노출상품명(옵션명)'] || r['등록상품명'], r['배송메세지'], r['구매수(수량)'], r));
+        const map = new Map(), umap = new Map();
+        for (const g of lines) {
+            const sm = QTY_SIZE.exec(g.opt);
+            let name = matchProduct(sm ? sm[1] : g.opt);
+            if (sm && typeof name === 'string' && !name.startsWith('[미매칭]')) name = name + ' ' + sm[2] + '사이즈로!';
+            if (typeof name !== 'string' || name.startsWith('[미매칭]')) { const k = `[${g.ch}] ${g.opt}`; umap.set(k, (umap.get(k) || 0) + g.qty); continue; }
+            map.set(name, (map.get(name) || 0) + g.qty);
+        }
+        // #860 현금 줄(올린 현금파일 행 뒤에 메모함 행 · 최종발주 omMergeCash 와 같은 순서) — 「!」 현금 손님 = 더함 · 입력삭제 주소 줄 = 그 구매자 주문이 이미 집계에 있으면 안 더함(박스 수 그대로)
+        const cashAll = (QTY.cash && Array.isArray(QTY.cash.rows) ? QTY.cash.rows : []).concat(omCash);   // 머리글이 틀린 파일 = rows 빈 배열(안 씀) · 빈 칸 있는 파일 = 행은 쓰고 한 줄에 ⚠️
+        const cBlank = cashAll.filter(r => r && !(r.qty > 0 && String(r.opt || '').trim())).length; if (cBlank) umap.set('[현금] (품목 없음)', (umap.get('[현금] (품목 없음)') || 0) + cBlank);   // 품목·수량 빈 줄 = 미매칭 장에 줄 수로(조용히 안 버림)
+        const cAdd = qtyCashPick(cashAll, tels); st.cashRows = cashAll.length; st.cashSkip = cashAll.filter(r => !r.bang).length - cAdd.filter(r => !r.bang).length;
+        cAdd.forEach(r => { const it = qtyCashItem(r.opt, aoInvoicePricingByPartner, window.FinalOrderCore); st.cashQty += r.qty;
+            if (!it) { const k = `[현금] ${r.opt}`; umap.set(k, (umap.get(k) || 0) + r.qty); return; }
+            map.set(it.name, (map.get(it.name) || 0) + r.qty); cashPart.set(it.name, it.partner); });
+        const items = [...map.entries()].map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), partner: aoItemPartner(name.replace(/\s+(2S|S|M)사이즈로!$/, '')) || cashPart.get(name) || '기타' }));
+        const urows = [...umap.entries()].map(([name, qty]) => ({ name, qty, cat: 'none' })).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+        QTY.stat = st;
+        if (!lines.length && !map.size && !umap.size) return false;
+        QTY.base = { items, urows };   // #598: 직접 추가 행을 넣어 그림만 다시 만들 때 쓴다(주문은 다시 묻지 않는다)
+        return true;
+    }
     function qtyOpen() {
         toolShow('desk-qty');
         if (!QTY.busy) qtyRun();
@@ -913,6 +980,7 @@
         const track = (p, key) => p.then(v => { chState[key] = v && v.ok ? nfmt(v.count != null ? v.count : (v.rows || []).length) + '건' : '실패'; paint(); return v; }, e => { chState[key] = '실패'; paint(); throw e; });
         try {
             await aoLoadInvoicePricing();   // 매번 오늘 단가표 품목명으로(#440)
+            const omP = qtyOmLoad();   // #860 발주 메모함(읽기만 · used·비우기 없음) — 실패·옛 서버 = 메모함 없이 종전대로
             const rv = await Promise.allSettled([
                 track(api('/api/agent-office/naver/invoice-orders?days=' + QTY_DAYS), 'naver'),
                 track(api('/api/agent-office/coupang/invoice-orders?days=' + QTY_DAYS), 'coupang'),
@@ -922,43 +990,46 @@
             const nv = chan(rv[0]), cp = chan(rv[1]), cf = chan(rv[2]);
             if (!nv.ok && !cp.ok && !cf.ok) { qtyNote(`3채널 모두 불러오지 못했어요 · 네이버: ${nv.message} / 쿠팡: ${cp.message} / 자사몰: ${cf.message}`, 'err'); return; }
             ptxt.textContent = '거래처별로 묶어 그림을 만드는 중';
-            // 채널별 (옵션 원문 + 손님 메모의 사이즈 요청 꼬리) → 수량
-            const lines = [];
-            const add = (ch, opt, memo, qty) => { let o = String(opt || ''); try { o = addSizeSuffix(o, String(memo || '').trim()); } catch (e) { /* 꼬리 없이 */ } lines.push({ ch, opt: o, qty: parseInt(qty) || 1 }); };
-            if (nv.ok) (nv.rows || []).forEach(r => add('naver', r['옵션정보'], r['배송메세지'], r['수량']));
-            if (cf.ok) (cf.rows || []).forEach(r => add('cafe24', r['주문상품명(세트상품 포함)'], r['배송메시지'], r['수량']));
-            if (cp.ok) (cp.rows || []).forEach(r => add('coupang', r['노출상품명(옵션명)'] || r['등록상품명'], r['배송메세지'], r['구매수(수량)']));
-            if (!lines.length) { qtyNote('3채널 모두 배송준비 주문이 없어요.', ''); return; }
-            const map = new Map(), umap = new Map();
-            for (const g of lines) {
-                const sm = QTY_SIZE.exec(g.opt);
-                let name = matchProduct(sm ? sm[1] : g.opt);
-                if (sm && typeof name === 'string' && !name.startsWith('[미매칭]')) name = name + ' ' + sm[2] + '사이즈로!';
-                if (typeof name !== 'string' || name.startsWith('[미매칭]')) { const k = `[${g.ch}] ${g.opt}`; umap.set(k, (umap.get(k) || 0) + g.qty); continue; }
-                map.set(name, (map.get(name) || 0) + g.qty);
-            }
-            const items = [...map.entries()].map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), partner: aoItemPartner(name.replace(/\s+(2S|S|M)사이즈로!$/, '')) || '기타' }));
-            const urows = [...umap.entries()].map(([name, qty]) => ({ name, qty, cat: 'none' })).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-            QTY.base = { items, urows };   // #598: 직접 추가 행을 넣어 그림만 다시 만들 때 쓴다(주문은 다시 묻지 않는다)
+            QTY.src = { nv, cp, cf }; QTY.om = await omP;
+            if (!qtyBuild()) { qtyNote(QTY.stat && QTY.stat.out ? '배송준비 주문이 모두 발주 메모함의 뒤 날짜 줄로 빠져 이번에 집계할 것이 없어요.' : '3채널 모두 배송준비 주문이 없어요.', ''); return; }
             const fails = [!nv.ok && '네이버: ' + nv.message, !cp.ok && '쿠팡: ' + cp.message, !cf.ok && '자사몰: ' + cf.message].filter(Boolean);
             const partial = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
             const cnt = x => x.ok ? nfmt(x.count != null ? x.count : (x.rows || []).length) : '실패';
             $('qty-sub').textContent = `${kst(new Date().toISOString(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 조회 · 최근 ${QTY_DAYS}일`;
             qtyExtraLoad();
-            out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div><div id="qty-figs"></div>`
+            out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div><div class="ship-meta qty-om" id="qty-om" role="status"></div><div class="qty-cash"><input type="file" id="qty-cash" accept=".xlsx,.xls" hidden><button type="button" class="desk-btn sm" id="qty-cash-pick">현금파일 고르기</button><button type="button" class="desk-btn sm" id="qty-cash-clear" hidden>파일 빼기</button><span class="desk-note" id="qty-cash-note"></span></div><div id="qty-figs"></div>`
                 + `<details class="qty-extra" id="qty-extra"${QTY.draft.length || QTY.xopen ? ' open' : ''}><summary>직접 추가 <span class="desk-note" id="qty-extra-n"></span></summary>
                     <p class="desk-note">전화·현금으로 받은 물량을 행으로 넣고 [그림 다시 만들기]를 누르면 그 거래처 그림의 같은 품목 줄에 더해져요(그림에 없던 품목은 새 줄). 오늘 하루 동안 기억해요.</p>
                     <div id="qty-extra-rows"></div>
                     <div class="qty-extra-acts"><button type="button" class="desk-btn sm" id="qty-extra-add">+ 행</button><button type="button" class="desk-btn sm primary" id="qty-extra-go">그림 다시 만들기</button></div>
                     <p class="desk-note" id="qty-extra-dirty" role="status" hidden>바꾼 내용은 [그림 다시 만들기]를 눌러야 그림에 들어가요.</p>
                 </details>`;
-            qtyExtraPaint(); qtyExtraDirty(false);
+            qtyExtraPaint(); qtyExtraDirty(false); qtyOmLine();
             await qtyDraw();
             if (fails.length) qtyNote('불러오지 못한 채널은 빼고 집계했어요 · ' + fails.join(' / '), 'err');
         } catch (e) {
             qtyNote('집계하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), 'err');
         } finally { prog.hidden = true; QTY.busy = false; $('desk-qty-now').disabled = false; plusBusy(); }
     }
+    async function qtyOmLoad() {   // 기준일 = 최종발주와 같은 다음 발송일(GET /api/order-memo 의 ship_date) → for-ship · 쓰기 0
+        try { const a = await api('/api/order-memo'); const d = a && a.ok && a.ship_date; if (!d) return null;
+            const r = await api('/api/order-memo/for-ship?date=' + encodeURIComponent(d)); return r && r.ok ? r : null; } catch (e) { return null; }
+    }
+    function qtyOmLine() {
+        const el = document.getElementById('qty-om'); if (!el) return; const s = QTY.stat || {}, om = QTY.om, mdd = d => (d ? (+d.slice(5, 7)) + '/' + (+d.slice(8, 10)) : '');
+        const memo = om ? `발주 메모함(${esc(mdd(om.date))} 발송 기준) 메모 ${nfmt(s.lines || 0)}줄 · 빠진 주문 ${nfmt(s.out || 0)}건 · 더한 현금 ${nfmt(s.cashQty || 0)}박스${s.cashSkip ? ` · 입력삭제 주소 줄 ${nfmt(s.cashSkip)}줄은 주문으로 셈` : ''}` : '발주 메모함을 불러오지 못해 메모함 없이 집계했어요';
+        const file = QTY.cash ? (QTY.cash.ok ? ` · 현금파일 ${nfmt(QTY.cash.rows.length)}행` : (QTY.cash.rows || []).length ? ` · 현금파일 ${nfmt(QTY.cash.rows.length)}행(⚠️ ${esc(QTY.cash.error || '빈 칸 있음')})` : ' · 현금파일 ⚠️ 읽지 못함(13칸 양식 머리글 확인)') : '';
+        el.innerHTML = `<span>${memo}${file}</span>${window.AkmOrderMemo ? '<button type="button" class="desk-btn sm" id="qty-om-open">메모함 열기</button>' : ''}`;
+        const nt = document.getElementById('qty-cash-note'); if (nt) nt.textContent = QTY.cash ? (QTY.cash.ok ? `${QTY.cashName} · ${QTY.cash.rows.length}행(현금 ${QTY.cash.rows.filter(r => r.bang).length}행 · 그 밖 ${QTY.cash.rows.filter(r => !r.bang).length}행)` : `${QTY.cashName} · ⚠️ ${QTY.cash.error}`) : '현금, 입력삭제 건의 주소 줄이 적힌 엑셀(최종발주와 같은 13칸 양식) · 없으면 그냥 두세요';
+        const cl = document.getElementById('qty-cash-clear'); if (cl) cl.hidden = !QTY.cash;
+    }
+    async function qtyCashRead(file) {
+        if (!file) return; if (QTY.busy || !QTY.src) { qtyNote('집계가 끝나면 현금파일을 다시 올려 주세요', 'err'); return; }
+        try { const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }); const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+            QTY.cash = window.FinalOrderCore.parseCash(aoa); } catch (err) { QTY.cash = { ok: false, error: '엑셀을 읽지 못했어요(' + (err && err.message ? err.message : err) + ')', rows: [] }; }
+        QTY.cashName = file.name; await qtyRedraw();
+    }
+    async function qtyRedraw() { if (!QTY.src) return; qtyBuild(); qtyOmLine(); await qtyDraw(); }
     // 거래처별 그림을 (다시) 그린다 — 집계(QTY.base) + 직접 추가(QTY.extra). 추가 행이 없으면 종전과 같은 표·같은 순서
     async function qtyDraw() {
         const box = document.getElementById('qty-figs'), base = QTY.base;
@@ -1295,7 +1366,7 @@
         const sb = $('desk-sms-now'), sn = $('sms-chip-n'); if (sb) sb.hidden = !hs;
         if (sn) { sn.hidden = !(n.sms > 0); sn.textContent = n.sms > 99 ? '99+' : String(n.sms); }
         INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k), i = $('inb-n-' + k); if (b) b.hidden = !hi; if (i) { i.hidden = !(n[k] > 0); i.textContent = n[k] > 99 ? '99+' : String(n[k]); } });
-        const g = $('desk-plus-cust'); if (g) g.hidden = !hs && !hi && !window.AkmOrderMemo;   // 둘 다 없는 서버면 「손님」 묶음째 숨김 · #850 발주 메모함은 늘 있음(문자·톡톡이 없어도 묶음을 남김)
+        const g = $('desk-plus-cust'); if (g) g.hidden = !hs && !hi;   // 둘 다 없는 서버면 「손님」 묶음째 숨김 · #860 발주 메모함은 「발주」 묶음으로 옮김
         const pn = $('desk-plus-n'); if (pn) { pn.hidden = !(n.total > 0); pn.textContent = n.total > 99 ? '99+' : String(n.total); }
         if (SMS.sumDone && (INB.known || !inbApi())) custSave();
     }
@@ -2397,8 +2468,12 @@
         drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
         drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
         drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); shipUpload((e.dataTransfer.files || [])[0]); });
+        $('qty-out').addEventListener('change', e => { if (e.target.id !== 'qty-cash') return; const f = (e.target.files || [])[0]; e.target.value = ''; if (f) qtyCashRead(f); });   // #860 현금파일
         $('qty-out').addEventListener('click', async e => {
             if (e.target.closest('#qty-again')) { qtyRun(); return; }
+            if (e.target.closest('#qty-om-open')) { if (window.AkmOrderMemo) hbIdle(() => window.AkmOrderMemo.open()); return; }   // #860 메모함 열기(고치기는 메모함 몫)
+            if (e.target.closest('#qty-cash-pick')) { const f = document.getElementById('qty-cash'); if (f) f.click(); return; }
+            if (e.target.closest('#qty-cash-clear')) { if (QTY.busy) return; QTY.cash = null; QTY.cashName = ''; qtyRedraw(); return; }
             if (e.target.closest('#qty-extra-add')) {
                 QTY.draft.push({ partner: QTY.draft.length ? QTY.draft[QTY.draft.length - 1].partner : '', name: '', qty: '' }); qtyExtraPaint(); qtyExtraDirty(true);
                 const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${QTY.draft.length - 1}"] .qty-xp`); if (f) f.focus();
