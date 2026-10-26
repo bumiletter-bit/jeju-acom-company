@@ -946,12 +946,13 @@ module.exports = function mountSms(app, deps) {
         try {
             const c = await cfg();
             try { await pendingPhotoTick(); } catch (e) { log.error('[문자] 사진 대기 정리 실패(무시):', e.message); }
-            // 발송 전 주문 짧은 보관(sms/preorders.js · 워커4) — 설정 preorders === true 일 때만 · 60분에 1회 · 네이버 자동수집·중간발주 조회와 겹치지 않게 시각 기록
+            // 발송 전 주문 짧은 보관(sms/preorders.js · 워커4) — 설정 preorders === true 일 때만 · preorders_interval_min(기본 60)분에 1회 · 네이버 자동수집·중간발주 조회와 겹치지 않게 시각 기록
             const rawCfg = (await naverCfgGet('sms_gateway')) || {};
             if (preorders && typeof preorders.collect === 'function' && rawCfg.preorders === true) {
                 const lastP = (await naverCfgGet('sms_preorders_last')) || {};
                 const kh = new Date(Date.now() + 9 * 3600e3).getUTCHours();   // 한국 01~07시는 쉼(04:30 스냅샷 · 05:10 자사몰 점검과 겹침 방지)
-                if (!_rfBusy && !channelBusy() && !(kh >= 1 && kh < 7) && (!lastP.at || Date.now() - new Date(lastP.at).getTime() > 60 * 60000)) {   // #665 즉시 조회가 도는 중이면 다음 틱에
+                const pIv = (n => (Number.isFinite(n) && n >= 10 && n <= 180 ? n : 60))(Math.floor(Number(rawCfg.preorders_interval_min)));   // #864 간격(분) = 설정 preorders_interval_min(10~180 · 그 밖·없음 = 60)
+                if (!_rfBusy && !channelBusy() && !(kh >= 1 && kh < 7) && (!lastP.at || Date.now() - new Date(lastP.at).getTime() > pIv * 60000)) {   // #665 즉시 조회가 도는 중이면 다음 틱에
                     await naverCfgSet('sms_preorders_last', Object.assign(lastP, { at: new Date().toISOString(), running: true }));
                     try { const r = await preorders.collect({ pool, fetchNaver: deps.fetchNaver, fetchCoupang: deps.fetchCoupang, fetchCafe24: deps.fetchCafe24, log }); await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, result: r }); log.log('[문자] 발송 전 주문 수집', JSON.stringify(r).slice(0, 200)); }
                     catch (e) { await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, error: String(e.message).slice(0, 200) }); log.error('[문자] 발송 전 주문 수집 실패:', e.message); }
