@@ -1,6 +1,6 @@
 // #850(대표 10/25 「직원이 회사폰 노트에 적던 발주 메모를 에이전트 오피스로 · 최대한 편리하게 · 글 쓰임 복잡하지 않게 · 디자인 · 무회귀」) — 발주 메모함 창
 //   설계 = docs/850-order-memo-design.md · 시안 docs/850-mock-*.png · 서버 계약 = docs/850-api.md(워커2) — 서버 길은 아래 API 한 곳에만(계약이 바뀌면 여기만).
-//   창 = 손님 연락 창과 같은 꼴(폰 = 전체 화면 · PC = 2단: 왼쪽 넣기 + 목록 / 오른쪽 「내일 발주에 들어갈 것」 = for-ship 글 그대로).
+//   창 = 손님 연락 창과 같은 꼴(폰 = 전체 화면 · PC = 2단: 왼쪽 넣기 + 목록 / 오른쪽 「다음 발주에 들어갈 것」 = for-ship 글 그대로).
 //   겹·뒤로가기 = ao-desk.js 기록(AkmAoDesk.hbPush/hbDrop · #677·#678) — 열린 순서대로 닫힘: 옵션 목록 → 정리 카드 → 미리보기 판 → 메모함.
 //   흐름 = 손님 글 붙여 넣기 → [입력하기](preview · 저장 0) → 정리 결과 카드(칸마다 고침 · ↺ = 처음 정리한 값 · 빈칸 빨강+이유 · 손님께 물어볼 문자 초안) → [저장].
 //   고친 것이 있는데 닫으면(× · 취소 · Esc · 뒤로가기) 「저장 안 하고 닫을까요?」 한 번.
@@ -124,8 +124,10 @@
     function pillOf(r) {
         if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(30일 넘으면 서버가 지움)
         if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
-        if (r.used_on) return { k: 'used', t: md(r.used_on) + ' 발주에 넣음' };
-        return { k: 'next', t: '내일 발주' };
+        // #873 다음 발주에 들어갈 줄 = 머리 줄과 같은 날짜 글 하나(「내일」은 자정 넘으면 틀림 · 그 발주를 미리 열어 used_on 이 찍혀도 같은 글)
+        //   used_on 이 다음 발주와 다른 날 = 지난 발주에 넣고 안 비운 줄 → 그날 표시(for-ship 은 used_on 을 안 봐서 다음 발주에도 들어감)
+        if (r.used_on && r.used_on !== OM.shipDate) return { k: 'used', t: md(r.used_on) + ' 발주에 넣음' };
+        return { k: 'next', t: OM.shipDate ? mdw(OM.shipDate) + ' 발주' : '다음 발주' };
     }
     const senderShow = v => String(v || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim();   // #863 「!」 어디든(서버가 맨 뒤에 붙임) 떼고 보임
     // #862 보내는 분 이름만 치면 「○○ 드림」 — 서버 cashSender(order-memo.js) · 최종발주 IvtSender(「이름 드림」) 와 같은 판정(이미 드림·올림 · 제주아꼼이네 · 「○○(제주아꼼이네)」 는 그대로)
@@ -187,12 +189,12 @@
                 <ul class="om-list" id="om-list" aria-live="polite"></ul>
               </div>
               <aside class="om-prev" id="om-prev" aria-labelledby="om-prev-t">
-                <div class="om-prev-h"><b id="om-prev-t">내일 발주에 들어갈 것</b><span id="om-prev-d"></span><button type="button" class="om-btn sm om-prev-x" id="om-prev-x">닫기</button></div>
+                <div class="om-prev-h"><b id="om-prev-t">다음 발주에 들어갈 것</b><span id="om-prev-d"></span><button type="button" class="om-btn sm om-prev-x" id="om-prev-x">닫기</button></div>
                 <div class="om-prev-b" id="om-prev-b"></div>
               </aside>
             </div>
             <footer class="om-foot" id="om-foot">
-              <button type="button" class="om-btn" id="om-prev-open">내일 발주 미리보기</button>
+              <button type="button" class="om-btn" id="om-prev-open">다음 발주 미리보기</button>
               <button type="button" class="om-btn om-del" id="om-del" disabled>삭제</button>
             </footer>
             <div class="om-undo" id="om-undo" role="status" hidden><span id="om-undo-t"></span><button type="button" class="om-btn sm" id="om-undo-b">되돌리기</button></div>
@@ -542,7 +544,7 @@
         if (OM.err) { ul.innerHTML = `<li class="om-empty err"><b>${esc(OM.err)}</b><button type="button" class="om-btn sm" data-act="reload">다시 불러오기</button></li>`; sum.textContent = ''; return; }
         if (!rows || !rows.length) {
             ul.innerHTML = OM.tab === 'open'
-                ? '<li class="om-empty"><b>내일 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>'
+                ? '<li class="om-empty"><b>다음 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>'
                 : '<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 30일 동안 여기서 되살릴 수 있어요.</span></li>';
             sum.textContent = OM.tab === 'open' ? '' : '';
             return;
@@ -552,7 +554,7 @@
             const nLine = ready.filter(r => r.kind === 'line').length, nCash = ready.filter(r => r.kind === 'cash').length, nLater = open.filter(r => !isCheck(r) && isLater(r)).length;
             sum.innerHTML = `${esc(mdw(OM.shipDate))} 발주에 <b>메모 ${nLine}줄 · 현금 ${nCash}줄</b>` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
         } else sum.textContent = '비운 지 30일이 지나면 영구로 지워져요.';
-        const rank = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on ? 3 : 1;   // 확인할 줄 → 내일 발주 → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
+        const rank = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on && r.used_on !== OM.shipDate ? 3 : 1;   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
         const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
         ul.innerHTML = sorted.map(rowHtml).join('');
     }
@@ -637,7 +639,7 @@
         loadShip();
     }
 
-    // ── 「내일 발주에 들어갈 것」 = for-ship 그대로(PC 오른쪽 · 폰은 단추로 여는 판) ─────
+    // ── 「다음 발주에 들어갈 것」 = for-ship 그대로(PC 오른쪽 · 폰은 단추로 여는 판) ─────
     async function loadShip() {
         if (!OM.shipDate) return;
         const res = await API.forShip(OM.shipDate);
