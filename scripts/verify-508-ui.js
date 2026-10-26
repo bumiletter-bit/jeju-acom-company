@@ -244,7 +244,7 @@ async function resolveCards(pg, type) {
         const saveBtns = await pg.locator(SEL.save).count();
         for (let i = 0; i < saveBtns; i++) { const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 20000 }), pg.locator(SEL.save).nth(i).click()]); const nm = d.suggestedFilename(); const f = path.join(TMP, 'out-' + i + path.extname(nm)); await d.saveAs(f); files[nm] = f; }
         const names = Object.keys(files); const md = `${ship.slice(5, 7)}.${ship.slice(8, 10)}`;
-        const fH = names.find(x => x === `제주아꼼이네송장(효돈) ${md}.xlsx`), fD = names.find(x => x === `제주아꼼이네송장(대성) ${md}.xlsx`), fS = names.find(x => x === `스마트스토어 발주발송관리 ${md}.xlsx`);
+        const fH = names.find(x => x === `제주아꼼이네송장(효돈)${md}.xlsx`), fD = names.find(x => x === `제주아꼼이네송장(대성)${md}.xlsx`), fS = names.find(x => x === `스마트스토어 발주발송관리 ${md}.xlsx`);
         ok(!!fH && !!fD && !!fS && names.length === 3, '④ 파일 3개: 거래처별 택배사 양식 2 + 스마트스토어 1 (이름 = 설계서 §7-7)', names.join(' | '));
         const gone = [...fx.expect.excluded, ...fx.expect.canceled, ...fx.expect.individualAfterRejudge, ...(fx.friKind === 'future' ? ['받는30'] : [])];
         const sums = {};
@@ -449,7 +449,7 @@ async function resolveCards(pg, type) {
             await a.pg.click(SEL.make); await idle(a.pg); await a.pg.waitForSelector(SEL.save, { timeout: 15000 });
             const md2 = `${later.slice(5, 7)}.${later.slice(8, 10)}`;
             const btnNames = await a.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save);
-            ok(btnNames.length === 3 && btnNames.every(nm => nm.includes(' ' + md2 + '.')), '⑦-9 파일 이름 MM.DD = 바꾼 기준 발송일', btnNames.join(' | '));
+            ok(btnNames.length === 3 && btnNames.every(nm => nm.endsWith(md2 + '.xlsx')), '⑦-9 파일 이름 MM.DD = 바꾼 기준 발송일', btnNames.join(' | '));
             // ⑦-6 전부 저장
             const got = []; const onDl = d => got.push(d.suggestedFilename()); a.pg.on('download', onDl);
             const allTxt = (await a.pg.textContent(SEL.saveAll)).trim();

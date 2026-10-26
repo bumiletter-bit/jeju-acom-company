@@ -823,3 +823,11 @@ html[data-ao-theme="dark"] .fo-iam-list li { border-color: var(--fd-warn-line); 
 html[data-ao-theme="dark"] .fo-iam-list li[data-k="unknown"] { border-color: var(--fd-err-line); border-left-color: var(--f-err); background: var(--fd-err-bg); }
 .fo-iam-no { white-space: nowrap; }
 .fo.iam-open .fo-float { visibility: hidden; }   /* 팝업이 떠 있는 동안 「↑ 맨 위」 등 떠 있는 단추를 숨김 */
+
+/* #861 메모 칸 위 [메모함 적용하기] = 주 단추 색(옆 [메모함 수정하기]는 보조) */
+.fo-om-link.fo-om-apply { background: var(--f-accent); border-color: var(--f-accent); color: #fff; }
+.fo-om-link.fo-om-apply:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
+.fo-om-link.fo-om-apply:disabled { background: #EEF0F4; border-color: #E4E7EC; color: #667085; cursor: default; }
+html[data-ao-theme="dark"] .fo-om-link.fo-om-apply { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
+html[data-ao-theme="dark"] .fo-om-link.fo-om-apply:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
+html[data-ao-theme="dark"] .fo-om-link.fo-om-apply:disabled { background: #1A1F36; border-color: var(--f-line); color: var(--fd-dim); }

@@ -74,6 +74,35 @@ body.om-open .mobile-menu-btn, body.om-open .mobile-noti-btn { visibility: hidde
 .om-tag.flash { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }   /* #850-f 누른 순간만(0.3초) · 켜짐 상태 없음 */
 .om-tag:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
 @media (max-width: 960px), (pointer: coarse) { .om-tag { min-height: 44px; } }
+/* #862 꼬리표 줄 입력판(입력 칸 아래) */
+.om-tp { margin-top: 10px; padding: 12px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-soft); }
+.om-tp-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.om-tp-h b { color: var(--d-ink); font-size: 14px; }
+.om-tp-s { flex: 1 1 auto; min-width: 0; color: var(--d-sub); font-size: 12.5px; }
+.om-tp-x { min-height: 36px; min-width: 36px; padding: 0; }
+.om-tp-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.om-tp-tel, .om-tp-name, .om-tp-date { min-height: 44px; margin: 0; padding: 0 12px; border: 1.5px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 15px; }
+.om-tp-tel { flex: 1 1 150px; min-width: 150px; max-width: 220px; font-variant-numeric: tabular-nums; }
+.om-tp-go { flex: 0 0 auto; margin-left: auto; }
+.om-tp-name, .om-tp-date { width: 100%; min-width: 0; }
+.om-tp-date { cursor: pointer; }
+.om-tp-tel:focus, .om-tp-name:focus, .om-tp-date:focus { outline: none; border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }
+.om-tp-k { display: flex; min-width: 0; }
+.om-tp-k:empty { display: none; }
+.om-tp[data-k="date"] .om-tp-k, .om-tp[data-k="sender"] .om-tp-k { flex: 1 1 120px; max-width: 220px; }
+.om-tp-sz .om-seg-b { min-width: 44px; padding: 0 10px; }
+.om-tp-note { margin: 8px 0 0; color: var(--d-sub); font-size: 12.5px; line-height: 1.45; }
+.om-tp-note:empty { display: none; }
+.om-tp-note[data-k="err"] { color: var(--d-err); font-weight: 700; }
+.om-tp-note[data-k="ok"] { color: var(--d-ok, var(--d-sub)); }
+@media (max-width: 960px), (pointer: coarse) {
+  .om-tp-x { min-height: 44px; min-width: 44px; }
+  .om-tp-tel, .om-tp-name, .om-tp-date { font-size: 16px; }
+}
+@media (max-width: 520px) {
+  .om-tp-tel { flex: 1 1 100%; max-width: none; }
+  .om-tp[data-k="date"] .om-tp-k, .om-tp[data-k="sender"] .om-tp-k { max-width: none; }
+}
 .om-in-acts { display: flex; gap: 8px; }
 .om-in-acts #om-go { flex: 1 1 auto; font-size: 15px; }
 .om-in-acts #om-go.ready { box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--d-accent) 80%, transparent), 0 0 0 4px color-mix(in srgb, var(--d-accent) 16%, transparent); }
@@ -209,6 +238,10 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 .om-undo1[hidden] { display: none; }
 .om-undo1:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
 @media (max-width: 960px), (pointer: coarse) { .om-undo1 { min-height: 36px; padding: 0 10px; } .om-f-l { min-height: 36px; } }
+/* #862 구매자 연락처 옆 「수취인과 동일」 */
+.om-telrow { display: flex; gap: 8px; align-items: center; }
+.om-telrow input { flex: 1 1 auto; min-width: 0; }
+.om-same { flex: 0 0 auto; min-height: 44px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
 .om-f input, .om-f textarea, .om-combo { width: 100%; min-height: 44px; margin: 0; padding: 0 12px; border: 1.5px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 15px; transition: border-color 140ms var(--d-ease), background-color 140ms var(--d-ease); }
 .om-f textarea { padding: 10px 12px; line-height: 1.5; resize: vertical; }
 .om-f input:focus, .om-f textarea:focus, .om-combo:focus-visible { outline: none; border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }

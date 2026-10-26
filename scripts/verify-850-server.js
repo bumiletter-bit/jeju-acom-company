@@ -48,7 +48,7 @@ function mkPool(db) {
     ok(['010-2101-0013 27일 보내지말고', '010-2101-0013 27일보내지마세요', '010-2101-0013 30일 도착하게'].every(t => OM.ruleLine(t, T) === null), '「보내지 말고」(반대 뜻)·「도착하게」 = 규칙으로 안 읽음(AI)');
     const paste = ['홍길동(제주아꼼이네)', '010-9999-0000', '', '김받음', CAT[0], '2', '010-8888-7777', '', '서울특별시 강남구 테헤란로 1 101호', '', '010-9999-0000', '', ''].join('\t');
     const r6 = OM.checkRow(OM.ruleLine(paste, T), { today: T, catalog: new Set(CAT), origin: '출고지글' });
-    ok(r6.kind === 'cash' && r6.sure && r6.cells[0] === '!홍길동(제주아꼼이네)' && r6.cells[2] === '출고지글' && r6.cells[5] === '2', '엑셀 13칸 붙여넣기 = 현금 행 ✅ · 「!」 표식 · 출고지 기본', r6);
+    ok(r6.kind === 'cash' && r6.sure && r6.cells[0] === '홍길동(제주아꼼이네)!' && r6.cells[2] === '출고지글' && r6.cells[5] === '2', '엑셀 13칸 붙여넣기 = 현금 행 ✅ · 「!」 표식 · 출고지 기본', r6);
     // 규칙 줄 = 손으로 친 메모 칸과 같은 판정(v2 parseLines)
     const v2 = OM.V2.parseLines([r3.line, r4.line].join('\n'), 'naver', T);
     ok(v2.length === 2 && v2.every(x => !x.bad && x.date === '2026-10-30') && v2[0].indiv, 'v2 parseLines 가 메모함 줄을 사람이 친 줄과 같게 읽음(날짜·입력삭제)', v2);
@@ -62,9 +62,9 @@ function mkPool(db) {
     console.log('② 현금 13칸 검사');
     const ctx = { today: T, catalog: new Set(CAT), origin: 'O' };
     const m1 = OM.checkRow(OM.cashFromAi({ buyer: '이손님', buyer_phone: '01055556666', recv: '박받음', phone1: '', phone2: '', addr: '', option: CAT[1], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }), ctx);
-    ok(!m1.sure && m1.missing.join() === '6,8' && m1.check_why.includes('주소가 없어요') && m1.cells[0] === '!이손님(제주아꼼이네)' && m1.cells[1] === '010-5555-6666', '빈 칸 = 🟠 · missing [6,8] · 「주소가 없어요」 · 보내는사람 = 「!손님(제주아꼼이네)」 · 번호 하이픈', m1);
+    ok(!m1.sure && m1.missing.join() === '6,8' && m1.check_why.includes('주소가 없어요') && m1.cells[0] === '이손님(제주아꼼이네)!' && m1.cells[1] === '010-5555-6666', '빈 칸 = 🟠 · missing [6,8] · 「주소가 없어요」 · 보내는사람 = 「손님(제주아꼼이네)!」 · 번호 하이픈', m1);
     const m2 = OM.checkRow(OM.cashFromAi({ buyer: '', buyer_phone: '', recv: '박받음', phone1: '01012341234', phone2: '', addr: '제주시 1', option: '없는 품목', qty: 0, memo: '', sender: '정만웅', sender_phone: '01094020886', sender_addr: '', date: '' }), ctx);
-    ok(!m2.sure && m2.missing.includes(4) && m2.missing.includes(5) && m2.cells[0] === '!정만웅 드림' && m2.check_why.includes('품목이 단가표 이름과 달라요'), '단가표에 없는 품목·수량 0 = 🟠 · 보내는이 = 「!이름 드림」', m2);
+    ok(!m2.sure && m2.missing.includes(4) && m2.missing.includes(5) && m2.cells[0] === '정만웅 드림!' && m2.check_why.includes('품목이 단가표 이름과 달라요'), '단가표에 없는 품목·수량 0 = 🟠 · 보내는이 = 「이름 드림!」', m2);
 
     {   // #856 현금 줄 옵션 칸에 최종발주 꼬리(「…2S사이즈로!」·「…15과로!」)가 붙어도 단가표 이름으로 대조
         const base = { buyer: '이손님', buyer_phone: '01055556666', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };
@@ -78,25 +78,38 @@ function mkPool(db) {
     {   // #858 보내는사람연락처(B) 빈칸 = 구매자연락처(K) · 적힌 B·A 는 그대로
         const cc = (a, b, k) => OM.checkRow({ kind: 'cash', src: 'edit', cells: [a, b, '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', k, '', ''] }, ctx);
         const b1 = cc('!제주아꼼이네', '', '01055556666'), b2 = cc('!제주아꼼이네', '010-1212-3434', '01055556666'), b3 = cc('!홍길동 드림', '', '010-5555-6666'), b4 = cc('!제주아꼼이네', '', '');
-        ok(b1.cells[1] === '010-5555-6666' && b1.cells[0] === '!제주아꼼이네' && b3.cells[1] === '010-5555-6666' && b3.cells[0] === '!홍길동 드림', '#858 B 빈칸 = K 번호로 채움 · A(「!제주아꼼이네」·「!홍길동 드림」) 그대로', [b1.cells.slice(0, 2), b3.cells.slice(0, 2)]);
+        ok(b1.cells[1] === '010-5555-6666' && b1.cells[0] === '제주아꼼이네!' && b3.cells[1] === '010-5555-6666' && b3.cells[0] === '홍길동 드림!', '#858 B 빈칸 = K 번호로 채움 · A(「제주아꼼이네!」·「홍길동 드림!」) 그대로', [b1.cells.slice(0, 2), b3.cells.slice(0, 2)]);
         ok(b2.cells[1] === '010-1212-3434' && b4.cells[1] === '', '#858 사람이 넣은 B 번호는 그대로 · K 도 비면 B 빈칸 그대로', [b2.cells[1], b4.cells[1]]);
+        {   // #863 「!」 맨 뒤(대표 현금파일 관례) · 이름만 = 「드림」 · 읽는 쪽(parseCash bang)도 그대로 현금
+            const n = v => cc(v, '', '01055556666').cells[0];
+            ok(n('홍길동') === '홍길동 드림!' && n('홍길동 드림') === '홍길동 드림!' && n('!홍길동 드림') === '홍길동 드림!' && n('홍길동 올림!') === '홍길동 올림!' && n('') === '제주아꼼이네!' && n('!') === '제주아꼼이네!' && n('김손님(제주아꼼이네)') === '김손님(제주아꼼이네)!' && n('！ 제주아꼼이네') === '제주아꼼이네!',
+                '#863 보내는사람 = 「!」 맨 뒤 · 이름만 「홍길동」 → 「홍길동 드림!」 · 드림·올림·제주아꼼이네·(제주아꼼이네) 그대로 · 빈칸 = 「제주아꼼이네!」', ['홍길동', '!홍길동 드림', '', '！ 제주아꼼이네'].map(n));
+            const ai = OM.checkRow(OM.cashFromAi({ buyer: '', buyer_phone: '010-5555-6666', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '이모', sender_phone: '', sender_addr: '', date: '' }, {}), ctx);
+            const pc = core.parseCash([core.HEADERS.slice(), ai.cells, cc('제주아꼼이네', '', '01055556666').cells]);
+            ok(ai.cells[0] === '이모 드림!' && pc.ok && pc.rows.every(r => r.bang), '#863 AI 줄도 「이모 드림!」 · 최종발주 parseCash = 뒤 「!」도 현금(bang)', [ai.cells[0], pc.ok && pc.rows.map(r => r.bang)]);
+            const ind = OM.checkRow({ kind: 'cash', src: 'edit', indiv: true, indivKey: '010-2101-0013', cells: ['홍길동 드림!', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '', '', ''] }, ctx);
+            ok(ind.cells[0] === '홍길동 드림' && ind.indiv === true, '#863 입력삭제 주소 줄 = 뒤 「!」도 뗌(현금 아님)', ind.cells[0]);
+            const fs63 = OM.pickForShip([{ id: 9, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!홍길동', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] },
+                { id: 10, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['구매자', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] }], '2026-10-26');
+            ok(fs63.cash_aoa[1][0] === '홍길동 드림!' && fs63.cash_aoa[2][0] === '구매자', '#863 이미 저장된 열린 줄 for-ship = 앞 「!」 → 뒤 · 「!」 없는 입력삭제 줄은 그대로', fs63.cash_aoa.slice(1).map(c => c[0]));
+        }
         const fs8 = OM.pickForShip([{ id: 1, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] },
             { id: 2, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '010-1212-3434', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] }], '2026-10-26');
-        ok(fs8.cash_aoa[1][1] === '010-5555-6666' && fs8.cash_aoa[2][1] === '010-1212-3434' && fs8.cash_aoa[1][0] === '!제주아꼼이네', '#858 이미 저장된 줄(for-ship 내보내기)도 B 빈칸 = K · 적힌 B 그대로', fs8.cash_aoa.slice(1).map(c => c.slice(0, 2)));
+        ok(fs8.cash_aoa[1][1] === '010-5555-6666' && fs8.cash_aoa[2][1] === '010-1212-3434' && fs8.cash_aoa[1][0] === '제주아꼼이네!', '#858 이미 저장된 줄(for-ship 내보내기)도 B 빈칸 = K · 적힌 B 그대로', fs8.cash_aoa.slice(1).map(c => c.slice(0, 2)));
     }
     console.log('②-b 문자 출처 현금 손님(#850-b)');
     {
         const SP = '01092590977', base = { buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' };
         const a1 = OM.checkRow(OM.cashFromAi(base, { smsPhone: SP, text: '타이벡 5kg 1박스 박받음 010-7777-8888 제주시 1' }), ctx);
-        ok(a1.cells[10] === '010-9259-0977' && a1.cells[1] === '010-9259-0977' && a1.cells[6] === '010-7777-8888' && a1.cells[0] === '!제주아꼼이네' && a1.sure, '문자 출처 · 입금자명 없음 = K·보내는사람연락처 = 문자 손님 번호 · 받는 분 번호 그대로 · 보내는사람 「!제주아꼼이네」', a1.cells);
+        ok(a1.cells[10] === '010-9259-0977' && a1.cells[1] === '010-9259-0977' && a1.cells[6] === '010-7777-8888' && a1.cells[0] === '제주아꼼이네!' && a1.sure, '문자 출처 · 입금자명 없음 = K·보내는사람연락처 = 문자 손님 번호 · 받는 분 번호 그대로 · 보내는사람 「제주아꼼이네!」', a1.cells);
         const a2 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님', buyer_phone: '010-5555-6666' }), { smsPhone: SP, text: '입금 김철수으로 했어요 박받음 …' }), ctx);
-        ok(a2.cells[0] === '!김철수 드림' && a2.cells[10] === '010-9259-0977' && a2.cells[1] === '010-9259-0977', '입금자명 있음(「입금 김철수으로 했어요」) = 보내는사람 「!김철수 드림」 · AI 구매자 번호보다 문자 손님 번호', a2.cells);
+        ok(a2.cells[0] === '김철수 드림!' && a2.cells[10] === '010-9259-0977' && a2.cells[1] === '010-9259-0977', '입금자명 있음(「입금 김철수으로 했어요」) = 보내는사람 「김철수 드림!」 · AI 구매자 번호보다 문자 손님 번호', a2.cells);
         const a3 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님', sender_phone: '010-1212-3434' }), { smsPhone: SP, text: '보내는 사람 번호 010-1212-3434' }), ctx);
-        ok(a3.cells[1] === '010-1212-3434' && a3.cells[10] === '010-9259-0977' && a3.cells[0] === '!김손님(제주아꼼이네)', 'AI 가 sender_phone 따로 주면 보내는사람연락처만 그 값 · 이름 = 구매자(제주아꼼이네)', a3.cells);
+        ok(a3.cells[1] === '010-1212-3434' && a3.cells[10] === '010-9259-0977' && a3.cells[0] === '김손님(제주아꼼이네)!', 'AI 가 sender_phone 따로 주면 보내는사람연락처만 그 값 · 이름 = 구매자(제주아꼼이네)', a3.cells);
         const a4 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { sender: '이모' }), { smsPhone: SP, text: '입금 김철수로 했어요' }), ctx);
-        ok(a4.cells[0] === '!이모 드림', '보내는이 지정이 입금자명보다 먼저');
+        ok(a4.cells[0] === '이모 드림!', '보내는이 지정이 입금자명보다 먼저');
         const a5 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer_phone: '010-5555-6666' }), {}), ctx);
-        ok(a5.cells[10] === '010-5555-6666' && a5.cells[1] === '010-5555-6666' && a5.cells[0] === '!제주아꼼이네', '문자 아님(manual) = 종전 그대로(K = AI 구매자 번호)', a5.cells);
+        ok(a5.cells[10] === '010-5555-6666' && a5.cells[1] === '010-5555-6666' && a5.cells[0] === '제주아꼼이네!', '문자 아님(manual) = 종전 그대로(K = AI 구매자 번호)', a5.cells);
         // 입금자명 38글(워커3 점검 꼴 · 맞게 읽을 12 + 이름 없음 26)
         const DEP = [['입금 김철수으로 했어요', '김철수'], ['입금은 김철수로 했습니다', '김철수'], ['입금자명 박영희입니다', '박영희'], ['입금자 이순자', '이순자'], ['입금자명: 최민수', '최민수'], ['입금자는 정하나예요', '정하나'],
             ['홍길동 이름으로 입금했어요', '홍길동'], ['김철수로 입금했어요', '김철수'], ['이영수 명의로 입금했습니다', '이영수'], ['입금 박지성 이름으로 했어요', '박지성'], ['010-1234-5678 타이벡 5kg 입금 이영수로 했어요', '이영수'], ['입금은 오세훈입니다', '오세훈'],
@@ -108,7 +121,7 @@ function mkPool(db) {
         const depBad = DEP.filter(([t, w]) => OM.depositName(t) !== w).map(([t, w]) => [t, w, OM.depositName(t)]);
         ok(DEP.length === 47 && !depBad.length, '입금자명 47글(38 + 재점검 9) = 이름 있을 때만(「먼저·오후에·바로·제가·늦어서·금액」·「아들이」·남편/엄마/회사·…뱅크/은행/페이 = 빈칸)', depBad);
         const m6 = OM.checkRow(OM.cashFromAi(Object.assign({}, base, { buyer: '김손님' }), { text: '입금 이영수로 했어요' }), ctx);
-        ok(m6.cells[0] === '!이영수 드림' && m6.cells[10] === '010-7777-8888', 'manual 붙여 넣기에도 입금자명 = 「!이영수 드림」(현금건 공통) · 번호 채우기는 안 함(K = 받는 분 번호 · 종전)', m6.cells);
+        ok(m6.cells[0] === '이영수 드림!' && m6.cells[10] === '010-7777-8888', 'manual 붙여 넣기에도 입금자명 = 「이영수 드림!」(현금건 공통) · 번호 채우기는 안 함(K = 받는 분 번호 · 종전)', m6.cells);
     }
     console.log('③ 30일 지정 — 26·27·28 매일 · 30일 당일');
     let id = 0; const mk = (o) => Object.assign({ id: ++id, state: 'open', sure: true, used_on: null, check_why: [] }, o);
@@ -303,7 +316,7 @@ function mkPool(db) {
         await db.query(`UPDATE pending_orders SET status = '완료', result = $2 WHERE id = $1`, [reqs[7], JSON.stringify({ type: 'desk_answer', title: '발주 메모 정리', answer: '현금 1명', data: deskData })]);
         const g2 = await call('GET', `/api/order-memo/preview/${reqs[7]}`, null, { uid: 7 });
         const cr = g2.j.rows && g2.j.rows.find(r => r.kind === 'cash'), lr = g2.j.rows && g2.j.rows.find(r => r.kind === 'line');
-        ok(g2.j.state === 'done' && cr && !cr.sure && cr.missing.join() === '8' && cr.cells[0] === '!이손님(제주아꼼이네)' && lr && lr.sure && lr.ship_date === '2026-10-30' && lr.line === '10/30\t010-2222-3333\t입력o삭제x\t네이버' && /주소/.test(g2.j.sms_draft),
+        ok(g2.j.state === 'done' && cr && !cr.sure && cr.missing.join() === '8' && cr.cells[0] === '이손님(제주아꼼이네)!' && lr && lr.sure && lr.ship_date === '2026-10-30' && lr.line === '10/30\t010-2222-3333\t입력o삭제x\t네이버' && /주소/.test(g2.j.sms_draft),
             '창구 답 = 서버가 다시 검사한 줄(현금 주소 빈칸 🟠 · 메모 줄 탭 꼴) + 문자 초안', g2.j);
         const dq = await call('DELETE', `/api/order-memo/preview/${reqs[7]}`, null, { uid: 7 });
         const after = (await db.query(`SELECT payload, result, status FROM pending_orders WHERE id = $1`, [reqs[7]])).rows[0];
@@ -331,7 +344,7 @@ function mkPool(db) {
                 { kind: 'cash', src: 'ai', cells: AD },
                 { kind: 'cash', src: 'ai', cells: Object.assign([], AD, { 1: '010-5555-1111', 10: '010-5555-1111' }) } ] });
             const [, addrRow, cashRow9] = sv9.j.rows || [];
-            ok(sv9.s === 200 && addrRow.indiv === true && !/[!！]/.test(addrRow.cells[0]) && addrRow.cells[0] === '제주아꼼이네' && addrRow.cells[10] === P && addrRow.sure && cashRow9.indiv === false && cashRow9.cells[0].startsWith('!'),
+            ok(sv9.s === 200 && addrRow.indiv === true && !/[!！]/.test(addrRow.cells[0]) && addrRow.cells[0] === '제주아꼼이네' && addrRow.cells[10] === P && addrRow.sure && cashRow9.indiv === false && cashRow9.cells[0].endsWith('!'),
                 '같은 묶음 「입력o삭제x」 번호 = 현금 줄 구매자 번호 → 주소 줄(「!」 없음 · K = 주문 번호) · 다른 번호 줄은 현금 손님(「!」)', sv9.j.rows);
             const fs9 = OM.pickForShip((await db.query(`SELECT id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line, cells, sure, check_why, state, used_on FROM order_memo_rows WHERE entry_id = $1 ORDER BY id`, [sv9.j.entry_id])).rows, '2026-10-30');
             const pc9 = core.parseCash(fs9.cash_aoa);
@@ -379,10 +392,10 @@ function mkPool(db) {
             const t1 = '타이벡 5kg 1박스 박받음 010-7777-8888 제주시 1 입금 김철수로 했어요';
             const q1 = await call('POST', '/api/order-memo/preview', { raw: t1, source: 'sms:55', phone: '010-9259-0977' }, U);
             const c1 = q1.j.rows.find(r => r.kind === 'cash');
-            ok(c1 && c1.cells[10] === '010-9259-0977' && c1.cells[1] === '010-9259-0977' && c1.cells[0] === '!김철수 드림' && c1.cells[6] === '010-7777-8888', '미리보기(서버 직접) · 문자 출처 = K·B 문자 손님 번호 · 입금자명 → 「!김철수 드림」 · 받는 분 번호 다름 그대로', c1 && c1.cells);
+            ok(c1 && c1.cells[10] === '010-9259-0977' && c1.cells[1] === '010-9259-0977' && c1.cells[0] === '김철수 드림!' && c1.cells[6] === '010-7777-8888', '미리보기(서버 직접) · 문자 출처 = K·B 문자 손님 번호 · 입금자명 → 「김철수 드림!」 · 받는 분 번호 다름 그대로', c1 && c1.cells);
             const q2 = await call('POST', '/api/order-memo/preview', { raw: '타이벡 1박스 박받음 제주시 1', source: 'sms:55' }, U);
             const c2 = q2.j.rows.find(r => r.kind === 'cash');
-            ok(c2 && c2.cells[10] === '010-9259-0977' && c2.cells[0] === '!이손님(제주아꼼이네)', '화면이 번호를 안 보내면 sms_threads 에서 읽음 · 입금자명 없음 = 「구매자(제주아꼼이네)」', c2 && c2.cells);
+            ok(c2 && c2.cells[10] === '010-9259-0977' && c2.cells[0] === '이손님(제주아꼼이네)!', '화면이 번호를 안 보내면 sms_threads 에서 읽음 · 입금자명 없음 = 「구매자(제주아꼼이네)」', c2 && c2.cells);
             const q3 = await call('POST', '/api/order-memo/preview', { raw: '타이벡 1박스 박받음 제주시 1', source: 'manual', phone: '010-9259-0977' }, U);
             ok(q3.j.rows.find(r => r.kind === 'cash').cells[10] === '010-5555-6666', 'manual = 문자 번호 안 씀(종전 그대로)');
             deskOn = true; cfgVal = null;
@@ -390,7 +403,7 @@ function mkPool(db) {
             const pw = (await db.query(`SELECT payload FROM pending_orders WHERE id = $1`, [w.j.desk.id])).rows[0].payload;
             await db.query(`UPDATE pending_orders SET status = '완료', result = $2 WHERE id = $1`, [w.j.desk.id, JSON.stringify({ type: 'desk_answer', answer: 'x', data: { lines: [], cash: [{ buyer: '', buyer_phone: '', recv: '박받음', phone1: '010-7777-8888', phone2: '', addr: '제주시 1', option: CAT[0], qty: 1, memo: '', sender: '', sender_phone: '', sender_addr: '', date: '' }], unsure: [], sms_draft: '' } })]);
             const gw = await call('GET', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
-            ok(pw.from_sms === true && gw.j.state === 'done' && gw.j.rows[0].cells[10] === '010-9259-0977' && gw.j.rows[0].cells[0] === '!이영수 드림', '창구 경유 · 문자 출처 = 기다리기 결과도 K = 문자 손님 · 입금자명 「!이영수 드림」(창구가 sender 를 비워도)', gw.j.rows);
+            ok(pw.from_sms === true && gw.j.state === 'done' && gw.j.rows[0].cells[10] === '010-9259-0977' && gw.j.rows[0].cells[0] === '이영수 드림!', '창구 경유 · 문자 출처 = 기다리기 결과도 K = 문자 손님 · 입금자명 「이영수 드림!」(창구가 sender 를 비워도)', gw.j.rows);
             await call('DELETE', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
             deskOn = false; cfgVal = { ai: { direct: true } };
             const sv = await call('POST', '/api/order-memo', { raw: 's', source: 'sms:55', rows: [{ kind: 'cash', src: 'edit', cells: ['', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '', '', ''] }] }, U);
@@ -528,8 +541,8 @@ function mkPool(db) {
             const g = await call('GET', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
             const c = g.j.rows && g.j.rows[0];
             ok(g.j.state === 'done' && g.j.rows.length === 1 && c.kind === 'cash' && c.cells[3] === '북경양꼬치' && c.cells[6] === '010-8213-7698' && c.cells[8] === '울산 중구 중앙길 91-1 (북경양꼬치)'
-                && c.cells[0] === '!김택연 드림' && c.cells[10] === '010-8213-7698' && c.cells[1] === '010-8213-7698' && !c.sure && c.missing.join() === '4,5' && c.check_why.includes('품목을 못 정했어요') && c.check_why.includes('수량이 없어요'),
-                '결과 = 현금 줄 1개(받는 분 북경양꼬치 · 연락처 · 주소 · 「!김택연 드림」 · 구매자 번호 = 문자 번호) · 품목·수량 빈칸 🟠 · 할 일 없는 메모 줄은 버림', g.j.rows);
+                && c.cells[0] === '김택연 드림!' && c.cells[10] === '010-8213-7698' && c.cells[1] === '010-8213-7698' && !c.sure && c.missing.join() === '4,5' && c.check_why.includes('품목을 못 정했어요') && c.check_why.includes('수량이 없어요'),
+                '결과 = 현금 줄 1개(받는 분 북경양꼬치 · 연락처 · 주소 · 「김택연 드림!」 · 구매자 번호 = 문자 번호) · 품목·수량 빈칸 🟠 · 할 일 없는 메모 줄은 버림', g.j.rows);
             await call('DELETE', `/api/order-memo/preview/${w.j.desk.id}`, null, U);
             deskOn = false; cfgVal = { ai: { direct: true } };
             const gsrc = fs.readFileSync(path.join(ROOT, '★에이전트오피스', '발주메모_정리.md'), 'utf8'), osrc = fs.readFileSync(path.join(ROOT, 'order-memo.js'), 'utf8');

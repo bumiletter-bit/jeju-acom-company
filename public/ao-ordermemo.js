@@ -27,6 +27,15 @@
     const telHead = d => d.startsWith('02') ? 2 : d.startsWith('050') ? 4 : 3;
     const telMax = d => d.startsWith('050') ? 12 : 11;
     const fmtTel = v => { let d = digits(v); d = d.slice(0, telMax(d)); const p = telHead(d), r = d.slice(p); if (!r) return d; if (r.length <= 4) return d.slice(0, p) + '-' + r; const m = r.length <= 7 ? 3 : 4; return d.slice(0, p) + '-' + r.slice(0, m) + '-' + r.slice(m); };
+    // 한 줄 번호 칸 = 치는 대로 하이픈(카드 번호 칸 · #862 줄 입력판 번호 칸) · 커서 = 그 앞 숫자 개수 기준 · 여러 줄 입력 칸(om-raw)엔 안 씀(#857)
+    const lineTel = v => { const d = digits(v); return d.startsWith('02') ? d : fmtTel(v); };   // #862 줄(메모 줄 번호) 꼴 — 02 는 숫자만
+    function telLive(t) {
+        if (!isPhoneish(t.value)) return;
+        const fv = fmtTel(t.value); if (fv === t.value) return;
+        const pos = t.selectionStart == null ? t.value.length : t.selectionStart, nd = digits(t.value.slice(0, pos)).length;
+        t.value = fv; let cnt = 0, i = 0; while (i < fv.length && cnt < nd) { if (/[0-9]/.test(fv[i])) cnt++; i++; }
+        try { t.setSelectionRange(i, i); } catch (er) { /* 그대로 */ }
+    }
     const isPhoneish = v => { const s = String(v || '').trim(), d = digits(s); return !!d && d[0] === '0' && d.length <= telMax(d) && !/[A-Za-z가-힣]/.test(s) && !/^\d{8}-\d/.test(s); };
     const telShow = v => isPhoneish(v) && digits(v).length >= 9 ? fmtTel(v) : v;
     const lineView = s => String(s || '').split('\t').map(x => x.trim()).filter(Boolean).join(' ');   // 메모 칸 글 보기 = 칸 사이 한 칸(앞 빈 칸·넓은 탭 없이)
@@ -44,7 +53,7 @@
         { i: 8, label: '배송지', need: true, why: '주소가 없어요', kind: 'area' },
         { i: 10, label: '구매자 연락처', kind: 'tel' },
         { i: 9, label: '배송메세지', ph: '비우면 최종발주가 기본 문구로' },
-        { i: 0, label: '보내는 분(선물)', more: true, kind: 'sender', ph: '예) 홍길동 드림' },
+        { i: 0, label: '보내는 분(선물)', hint: '「드림」 자동', more: true, kind: 'sender', ph: '예) 홍길동' },   // #862 힌트 = 최종발주 「보내는 분 이름(「드림」 자동)」과 같은 글자
         { i: 12, label: '보내는 분 주소', more: true },
     ];
     const LINE_FIELDS = [
@@ -118,7 +127,9 @@
         if (r.used_on) return { k: 'used', t: md(r.used_on) + ' 발주에 넣음' };
         return { k: 'next', t: '내일 발주' };
     }
-    const senderShow = v => String(v || '').replace(/^\s*!\s*/, '');
+    const senderShow = v => String(v || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim();   // #863 「!」 어디든(서버가 맨 뒤에 붙임) 떼고 보임
+    // #862 보내는 분 이름만 치면 「○○ 드림」 — 서버 cashSender(order-memo.js) · 최종발주 IvtSender(「이름 드림」) 와 같은 판정(이미 드림·올림 · 제주아꼼이네 · 「○○(제주아꼼이네)」 는 그대로)
+    const senderDrim = v => { const n = senderShow(v); return !n || /(?:드림|올림)$|제주아꼼이네\)?$/.test(n) ? n : n + ' 드림'; };
     const nameOf = r => r.kind === 'cash' ? (r.cells[3] || '') : '';
     const numOf = r => r.kind === 'cash' ? (r.cells[6] || r.cells[10]) : r.key;
     const shortOpt = s => String(s || '').replace(/\s*\/\s*상품 및 과수:\s*/, ' · ');
@@ -153,6 +164,15 @@
                     <button type="button" class="om-in-clear" id="om-raw-clear" aria-label="글 지우기" hidden>${ICON_X}</button>
                   </div>
                   <div class="om-tags" role="group" aria-label="빠른 꼬리표(안 눌러도 글에서 읽어요)">${TAGS.map(t => `<button type="button" class="om-tag" data-tag="${t[0]}">${t[1]}</button>`).join('')}</div>
+                  <div class="om-tp" id="om-tp" role="group" aria-labelledby="om-tp-t" hidden>
+                    <div class="om-tp-h"><b id="om-tp-t">입력삭제</b><span class="om-tp-s" id="om-tp-s"></span><button type="button" class="om-btn icon om-tp-x" id="om-tp-x" aria-label="줄 입력 닫기">${ICON_X}</button></div>
+                    <div class="om-tp-row">
+                      <input id="om-tp-tel" class="om-tp-tel" type="tel" inputmode="tel" autocomplete="off" maxlength="16" placeholder="010-1234-5678" aria-label="손님 번호(구매자 번호)">
+                      <div class="om-tp-k" id="om-tp-k"></div>
+                      <button type="button" class="om-btn primary om-tp-go" id="om-tp-go">넣기</button>
+                    </div>
+                    <p class="om-tp-note" id="om-tp-note" role="status"></p>
+                  </div>
                   <div class="om-in-acts">
                     <button type="submit" class="om-btn primary" id="om-go" disabled>입력하기</button>
                   </div>
@@ -209,9 +229,16 @@
             const b = e.target.closest('.om-tag'); if (!b) return;
             const k = b.dataset.tag, tpl = (TAGS.find(t => t[0] === k) || [])[2];
             b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 320);   // 누른 순간만 표시
-            if (k === 'cash') { cashCard(); return; }   // #853 현금 손님 = 바로 빈 현금 카드
-            if (tpl) tplInsert(tpl);
+            if (k === 'cash') { tpClose(false); cashCard(); return; }   // #853 현금 손님 = 바로 빈 현금 카드
+            if (tpl) tpOpen(k);   // #862 틀을 칸에 넣지 않고 아래 줄 입력판(번호 칸 + 꼬리표 칸)
         });
+        $('om-tp-x').addEventListener('click', () => tpClose(true));
+        $('om-tp-go').addEventListener('click', tpGo);
+        const tp = $('om-tp');
+        tp.addEventListener('input', e => { if (e.target.id === 'om-tp-tel' && !e.isComposing) telLive(e.target); if (e.target.closest('.om-tp-row')) tpNote(''); });
+        tp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'om-tp-tel' || e.target.id === 'om-tp-name')) { e.preventDefault(); tpGo(); } });
+        tp.addEventListener('change', e => { if (e.target.id === 'om-tp-date') { tpNote(''); if (!$('om-tp-tel').value.trim()) $('om-tp-tel').focus({ preventScroll: true }); else $('om-tp-go').focus({ preventScroll: true }); } });
+        tp.addEventListener('click', e => { const b = e.target.closest('[data-tpsz]'); if (!b || !OM.tp) return; OM.tp.sz = b.dataset.tpsz; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); tpNote(''); });
         OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
         $('om-list').addEventListener('click', onList);
         $('om-prev-open').addEventListener('click', () => prevShow(true));
@@ -232,6 +259,7 @@
             e.stopPropagation(); e.preventDefault();
             if (OM.opt) { optClose(true); return; }
             if (OM.card) { cardClose(); return; }
+            if (OM.tp) { tpClose(true); return; }   // #862 줄 입력판
             if (OM.prevOpen) { prevShow(false, true); return; }
             if (OM.delArm) { delDisarm(); return; }
             close(true);
@@ -273,8 +301,73 @@
         try { raw.setSelectionRange(s, s + TEL_PH.length); } catch (e) { /* 그대로 */ }
         inNote('번호 자리를 골라 뒀어요 · 손님 번호를 바로 치세요', 'ok');
     }
+    // #862 줄 입력판 — 꼬리표를 누르면 입력 칸에 틀을 넣지 않고 [번호 칸 + 꼬리표 칸 + 넣기] · [넣기]·Enter = 입력 칸 끝에 서버 규칙 줄 꼴 한 줄
+    //   입력삭제 「010-1234-5678 입력o삭제x」 · 사이즈 「… S사이즈로」 · 날짜 「… 10/27 발송」(해 넘김 = 「1/3/27 … 발송」) · 보내는이 「… 보내는이 홍길동」 (ruleLine · invoice-v2 parseLines · sizeLines 가 읽는 꼴)
+    //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
+    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈', '귤 로얄과 사이즈 요청'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'] };
+    const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
+    function tpLastTel() {
+        if (OM.tpLast) return OM.tpLast;
+        const above = String($('om-raw').value || '').split('\n').map(x => x.trim()).filter(Boolean).pop() || '', m = above.match(/^(0\d{1,3}[-\s]?\d{3,4}[-\s]?\d{4})(?=\s|$)/);
+        return m && digits(m[1]).length >= 9 ? fmtTel(m[1]) : '';
+    }
+    function tpOpen(k) {
+        if (!TP_KIND[k]) return;
+        const tp = $('om-tp'), tel = $('om-tp-tel'), was = OM.tp;
+        OM.tp = { k, sz: null };
+        $('om-tp-t').textContent = TP_KIND[k][0]; $('om-tp-s').textContent = TP_KIND[k][1];
+        $('om-tp-k').innerHTML = k === 'size' ? `<div class="om-seg om-tp-sz" role="radiogroup" aria-label="사이즈">${['2S', 'S', 'M'].map(z => `<button type="button" role="radio" class="om-seg-b" data-tpsz="${z}" aria-checked="false">${z}</button>`).join('')}</div>`
+            : k === 'date' ? '<input id="om-tp-date" class="akm-date om-tp-date" readonly autocomplete="off" placeholder="발송 날짜 고르기" aria-label="발송 날짜">'
+            : k === 'sender' ? '<input id="om-tp-name" class="om-tp-name" autocomplete="off" maxlength="20" placeholder="보내는 분 이름" aria-label="보내는 분 이름">' : '';
+        tp.dataset.k = k; tpNote('');
+        if (!was) { tp.hidden = false; tel.value = tpLastTel(); }
+        else if (!tel.value.trim()) tel.value = tpLastTel();
+        tel.focus({ preventScroll: true }); try { tel.select(); } catch (e) { /* 그대로 */ }
+        try { tp.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 그대로 */ }
+    }
+    function tpClose(focusRaw) {
+        const tp = $('om-tp'); if (!OM.tp || !tp) { OM.tp = null; return; }
+        OM.tp = null; tp.hidden = true; $('om-tp-k').innerHTML = ''; tpNote('');
+        if (focusRaw) { const t = OM.el.querySelector(`.om-tag[data-tag="${tp.dataset.k}"]`) || $('om-raw'); if (t) t.focus({ preventScroll: true }); }
+    }
+    // 날짜 → 「10/27」(늘 M/D) · 해가 다르면 「1/3/27」
+    function tpDay(iso) {
+        const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); if (!m) return '';
+        const t = todayStr(), mo = +m[2], d = +m[3];
+        if (t.slice(0, 4) !== iso.slice(0, 4)) return mo + '/' + d + '/' + iso.slice(2, 4);   // 해가 다르면 해까지(「1/3」 만 쓰면 올해로 읽음)
+        return mo + '/' + d;   // 늘 「M/D」 — 「27일」은 최종발주가 그날 기준으로 다시 읽어 달이 넘어가면 다음 달로 읽힘(워커2 점검)
+    }
+    function tpLine(k, tel, x) {
+        if (k === 'indiv') return tel + ' 입력o삭제x';
+        if (k === 'size') return x.sz ? tel + ' ' + x.sz + '사이즈로' : null;
+        if (k === 'date') { const d = tpDay(x.date); return !d ? null : /^\d{1,2}\/\d{1,2}\/\d{2}$/.test(d) ? d + ' ' + tel + ' 발송' : tel + ' ' + d + ' 발송'; }   // 해 넘김 = 날짜를 앞에(「1/3/27 010-… 발송」)
+        if (k === 'sender') { const n = String(x.name || '').replace(/\s+/g, ' ').trim(); return n ? tel + ' 보내는이 ' + n : null; }
+        return null;
+    }
+    function tpGo() {
+        const x = OM.tp; if (!x) return;
+        const te = $('om-tp-tel'), d = digits(te.value);
+        if (!(isPhoneish(te.value) && d.length >= 9)) { tpNote('손님 번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
+        te.value = fmtTel(te.value); const tel = lineTel(te.value);
+        const name = $('om-tp-name'), date = $('om-tp-date');
+        const line = tpLine(x.k, tel, { sz: x.sz, date: date && date.value, name: name && name.value });
+        if (!line) {
+            if (x.k === 'size') { tpNote('사이즈를 골라 주세요', 'err'); const b = $('om-tp').querySelector('[data-tpsz]'); if (b) b.focus({ preventScroll: true }); }
+            else if (x.k === 'date') { tpNote('발송 날짜를 골라 주세요', 'err'); if (date) { date.focus({ preventScroll: true }); date.click(); } }
+            else { tpNote('보내는 분 이름을 넣어 주세요', 'err'); if (name) name.focus({ preventScroll: true }); }
+            return;
+        }
+        const raw = $('om-raw'); telLeave(raw, true);
+        const cur = raw.value, pre = cur && !/\n$/.test(cur) ? cur + '\n' : cur;
+        raw.value = (pre + line).slice(0, 4000); OM.raw = raw.value; xUndoHide(); inState();
+        try { raw.scrollTop = raw.scrollHeight; } catch (e) { /* 그대로 */ }
+        OM.tpLast = te.value;
+        inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote('넣었어요 · 같은 손님은 꼬리표만 바꿔 이어서, 다른 손님은 번호를 바꿔 넣으세요', 'ok');
+        x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(b => b.setAttribute('aria-checked', 'false')); if (name) name.value = ''; if (date) date.value = '';
+        te.focus({ preventScroll: true }); try { te.select(); } catch (e) { /* 그대로 */ }
+    }
     // #850-f 꼬리표(서버로 보내는 tags) = 칸에 그 줄이 있을 때만 · 종전 「누른 단추」 tags 와 같은 값
-    const TAG_RE = { cash: /현금\s*손님/, indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i, size: /사이즈/, date: /\d+\s*일\s*(?:발송|출고)/, sender: /보내는\s*(?:이|분|사람)/ };
+    const TAG_RE = { cash: /현금\s*손님/, indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i, size: /사이즈/, date: /\d+\s*일\s*(?:발송|출고)|\d{1,2}\s*\/\s*\d{1,2}\s*(?:발송|출고)|^\d{1,2}\/\d{1,2}\/\d{2}\s.*(?:발송|출고)/, sender: /보내는\s*(?:이|분|사람)/ };
     function tagsFromText() { const lines = String(OM.raw || '').split('\n'); Object.keys(TAG_RE).forEach(k => { if (lines.some(l => TAG_RE[k].test(l))) OM.tags.add(k); else OM.tags.delete(k); }); syncTags(); }
     // #850-f 입력 칸 줄마다 × — 재는 칸(같은 폭·글꼴)에 줄을 그려 줄 위치를 재고 오른쪽 끝에 놓음 · 빈 줄엔 없음 · 지운 뒤 되돌리기 한 번
     function xLayout() {
@@ -317,6 +410,7 @@
         const v = ta.value, lines = v.split('\n'); if (!(ln >= 0 && ln < lines.length)) return;
         const l = lines[ln], m = l.match(/^0[0-9-]*/); if (!m) return;
         const chunk = m[0], d = digits(chunk); if (d.length < 9 || d.length > 12 || !isPhoneish(chunk)) return;
+        if (d.startsWith('02')) return;   // #862 02 는 하이픈을 넣으면 최종발주가 날짜로 읽음 → 숫자 그대로
         const fv = fmtTel(chunk); if (digits(fv) !== d) return;   // 자릿수가 넘쳐 잘리면 안 바꿈
         const rest = l.slice(chunk.length), nl = fv + (rest && !/^\s/.test(rest) ? ' ' : '') + rest; if (nl === l) return;
         const ls = lines.slice(0, ln).join('\n').length + (ln ? 1 : 0), delta = nl.length - l.length, ss = ta.selectionStart, se = ta.selectionEnd;
@@ -625,7 +719,7 @@
     const getV = (r, f) => f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? senderShow(r.cells[0]) : valOf(r, f);
     function setV(r, f, v) {
         if (f.kind === 'shipdate') { const iso = toIso(v); r.ship_date = iso === undefined ? r.ship_date : iso; r._dateBad = iso === undefined; }
-        else if (f.kind === 'sender') r.cells[0] = '!' + (String(v).trim() ? ' ' + String(v).trim() : '');
+        else if (f.kind === 'sender') r.cells[0] = senderShow(v);   // #863 이름만 보냄(「!」 = 서버가 맨 뒤에)
         else if (r.kind === 'cash') r.cells[f.i] = v; else r[f.k] = v;
         if (r.kind === 'line') r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t');
     }
@@ -676,10 +770,12 @@
         } else {
             const at = f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
             input = `<input id="${id}" ${f.kind === 'tel' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
+            if (r.kind === 'cash' && f.i === 10) input = `<div class="om-telrow">${input}${sameBtn(r, ri)}</div>`;   // #862 구매자 연락처 = 받는 분 연락처 그대로 넣기
         }
         const wide = f.kind === 'area' || f.kind === 'option' || f.kind === 'platform' || (r.kind === 'line' && f.k === 'note');
         return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
+    const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
     const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save">${n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? '고친 대로 저장' : '저장')}</button>`; };
     const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length + (addrBad(r) ? 1 : 0), 0) : 0;   // #850-g 주소 확인 안 됨 = 빈칸 1
     function askText(c) {
@@ -729,7 +825,7 @@
           <footer class="om-card-f">${c.confirm ? '' : footHtml()}</footer>
           <p class="om-card-note">${c.mode === 'edit' ? '저장하면 이 줄만 바뀌어요 · 서버가 다시 검사해요.' : '저장 전엔 아무것도 안 남아요 · 저장한 뒤에도 목록에서 고치거나 지울 수 있어요.'}</p>`;
         if (c.confirm) renderConfirm();
-        if (!card._bound) { card._bound = true; card.addEventListener('click', onCard); card.addEventListener('input', onCardInput); }
+        if (!card._bound) { card._bound = true; card.addEventListener('click', onCard); card.addEventListener('input', onCardInput); card.addEventListener('focusout', onCardLeave); }
         const nb = card.querySelector('.om-card-b'); if (nb && sc) nb.scrollTop = sc;
     }
     // 입력 중엔 다시 그리지 않는다(초점·자판 유지) — 빨강 풀기 · ↺ 보이기 · 머리 숫자 · 저장 단추만
@@ -744,15 +840,15 @@
         }
         const f = t.dataset.fd ? fieldsOf(r).find(x => x.kind === 'shipdate') : t.dataset.fs ? CASH_FIELDS.find(x => x.kind === 'sender') : t.dataset.fi != null ? CASH_FIELDS.find(x => x.i === Number(t.dataset.fi)) : LINE_FIELDS.find(x => x.k === t.dataset.fk);
         if (!f) return;
-        if (f.kind === 'tel' && !e.isComposing && isPhoneish(t.value)) {   // #850-c 치는 대로 하이픈 · 커서 = 그 앞 숫자 개수 기준(가운데를 고쳐도 끝으로 안 튐)
-            const fv = fmtTel(t.value);
-            if (fv !== t.value) {
-                const pos = t.selectionStart == null ? t.value.length : t.selectionStart, nd = digits(t.value.slice(0, pos)).length;
-                t.value = fv; let cnt = 0, i = 0; while (i < fv.length && cnt < nd) { if (/[0-9]/.test(fv[i])) cnt++; i++; }
-                try { t.setSelectionRange(i, i); } catch (er) { /* 그대로 */ }
-            }
-        }
+        if (f.kind === 'tel' && !e.isComposing && !(f.k === 'key' && digits(t.value).startsWith('02'))) telLive(t);   // #862 메모 줄 번호의 02 = 숫자 그대로(위 lineTel)   // #850-c 치는 대로 하이픈 · 커서 = 그 앞 숫자 개수 기준(가운데를 고쳐도 끝으로 안 튐)
         setV(r, f, t.value); touched(ri, f);
+        if (r.kind === 'cash' && f.i === 6) { const sb = $('om-card').querySelector(`.om-same[data-ri="${ri}"]`); if (sb) sb.disabled = !String(t.value).trim(); }
+    }
+    function onCardLeave(e) {   // #862 보내는 분 칸을 떠날 때 「드림」(치는 중엔 안 바꿈)
+        const t = e.target; if (!t || !t.dataset || !t.dataset.fs || !OM.card) return;
+        const ri = Number(t.dataset.ri), r = OM.card.rows[ri]; if (!r) return;
+        const v = senderDrim(t.value); if (v === t.value) return;
+        t.value = v; const f = CASH_FIELDS.find(x => x.kind === 'sender'); setV(r, f, v); touched(ri, f);
     }
     function touched(ri, f) {
         const c = OM.card, r = c.rows[ri], id = fid(ri, f), wrap = $('om-card').querySelector(`[data-fwrap="${id}"]`);
@@ -921,6 +1017,10 @@
         if (a === 'stopwait') { waitEnd(c, { state: 'fail', leftover: '', message: '기다리지 않기로 했어요 — 남은 글은 직접 채워 주세요(위 원문 참고)' }); return; }
         if (a === 'discard') { cardClose(true); return; }
         if (a === 'reset') { c.rows = clone(c.orig); c.dirty = false; renderCard(); lkAll(); toast('처음 정리한 값으로 돌렸어요'); return; }
+        if (a === 'same') {   // #862 받는 분 연락처 → 구매자 연락처(이미 있으면 바꿔 넣음 · 처음 값은 칸 ↺)
+            const v = String((r && r.cells[6]) || '').trim(), f = CASH_FIELDS.find(x => x.i === 10); if (!v || !f) return;
+            setV(r, f, v); const el = $(fid(ri, f)); if (el) el.value = getV(r, f); touched(ri, f); return;
+        }
         if (a === 'undo1') {
             const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more)).find(x => fid(ri, x) === b.dataset.f); if (!f || !origOf(ri)) return;
             setV(r, f, getV(c.orig[ri], f)); if (f.kind === 'shipdate') { r.ship_date = c.orig[ri].ship_date; r._dateBad = false; }
@@ -1064,7 +1164,7 @@
         if (el.hidden) {
             let fo = false; try { fo = !!(history.state && history.state.foPanel); } catch (e) { fo = false; }
             OWN.on = fo; OWN.stack = []; OWN.skip = 0;
-            el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
+            OM.tpLast = null; el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
         }
         OM.tab = 'open'; syncTabs(); inState(); load();
         requestAnimationFrame(xLayout);   // #850-f 창이 보인 뒤 줄 × 자리
@@ -1076,7 +1176,7 @@
         if (OM.opt) optClose(false, hist === false);
         if (OM.card) cardClose(true, hist === false);
         if (OM.prevOpen) prevShow(false, hist !== false);
-        OM.sel.clear(); delDisarm(); undoHide();   // #859 닫으면 고른 것도 풂
+        tpClose(false); OM.sel.clear(); delDisarm(); undoHide();   // #859 닫으면 고른 것도 풂
         OM.el.hidden = true; document.body.classList.remove('om-open');
         if (hist !== false) hbDrop('om');
         OWN.on = false; OWN.stack = [];

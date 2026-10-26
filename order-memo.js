@@ -111,11 +111,19 @@ function cashRowFromCells(cells, src) {
     const c = []; for (let i = 0; i < 13; i++) c.push(s(cells[i], i === 8 || i === 12 ? 300 : 200).replace(/[\t\n]+/g, ' ').trim());
     return { kind: 'cash', cells: c, ship_date: null, src };
 }
+// #863(대표 현금파일 관례) 현금 손님 보내는사람 = 「제주아꼼이네!」·「홍길동 드림!」 — 「!」는 맨 뒤(읽는 쪽 parseCash·invoice-auto·중간발주는 칸 어디든 「!」면 현금)
+//   이름만 적힌 사람 이름 = 「○○ 드림」(cashFromAi 와 같게) · 이미 드림·올림 · 제주아꼼이네 · 「○○(제주아꼼이네)」 는 그대로
+function cashSender(v) {
+    let n = String(v == null ? '' : v).replace(/[!！]/g, '').replace(/\s+/g, ' ').trim();
+    if (!n) n = '제주아꼼이네';
+    else if (!/(?:드림|올림)$|제주아꼼이네\)?$/.test(n)) n += ' 드림';
+    return n + '!';
+}
 function checkCash(r, today, catalog, origin) {
     const c = cashRowFromCells(r.cells || [], r.src || 'edit').cells;
     // 현금 손님 = 「!」 표식(parseCash bang) · 입력삭제 주문의 주소 줄(r.indiv · markIndiv) = 「!」 없이 + 구매자연락처(K) = 주문 번호 → cashCheck 가 주문과 짝을 지음(#850 워커3 시험)
-    if (r.indiv) { c[0] = c[0].replace(/^[!！]+\s*/, '') || '제주아꼼이네'; if (r.indivKey) c[10] = r.indivKey; }
-    else if (!/[!！]/.test(c[0])) c[0] = '!' + (c[0] || '제주아꼼이네');
+    if (r.indiv) { c[0] = c[0].replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; if (r.indivKey) c[10] = r.indivKey; }
+    else c[0] = cashSender(c[0]);   // #863 「!」 맨 뒤 · 이름만이면 「드림」 · 입력삭제 줄(위)은 「!」가 뒤에 와도 뗌
     if (!c[2]) c[2] = origin;
     // #858(대표 10/26 사진 「!제주아꼼이네」·B 빈칸) 보내는사람연락처(B)가 비면 구매자연락처(K) · 사람이 「보내는이 변경」으로 넣은 번호는 그대로 · 이름(A)은 안 건드림
     if (!c[1] && c[10]) c[1] = c[10];
@@ -178,7 +186,7 @@ function cashFromAi(x, opt) {
     const c0 = who ? (/드림$/.test(who) ? who : who + ' 드림') : (buyer ? buyer + '(제주아꼼이네)' : '제주아꼼이네');
     const buyerPhone = sms || x.buyer_phone || x.phone1;
     return { kind: 'cash', src: 'ai', ship_date: isDay(x.date) ? x.date : null,
-        cells: ['!' + c0, x.sender_phone || (sms || x.buyer_phone) || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, buyerPhone || '', '', x.sender_addr] };
+        cells: [c0 + '!',x.sender_phone || (sms || x.buyer_phone) || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, buyerPhone || '', '', x.sender_addr] };
 }
 // 사람이 붙인·고친 현금 줄(규칙·저장)에도 문자 출처면 빈 구매자·보내는사람 번호만 채움(적힌 값은 그대로)
 function applySms(rows, smsPhone) {
@@ -208,7 +216,7 @@ function pickForShip(rows, date) {
         else held.push({ id: r.id, kind: 'cash', why: ['지난 날짜예요'] });
     }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
-        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K */ : [], cash_ids: cash.map(r => r.id),
+        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
         waiting, held, ids: lines.map(l => l.id).concat(cash.map(r => r.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부

@@ -118,7 +118,7 @@
                 <section class="fo-sec" id="fo-progress" hidden aria-label="주문 불러오기" aria-live="polite"></section>
                 <!-- #572(대표 10/7 「틀 순서를 불러오기 밑으로 · AI 가 인식 · 이미지도」): 메모 칸은 주문을 불러온 뒤에 — 규칙이 먼저 읽고, 못 읽은 줄만 클코가 틀로 고쳐 쓰고, 사진(폰 메모 캡처)은 클코가 틀 줄로 읽는다 -->
                 <section class="fo-sec" id="fo-memo-sec" hidden aria-label="개별발송 처리 · 지정 발송일">
-                    <div class="fo-om-bar" id="fo-om-bar"><button type="button" class="fo-om-link" id="fo-om-open">발주 메모함 열기</button><span class="fo-om-band" id="fo-om-band" role="status" aria-live="polite" hidden></span></div>
+                    <div class="fo-om-bar" id="fo-om-bar"><button type="button" class="fo-om-link" id="fo-om-open">메모함 수정하기</button><button type="button" class="fo-om-link fo-om-apply" id="fo-om-apply">메모함 적용하기</button><span class="fo-om-band" id="fo-om-band" role="status" aria-live="polite" hidden></span></div>
                     <div class="fo-field">
                         <label for="fo-memo">개별발송 처리 · 지정 발송일</label>
                         <textarea id="fo-memo" rows="6" spellcheck="false" placeholder="10/5&#9;010-0000-0000&#9;입력o삭제x&#9;네이버&#10;010-0000-0000 금요일 발송&#10;010-0000-0000 2S사이즈&#10;10/5&#9;010-0000-0000&#9;보내는이 홍길동"></textarea>
@@ -336,6 +336,21 @@
         omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
         markStale(); syncInput();
     }
+    // #861 [메모함 적용하기] = 메모함 오늘 몫(for-ship)을 지금 바로 넣고 판정까지 · 이미 넣었으면 뺀 뒤 새로(바꿔 넣기) · 길은 자동 넣기(omInsert)와 같음
+    async function omApply() {
+        if (!st.loaded) return;   // 주문을 불러오기 전엔 단추가 흐림(메모 칸도 아직 없음)
+        if (st.busy || (st.ai && st.ai.running) || OMF.busy) { toast('판정·읽기가 끝난 뒤 눌러 주세요', 2500); return; }
+        // 비운 뒤엔 for-ship 이 비운 줄을 안 줌 → 메모 칸 줄을 빼면 그대로 사라짐(워커2 점검) — 칸은 그대로 둔다
+        if (OMF.cleared) { toast('메모함을 비운 뒤라 다시 넣을 줄이 없어요 · 메모 칸 그대로 둬요', 3000); return; }
+        const b = $('fo-om-apply'); if (b) b.disabled = true;
+        try {
+            if (!OMF.removed && (OMF.lines.length || OMF.cash.length)) { omTake(); if (OMF.ids.length) await omPost(OMF.ids.slice(), true); }   // 되돌리기가 끝난 뒤 새로 넣기(순서가 뒤집히면 used_on 이 NULL 로 남음)
+            Object.assign(OMF, { ids: [], lines: [], cash: [], removed: false, pend: null, date: '' });
+            await omInsert(true);
+        } finally { if (b) b.disabled = false; }
+        if (!OMF.lines.length && !OMF.cash.length) { if (!$('fo-om-band').innerHTML) omBand('발주 메모함: 이번 발송일에 넣을 줄이 없어요'); markStale(); syncInput(); return; }
+        await run(judge);
+    }
     function omResultNote(el) {
         const n = omLiveIds().length;
         if (!el || !n || OMF.removed || OMF.cleared) return;
@@ -344,7 +359,8 @@
         const notes = el.querySelector('.fo-notes'); (notes || el).appendChild(box);
     }
     document.addEventListener('click', async e => {
-        const b = e.target.closest('#fo-om-open, [data-om]'); if (!b || !b.closest('#fo-panel, .fo')) return;
+        const b = e.target.closest('#fo-om-open, #fo-om-apply, [data-om]'); if (!b || !b.closest('#fo-panel, .fo')) return;
+        if (b.id === 'fo-om-apply') { omApply(); return; }
         if (b.id === 'fo-om-open' || b.dataset.om === 'open') { if (window.AkmOrderMemo) window.AkmOrderMemo.open(); else toast('발주 메모함을 불러오지 못했어요', 2500); return; }
         if (b.dataset.om === 'take') {
             if (st.busy) return;
@@ -424,6 +440,7 @@
         $('fo-start').disabled = !ready; $('fo-start').hidden = st.loaded;
         $('fo-memo-sec').hidden = !st.loaded;   // #572 메모 칸은 주문을 불러온 뒤에
         $('fo-rejudge').hidden = !st.loaded; $('fo-rejudge').disabled = !haveCash || st.busy || st.ai.running;
+        { const ap = $('fo-om-apply'); if (ap) ap.disabled = !st.loaded || st.busy || st.ai.running || OMF.busy; }   // #861
         // #575(대표 10/7): 버튼 이름 = 평소 [확인] · 메모·현금파일·기준일이 바뀌어 판정이 낡으면 [다시 판정] — 판정하면 다시 [확인]
         syncRejudgeLabel();
         $('fo-memo-photo').disabled = !st.loaded || st.busy || !!st.memoAsk;
@@ -1804,7 +1821,7 @@
             const pw = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(pw, core().sheetOf(XLSX, p), 'Sheet1');
             XLSX.utils.book_append_sheet(pw, core().qtySheetOf(XLSX, p, colorOf), '수량');
-            files.push({ kind: 'partner', short: p.short, name: `제주아꼼이네송장(${p.short}) ${dot}.xlsx`, wb: pw, partner: p, png: `수량(${p.short}) ${dot}.png` });
+            files.push({ kind: 'partner', short: p.short, name: `제주아꼼이네송장(${p.short})${dot}.xlsx`, wb: pw, partner: p, png: `수량(${p.short}) ${dot}.png` });
         });
         const store = wb.Sheets['발주발송관리'];
         if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(store), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
