@@ -434,6 +434,7 @@ html[data-ao-theme="dark"] #fo-rejudge.stale { background: #3A2E12; color: #FBBF
 .fo-fix > summary:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; border-radius: 6px; }
 .fo-fix[open] { display: flex; flex-direction: column; gap: 10px; }
 .fo-card.fo-flash { box-shadow: 0 0 0 3px rgba(79, 70, 229, .45); transition: box-shadow 200ms var(--f-ease); }
+#fo-info li.fo-flash { box-shadow: 0 0 0 3px rgba(79, 70, 229, .45); border-radius: 8px; transition: box-shadow 200ms var(--f-ease); }   /* #869 메모 칸 표시 → 그 줄의 참고 줄 */
 /* ⑨ 참고 줄: 배지 · 강조 · [고치기] */
 .fo-info ul { padding-left: 0; list-style: none; gap: 6px; }
 .fo-info li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 10px; border: 1px solid var(--f-line); border-radius: 10px; background: #fff; color: var(--f-ink); line-height: 1.55; }

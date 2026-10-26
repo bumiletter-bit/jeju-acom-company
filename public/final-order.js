@@ -216,7 +216,7 @@
         });
         $('fo-cards').addEventListener('input', onFixInput);   // #583-g2
         $('fo-result').addEventListener('click', onResultClick);
-        $('fo-info').addEventListener('click', e => { const fb = e.target.closest('button[data-info-flip]'); if (fb) { e.preventDefault(); if (!st.busy && st.judged) infoFlip(Number(fb.dataset.infoFlip)); return; } const li = e.target.closest('li[data-info]'); if (!li || !li.querySelector('[data-info-go]') || String(window.getSelection && window.getSelection()).trim()) return; e.preventDefault(); infoGo(Number(li.dataset.info)); });   // #583 ⑨
+        $('fo-info').addEventListener('click', e => { const fb = e.target.closest('button[data-info-flip]'); if (fb) { e.preventDefault(); if (!st.busy && st.judged) infoFlip(Number(fb.dataset.infoFlip)); return; } const li = e.target.closest('li[data-info]'); if (!li || !li.querySelector('[data-info-go]') || (() => { const sl = window.getSelection && window.getSelection(); return !!sl && !!String(sl).trim() && !!sl.anchorNode && $('fo-info').contains(sl.anchorNode); })()) return; e.preventDefault(); infoGo(Number(li.dataset.info)); });   // #583 ⑨ · #869: 글자 고름으로 막는 것은 참고 목록 안에서 끌어 고른 때만(메모 칸 줄 고름이 남아 있어도 [고치기]가 되게)
         // #583-A(워커2 조사): 캡처는 보통 클립보드 — 메모 구획에 붙여넣기(Ctrl+V)·끌어다 놓기로도 사진을 넣는다(종전엔 아무 일도 없었다)
         { const sec = $('fo-memo-sec'), pickImg = list => Array.from(list || []).find(x => /^image\//.test(x.type) || IMG_EXT.test(x.name || ''));
           sec.addEventListener('paste', e => { const f = pickImg(e.clipboardData && e.clipboardData.files); if (f) { e.preventDefault(); memoPhoto(f); } });
@@ -668,7 +668,7 @@
         const bar = document.createElement('div'); bar.className = 'fo-linebar'; bar.id = 'fo-memo-bar'; bar.setAttribute('role', 'status'); ed.parentNode.insertBefore(bar, ed.nextSibling);
         st.memoEd = { ed, gut, bar, ta, marks: [] };
         ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
-        gut.addEventListener('click', e => { const m = e.target.closest('.m[data-i]'); if (m) selectMemoLine(Number(m.dataset.i)); });
+        gut.addEventListener('click', e => { const m = e.target.closest('.m[data-i]'); if (m) { selectMemoLine(Number(m.dataset.i)); memoGo(Number(m.dataset.i)); } });   // #869: 줄 고르기는 그대로 + 그 줄의 카드(없으면 참고 줄)로
         bar.addEventListener('click', e => { const b = e.target.closest('button[data-k]'); if (!b) return; const M = st.memoEd.marks, cur = st.memoEd.cur == null ? -1 : st.memoEd.cur; let i = M.findIndex((x, j) => j > cur && x && x.k === b.dataset.k); if (i < 0) i = M.findIndex(x => x && x.k === b.dataset.k); if (i >= 0) selectMemoLine(i); });
         fitMemoEd();
     }
@@ -724,6 +724,44 @@
         });
         marks.forEach((m, i) => { if (m && m.k === 'none' && m.t === '주문 없음') { const ck = omChecked(i); if (ck) marks[i] = { k: 'warn', t: '취소됐을 수 있어요', tip: omCheckedTip(ck) }; } });   // #850-c
         return marks;
+    }
+    // #869(대표 10/26 「참고에 메모 목록 · 작업됐다는 걸 보이게 · 오류는 누르면 그 대상 건으로」): 표시가 붙은 메모 줄 가운데 참고 줄이 아직 없는 줄마다 참고 한 줄
+    //   (한 메모 줄 = 참고 한 줄 — 그 줄에서 나온 참고 줄(line)이 이미 있으면 새로 만들지 않는다) · 확인할 것·[파일 만들기] 조건과 무관 · 결과 파일 무관
+    function memoInfo() {
+        const E = st.memoEd, s = S(); if (!E || !st.judged || st.stale || !s) return [];
+        const marks = memoMarks(), lines = E.ta.value.replace(/\r/g, '').split('\n'), has = new Set();
+        (st.infoBase || []).forEach(it => { if (it && typeof it === 'object' && it.line != null) has.add(it.line); });
+        const head = { ok: '✓ 확인완료', warn: '⚠ 확인 필요', none: '✕ 주문 없음' }, out = [];
+        marks.forEach((m, i) => {
+            const raw = String(lines[i] || '').trim(); if (!m || has.has(i) || !raw) return;
+            const l = (s.allLines || []).find(x => x.srcLine === i), rows = (l && l.hitRows) || [];
+            const ind = rows.filter(e => e.individual).length, ex = rows.filter(e => !e.individual && e.excluded).length, go = rows.length - ind - ex;
+            const did = [ind ? `입력삭제 ${ind}건` : '', go ? `오늘 발송 ${go}건` : '', ex ? `오늘 안 나감 ${ex}건` : ''].filter(Boolean);
+            const what = did.length ? did.join(' · ') + (m.k === 'ok' ? '' : ' · ' + m.t) : m.k === 'none' ? (m.tip || '배송준비에 이 번호의 주문이 없어요') : m.t;
+            out.push({ t: `메모 줄 ${head[m.k]}: ${raw} → ${what}${m.k === 'warn' && m.tip ? ' — ' + m.tip : ''}`, keys: rows.map(keyOf), line: i });
+        });
+        return out;
+    }
+    // #869: 메모 칸 표시를 누르면 — ⚠·✕ 줄은 그 줄의 확인 카드(카드 id 의 줄 번호 · 「메모 재확인」 주문 카드는 그 줄이 잡은 주문)로 · 카드가 없거나 ✓ 줄이면 그 줄의 참고 줄로
+    const LINE_CARD = /^(l[a-z]+|samb-line|snohit):(\d+):/;
+    function memoLineCard(i) {
+        const s = S(), l = ((s && s.allLines) || []).find(x => x.srcLine === i), hk = new Set(((l && l.hitRows) || []).map(keyOf));
+        const mine = cd => { const m = LINE_CARD.exec(String(cd.id)); return m ? Number(m[2]) === i : cd.recheck && (cd.keys || []).some(k => hk.has(k)); };
+        return st.cards.find(cd => mine(cd) && !closed(cd)) || st.cards.find(mine) || null;
+    }
+    function memoGo(i) {
+        const E = st.memoEd, m = E && E.marks && E.marks[i]; if (!m || st.stale || !st.judged) return;
+        const smooth = smoothOk() ? 'smooth' : 'auto', flash = el => { el.classList.add('fo-flash'); setTimeout(() => el.classList.remove('fo-flash'), 1800); };
+        const cd = m.k !== 'ok' ? memoLineCard(i) : null;
+        if (cd) {
+            if (st.kindFilter) { st.kindFilter = ''; renderReview(); }
+            const el = [...document.querySelectorAll('#fo-cards .fo-card')].find(c => c.dataset.id === cd.id);
+            if (el) { st.anchor = null; el.scrollIntoView({ block: 'center', behavior: smooth }); document.querySelectorAll('#fo-cards .fo-card.fo-flash').forEach(x => x.classList.remove('fo-flash')); flash(el); if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1'); el.focus({ preventScroll: true }); return; }   // 초점은 카드 자체(단추에 주면 Enter 한 번에 눌림)
+        }
+        const j = st.info.findIndex(it => it && typeof it === 'object' && it.line === i); if (j < 0) return;
+        const det = $('fo-info').querySelector('details'); if (det && !det.open) { det.open = true; st.infoClosed = false; }
+        const li = $('fo-info').querySelector(`li[data-info="${j}"]`); if (!li) return;
+        li.scrollIntoView({ block: 'center', behavior: smooth }); flash(li); if (!li.hasAttribute('tabindex')) li.setAttribute('tabindex', '-1'); li.focus({ preventScroll: true });
     }
     function renderMemoGut() {
         const E = st.memoEd; if (!E) return; fitMemoEd();
@@ -988,7 +1026,7 @@
             const msg = [b.kind === 'size' ? '사이즈' : '박스별 사이즈', BOX_BAD_TIP(b)], cd = cards.find(c => new RegExp('^l[a-z]+:' + b.srcLine + ':').test(c.id));
             if (cd) cd.lines = [msg].concat(cd.lines || []); else cards.push({ id: 'lpbad:' + b.srcLine + ':' + b.raw, type: 'line', tag: '메모 재확인', recheck: true, title: b.raw, lines: [msg], choices: [['ok', '확인함', 1]] });
         });
-                st.cards = cards; st.info = info;
+                st.cards = cards; st.info = info; st.infoBase = info;   // #869: 메모 줄 참고 줄은 그릴 때마다 infoBase 뒤에 붙인다(앞 자리 번호는 그대로)
         // 사라진 주문 카드의 옛 결정은 지운다(같은 카드가 나중에 다시 뜨면 새로 묻는다)
         const live = new Set(cards.map(cd => cd.id));
         [...st.dec.keys()].forEach(id => { if (/^(ord|split|samb|memo):/.test(id) && !live.has(id)) st.dec.delete(id); });
@@ -1558,7 +1596,7 @@
     }
     const isAiDone = cd => st.dec.has(cd.id) && st.ai.tag.has(cd.id) && !patchDec(cd);
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
-    const INFO_KIND = [[/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
+    const INFO_KIND = [[/^메모 줄 ✓/, '확인완료', 'hand'], [/^메모 줄 ⚠/, '확인 필요', 'warn'], [/^메모 줄 ✕/, '주문 없음', 'warn'], [/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
@@ -1572,6 +1610,7 @@
         let h = esc(body).replace(/손님 메모 「([^」]*)」/g, '손님 메모 <mark class="fo-hl">$1</mark>').replace(/→ 「([^」]*)」/g, '→ <b class="fo-em">$1</b>').replace(/에 「([^」]*)」/g, '에 <b class="fo-em">$1</b>');
         // #603(대표 10/9): 직원 메모 줄에서 온 참고 줄도 같은 꼴 — 메모 줄 원문 = 형광 · 결과 = 굵게
         h = h.replace(/메모 줄 요청일 [^\s<]+/g, x => '<mark class="fo-hl">' + x + '</mark>').replace(/메모 줄 「([^」]*)」/g, '메모 줄 <mark class="fo-hl">$1</mark>')
+            .replace(/^(메모 줄 [✓⚠✕] [^:]+: )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')   // #869
             .replace(/^(메모 줄(?:\(업그레이드\))?로 (?:박스별 사이즈|사이즈 지정|보내는이 지정): )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/( → 귤 로얄과 (?:\d+줄 )?)([^<]+)$/, '$1<b class="fo-em">$2</b>')
             .replace(/^(건수 다름: )(.+?)( — )/, '$1<mark class="fo-hl">$2</mark>$3')
@@ -1590,6 +1629,7 @@
         $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span><span id="fo-jeju">제주도 배송 <b>${esc(jejuText())}</b></span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
         {   // #603(대표 10/9 「여기서 보내야 할 것을 안 보내는 경우가 많다」): 기본으로 펼쳐 두고(접으면 이 화면 동안 기억) · 「오늘 안 나감」 → 배송메세지 → 사이즈 → 그 밖 순(같은 종류 안은 종전 순) · data-info 는 st.info 의 원래 자리 그대로
           const cur = $('fo-info').querySelector('details'); if (cur) st.infoClosed = !cur.open;
+          if (st.infoBase) st.info = st.infoBase.concat(memoInfo());   // #869
           const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감|^오늘 발송 제외\(사람\)/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
           const order = st.info.map((it, i) => [rank(it), i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
           $('fo-info').innerHTML = st.info.length ? `<details${st.infoClosed ? '' : ' open'}><summary>참고 ${st.info.length}건 (확인만 하면 돼요 · 줄을 누르면 그 주문·메모 줄로 가요 · 여기를 누르면 접혀요)</summary><ul>${order.map(([, i]) => infoHtml(st.info[i], i)).join('')}</ul></details>` : ''; }
@@ -2689,7 +2729,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         try {
             $('fo-memo').value = ''; $('fo-chat-input').value = ''; st.lineFixTried = null; st.lineFix = null; st.fixDraft = new Map(); st.memoAsk = false; memoNote(''); band('memo', ''); band('ai', '');   // #572
             st.cash = null; st.cashName = ''; st.cashNone = false; $('fo-cash').value = '';
-            st.prep = null; st.loaded = false; st.judged = false; st.stale = false; st.loadedOn = null; st.loadedAt = 0; st.chState = {}; st.cards = []; st.info = []; st.kindFilter = '';
+            st.prep = null; st.loaded = false; st.judged = false; st.stale = false; st.loadedOn = null; st.loadedAt = 0; st.chState = {}; st.cards = []; st.info = []; st.infoBase = null; st.kindFilter = '';
             st.dec = new Map(); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.recvFix = []; st.ordMemo = new Map();
             st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
             st.out = null; st.files = []; st.phase = 'input'; renderMemoGut();
