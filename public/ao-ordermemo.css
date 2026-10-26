@@ -409,3 +409,7 @@ html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
 /* #867 입력삭제 줄 = 받는 분 번호 → [구매자 번호로 바꾸기] */
 .om-lk .om-lk-fix { display: flex; margin-top: 8px; color: var(--d-ink); font-weight: 700; }
 .om-lk .om-lk-fix small { font-weight: 600; opacity: .75; }
+/* #868 막힌 저장 = 회색·흐림(글은 읽히게) · 풀리면 원래 색 */
+.om-btn.primary.om-blocked, .om-btn.primary.om-blocked:hover { background: #E4E7EC; border-color: #D0D5DD; color: #475467; cursor: not-allowed; transform: none; box-shadow: none; }
+.om-btn.primary.om-blocked small { opacity: 1; }
+html[data-ao-theme="dark"] .om-btn.primary.om-blocked, html[data-ao-theme="dark"] .om-btn.primary.om-blocked:hover { background: #2A3142; border-color: #39415A; color: #AEB6C6; }

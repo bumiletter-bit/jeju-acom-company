@@ -777,7 +777,10 @@
         return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
     const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
-    const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save">${saveLabel(n)}</button>`; };
+    const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary${saveBlocked() ? ' om-blocked' : ''}" id="om-card-save" data-cact="save"${saveBlocked() ? ' aria-disabled="true"' : ''}>${saveLabel(n)}</button>`; };
+    // #868 막힌 저장(입력삭제 받는 분 번호·번호 확인 중) = 회색·흐림 + aria-disabled · 누르면 그대로 안내+초점(disabled 를 안 씀 = 눌러서 이유를 들을 수 있게) · 풀리면 원래 색
+    const saveBlocked = () => indivPendAt() >= 0 || indivBadAt() >= 0;
+    function saveSync(sv) { if (!sv) return; const b = saveBlocked(); sv.classList.toggle('om-blocked', b); if (b) sv.setAttribute('aria-disabled', 'true'); else sv.removeAttribute('aria-disabled'); }
     const saveLabel = n => indivPendAt() >= 0 ? '번호 확인 중…' : indivBadAt() >= 0 ? '저장 <small>입력삭제 번호를 구매자 번호로 바꿔 주세요</small>' : n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? '고친 대로 저장' : '저장');   // #867
     const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length + (addrBad(r) ? 1 : 0), 0) : 0;   // #850-g 주소 확인 안 됨 = 빈칸 1
     function askText(c) {
@@ -869,7 +872,7 @@
         c.dirty = JSON.stringify(c.rows.map(stripTmp)) !== JSON.stringify(c.orig.map(stripTmp));
         const rs = $('om-card').querySelector('.om-reset'); if (rs) rs.hidden = !c.dirty;
         const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
-        const sv = $('om-card-save'); if (sv && !c.wait) sv.innerHTML = saveLabel(n);
+        const sv = $('om-card-save'); if (sv && !c.wait) { sv.innerHTML = saveLabel(n); saveSync(sv); }
     }
     // #850-a 입력삭제 주소 줄(indiv) 안내 — 짝인 「입력o삭제x」 메모 줄이 카드에서 빠지면(× · 할 일 칸 비움) 저장 때 서버가 현금 손님(「!」)으로 다시 정한다
     //   판정 = 서버 order-memo.js 의 INDIV 식 · isIndivLine 과 같게(「입력o삭제x」·「입력0삭제x」·「입력삭제」·「개별발송」 + 번호 8자리 이상)

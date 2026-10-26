@@ -500,7 +500,7 @@ function mount(app, deps) {
         }
         const oldD = cur.ship_date ? String(cur.ship_date).slice(0, 10) : null, newD = r.ship_date || null;
         if (r.kind === 'line' && isIndivLine(r) && oldD !== newD) {   // #850-a 같은 짝 계산(번호 = K칸 또는 B칸)
-            const opens = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash'`)).rows;
+            const opens = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash' AND entry_id = $1`, [cur.entry_id])).rows;   // #868 같은 묶음만(#867 rekey 와 같은 기준 · 다른 묶음 같은 번호 주소 줄 날짜 무변경)
             for (const c0 of opens) {
                 const c = c0.cells || [], sd = c0.ship_date ? String(c0.ship_date).slice(0, 10) : null;
                 if (/[!！]/.test(String(c[0] || '')) || ![c[10], c[1]].map(dg).includes(dg(r.key)) || (sd && sd !== oldD)) continue;
