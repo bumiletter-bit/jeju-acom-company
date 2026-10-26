@@ -2512,7 +2512,7 @@ async function resolveCards(pg, type) {
                     ok(t1.y > t1.ch && /맨 위/.test(t1.top) && t1.rTop[1] >= 44 && t1.rNext[1] >= 44 && t1.rTop[2] <= t1.vw && t1.rTop[3] <= t1.vh && t1.sw <= t1.vw, `㊵ ${tag} 한 화면 넘게 내려가면 「↑ 맨 위」가 나타남 · 버튼 44px · 화면 안 · 가로 넘침 없음`, JSON.stringify(t1));
                     await w.pg.click('#fo-top'); await w.pg.waitForTimeout(1600); const t2 = await flt(w.pg);
                     ok(t2.y <= 16 && /맨 아래/.test(t2.top) && /방금 보던 곳으로/.test(t2.back), `㊵ ${tag} 「↑ 맨 위」 → 창 맨 위로 · 버튼은 「↓ 맨 아래」로 바뀌고(#600) 「방금 보던 곳으로」가 잠깐 나타남`, JSON.stringify({ y: t2.y, back: t2.back }));
-                    await w.pg.click('#fo-back'); await w.pg.waitForTimeout(1100); const t3 = await flt(w.pg);
+                    await w.pg.click('#fo-back'); await w.pg.waitForTimeout(1600); const t3 = await flt(w.pg);   // #858 폰 부드러운 스크롤이 1.1초 안에 덜 끝나 21~27px 흔들림 → 1.6초
                     ok(Math.abs(t3.y - t1.y) <= 24 && !t3.back, `㊵ ${tag} 「방금 보던 곳으로」 → 보던 자리로 돌아감`, JSON.stringify({ was: t1.y, now: t3.y }));
                     // ── #600(대표 10/9): 떠 있는 묶음이 대화 입력 칸을 가리지 않는다(B-1) · 맨 위에서는 「↓ 맨 아래」(B-2) · 폰 자판 위로(B-3)
                     {
