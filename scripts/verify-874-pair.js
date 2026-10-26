@@ -205,7 +205,21 @@ function mkPool(db) {
     await u2.pair2Run({ mode: 'new', rows: [lineR], pair2: { [BUY.replace(/\D/g, '')]: 'yes' } });
     ok(sent && sent.key === BUY && sent.ids.join() === '63,64', '[바꾸기] 고른 뒤 저장 = POST pair {key, ids 63·64}', sent);
     // ③ 순서 반대 — 메모함에 주소 줄 없는 열린 입력삭제 줄 · 카드 = 현금 줄만(K = 받는 분 번호)
-    OMs.list = [Object.assign({ id: 69, state: 'open' }, lineR)];
+    // #875 오늘(KST) 저장한 입력삭제 줄만 묻기 — 묶음 created_at(UTC ISO) 기준 · KST 자정 언저리 9시간 함정 꼴
+    const isoAt = kstYmdHm => new Date(Date.parse(kstYmdHm + ':00+09:00')).toISOString();
+    const kToday = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), kYest = new Date(Date.now() - 15 * 3600e3).toISOString().slice(0, 10);
+    OMs.list = [Object.assign({ id: 68, state: 'open', entry: { created_at: isoAt(kYest + 'T23:50') } }, lineR)];
+    ok(u.pairHtml({ mode: 'new', cash: true, rows: [cashR(0)] }) === '', '#875 어제(KST 23:50 = UTC 같은 날 14:50) 저장한 입력삭제 줄 = 묻기 0');
+    OMs.list = [Object.assign({ id: 69, state: 'open', entry: { created_at: isoAt(kToday + 'T00:10') } }, lineR)];   // KST 00:10 = UTC 전날 15:10
+    ok(/건\(메모함\)/.test(u.pairHtml({ mode: 'new', cash: true, rows: [cashR(0)] })), '#875 오늘(KST 00:10 = UTC 전날) 저장한 입력삭제 줄 = 묻기');
+    {   // ①·② 는 날짜 무관(어제 줄이어도 ② 그대로)
+        OMs.list = [Object.assign({ id: 68, state: 'open', entry: { created_at: isoAt(kYest + 'T10:00') } }, lineR), Object.assign(cashR(3), { id: 63, cells: cashCells(RECV[3]) })];
+        ok(/메모함에 이 번호/.test(u.pairHtml({ mode: 'new', rows: [lineR] })), '#875 ②(카드에 입력삭제 줄 · 번호 맞는 현금 줄) = 날짜 무관 그대로');
+        const c5 = { mode: 'new', rows: [Object.assign({}, lineR), cashR(0)] }; u.pairHtml(c5); c5.pair1.sel.add(1);
+        c5.rows[0].key = '010-7777-0000'; const before5 = JSON.stringify(c5.rows[1]); u.pair1Go(c5);
+        ok(JSON.stringify(c5.rows[1]) === before5 && /번호가 바뀌었어요/.test(toasts.pop() || '') && c5.pair1.key === null, '#875 카드에서 입력삭제 번호를 고친 뒤 [주소 줄로 짝짓기] = 「번호가 바뀌었어요」 · 줄 안 바뀜');
+    }
+    OMs.list = [Object.assign({ id: 69, state: 'open', entry: { created_at: new Date().toISOString() } }, lineR)];
     c = { mode: 'new', cash: true, rows: [cashR(0), cashR(1)] };
     const h4 = u.pairHtml(c);
     ok(/이 현금 줄 2개가 입력삭제 010-2600-0167 건\(메모함\) 주소 줄인가요/.test(h4) && !/ checked/.test(h4) && /data-cact="p1go" disabled/.test(h4) && !/p2yes/.test(h4), '③ 「이 현금 줄 2개가 입력삭제 … 건(메모함) 주소 줄인가요?」 · 기본 안 고름', h4.slice(0, 200));

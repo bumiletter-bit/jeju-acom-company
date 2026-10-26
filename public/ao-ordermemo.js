@@ -894,7 +894,9 @@
     const savedCashOf = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && r.id != null && [r.cells[10], r.cells[1]].map(digits).includes(d));
     //   ③(대표 10/27 · 순서 반대) 입력삭제 줄은 먼저 저장 · 주소 줄은 나중 다른 묶음 = 주소 글엔 구매자 번호가 없어(AI 가 K 에 받는 분 번호) 번호로 못 찾음
     //     → 메모함에 「아직 주소 줄이 없는 열린 입력삭제 줄」이 있으면 ①과 같은 묻기에 그 번호도 넣음(saved) · 고르면 저장 뒤 POST pair 로 그 줄 묶음에 짝
-    const savedIndivKeys = () => { const L = OM.list || [], m = new Map(); L.forEach(x => { const d = digits(x.key); if (x.kind !== 'line' || x.state !== 'open' || d.length < 8 || m.has(d) || !INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''))) return; if (L.some(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d))) return; m.set(d, telShow(x.key)); }); return [...m].map(([d, show]) => ({ d, show, saved: true })); };
+    //     #875(대표 10/27) 오늘(KST) 저장한 입력삭제 줄만 — 어제 이전 줄은 안 물음(묶음 created_at = UTC ISO → +9시간 날짜 · todayStr 와 같은 KST)
+    const kstDay = v => { const t = Date.parse(String(v || '')); return Number.isFinite(t) ? new Date(t + 9 * 3600e3).toISOString().slice(0, 10) : ''; };
+    const savedIndivKeys = () => { const L = OM.list || [], m = new Map(), today = todayStr(); L.forEach(x => { const d = digits(x.key); if (x.kind !== 'line' || x.state !== 'open' || d.length < 8 || m.has(d) || kstDay(x.entry && x.entry.created_at) !== today || !INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''))) return; if (L.some(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d))) return; m.set(d, telShow(x.key)); }); return [...m].map(([d, show]) => ({ d, show, saved: true })); };
     const pair1Keys = c => { const own = pairKeys(c); return c && c.mode !== 'edit' ? own.concat(savedIndivKeys().filter(k => !own.some(o => o.d === k.d))) : []; };
     const pairWho = r => [nameOf(r), last4(r.cells[6]) ? '…' + last4(r.cells[6]) : '', String(r.cells[8] || '').split(/\s+/).slice(0, 3).join(' ')].filter(Boolean).join(' · ');
     function pairHtml(c) {
@@ -924,7 +926,8 @@
         return h;
     }
     function pair1Go(c) {
-        const p1 = c.pair1, k = p1 && pair1Keys(c).find(x => x.d === p1.key); if (!k || !p1.sel.size) return;
+        const p1 = c.pair1, k = p1 && pair1Keys(c).find(x => x.d === p1.key); if (!p1 || !p1.sel.size) return;
+        if (!k) { p1.key = null; toast('입력삭제 번호가 바뀌었어요 · 번호를 다시 확인하고 골라 주세요'); renderCard(); return; }   // #875 카드에서 번호를 고친 뒤 누름 = 조용히 안 됨 막기
         let n = 0;
         p1.sel.forEach(ri => { const r = c.rows[ri]; if (!r || r.kind !== 'cash' || r.indiv) return; const oldK = digits(r.cells[10]); if (!digits(r.cells[1]) || digits(r.cells[1]) === oldK) r.cells[1] = k.show; r.cells[10] = k.show; r.cells[0] = String(r.cells[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim(); r.indiv = true; if (k.saved) r._pairSaved = k.show; n++; });   // ③ 메모함 입력삭제 줄 = 저장 뒤 POST pair(같은 묶음이 아니라 서버 markIndiv 가 못 짝지음)
         p1.sel.clear(); c.dirty = true; renderCard();
