@@ -1,3 +1,8 @@
+## v5.9.655 (2026-10-27) — #882 메모함 손님 글 첫 카드에서도 현금 줄 주소 확인(대표 폰 실물)
+
+- 메모함(ao-ordermemo.js waitEnd): [입력하기] 뒤 창구(AI)가 나중에 채운 현금 줄은 주소 확인(addrRun)을 안 돌려 「확인됨 · 도로명」·[도로명으로 바꾸기]가 첫 카드에 안 나오던 것(저장 뒤 다시 열면 나옴) → AI 줄을 더한 뒤 주소 없는 확인 전 현금 줄마다 addrRun(ACACHE 공용 · 중복 0). 확인 필요 = 저장 전 빈칸 셈 종전 그대로.
+- 검증 t880 104/104(고치기 전 재현 실패 확인) · 무회귀 19 · 워커 교차 점검 막을 것 0. 캐시 ao-ordermemo 21.
+
 ## v5.9.654 (2026-10-27) — #880 메모함 현금 줄 「입력삭제 …끝4」 · 주소 확인 필요 · 「이대로 둘게요」 서버 저장 · #881 [+] 메뉴 설명(대표)
 
 - 서버(order-memo.js): order_memo_rows.addr_ok JSONB(ensure ALTER ADD COLUMN IF NOT EXISTS) · 목록 현금 줄에 addr_ok · POST /api/order-memo/rows/:id/addr-ok {raw}(직원 전부 · 열린 현금 줄만 · raw = 지금 주소일 때만 · 409/400/404) · {undo:true} · audit 숫자만. for-ship·cash_aoa 무영향.

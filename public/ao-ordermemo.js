@@ -525,6 +525,7 @@
         }
         renderCard();
         c.rows.forEach((r, i) => { if (r.kind === 'line' && !r._lk && !r._new) lkRun(i); });   // #867 창구가 나중에 넣은 메모 줄도 판매처 확인(입력삭제 받는 분 번호 막기)
+        c.rows.forEach((r, i) => { if (r.kind === 'cash' && !r._addr && String(r.cells[8] || '').trim()) addrRun(i); });   // #882 창구가 나중에 넣은 현금 줄도 주소 확인(종전 = cardOpen 의 lkAll 만 돌아 AI 줄은 빠졌음 · ACACHE 공용)
         const f = $('om-card').querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo'); if (f && !phoneW()) f.focus({ preventScroll: true });
     }
     function waitTick() {   // 기다리는 초만 고쳐 씀(다시 그리지 않음)
