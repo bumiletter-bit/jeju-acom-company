@@ -406,3 +406,6 @@ html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
 .om-tail-s { color: var(--d-ink); font-size: 14px; font-weight: 700; }
 .om-tail-h { flex-basis: 100%; color: var(--d-sub); font-size: 12px; }
 @media (max-width: 960px), (pointer: coarse) { .om-gwa { min-height: 44px; } }
+/* #867 입력삭제 줄 = 받는 분 번호 → [구매자 번호로 바꾸기] */
+.om-lk .om-lk-fix { display: flex; margin-top: 8px; color: var(--d-ink); font-weight: 700; }
+.om-lk .om-lk-fix small { font-weight: 600; opacity: .75; }

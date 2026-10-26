@@ -481,7 +481,23 @@ function mount(app, deps) {
         const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13
             WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
-        let paired = 0;
+        let paired = 0, rekeyed = 0;
+        // #867 입력삭제 줄 번호를 고치기로 바꿈(예: 받는 분 번호 → 구매자 번호) = 같은 묶음(entry) 열린 짝 주소 줄(「!」 없음 · K = 옛 번호)의 K 를 새 번호로
+        //   B 는 K 와 같은 옛 번호일 때만(K 를 따라 채운 값) · 사람이 따로 넣은 B(보내는이 변경 번호) = 그대로 · 아래 #850-a 날짜 짝이 새 번호로 찾도록 먼저
+        if (r.kind === 'line' && isIndivLine(r) && INDIV.test(String(cur.note || '') + ' ' + String(cur.line || '')) && dg(cur.line_key).length >= 8 && dg(r.key) !== dg(cur.line_key)) {
+            const oldK = dg(cur.line_key), newK = String(r.key).trim();
+            const sibs = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash' AND entry_id = $1`, [cur.entry_id])).rows;
+            for (const c0 of sibs) {
+                const c = Array.isArray(c0.cells) ? c0.cells.slice() : [];
+                if (/[!！]/.test(String(c[0] || '')) || dg(c[10]) !== oldK) continue;
+                if (dg(c[1]) === oldK) c[1] = newK;
+                c[10] = newK;
+                const rc = checkRow({ kind: 'cash', cells: c, ship_date: c0.ship_date || null, src: c0.src, indiv: true, indivKey: newK }, ctx);
+                const u = await pool.query(`UPDATE order_memo_rows SET sure=$2, check_why=$3, cells=$4, updated_at=NOW(), updated_by=$5 WHERE id=$1 AND state='open'`,
+                    [c0.id, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req)]);
+                rekeyed += u.rowCount;
+            }
+        }
         const oldD = cur.ship_date ? String(cur.ship_date).slice(0, 10) : null, newD = r.ship_date || null;
         if (r.kind === 'line' && isIndivLine(r) && oldD !== newD) {   // #850-a 같은 짝 계산(번호 = K칸 또는 B칸)
             const opens = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash'`)).rows;
@@ -494,8 +510,8 @@ function mount(app, deps) {
                 paired += u.rowCount;
             }
         }
-        await audit(req, 'update', cur.id, { kind: r.kind, sure: r.sure, paired });
-        res.json({ ok: true, row: rowOut(row), paired });
+        await audit(req, 'update', cur.id, { kind: r.kind, sure: r.sure, paired, rekeyed });
+        res.json({ ok: true, row: rowOut(row), paired, rekeyed });
     }));
 
     app.delete('/api/order-memo/rows/:id', authMiddleware, wrap(async (req, res) => {
@@ -537,7 +553,8 @@ function mount(app, deps) {
                     + ' FROM order_memo_preorders WHERE channel = ANY($1::text[]) AND miss = 0 AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
                 matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
                     buyer_name: r.buyer_name || null, recv_name: r.recv_name || null, recv_initial: (String(r.recv_name || '').match(/[가-힣A-Za-z]/) || [''])[0], addr: r.addr || null,
-                    option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], paid_at: r.paid }));
+                    option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], paid_at: r.paid,
+                    buyer_phone: phone && r.buyer_digits && r.buyer_digits !== d ? r.buyer_digits : null }));   // #867 받는 분 번호로 찾았을 때만 = 그 주문의 구매자 번호(입력삭제 줄을 구매자 번호로 바꾸기)
                 cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM order_memo_preorders")).rows[0];
             }
         } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
@@ -549,7 +566,8 @@ function mount(app, deps) {
                 src = 'sms';
                 matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
                     buyer_name: null, recv_name: null, recv_initial: r.recipient_initial || '', addr: null,   // 이름 전체·주소 = 그 표에 없음(#610-G)
-                    option: r.option_text || '', qty: r.qty || null, order_no: String(r.order_key || '').split('|')[0], paid_at: r.paid }));
+                    option: r.option_text || '', qty: r.qty || null, order_no: String(r.order_key || '').split('|')[0], paid_at: r.paid,
+                    buyer_phone: phone && r.buyer_digits && r.buyer_digits !== d ? r.buyer_digits : null }));   // #867 위와 같음
                 cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM sms_preorders")).rows[0];
             } catch (e) { if (!/sms_preorders/.test(String(e.message))) throw e; }   // 표가 없는 서버(문자 기능 꺼짐) = 못 찾음
         }
