@@ -1585,7 +1585,8 @@
     const IND_MIN = 9, FILE_MAX = 300, SAVE_CHUNK = 60;   // SAVE_CHUNK = 서버 한 번 저장 상한(order-memo.js MAX_ROWS)
     const FILE_HEADERS = ['보내는사람', '보내는사람연락처', '출고지', '수취인명', '옵션정보', '수량', '수취인연락처1', '수취인연락처2', '배송지', '배송메세지', '구매자연락처', '박스타입(입력x)', '보내는이 변경주소'];   // final-order-core.js HEADERS 와 같은 순서(그 파일이 없을 때 대비)
     const savedIndivLine = d => (OM.list || []).some(x => x.kind === 'line' && x.state === 'open' && digits(x.key) === d && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')));
-    const cashEmpty = r => r.kind === 'cash' && !r.ship_date && !r.cells.some(v => String(v == null ? '' : v).trim());
+    // #902 「입력삭제 주소예요」가 넣은 구매자·보내는사람 번호(_ik)만 있는 줄도 = 손대지 않은 빈 줄(종전엔 그 번호 때문에 파일 줄로 안 바뀌고 빈 「현금 줄 1」이 남음)
+    const cashEmpty = r => r.kind === 'cash' && !r.ship_date && !r.cells.some((v, i) => { const t = String(v == null ? '' : v).trim(); return t && !(r._ik != null && (i === 10 || i === 1) && digits(t) === r._ik); });
     function indNote(c) {
         const ind = c.ind; if (!ind || !ind.on) return null;
         if (!digits(ind.key)) return { t: '주문자(구매자) 번호를 넣으면 모든 줄 구매자 연락처가 그 번호가 돼요', w: false };
