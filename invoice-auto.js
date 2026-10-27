@@ -63,14 +63,17 @@ function canonOf(text, pricingNames) {
 const prodHit = (o, s) => (o.canon && s.canonReal) ? o.canon === s.canon : (prodMatch(o.option, s.product) || (!!o.canon && o.canon === s.canon));
 
 // 짝 맞추기(순수 함수 · 검증이 바로 부름) — 정본 2절 규칙표 · pricingNames = 그날 단가표 이름(#841 · 없으면 종전 글자 비교만 + 표준명)
-function matchShipments({ ships, orders, pricingNames }) {
+// #894 F2 indivKeys(있으면) = 그날 최종발주가 입력삭제로 뺀 주문 「채널:주문 열쇠」 — 그 주문은 받는 분 키 짝에서 빼고 입력삭제 길(구매자 번호)로만
+//   (같은 분이 집으로 받는 일반 주문 박스가 받는 분·번호·주소가 같은 입력삭제 주문에 붙지 않게 + 같은 품목 나눔에서 「남은 박스 수가 딱 맞는 주문 하나」 우선 · 둘 다 IND 있을 때만 · 없으면 종전 그대로)
+function matchShipments({ ships, orders, pricingNames, indivKeys }) {
+    const IND = indivKeys instanceof Set ? indivKeys : new Set(Array.isArray(indivKeys) ? indivKeys.map(String) : []);
     for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
     for (const s of ships) if (s.canon === undefined) { const c = canonOf(s.product, pricingNames); s.canonReal = !!c; s.canon = c || normProd(s.product); }
     const byT = (a, b) => (a.tracking < b.tracking ? -1 : a.tracking > b.tracking ? 1 : 0);
     const cash = ships.filter(s => s.cash).sort(byT), live = ships.filter(s => !s.cash).sort(byT);
     const assign = new Map();   // order_key → { o, ships:[], rule, todo?:[ships] }
     const give = (o, list, rule) => { const a = assign.get(o.channel + ':' + o.order_key) || { o, ships: [], rule }; a.ships.push(...list); a.rule = a.rule || rule; assign.set(o.channel + ':' + o.order_key, a); };
-    const ordersBy = new Map(); for (const o of orders) { if (!ordersBy.has(o.key)) ordersBy.set(o.key, []); ordersBy.get(o.key).push(o); }
+    const ordersBy = new Map(); for (const o of orders) { if (IND.has(o.channel + ':' + o.order_key)) continue; if (!ordersBy.has(o.key)) ordersBy.set(o.key, []); ordersBy.get(o.key).push(o); }   // #894 F2
     const shipsBy = new Map(); for (const s of live) { if (!shipsBy.has(s.key)) shipsBy.set(s.key, []); shipsBy.get(s.key).push(s); }
     const leftover = [];   // 셋 다 맞는 주문이 없는 운송장
     const todos = [];      // { o, rule, options:[ships] }
@@ -83,7 +86,7 @@ function matchShipments({ ships, orders, pricingNames }) {
         if (!os.length) { leftover.push(...ss); continue; }
         if (os.length === 1) { const o = os[0]; give(o, ss, ss.length === o.qty ? (ss.length > 1 ? 'auto_multi' : 'auto') : 'auto_qty_diff'); continue; }
         const prods = new Set(os.map(o => normProd(o.option)));
-        if (prods.size === 1) { distribute(os, ss, 'same_item_any'); continue; }
+        if (prods.size === 1) { const exact = os.filter(o => o.qty === ss.length); if (IND.size && ss.length < os.reduce((n, o) => n + o.qty, 0) && exact.length === 1) { give(exact[0], ss, 'same_item_qty'); continue; } distribute(os, ss, 'same_item_any'); continue; }   // #894 F2 운송장이 모자랄 때 수량 딱 맞는 주문 하나 = 그 주문
         // 같은 분 다른 품목 = 운송장 상품명으로 가름 · 운송장마다 맞는 「품목 묶음」이 정확히 하나여야(아니면 그 열쇠 주문 전부 할 일)
         const groups = new Map(); let bad = false;
         for (const s of ss) {
@@ -100,7 +103,7 @@ function matchShipments({ ships, orders, pricingNames }) {
             });
             continue;
         }
-        for (const g of groups.values()) { if (g.os.length === 1) give(g.os[0], g.ss, 'by_product'); else distribute(g.os, g.ss, 'same_item_any'); }
+        for (const g of groups.values()) { if (g.os.length === 1) { give(g.os[0], g.ss, 'by_product'); continue; } const exact = g.os.filter(o => o.qty === g.ss.length); if (IND.size && g.ss.length < g.os.reduce((n, o) => n + o.qty, 0) && exact.length === 1) give(exact[0], g.ss, 'same_item_qty'); else distribute(g.os, g.ss, 'same_item_any'); }   // #894 F2
     }
     // 입력삭제(주문 통째 개별 주소 = 현금파일 줄로 나감): 운송장이 안 붙은 주문 → 같은 구매자 번호(시트2 보내는분 전화)로 나간 남은 운송장
     const todoKeys = new Set(todos.map(t => t.o.channel + ':' + t.o.order_key));
@@ -232,7 +235,8 @@ module.exports = function mountInvoiceAuto(app, d) {
             const ships = []; parsed.forEach(p => ships.push(...normShips(p.rows.map(r => ({ ...r, partner: p.partner })), p.partner)));
             let pricingNames = [];   // #841 그날 단가표 이름(/api/invoice/catalog 와 같은 SQL · 읽기) · 실패하면 빈 목록(표준명·글자 비교로)
             try { const pr = await pool.query(`SELECT items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [shipDate]); const set = new Set(); pr.rows.forEach(row => (row.items || []).forEach(it => { if (it && it.name) set.add(it.name); })); pricingNames = [...set]; } catch (e) { pricingNames = []; }
-            const m = matchShipments({ ships, orders, pricingNames });
+            const iv = req.body && req.body.indiv, indivKeys = iv && iv.date === shipDate && Array.isArray(iv.keys) ? iv.keys.slice(0, 500).map(k => String(k).slice(0, 120)) : [];   // #894 F2 최종발주가 남긴 입력삭제 주문(그 발송일만)
+            const m = matchShipments({ ships, orders, pricingNames, indivKeys });
             const card = buildCard(m, orders);
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;

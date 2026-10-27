@@ -172,14 +172,30 @@ function markIndiv(rows, extra) {
 // #874 저장된 현금(「!」) 줄 하나를 입력삭제 줄(line = 표 행 꼴 · line_key)의 주소 줄로 바꾼 값(순수 · 짝 안 되면 null)
 //   대상 = 「!」 있고 K(구매자연락처) 또는 B(보내는사람연락처) 번호가 그 번호 · K = 그 번호 · B 는 비었거나 옛 K 와 같을 때만 그 번호(사람이 넣은 다른 B 그대로)
 //   날짜 = 줄에 날짜가 없고 입력삭제 줄에 날짜가 있으면 그 날짜(markIndiv 와 같게)
-function pairCash(r, line, ctx) {
+function pairCash(r, line, ctx, opt) {
     const c = Array.isArray(r && r.cells) ? r.cells.slice() : [];
-    const key = String((line && line.line_key) || '').trim(), d = dg(key);
-    if (!r || r.kind !== 'cash' || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || ![c[10], c[1]].map(dg).includes(d)) return null;
+    const key = String((line && line.line_key) || '').trim(), d = dg(key), any = !!(opt && opt.anyNumber);   // #894 F4 any = 후보 묶음에서 사람이 고른 줄(번호가 받는 분 번호여도)
+    if (!r || r.kind !== 'cash' || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || (!any && ![c[10], c[1]].map(dg).includes(d))) return null;
     if (!dg(c[1]) || dg(c[1]) === dg(c[10])) c[1] = key;
     c[10] = key;
     const own = r.ship_date ? String(r.ship_date).slice(0, 10) : null, ld = line.ship_date ? String(line.ship_date).slice(0, 10) : null;
     return checkRow({ kind: 'cash', cells: c, ship_date: isDay(own) ? own : (isDay(ld) ? ld : null), src: r.src || 'edit', indiv: true, indivKey: key }, ctx);
+}
+// #894 F4 품목 열쇠 = 채널 옵션(「아꼼이네 상품선택: 3. (제철)과즙팡팡 황금향 / 상품 및 과수: …」)과 현금 줄 품목(단가표 이름) 을 같은 꼴로
+const itemKeyOf = o => String(o == null ? '' : o).replace(/^\s*[^:：/]*상품선택\s*[:：]\s*/, '').replace(/^\s*\d+\.\s*/, '').replace(/^\s*\((?:제철|예약|특가|행사)\)\s*/, '').replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
+// #894 F4 짝 후보(순수) — orders = 그 번호의 주문 [{option, qty}] · rows = 열린 현금·주소 줄(표 행 꼴) · key = 입력삭제 번호
+//   need = 품목별 주문 박스 − 이미 짝 된 주소 줄(「!」 없음 · K = 그 번호) 박스 · groups = 짝 안 된 현금(「!」) 줄을 묶음(entry)별로 모아 품목별 박스가 need 와 딱 같은 것 · 최근 묶음 먼저
+function pairHint(orders, rows, key) {
+    const d = dg(key), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n), need = new Map(), paired = new Map();
+    (orders || []).forEach(o => { const k = itemKeyOf(o.option); if (k) add(need, k, Math.max(0, parseInt(o.qty, 10) || 0)); });
+    const cashOf = r => r.kind === 'cash' && r.state === 'open' && Array.isArray(r.cells);
+    (rows || []).filter(r => cashOf(r) && !/[!！]/.test(String(r.cells[0] || '')) && dg(r.cells[10]) === d).forEach(r => add(paired, itemKeyOf(r.cells[4]), Math.max(0, parseInt(r.cells[5], 10) || 0)));
+    const left = new Map(); need.forEach((n, k) => { const v = n - (paired.get(k) || 0); if (v > 0) left.set(k, v); });
+    const total = m => [...m.values()].reduce((a, b) => a + b, 0), same = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+    const byEntry = new Map(); (rows || []).filter(r => cashOf(r) && /[!！]/.test(String(r.cells[0] || ''))).forEach(r => { const g = byEntry.get(r.entry_id) || byEntry.set(r.entry_id, { entry_id: r.entry_id, created_at: r.entry_created_at || null, ids: [], items: new Map() }).get(r.entry_id); g.ids.push(r.id); add(g.items, itemKeyOf(r.cells[4]), Math.max(0, parseInt(r.cells[5], 10) || 0)); });
+    const groups = left.size ? [...byEntry.values()].filter(g => same(g.items, left)).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || b.entry_id - a.entry_id).slice(0, 5)
+        .map(g => ({ entry_id: g.entry_id, created_at: g.created_at, ids: g.ids, boxes: total(g.items), items: [...g.items].map(([opt, qty]) => ({ opt, qty })) })) : [];
+    return { order_boxes: total(need), paired_boxes: total(paired), short: total(left), need: [...left].map(([opt, qty]) => ({ opt, qty })), groups };
 }
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
 
@@ -560,6 +576,22 @@ function mount(app, deps) {
         res.json({ ok: true, row: rowOut(row) });
     }));
 
+    // #894 F4(대표 10/27 · 「주문입력으로 개별 주소 먼저 → 입력삭제 번호 나중」이 기본 길) 짝 후보 — 읽기만
+    //   GET /api/order-memo/pair-hint?key=<입력삭제 번호> → { ok, key, orders:[{plat, order_no, option, qty}], order_boxes, paired_boxes, short, need:[{opt, qty}], groups:[{entry_id, created_at, ids, boxes, items}] , src }
+    //   orders = 발송 전 주문 표(order_memo_preorders · 구매자 번호 = 그 번호 · 7일) · groups = 짝 안 된 현금(「!」) 줄 묶음 가운데 품목별 박스가 남은 수와 딱 같은 것(최근 먼저 · 5개까지)
+    //   화면: ② 번호로 못 찾을 때 groups 를 「이 현금 줄 묶음이 입력삭제 주소 줄인가요?」로 · ③ short > 0 이면 주소 줄이 이미 있어도 묻기 · 고르면 POST /pair { key, ids, pick: true }
+    app.get('/api/order-memo/pair-hint', authMiddleware, wrap(async (req, res) => {
+        if (req.user.role === 'accountant') throw err(403, '세무사 계정은 볼 수 없어요');
+        const key = s(req.query.key, 40).trim(), np = PRE_LK ? PRE_LK.normalizePhone(key) : dg(key);
+        if (!/^0\d{8,11}$/.test(np)) throw err(400, '입력삭제 번호(구매자 전화번호)를 주세요');
+        let orders = [], src = 'memo';
+        try { orders = (await pool.query("SELECT channel, order_key, product_order_no, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 ORDER BY paid_at DESC NULLS LAST LIMIT 40", [np])).rows; }
+        catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; src = 'none'; }
+        const rows = (await pool.query(`SELECT r.id, r.entry_id, r.kind, r.cells, r.state, to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS entry_created_at FROM order_memo_rows r JOIN order_memo_entries e ON e.id = r.entry_id WHERE r.state = 'open' AND r.kind = 'cash'`)).rows;
+        const h = pairHint(orders.map(o => ({ option: o.option_text, qty: o.qty })), rows, np);
+        res.json(Object.assign({ ok: true, key: np, src, orders: orders.map(o => ({ plat: CH_PLAT[o.channel] || o.channel, order_no: o.product_order_no || String(o.order_key || '').split('|')[0], option: o.option_text || '', qty: o.qty || 0 })) }, h));
+    }));
+
     app.post('/api/order-memo/pair', authMiddleware, wrap(async (req, res) => {
         const b = req.body || {}, ctx = await ctxOf();
         if (b.undo === true) {
@@ -588,7 +620,7 @@ function mount(app, deps) {
         const cands = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = ANY($1::int[]) AND state = 'open' AND kind = 'cash' ORDER BY id`, [ids])).rows;
         const out = [], undo = [];
         for (const r0 of cands) {
-            const p = pairCash(r0, line, ctx); if (!p) continue;
+            const p = pairCash(r0, line, ctx, { anyNumber: b.pick === true }); if (!p) continue;   // #894 F4 pick = 후보 묶음(pair-hint groups)에서 고른 줄
             const row = (await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
                 [r0.id, line.entry_id, JSON.stringify(p.cells), p.ship_date, p.sure, JSON.stringify(p.check_why), actorName(req)])).rows[0];
             if (!row) continue;
@@ -776,4 +808,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, pairHint, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

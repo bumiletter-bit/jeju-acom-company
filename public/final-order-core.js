@@ -698,10 +698,12 @@
         return { ok: !errors.length, error, errors, rows };
     }
     // 주문 ↔ 현금파일(「!」 없는 행 = 입력삭제 건의 주소 줄) 대조. 구매자 = K칸 숫자 전체 · 자리표시·8자리 미만은 대조에서 뺀다.
+    // #894 품목 열쇠 = 옵션 글자에서 끝 요청 꼬리(「 S사이즈로!」 「 13과로!」) 뗀 것 · 빈 글 = 모름
+    const itemKey = o => String(o == null ? '' : o).replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
     function cashCheck(arg) {
         const orders = (arg && arg.orders) || []; const cashRows = (arg && arg.cash && (Array.isArray(arg.cash) ? arg.cash : arg.cash.rows)) || [];
         const cashBy = new Map(), strangersBad = [];
-        cashRows.filter(r => !r.bang).forEach(r => { if (!validDigits(r.digits)) { strangersBad.push(r); return; } const g = cashBy.get(r.digits) || cashBy.set(r.digits, { rows: [], qty: 0 }).get(r.digits); g.rows.push(r.no); g.qty += r.qty; });
+        cashRows.filter(r => !r.bang).forEach(r => { if (!validDigits(r.digits)) { strangersBad.push(r); return; } const g = cashBy.get(r.digits) || cashBy.set(r.digits, { rows: [], qty: 0, items: new Map() }).get(r.digits); g.rows.push(r.no); g.qty += r.qty; const it = itemKey(r.opt); if (it) g.items.set(it, (g.items.get(it) || 0) + r.qty); else g.itemsUnknown = true; });
         const byBuyer = new Map(), unchecked = [];
         orders.forEach(od => { if (!validDigits(od.digits || '')) { if (od.individual) unchecked.push({ key: od.key, buyer: od.buyer || '', qty: Number(od.qty) || 0 }); return; } const g = byBuyer.get(od.digits) || byBuyer.set(od.digits, { buyer: od.buyer || '', list: [] }).get(od.digits); g.list.push(od); });
         const missing = [], notIndiv = [], boxDiff = [], strangers = [], mixed = [];
@@ -718,7 +720,16 @@
         });
         cashBy.forEach((g, digits) => { if (!byBuyer.has(digits)) strangers.push({ digits, rows: g.rows.slice() }); });
         if (strangersBad.length) strangers.push({ digits: '', rows: strangersBad.map(r => r.no) });
-        return { missing, notIndiv, boxDiff, strangers, mixed, unchecked };
+        // #894 F3(대표 10/27) 박스 합은 맞는데 품목(단가표 이름 · 꼬리 뗌)별 합이 다르면 = itemDiff · 주문에 opt 가 있을 때만(옛 호출 = 종전 그대로)
+        const itemDiff = [];
+        byBuyer.forEach((g, digits) => {
+            const indiv = g.list.filter(x => x.individual && !x.excluded), cash = cashBy.get(digits);
+            if (!indiv.length || !cash || cash.itemsUnknown || sumQty(indiv) !== cash.qty || indiv.some(x => !itemKey(x.opt))) return;
+            const want = new Map(); indiv.forEach(x => { const k = itemKey(x.opt); want.set(k, (want.get(k) || 0) + (Number(x.qty) || 0)); });
+            const keys = [...new Set([...want.keys(), ...cash.items.keys()])], rows = keys.map(k => ({ opt: k, orderQty: want.get(k) || 0, cashQty: cash.items.get(k) || 0 })).filter(r => r.orderQty !== r.cashQty);
+            if (rows.length) itemDiff.push({ digits, buyer: g.buyer, rows });
+        });
+        return { missing, notIndiv, boxDiff, strangers, mixed, unchecked, itemDiff };
     }
 
     // ── 나눠 보내기 신호(손님 배송메세지) — 자동 처리가 아니라 확인 카드로 올릴 신호만 ─────────────────

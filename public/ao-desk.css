@@ -370,6 +370,13 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-md-t .ctr { text-align: center; }
 .desk-quick2-label { flex-basis: 100%; }
 .desk-md-t td, .desk-md-t th { min-width: 4.5em; }
+/* #896 클코 답변 마크다운 표(.md) = 칸마다 가로·세로 1px(바깥 테두리·둥근 모서리는 감싼 칸 .desk-md-tw 가 그림 → 바깥쪽 칸 선은 뺌) · 합계 줄 굵게 · 배송조회 표 등 다른 .desk-md-t 는 그대로 */
+.desk-md-t.md th, .desk-md-t.md td { border: 1px solid var(--d-line); }
+.desk-md-t.md tr > :first-child { border-left: 0; }
+.desk-md-t.md tr > :last-child { border-right: 0; }
+.desk-md-t.md thead tr:first-child > * { border-top: 0; }
+.desk-md-t.md tbody tr:last-child > * { border-bottom: 0; }
+.desk-md-t.md tr.sum td { font-weight: 700; color: var(--d-ink); }
 /* #499 내 지시 대화 보기 — 내 글 오른쪽 · 클코 답 왼쪽 · 대화마다 구분선 */
 .desk-viewbtn { min-height: 36px; margin-right: 8px; }
 .desk-chat { display: block; }

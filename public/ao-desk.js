@@ -29,13 +29,18 @@
                 flushP(); flushL();
                 const head = mdCells(t);
                 const align = mdCells(lines[i + 1]).map(c => /^:?-+:$/.test(c) ? (c[0] === ':' ? 'c' : 'r') : '');
-                const numCls = (c, k) => { const a = align[k] || (/^[\d,.\-+%₩\s]*\d[\d,.\-+%₩\s]*(원|박스|건|개|kg|과|명|장|초|분)?$/.test(c) ? 'r' : ''); return a ? ' class="' + (a === 'r' ? 'num' : 'ctr') + '"' : ''; };
+                const numCls = (c, k) => { const a = align[k] || (/^[\d,.\-+%₩\s]*\d[\d,.\-+%₩\s]*(원|박스|건|개|kg|과|명|장|초|분)?$/.test(String(c).replace(/\*\*/g, '').trim()) ? 'r' : ''); return a ? ' class="' + (a === 'r' ? 'num' : 'ctr') + '"' : ''; };   // #896 **굵은 숫자**(합계 줄)도 숫자로
                 i += 2;
                 const rows = [];
                 while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(mdCells(lines[i])); i++; }
                 i--;
-                out.push('<div class="desk-md-tw"><table class="desk-md-t"><thead><tr>' + head.map((c, k) => '<th' + (align[k] ? ' class="' + (align[k] === 'r' ? 'num' : 'ctr') + '"' : '') + '>' + mdInline(c) + '</th>').join('') + '</tr></thead><tbody>'
-                    + rows.map(r => '<tr>' + head.map((_, k) => '<td' + numCls(r[k] == null ? '' : r[k], k) + '>' + mdInline(r[k] == null ? '' : r[k]) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>');
+                // #896 합계 줄 = 첫 칸이 「합계·총합·총계·소계·계·총」 낱말로 시작(뒤는 빈칸·괄호·쌍점·끝) 또는 마지막 줄의 글 있는 칸이 전부 **굵게**
+                const plain = c => String(c == null ? '' : c).replace(/\*\*/g, '').trim();
+                const isSum = (r, ri) => /^(합계|총합|총계|소계|계|총)(?=$|[\s:(（])/.test(plain(r[0])) || (ri === rows.length - 1 && r.some(c => plain(c)) && r.every(c => !plain(c) || /^\*\*[^*]+\*\*$/.test(String(c).trim())));
+                // #896 정렬 표시가 없는 열 = 글 있는 칸이 전부 숫자면(numCls 와 같은 판정) 머리글도 오른쪽(머리·숫자 엇갈림 방지)
+                const colNum = head.map((_, k) => { const vs = rows.map(r => plain(r[k])).filter(Boolean); return !align[k] && vs.length > 0 && vs.every(v => numCls(v, k)); });
+                out.push('<div class="desk-md-tw"><table class="desk-md-t md"><thead><tr>' + head.map((c, k) => '<th' + (align[k] || colNum[k] ? ' class="' + ((align[k] || 'r') === 'r' ? 'num' : 'ctr') + '"' : '') + '>' + mdInline(c) + '</th>').join('') + '</tr></thead><tbody>'
+                    + rows.map((r, ri) => '<tr' + (isSum(r, ri) ? ' class="sum"' : '') + '>' + head.map((_, k) => '<td' + numCls(r[k] == null ? '' : r[k], k) + '>' + mdInline(r[k] == null ? '' : r[k]) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>');
                 continue;
             }
             if (!t) { flushP(); flushL(); continue; }

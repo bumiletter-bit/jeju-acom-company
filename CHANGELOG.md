@@ -1,3 +1,10 @@
+## v5.9.658 (2026-10-27) — #894 입력삭제 손질 F1~F5 · #895 주문입력 화면 · #896 답변 카드 표 · #899 짝 60줄·다시 붙여 넣기(대표)
+
+- #894(69 · order-memo.js·invoice-auto.js·final-order.js·final-order-core.js): F1 같은 구매자 다른 주소 「!」 현금 줄이면 「일반 발송으로」 막고 안내 · F2 자동 송장 = 화면이 그날 입력삭제 주문 열쇠(localStorage akm_fo_indiv → body.indiv)를 보내 받는 분 짝에서 뺌 · 운송장 모자랄 때 수량 딱 맞는 주문 우선(indiv 받은 날만) · F3 합은 같은데 품목별 박스 다름 카드(optOf) · F4 GET /api/order-memo/pair-hint · POST pair {pick} · F5 현금파일·메모함 같은 줄 중복 카드([메모함 줄 빼기]/[둘 다 보냄] · 결정 전 파일 만들기 막힘) · cbox 「확인함 = 남는 주문은 오늘 안 나가요」 줄 · 요약·기록 = cashLive().
+- #895(2b · ao-ordermemo.js·css): 칩 「현금 손님」→「주문입력」 · 「입력삭제 주소예요」 스위치 + 주문자 번호(저장 뒤 저절로 짝) · 택배 양식 xlsx 올리기(브라우저에서만 · 300줄 · 60줄씩 저장 · 중간 실패 = 남은 줄만) · 후보 묶음 고르기(F4). #899 pair2Run 60줄씩 나눠 보내기(+되돌리기) · dupPairMark(같은 입력삭제 줄 다시 붙여 넣으면 주소 줄 짝).
+- #896(aa · ao-desk.js·css): 답변 카드 마크다운 표 칸 테두리 1px · 합계 줄 굵게 · 숫자 열 머리글 오른쪽.
+- 검증 508-ui A 194 · B 613(ro-preload) · verify-894 21 · 874 49 · 880b 13 · 883 20 · t895 157(무회귀 19) · sim899·sim901(가상) · 교차 점검(aa) 막을 것 0. 캐시 ao-desk 100/74 · ao-ordermemo 24/15 · final-order-core 16 · final-order 54. 총괄 교대 claude-c9 → claude-94(종전 jsonl 388a4222).
+
 ## v5.9.657 (2026-10-27) — #883 메모 칸 과수 줄 · #886 입력삭제 박스 수 카드 「일반 발송으로」 · #882 메모함 「사이즈·과수」 칩 · #885 메모함 글 대비(대표)
 
 - #883 최종발주(final-order-core.js gwaLines · final-order.js gwaApply·과수 카드): 메모 칸 「번호 13과로 [판매처]」 줄 → 그 번호 만감류(황금향·한라봉·레드향·천혜향 · 카라향 제외) 주문 옵션 끝 「13과로!」(#856 꼬리 꼴 · stripTail 대조 그대로) · 그 밖 품목 = 「과수 지정은 만감류만」 카드 · 범위 밖 = 「과수 못 읽음」 · 사이즈+과수 한 줄 = 확인 카드 · 박스별 = boxTails. 메모함 서버(order-memo.js ruleLine 사이즈 → 과수 → v2 · checkLine 과수 bad = 확인).
