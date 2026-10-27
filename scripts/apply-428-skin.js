@@ -48,7 +48,11 @@ const ignoredOpt = (no, o, ign) => {
   if (!o || o.usable === false || !(Number(o.stock) > 0)) return false;
   return ign.keys.has(require(path.join(__dirname, '..', 'price-check.js')).cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || '')));
 };
-function applySkin(D, snap, det, targets, keepMap, ign) {
+// #891 repl(있으면) = skin-keep-map.json 「replace」 = [{ from: 네이버 버튼 그림 주소, html: 자사몰 전용 HTML 버튼(data-btn802) }]
+//   네이버 상세의 그 그림 블록 → 자사몰 버튼 블록(톡톡 버튼 그림 → 카카오 채널 버튼) · keepButtons 다음에 적용(다음 갱신 땐 keepButtons 가 이 버튼을 같은 자리에 되돌려 놓음)
+function applySkin(D, snap, det, targets, keepMap, ign, repl) {
+  const REPL = new Map((repl || []).filter(r => r && r.from && r.html && KEEP_RE.test(r.html)).map(r => [ubase(r.from), r.html]));
+  let replaced = 0;
   const byNo = {}; for (const x of snap.items) byNo[String(x.no)] = x;
   const MAP = new Map((keepMap || []).map(m => [ubase(m.from), m.to]));
   let mapped = 0;
@@ -99,11 +103,12 @@ function applySkin(D, snap, det, targets, keepMap, ign) {
     if (!n || !Array.isArray(n.blocks) || !n.blocks.length) { dMissing.push(k); continue; }
     const blocks = n.blocks.map(mapB);
     keptBtn += keepButtons(k, (D.detailImages[k] || {}).blocks || [], blocks, x => mapB(x, false));   // 비교용 = 치환 수 안 셈
+    for (let i = 0; i < blocks.length; i++) { const x = blocks[i]; if (x && x.t === 'i' && REPL.has(ubase(x.src))) { blocks[i] = { t: 'x', html: REPL.get(ubase(x.src)) }; replaced++; } }   // #891
     const nv = { count: n.count, imgs: Array.isArray(n.imgs) ? n.imgs.map(u => mapU(u, false)) : n.imgs, blocks };
     if (JSON.stringify(D.detailImages[k]) === JSON.stringify(nv)) dSame++; else { dChanged++; D.detailImages[k] = nv; }
   }
   if (dChanged) D.detailImagesSource = `naver detailContent snapshot ${det.at} (#833 지정 상품만 · 전용 버튼·지킬 주소 유지)`;
-  return { optLog, ignored_opts: ignoredOpts, dKeys, dChanged, dSame, dMissing, kept_btn802: keptBtn, kept_products: keptProducts, mapped };
+  return { optLog, ignored_opts: ignoredOpts, dKeys, dChanged, dSame, dMissing, kept_btn802: keptBtn, kept_products: keptProducts, mapped, replaced };
 }
 module.exports = { applySkin, keepButtons, ignoredOpt, KEEP_MAP_FILE, KEEP_RE };
 
@@ -125,11 +130,11 @@ if (require.main === module) (async () => {
   const det = (await pool.query(`SELECT value FROM agent_office_config WHERE key='product_detail_snapshot'`)).rows[0].value;
   console.log('스냅샷#', snap.id, snap.run_at, '| 상세 스냅샷', det.at, det.count + '종');
   if (Date.now() - new Date(snap.run_at).getTime() > 2 * 3600 * 1000) throw new Error('스냅샷 2시간 초과 — 재수집 후 실행');
-  const keepMap = JSON.parse(fs.readFileSync(KEEP_MAP_FILE, 'utf8')).map;
+  const keepJson = JSON.parse(fs.readFileSync(KEEP_MAP_FILE, 'utf8')), keepMap = keepJson.map, repl = keepJson.replace || [];
   const cfg = async k => ((await pool.query(`SELECT value FROM agent_office_config WHERE key=$1`, [k])).rows[0] || {}).value || {};
   const ignCfg = await cfg('cafe24_sync_ignore_opts'), mapCfg = await cfg('cafe24_sync_map');
   const ign = { keys: new Set((ignCfg.keys || []).map(String)), mapped: new Set(Object.keys(mapCfg.map || {})) };
-  const r = applySkin(D, snap, det, TARGET_NOS, keepMap, ign);
+  const r = applySkin(D, snap, det, TARGET_NOS, keepMap, ign, repl);
   if (r.ignored_opts.length) console.log('#844 네이버 전용 옵션 뺌(cafe24_sync_ignore_opts):', r.ignored_opts.join(' · '));
 
   // 재직렬화 + 검산
@@ -148,7 +153,7 @@ if (require.main === module) (async () => {
   fs.writeFileSync(FILE, out, 'utf8');
   console.log('① 옵션:'); r.optLog.forEach(l => console.log('  ' + l));
   console.log(`② 상세: ${r.dKeys.length}키 — 지정 상품 내용 변경 ${r.dChanged} · 동일 ${r.dSame} · 스냅샷 부재 ${r.dMissing.length}${r.dMissing.length ? ' ' + r.dMissing.join(',') : ''}`);
-  console.log('#833 ' + JSON.stringify({ kept_btn802: r.kept_btn802, kept_products: r.kept_products, mapped: r.mapped }));
+  console.log('#833 ' + JSON.stringify({ kept_btn802: r.kept_btn802, kept_products: r.kept_products, mapped: r.mapped, replaced: r.replaced }));
   const cnt = (s, w) => (s.match(new RegExp(w, 'g')) || []).length;
   const optsStr = JSON.stringify(D.items.map(x => x.opts)); const detStr = JSON.stringify(D.detailImages);
   console.log(`③ 잔재: opts 「13~23과」 ${cnt(optsStr, '13~23과')} · opts 「대과 7~15과」 ${cnt(optsStr, '[^중]대과 7~15과')} · 상세 「23과」 ${cnt(detStr, '23과')} · 상세 「중대과」 ${cnt(detStr, '중대과')}`);

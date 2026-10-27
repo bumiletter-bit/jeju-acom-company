@@ -156,5 +156,12 @@
    "to": "https://shop-phinf.pstatic.net/20261025_219/17929145507681xpGk_JPEG/11216841945550674_1196600732.jpg",
    "why": "#844 체험 구매전확인 = 자사몰판"
   }
+ ],
+ "replace": [
+  {
+   "from": "https://shop-phinf.pstatic.net/20261027_214/17930816900057jREb_PNG/47690506981175337_1844039894.png",
+   "why": "#891 네이버 상세 끝 「네이버 톡톡으로 문의하기」 버튼 그림 → 자사몰은 카카오 채널 버튼(대표 10/27 · 채널별 연락처)",
+   "html": "<p style=\"text-align:center;margin:10px 0 14px\"><a href=\"https://pf.kakao.com/_lbJLs/chat\" target=\"_blank\" rel=\"noopener\" data-btn802=\"1\" style=\"display:inline-block;background:#FEE500;color:#191600;font-weight:800;text-decoration:none;border-radius:14px;font-size:16px;padding:14px 30px\">💬 카카오톡 채널로 문의하기 ›</a></p>"
+  }
  ]
 }
