@@ -1,3 +1,9 @@
+## v5.9.662 (2026-10-28) — #903 메모함 「비운 것(30일)」 최근 비운 줄 위 · 찾기(대표 폰)
+
+- 메모함(ao-ordermemo.js · 2b · 서버 무접촉): 비운 것 탭 = cleared_at 내림차순(같으면 줄 번호 큰 것 먼저) · 찾기 칸(이름·번호 끝자리·주소·품목 · 띄어쓰기 무시 · 비운 줄 있을 때만 · Esc = 글만 비움 · 메모함 닫으면 비움) · 「지금 메모」 탭·현금 줄 표·되살리기 무변경.
+- #904 메모함 총 점검(aa · 읽기만) = 막을 것 0 · 10/28 흐름 이상 0 · DB 144KB+64KB+696KB(30일 영구 삭제) · 조심할 변수 5(6시간 정리 타이머 재시작 · 지난 날짜 줄 띠 · 한 번호 두 손님 · 다른 컴퓨터 자동 송장 · 서비스 끔) → 1·2 는 대표 「고」 대기.
+- 검증 t895 191/191(새 H 16) · verify-874 49 · node --check · 읽기 점검(aa) 막을 것 0. 캐시 ao-ordermemo 28.
+
 ## v5.9.661 (2026-10-27) — #900 1단계 입력삭제 박스 차이 카드(일반발송·서비스) · 짝 줄 체크 · 자동 송장 같은 구매자 여러 건 · 자사몰 개인결제창(대표)
 
 - 서버(order-memo.js · 69): order_memo_rows.service(ensure ADD COLUMN IF NOT EXISTS · 기본 false) · 서비스 = 주소 줄 A칸을 현금 「!」 꼴로(끄면 되돌림) · 저장 rows[].service/no_indiv(markIndiv 건너뜀) · PUT body.service · 새 POST /api/order-memo/service{ids,on}(60줄 · 세무사 403 · audit) · for-ship cash_service · pair·pair-hint 후보에서 서비스 뺌.
