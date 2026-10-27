@@ -338,7 +338,8 @@
         const lines = Array.isArray(r.lines) ? r.lines : [];
         OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || ''), checked: x.checked || null })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
         const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
-        OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null })) : [];
+        const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
+        OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
         OMF.ids = Array.isArray(r.ids) ? r.ids.slice() : [];
         const held = Array.isArray(r.held) ? r.held.length : 0, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
         if (!OMF.lines.length && !OMF.cash.length) { OMF.ids = []; omBand(held ? `발주 메모함: 확인 안 된 ${held}줄은 안 넣었어요 <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
@@ -395,6 +396,62 @@
             if (b.closest('#fo-om-band')) omBand(`<b>발주 메모함:</b> ${done} · 비운 줄은 30일 동안 메모함 「비운 것」에서 되살릴 수 있어요`);
             OMF.ids = []; OMF.cleared = true;
         }
+    });
+    // #900 1-A~E 입력삭제 박스 확인 카드 — 고른 것(일반발송 주문 열쇠 · 서비스 줄 id) · 품목별 남은 차이 · [적용] · [바꾸기](놓친 짝)
+    // 박스 확인 카드 id = 박스 합이 다르면 cbox:번호:주문:입력 · 합이 같고 품목만 다르면 끝에 :i주문/입력(품목별) — table = [{o, c}]
+    const cbxId = (d, oq, cq, table) => oq === cq && table && table.some(t => t.o !== t.c) ? `cbox:${d}:${oq}:${cq}:i${table.filter(t => t.o !== t.c).map(t => t.o + '/' + t.c).join(',')}` : `cbox:${d}:${oq}:${cq}`;
+    const cbxSel = id => { st.cbxSel = st.cbxSel || new Map(); if (!st.cbxSel.has(id)) st.cbxSel.set(id, { ord: new Set(), svc: new Set() }); return st.cbxSel.get(id); };
+    // 그 번호(K·B)의 짝 안 된 메모함 현금(「!」) 줄 · 서비스 줄 뺌(엑셀 줄은 서버에서 못 바꿔 뺌)
+    function cbxPairCand(d) { return (st.cash && st.cash.ok ? cashLive() : []).filter(r => r.om && r.omId != null && r.bang && !r.service && d && (digitsOf(r.cells[10]) === d || digitsOf(r.cells[1]) === d)); }
+    function cbxCalc(cd) {
+        const b = cd.box, sel = cbxSel(cd.id), oSel = b.orders.filter(o => sel.ord.has(o.key)), rSel = b.rows.filter(r => r.id != null && sel.svc.has(String(r.id)));
+        if (!b.table) { const o = b.oq - oSel.reduce((n, x) => n + x.qty, 0), c = b.cq - rSel.reduce((n, x) => n + x.qty, 0); return { rows: null, ok: o === c, left: o === c ? '' : `아직 ${Math.abs(o - c)}박스 차이(주문 ${o} / 입력 ${c})`, oSel, rSel }; }
+        const rows = b.table.map(t => { const o = t.o - oSel.filter(x => x.it === t.it).reduce((n, x) => n + x.qty, 0), c = t.c - rSel.filter(x => x.it === t.it).reduce((n, x) => n + x.qty, 0); return Object.assign({}, t, { o2: o, c2: c }); });
+        const bad = rows.filter(r => r.o2 !== r.c2);
+        return { rows, ok: !bad.length, left: bad.map(r => `${r.lab} ${Math.abs(r.o2 - r.c2)}박스`).join(' · '), oSel, rSel };
+    }
+    function cbxPairHtml(cd) {
+        const p = cd.pair || []; if (!p.length) return '';
+        return `<div class="fo-line" data-cbx-pairbox="1"><span>놓친 짝</span><p>이 번호 현금 줄(「!」) ${p.length}줄이 메모함에 따로 있어요: ${p.slice(0, 6).map(r => esc(`${r.cells[3] || ''} ${String(r.opt || '').split(':').pop().trim()} ${r.qty}박스`)).join(' · ')}${p.length > 6 ? ' …' : ''} — 입력삭제 주소 줄을 놓친 것이면 <button type="button" class="fo-btn sm" data-cbx-pair="${esc(cd.id)}">이 줄들을 입력삭제 주소 줄로</button></p></div>`;
+    }
+    function cbxHtml(cd) {
+        const b = cd.box, sel = cbxSel(cd.id), k = cbxCalc(cd);
+        const tbl = k.rows ? `<table class="fo-cbx-t" style="border-collapse:collapse;margin:4px 0;font-variant-numeric:tabular-nums"><thead><tr><th style="text-align:left;padding:2px 10px 2px 0">품목</th><th style="padding:2px 8px">주문</th><th style="padding:2px 8px">입력</th><th style="padding:2px 8px">차이</th></tr></thead><tbody>${k.rows.map(r => `<tr data-cbx-it="${esc(r.it)}"><td style="padding:2px 10px 2px 0">${esc(r.lab)}</td><td style="text-align:right;padding:2px 8px">${r.o2}</td><td style="text-align:right;padding:2px 8px">${r.c2}</td><td style="text-align:right;padding:2px 8px;font-weight:${r.o2 !== r.c2 ? 700 : 400}">${r.o2 - r.c2 > 0 ? '−' + (r.o2 - r.c2) : r.o2 - r.c2 < 0 ? '+' + (r.c2 - r.o2) : '0'}</td></tr>`).join('')}</tbody></table>` : '';
+        const ord = b.orders.map(o => `<label class="fo-check" style="display:flex;gap:6px;align-items:center;min-height:44px"><input type="checkbox" data-cbx-ord="${esc(o.key)}" data-cbx-id="${esc(cd.id)}"${sel.ord.has(o.key) ? ' checked' : ''}${o.block ? ' disabled' : ''}> 일반발송 · ${esc(o.lab)}${o.block ? ` <small>(${esc(o.block)})</small>` : ''}</label>`).join('');
+        const rws = b.rows.map(r => r.id != null ? `<label class="fo-check" style="display:flex;gap:6px;align-items:center;min-height:44px"><input type="checkbox" data-cbx-svc="${esc(String(r.id))}" data-cbx-id="${esc(cd.id)}"${sel.svc.has(String(r.id)) ? ' checked' : ''}> 서비스 · ${esc(r.lab)}</label>` : `<p class="fo-hint">${esc(r.lab)} · 현금파일 엑셀 줄(서비스는 엑셀에서 「!」로)</p>`).join('');
+        return `<div class="fo-cbx" data-cbx="${esc(cd.id)}">${tbl}<div class="fo-line"><span>입력삭제 주문</span><div>${ord || '(없음)'}</div></div><div class="fo-line"><span>주소 줄</span><div>${rws || '(없음)'}</div></div>${cbxPairHtml(cd)}<p class="fo-hint" data-cbx-left="1">${k.ok ? (k.oSel.length || k.rSel.length ? '차이 0 — [적용]을 누르세요' : '') : esc('아직 ' + k.left + ' 차이')}</p><button type="button" class="fo-btn sm primary" data-cbx-apply="${esc(cd.id)}"${k.ok && (k.oSel.length || k.rSel.length) ? '' : ' disabled'}>적용</button><button type="button" class="fo-btn sm" data-choice="ok" data-fo-act="ok" data-id="${esc(cd.id)}">확인함 — 이대로</button></div>`;
+    }
+    document.addEventListener('change', e => {
+        const el = e.target.closest && e.target.closest('#fo-cards input[data-cbx-ord], #fo-cards input[data-cbx-svc]'); if (!el) return;
+        const id = el.dataset.cbxId, cd = (st.cards || []).find(c => c.id === id); if (!cd || !cd.box) return;
+        const sel = cbxSel(id), set = el.dataset.cbxOrd != null ? sel.ord : sel.svc, k = el.dataset.cbxOrd != null ? el.dataset.cbxOrd : el.dataset.cbxSvc;
+        if (el.checked) set.add(k); else set.delete(k);
+        const box = el.closest('.fo-cbx'), attr = el.dataset.cbxOrd != null ? 'data-cbx-ord' : 'data-cbx-svc';
+        if (box) { box.outerHTML = cbxHtml(cd); const again = document.querySelector(`#fo-cards .fo-cbx[data-cbx="${CSS.escape(id)}"] input[${attr}="${CSS.escape(k)}"]`); if (again) again.focus(); }
+    });
+    document.addEventListener('click', async e => {
+        const b = e.target.closest && e.target.closest('#fo-cards [data-cbx-apply], #fo-cards [data-cbx-pair]'); if (!b) return;
+        const id = b.dataset.cbxApply || b.dataset.cbxPair, cd = (st.cards || []).find(c => c.id === id); if (!cd) return;
+        if (st.busy || (st.ai && st.ai.running) || OMF.busy) { toast('판정·읽기가 끝난 뒤 눌러 주세요', 2500); return; }
+        if (b.dataset.cbxPair) {   // 1-E 놓친 짝 = 서버 /pair(60줄씩) → 메모함 다시 넣고 판정
+            const d = cd.box ? cd.box.digits : cd.id.split(':')[1], ids = (cd.pair || []).map(r => r.omId); if (!ids.length) return;
+            b.disabled = true; let n = 0;
+            try { for (let i = 0; i < ids.length; i += 60) { const r = await window.api('/api/order-memo/pair', 'POST', { key: d, ids: ids.slice(i, i + 60) }); n += Number(r && r.n) || 0; } }
+            catch (er) { b.disabled = false; toast((er && er.message) || '바꾸지 못했어요 · 메모함에서 해 주세요', 3500); return; }
+            toast(`${n}줄을 입력삭제 주소 줄로 바꿨어요 · 메모함을 다시 넣어 판정해요`, 3000);
+            await omApply(); return;
+        }
+        const k = cbxCalc(cd); if (!k.ok || !(k.oSel.length || k.rSel.length)) return;
+        const keys = k.oSel.map(o => o.key), svc = k.rSel.map(r => r.id);
+        if (!svc.length) { st.cbxSel.delete(id); decide(id, 'norm:' + keys.join(',')); return; }
+        b.disabled = true; let n = 0, q = 0;
+        try { for (let i = 0; i < svc.length; i += 60) { const r = await window.api('/api/order-memo/service', 'POST', { ids: svc.slice(i, i + 60), on: true }); n += Number(r && r.n) || 0; } q = k.rSel.reduce((a, x) => a + x.qty, 0); }
+        catch (er) { b.disabled = false; toast((er && er.message) || '서비스 표시를 못 했어요 · 다시 눌러 주세요', 3500); return; }
+        if (n < svc.length) toast(`서비스 표시 ${n}/${svc.length}줄만 됐어요 — 카드를 다시 확인해 주세요`, 4000);
+        // 서비스 줄이 빠지면 입력 박스가 줄어 카드 id 가 바뀜 → 일반발송 고른 주문은 바뀐 id 로 미리 적어 둠(판정 뒤 그 카드에 붙음)
+        if (keys.length) st.dec.set(cbxId(cd.box.digits, cd.box.oq, cd.box.cq - q, k.rows && k.rows.map(r => ({ o: r.o, c: r.c2 }))), 'norm:' + keys.join(','));   // 일반발송 주문은 판정 때도 입력삭제로 셈(chkO) = 주문 수 그대로 · 입력만 서비스만큼 줄어듦
+        st.cbxSel.delete(id);
+        await omApply();
     });
     // #859 [메모함 비우기] 두 번 누르기 — 첫 누름 = 글이 「…한 번 더 누르세요」로 바뀌고 주황 · 3초 안 다시 = 실행 · 3초 지나거나 다른 데 누르면 되돌아감
     function omArm(b) {
@@ -1063,24 +1120,37 @@
         const chkO = s.merged.some(e => e._indivOff) ? c.cashCheck({ orders: s.merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), qty: qtyOf(e), individual: !!(e.individual || e._indivOff), excluded: !!e.excluded, buyer: buyerName(e) })), cash: cashLive() }) : chk;
         const bdList = chk.boxDiff.slice(); chkO.boxDiff.forEach(m => { const id = `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, v = st.dec.get(id); if (typeof v === 'string' && v.startsWith('norm:') && !bdList.some(x => x.digits === m.digits)) bdList.push(m); });
         const normAddr = t => String(t || '').replace(/\s+/g, '').replace(/[,()]/g, '');
-        const boxNorm = m => {   // { key, e } | { block } | null
-            if (!(m.cashQty < m.orderQty)) return null;
-            const need = m.orderQty - m.cashQty, es = s.merged.filter(e => (e.individual || e._indivOff) && !e.excluded && buyerTel(e) === m.digits && qtyOf(e) === need);
-            if (es.length !== 1) return null;
-            const e = es[0], ad = normAddr(addrOf(e)), dup = (cashLive()).filter(r => r.bang && normAddr(r.addr) === ad);
-            // #894 F1 그 구매자 현금(「!」) 줄(구매자 번호·보내는사람 번호가 그 번호 · 또는 보내는 분 이름이 구매자 이름) = 짝 안 된 입력삭제 주소 줄일 수 있음 → 단추 대신 안내(이중 발송 막기)
-            const bn = String(buyerName(e) || '').replace(/\s+/g, ''), nmA = a => String(a || '').replace(/[!！]/g, '').replace(/\(제주아꼼이네\)/g, '').replace(/\s*(?:드림|올림)\s*$/, '').replace(/\s+/g, '');
-            const mineC = (cashLive()).filter(r => r.bang && normAddr(r.addr) !== ad && (digitsOf(r.cells[10]) === m.digits || digitsOf(r.cells[1]) === m.digits || (bn.length >= 2 && nmA(r.cells[0]) === bn)));
-            if (!dup.length && mineC.length) return { e, block: `이 구매자(${buyerName(e)})의 현금 줄(「!」) ${mineC.length}줄 ${mineC.reduce((n, r) => n + (Number(r.qty) || 0), 0)}박스가 따로 있어요 — 입력삭제 주문의 주소 줄인데 짝이 안 된 것일 수 있어요. 메모함에서 입력삭제 주소 줄로 짝지은 뒤 [메모함 적용하기]·[다시 판정]을 눌러 주세요(정말 따로 보내는 현금 손님이면 [확인함 — 이대로]).` };
-            return dup.length ? { e, block: `현금 줄(「!」) ${dup.length}줄이 이 주문과 같은 주소(${addrOf(e).slice(0, 30)})로 이미 나가요 — 일반 발송으로 바꾸면 그 집으로 ${dup.length + need}박스가 가요. 현금 줄을 지우고 [다시 판정]하면 단추가 생겨요(지금은 [확인함 — 이대로]로 현금 줄이 그 박스를 보내요).` } : { e, key: keyOf(e) };
-        };
-        bdList.forEach(m => { const nb = boxNorm(m), e = nb && nb.e, lab = e ? `이 주문(${core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog).split(':').pop().trim()} ${qtyOf(e)}박스 · ${String(addrOf(e)).split(/\s+/).slice(0, 3).join(' ')})은 일반 발송으로` : '';
-            if (nb && nb.key && st.dec.get(`cbox:${m.digits}:${m.orderQty}:${m.cashQty}`) === 'norm:' + nb.key) info.push({ t: `입력삭제에서 뺌(일반 발송): ${orderLine(e)} — 박스 수 카드에서 고름 · 택배사 양식에 주문 주소로`, keys: [nb.key] });
-            cards.push({ id: `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, type: 'cash', tag: '박스 수', title: `${m.buyer} · 주문 ${m.orderQty}박스 / 현금파일 ${m.cashQty}박스`, lines: [...(nb && nb.block ? [['주의', nb.block]] : nb ? [['따로 주문', `${orderLine(e)} — 남는 ${qtyOf(e)}박스와 수량이 딱 맞는 주문이에요. 손님이 따로 주문한 것이면 「일반 발송으로」(이 주문만 입력삭제에서 빼서 택배사 양식에 주문 그대로)`]] : []), ['이유', m.cashQty > m.orderQty ? '현금파일이 주문보다 많아요(서비스·추가 발송일 수 있어요).' : '현금파일이 주문보다 적어요. 빠진 박스가 없는지 확인해 주세요.'], ...(m.cashQty < m.orderQty ? [['확인함', '확인함 = 남는 주문은 오늘 안 나가요 · 새로 추가된 주문이면 「일반 발송으로」']] : [])], choices: [...(nb && nb.key ? [['norm:' + nb.key, lab, 0]] : []), ['ok', '확인함 — 이대로', 1]] }); });
-        // #894 F3 박스 합은 맞는데 품목별 박스가 다름(예 타이벡 11 · 황금향 3 ↔ 주문 10 · 4) = 확인 카드
-        (chk.itemDiff || []).forEach(m => cards.push({ id: `citem:${m.digits}:${m.rows.map(r => r.orderQty + '/' + r.cashQty).join(',')}`, type: 'cash', tag: '품목', title: `${m.buyer} · 품목별 박스 수가 달라요(합은 같음)`,
-            lines: m.rows.map(r => [core().stripTail(r.opt, inCatalog).split(':').pop().trim() || r.opt, `주문 ${r.orderQty}박스 / 현금파일 ${r.cashQty}박스`]).concat([['처리', '입력삭제 주문의 품목과 현금파일(메모함) 주소 줄의 품목이 달라요. 주소 줄 품목을 고치고 [다시 판정]을 눌러 주세요 · 맞게 보내는 것이면 [확인함 — 이대로]']]),
-            choices: [['ok', '확인함 — 이대로', 1]] }));
+        // #900 1-A~E·G(대표 10/27) 입력삭제 박스 확인 = 구매자마다 카드 하나 · 품목별 표(주문/입력/차이) + 입력삭제 주문(「일반발송」 체크) + 주소 줄(「서비스」 체크) + 놓친 짝([바꾸기])
+        //   차이 0 이 되면 [적용] · [확인함 — 이대로] 그대로 · id = cbox:번호:주문:입력(합 같고 품목만 다르면 끝에 :i품목별) · 1-G 자사몰 개인결제창 꼴은 카드 대신 안내 한 줄
+        const ik = o => String(o == null ? '' : o).replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
+        const short3 = t => String(t || '').split(/\s+/).slice(0, 3).join(' ');
+        const optLab = o => core().stripTail(String(o || ''), inCatalog).split(':').pop().trim() || String(o || '');
+        const cbxD = new Map(); bdList.forEach(m => cbxD.set(m.digits, { m, sum: false })); (chk.itemDiff || []).forEach(m => { if (!cbxD.has(m.digits)) cbxD.set(m.digits, { m, sum: true }); });
+        cbxD.forEach(({ m, sum }, d) => {
+            const es = s.merged.filter(e => (e.individual || e._indivOff) && !e.excluded && buyerTel(e) === d);
+            const crow = cashLive().filter(r => !r.bang && !r.service && r.digits === d);
+            const buyer = m.buyer || (es[0] ? buyerName(es[0]) : '');
+            if (es.length && es.every(e => e.ch === 'cafe24' && qtyOf(e) === 1 && !inCatalog(core().stripTail(String(optOf(e) || ''), inCatalog)))) { info.push(`${buyer}: 개인결제창입니다! · 주소 줄 ${crow.length}줄`); return; }   // 1-G
+            const oq = es.reduce((n, e) => n + qtyOf(e), 0), cq = crow.reduce((n, r) => n + (Number(r.qty) || 0), 0);
+            let table = null;
+            if (es.every(e => ik(optOf(e))) && crow.every(r => ik(r.opt))) { const w = new Map(), h = new Map(); es.forEach(e => { const k = ik(optOf(e)); w.set(k, (w.get(k) || 0) + qtyOf(e)); }); crow.forEach(r => { const k = ik(r.opt); h.set(k, (h.get(k) || 0) + (Number(r.qty) || 0)); }); table = [...new Set([...w.keys(), ...h.keys()])].map(k => ({ it: k, lab: optLab(k), o: w.get(k) || 0, c: h.get(k) || 0 })); }
+            const bn = String(buyer || '').replace(/\s+/g, ''), nmA = a => String(a || '').replace(/[!！]/g, '').replace(/\(제주아꼼이네\)/g, '').replace(/\s*(?:드림|올림)\s*$/, '').replace(/\s+/g, '');
+            const pair = cbxPairCand(d), mineC = cashLive().filter(r => r.bang && !r.service && (digitsOf(r.cells[10]) === d || digitsOf(r.cells[1]) === d || (bn.length >= 2 && nmA(r.cells[0]) === bn)));
+            const orders = es.map(e => { const ad = normAddr(addrOf(e)), dup = cashLive().filter(r => r.bang && !r.service && normAddr(r.addr) === ad).length;
+                return { key: keyOf(e), qty: qtyOf(e), it: ik(optOf(e)), lab: `${CH_LABEL[e.ch]} ${(idsOf(e)[0] || '').slice(-6)} · ${optLab(optOf(e))} ${qtyOf(e)}박스 · ${short3(addrOf(e))}`, block: dup ? `같은 주소 현금 줄(「!」) ${dup}줄이 이미 나가요 — 일반발송이면 그 집에 또 가요` : (mineC.length ? '이 구매자 현금 줄(「!」)이 따로 있어요 — 짝 안 된 주소 줄이면 아래 [바꾸기]' : null) }; });
+            const rows = crow.map(r => ({ id: r.om && r.omId != null ? r.omId : null, qty: Number(r.qty) || 0, it: ik(r.opt), lab: `${r.cells[3] || ''} · ${optLab(r.opt)} ${r.qty}박스 · ${short3(r.addr)}` }));
+            const id = cbxId(d, oq, cq, table);
+            const v = st.dec.get(id), normKeys = typeof v === 'string' && v.startsWith('norm:') ? v.slice(5).split(',').filter(Boolean) : [];
+            es.filter(e => normKeys.includes(keyOf(e))).forEach(e => info.push({ t: `입력삭제에서 뺌(일반발송): ${orderLine(e)} — 박스 확인 카드에서 고름 · 택배사 양식에 주문 주소로`, keys: [keyOf(e)] }));
+            const shortN = table ? table.reduce((n, t) => n + Math.max(0, t.o - t.c), 0) : Math.max(0, oq - cq);
+            cards.push({ id, type: 'cashbox', tag: '박스 수', title: `${buyer} · 입력삭제 확인 필요 · 주문 ${oq}박스 / 입력 ${cq}박스`,
+                lines: [['이유', sum ? '박스 합은 같은데 품목별 박스가 달라요.' : oq > cq ? '입력(주소 줄)이 주문보다 적어요. 빠진 박스가 없는지, 새로 추가된 주문은 아닌지 확인해 주세요.' : '입력(주소 줄)이 주문보다 많아요(서비스·추가 발송일 수 있어요).'],
+                    ['처리', '모자라면 주문을 「일반발송」(스토어 주소로) · 남으면 주소 줄을 「서비스」(주문과 별개 현금건 · 운송장 등록 안 함) · 품목별 차이가 0 이 되면 [적용]'],
+                    ...(shortN ? [['확인함', `확인함 = 모자란 ${shortN}박스는 오늘 안 나가요 · 새로 추가된 주문이면 「일반발송」`]] : [])],
+                box: { digits: d, buyer, oq, cq, table, orders, rows, pair, normKeys }, pair, choices: [['ok', '확인함 — 이대로', 1]] });
+        });
+        // #900 1-E 입력삭제인데 주소 줄 0(cmiss) = 그 번호 짝 안 된 현금 줄을 바로 [바꾸기]
+        cards.forEach(cd => { if (/^cmiss:/.test(cd.id)) { const p = cbxPairCand(cd.id.split(':')[1]); if (p.length) cd.pair = p; } });
         (chk.strangers || []).forEach(x => info.push(`현금파일에만 있는 구매자(재발송 등): 엑셀 ${[].concat(x.rows).join(', ')}행`));
         (chk.unchecked || []).forEach(x => info.push(`번호가 가려진 입력삭제 주문(선물하기 등)은 현금파일과 대조하지 못했어요: ${x.buyer || ''} ${x.qty || ''}박스`));
         // ⑥ 거래처를 못 정한 품목
@@ -1136,7 +1206,7 @@
     function applyOrderDecisions() {   // 카드 결정 → v2 상태(제외 체크). 판정(saveLines) 뒤마다 다시 건다
         const byKey = new Map(S().merged.map(e => [keyOf(e), e]));
         // #886(대표 10/27 김병우) 박스 수 카드 「이 주문은 일반 발송으로」 = 그 주문만 입력삭제에서 빼서 일반 주문처럼(택배사 양식에 주문 그대로) · [바꾸기]로 결정을 지우면 원래대로
-        { const off = new Set(); st.dec.forEach((v, id) => { if (/^cbox:/.test(id) && typeof v === 'string' && v.startsWith('norm:') && (st.cards || []).some(cd => cd.id === id)) off.add(v.slice(5)); });   // 지금 떠 있는 박스 수 카드의 결정만(박스 수가 바뀌어 카드가 달라지면 원래대로)
+        { const off = new Set(); st.dec.forEach((v, id) => { if (/^cbox:/.test(id) && typeof v === 'string' && v.startsWith('norm:') && (st.cards || []).some(cd => cd.id === id)) v.slice(5).split(',').forEach(k => { if (k) off.add(k); }); });   // #900 1-B 여러 주문   // 지금 떠 있는 박스 수 카드의 결정만(박스 수가 바뀌어 카드가 달라지면 원래대로)
           byKey.forEach((e, k) => { if (off.has(k)) { e.indivOff = true; if (e.individual) { e._indivOff = true; e.individual = false; e.reqKind = null; e.req = null; e.flag = e.memoFlag; } }
               else if (e.indivOff) { e.indivOff = false; if (e._indivOff) { e._indivOff = false; e.individual = true; e.reqKind = 'indiv'; e.flag = null; e.excluded = false; } } }); }   // e.indivOff = v2 applyLines 가 보는 표시(파일 만들 때 v2 가 다시 판정해도 유지)
         // #583-f 「메모 확인」 카드의 [제외] — 카드가 사라졌거나 결정이 바뀌면 원래대로(오늘 발송)
@@ -1675,6 +1745,10 @@
             const tz = (() => { const p = cd.fix && cd.fix.length ? st.patch.get(cd.fix[0]) : null; return p && p.tailBy === 'card' && p.tail ? p.tail : ''; })();   // #608: 직접 고치기에서 꼬리를 정해 끝낸 카드
             acts = done ? `<span class="fo-done">${v === 'skip' ? (bz ? '박스별 꼬리 ' + esc(boxText(bz)) : tz ? esc(tz) + ' · 직접 고침' : '넘어감') : `${esc(v)}사이즈로! · 귤 로얄과 ${cd.okN}건`}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
                 : (cd.sizes.length ? `<div class="fo-sizes" role="group" aria-label="사이즈 고르기">${cd.sizes.map(z => `<button type="button" class="fo-btn fo-size" data-size="${z}" data-fo-act="size-${z}" data-id="${esc(cd.id)}">${z}</button>`).join('')}</div>` : '') + boxBtn + `<button type="button" class="fo-btn sm" data-choice="skip" data-fo-act="skip" data-id="${esc(cd.id)}">넘어감</button>`;
+        } else if (cd.type === 'cashbox' && done && typeof v === 'string' && v.startsWith('norm:')) {   // #900 1-B
+            acts = `<span class="fo-done">일반발송 ${v.slice(5).split(',').filter(Boolean).length}건(스토어 주소로)</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`;
+        } else if (cd.type === 'cashbox' && !done) {
+            acts = cbxHtml(cd);
         } else if (done) {
             const om = cd.type === 'order' && v === 'send' && st.ordMemo && st.ordMemo.has(cd.id) ? ` · 배송메세지 「${st.ordMemo.get(cd.id) || '기본 문구'}」` : '';
             const lab = ((cd.choices.find(c => c[0] === v) || [])[1] || '확인함') + om + (st.ai.tag.has(cd.id) ? ' · AI: ' + st.ai.tag.get(cd.id) : '');
@@ -1684,7 +1758,7 @@
             // #548: 주문 확인 카드에서도 택배사 양식에 들어갈 배송메세지를 고쳐 넣을 수 있다([오늘 발송]을 누를 때만 반영 · 원문과 같으면 종전대로)
             const od = cd.type === 'order' ? st.draft.get(cd.id) : null;
             const ordBox = cd.type === 'order' ? `<div class="fo-edit"><label class="wide">택배사 양식에 들어갈 배송메세지(오늘 발송일 때만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(od && od.memo != null ? od.memo : cd.memoPre || '')}</textarea></label></div>` : '';
-            acts = ordBox + cd.choices.map(([val, lab, pri]) => `<button type="button" class="fo-btn sm${pri ? ' primary' : ''}" data-choice="${esc(val)}" data-fo-act="${esc(val)}" data-id="${esc(cd.id)}">${esc(lab)}</button>`).join('') || '<span class="fo-wait">고친 뒤 [다시 판정]을 눌러야 넘어가요</span>';
+            acts = (cd.pair && cd.pair.length ? cbxPairHtml(cd) : '') + ordBox + cd.choices.map(([val, lab, pri]) => `<button type="button" class="fo-btn sm${pri ? ' primary' : ''}" data-choice="${esc(val)}" data-fo-act="${esc(val)}" data-id="${esc(cd.id)}">${esc(lab)}</button>`).join('') || '<span class="fo-wait">고친 뒤 [다시 판정]을 눌러야 넘어가요</span>';
         }
         acts = acts.replace(/(<span class="fo-done">)([^<]*)(<\/span>)/g, (m0, a, t, c) => a + doneMark(t) + c);   // #604 끝난 카드의 결과 글
         return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''}${cd.recheck ? ' data-recheck="1"' : ''}${aiDone ? ' data-ai-done="1"' : ''} data-type="${cd.type}" data-state="${done || cd.type === 'fix' ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.recheck ? 'recheck' : cd.type}">${esc(cd.tag)}</span>${memoCard(cd) ? SRC_BADGE : ''}${aiDone ? '<span class="fo-aibadge" data-ai-badge>AI가 처리</span>' : ''}<b>${cd.type === 'line' || cd.type === 'sizeup' ? `<mark class="fo-hl">${esc(cd.title)}</mark>` : esc(cd.title)}</b></div>${done && !aiDone && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' && cd.type !== 'fix' ? (sn ? `<div class="fo-card-body">${sn}</div>` : '') : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div>${showFix ? fixHtml(cd) : ''}</article>`;
@@ -2801,6 +2875,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         L.push(`제주도 배송: ${jejuText()}`);
         if (settleText()) L.push(`스토어 정산예정(네이버): ${settleText()}`);
         L.push(`현금파일 ${st.cash && st.cash.ok ? cashLive().length : 0}행 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건`);
+        { const sv = (st.cash && st.cash.ok ? cashLive() : []).filter(r => r.service), by = new Map(); sv.forEach(r => { const k = core().stripTail(String(r.opt || ''), inCatalog).split(':').pop().trim(); by.set(k, (by.get(k) || 0) + (Number(r.qty) || 0)); });   // #900 서비스·일반발송
+          if (sv.length) L.push(`서비스 ${sv.reduce((n, r) => n + (Number(r.qty) || 0), 0)}박스(${[...by].map(([k, n]) => k + ' ' + n).join(' · ')})`);
+          const nk = m.filter(e => e.indivOff).length; if (nk) L.push(`일반발송 ${nk}건(입력삭제에서 뺌 · 스토어 주소로)`); }
         const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 통째로 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
         kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) sp.push(`· ${k} ${xs.length}건: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); });
         const szN = m.filter(e => goingOut(e) && st.sizeTail && st.sizeTail.has(keyOf(e))).length; if (szN) sp.push(`· 메모 줄로 사이즈 지정 ${szN}건`);

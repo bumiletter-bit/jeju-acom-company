@@ -700,10 +700,13 @@
     // 주문 ↔ 현금파일(「!」 없는 행 = 입력삭제 건의 주소 줄) 대조. 구매자 = K칸 숫자 전체 · 자리표시·8자리 미만은 대조에서 뺀다.
     // #894 품목 열쇠 = 옵션 글자에서 끝 요청 꼬리(「 S사이즈로!」 「 13과로!」) 뗀 것 · 빈 글 = 모름
     const itemKey = o => String(o == null ? '' : o).replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
+    // #900 1-A 품목별 표 [{opt, orderQty, cashQty}](차이 0 줄 포함 · 주문 품목 먼저) · 품목을 모르는 줄이 있으면 null
+    const itemTable = (indiv, cash) => { if (!cash || cash.itemsUnknown || indiv.some(x => !itemKey(x.opt))) return null; const want = new Map(); indiv.forEach(x => { const k = itemKey(x.opt); want.set(k, (want.get(k) || 0) + (Number(x.qty) || 0)); }); return [...new Set([...want.keys(), ...cash.items.keys()])].map(k => ({ opt: k, orderQty: want.get(k) || 0, cashQty: cash.items.get(k) || 0 })); };
     function cashCheck(arg) {
         const orders = (arg && arg.orders) || []; const cashRows = (arg && arg.cash && (Array.isArray(arg.cash) ? arg.cash : arg.cash.rows)) || [];
         const cashBy = new Map(), strangersBad = [];
-        cashRows.filter(r => !r.bang).forEach(r => { if (!validDigits(r.digits)) { strangersBad.push(r); return; } const g = cashBy.get(r.digits) || cashBy.set(r.digits, { rows: [], qty: 0, items: new Map() }).get(r.digits); g.rows.push(r.no); g.qty += r.qty; const it = itemKey(r.opt); if (it) g.items.set(it, (g.items.get(it) || 0) + r.qty); else g.itemsUnknown = true; });
+        cashRows.filter(r => !r.bang && !r.service).forEach(r => {   // #900 서비스 줄 = 대조 밖
+            if (!validDigits(r.digits)) { strangersBad.push(r); return; } const g = cashBy.get(r.digits) || cashBy.set(r.digits, { rows: [], qty: 0, items: new Map() }).get(r.digits); g.rows.push(r.no); g.qty += r.qty; const it = itemKey(r.opt); if (it) g.items.set(it, (g.items.get(it) || 0) + r.qty); else g.itemsUnknown = true; });
         const byBuyer = new Map(), unchecked = [];
         orders.forEach(od => { if (!validDigits(od.digits || '')) { if (od.individual) unchecked.push({ key: od.key, buyer: od.buyer || '', qty: Number(od.qty) || 0 }); return; } const g = byBuyer.get(od.digits) || byBuyer.set(od.digits, { buyer: od.buyer || '', list: [] }).get(od.digits); g.list.push(od); });
         const missing = [], notIndiv = [], boxDiff = [], strangers = [], mixed = [];
@@ -716,7 +719,7 @@
             // 개별발송이 하나도 없는데 현금파일에 줄이 있음 = 이중 발송 위험. allExcluded = 그 구매자의 주문이 전부 뒤 날짜로 빠진 경우(오늘은 현금 줄만 나감)
             if (!indiv.length) { notIndiv.push({ digits, buyer: g.buyer, cashRows: cash.rows.slice(), orderKeys: (going.length ? going : g.list).map(x => x.key), allExcluded: !going.length }); return; }
             if (going.length) mixed.push({ digits, buyer: g.buyer, cashRows: cash.rows.slice(), orderKeys: going.map(x => x.key) });   // 개별발송 주문도 있고 시트1 로 나가는 주문도 있는 구매자(안내용)
-            if (sumQty(indiv) !== cash.qty) boxDiff.push({ digits, buyer: g.buyer, orderQty: sumQty(indiv), cashQty: cash.qty });
+            if (sumQty(indiv) !== cash.qty) { const d = { digits, buyer: g.buyer, orderQty: sumQty(indiv), cashQty: cash.qty }; const t = itemTable(indiv, cash); if (t) d.rows = t; boxDiff.push(d); }   // #900 1-A 품목별 표
         });
         cashBy.forEach((g, digits) => { if (!byBuyer.has(digits)) strangers.push({ digits, rows: g.rows.slice() }); });
         if (strangersBad.length) strangers.push({ digits: '', rows: strangersBad.map(r => r.no) });

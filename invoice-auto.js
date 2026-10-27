@@ -110,8 +110,21 @@ function matchShipments({ ships, orders, pricingNames, indivKeys }) {
     const trackless = orders.filter(o => !assign.has(o.channel + ':' + o.order_key) && !todoKeys.has(o.channel + ':' + o.order_key) && validTel(o.kBuyer));
     const tlByBuyer = new Map(); for (const o of trackless) { if (!tlByBuyer.has(o.kBuyer)) tlByBuyer.set(o.kBuyer, []); tlByBuyer.get(o.kBuyer).push(o); }
     const used = new Set();
-    for (const [buyer, os] of tlByBuyer) {
+    for (const [buyer, osAll] of tlByBuyer) {
         const cand = leftover.filter(s => s.senderTel === buyer && !used.has(s.tracking)); if (!cand.length) continue;
+        // #900 1-F·1-G(대표 10/27) 그날 최종발주가 넘긴 입력삭제 주문(IND)만 = 주문마다 1장 · 주문 주소와 같은 줄 먼저(indiv_store_addr) · 나머지는 남은 줄에서 서로 다른 1장(indiv_any) · 할 일 안 냄
+        //   자사몰 입력삭제(개인결제창 꼴) = 품목 안 봄(그 번호 자사몰 1건이면 품목 무시 · 2건 이상이면 품목 맞는 줄 먼저 → 없으면 아무 줄) · 네이버·쿠팡 = 품목 맞는 줄만
+        //   IND 없는 날(옛 화면·빈 localStorage)·IND 밖 주문 = 아래 종전 길 그대로(뒤 날짜 주문과 섞일 수 있어 할 일)
+        const osI = IND.size ? osAll.filter(o => IND.has(o.channel + ':' + o.order_key)) : [], os = osI.length ? osAll.filter(o => !osI.includes(o)) : osAll;
+        if (osI.length) {
+            const c24n = osI.filter(o => o.channel === 'cafe24').length, ord = osI.filter(o => o.channel !== 'cafe24').concat(osI.filter(o => o.channel === 'cafe24'));   // 품목 맞춰야 하는 주문 먼저 · 자사몰(품목 안 봄) 나중
+            const pool = () => cand.filter(s => !used.has(s.tracking));
+            const mineOf = o => { const p = pool(); if (o.channel !== 'cafe24') return p.filter(s => prodHit(o, s)); const p2 = p.filter(s => !os.some(x => prodHit(x, s))); if (c24n === 1) return p2; const h = p2.filter(s => prodHit(o, s)); return h.length ? h : p2; };   // 자사몰 = 다른 주문(목록 밖) 품목 운송장은 안 집음
+            const done = new Set();
+            for (const o of ord) { const same = mineOf(o).filter(s => normAddr(s.addr) === o.kAddr); if (same.length) { used.add(same[0].tracking); give(o, [same[0]], 'indiv_store_addr'); done.add(o); } }
+            for (const o of ord) { if (done.has(o)) continue; const m = mineOf(o); if (m.length) { used.add(m[0].tracking); give(o, [m[0]], 'indiv_any'); }
+                else if (o.channel === 'cafe24' && pool().length) { todos.push({ o, rule: 'todo_pick', options: pool(), suggest: null, suggest_why: null }); todoKeys.add(o.channel + ':' + o.order_key); } }   // 남은 게 다른 주문 품목뿐 = 사람이 고름(종전 꼴)
+        }
         for (const o of os) {
             const mine = cand.filter(s => !used.has(s.tracking) && prodHit(o, s)); if (!mine.length) continue;
             // 그 구매자의 운송장 안 붙은 주문 가운데 같은 품목이 둘 이상이면 어느 주문 것인지 모름(지정발송일 주문과 섞일 수 있음) → 할 일

@@ -391,8 +391,12 @@ async function xlsxOf(lines, withSheet1) {
     ok(/app\.post\('\/api\/agent-office\/invoice-auto\/register', authMiddleware, staffOnly,/.test(ia) && /role !== 'accountant'/.test(ia) && /app\.post\('\/api\/agent-office\/invoice-auto\/match', authMiddleware,/.test(ia), '권한 = match 로그인 · register 직원 전부(세무사 X · #858)');
     ok(!/DEFAULT/.test((ia.match(/CREATE TABLE IF NOT EXISTS invoice_auto_runs[\s\S]*?\)`\);/) || [''])[0].replace(/DEFAULT now\(\)/g, '')), '새 표에 now() 밖 DEFAULT 없음');
     const { execSync } = require('child_process'); let diffFo = '';
-    try { diffFo = execSync('git diff --stat -- public/final-order-core.js public/invoice-v2.js', { cwd: ROOT }).toString().trim(); } catch (e) { diffFo = 'git 실패'; }
-    ok(diffFo === '', '최종발주 판정·산출 파일(final-order-core.js·invoice-v2.js) 무변경(final-order.js 는 워커1 화면 묶음 추가 몫)', diffFo);
+    try { diffFo = execSync('git diff --stat -- public/invoice-v2.js', { cwd: ROOT }).toString().trim(); } catch (e) { diffFo = 'git 실패'; }
+    // #900(대표 10/27 1단계) final-order-core.js 는 cashCheck(현금 대조 · 서비스 줄 제외 · 박스 차이 품목별 표)만 의도적으로 고침 → 그 구간(itemKey ~ cashCheck 끝) 밖은 HEAD 와 글자 같아야
+    let coreOut = ''; try { const cut = t => { t = t.replace(/\r\n/g, '\n'); const i = t.indexOf('    const itemKey = o =>'), j = t.indexOf('return { missing, notIndiv', i); return i < 0 || j < 0 ? '표식 없음' : t.slice(0, i) + t.slice(j); };
+        const head = execSync('git show HEAD:public/final-order-core.js', { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 }).toString(), now = require('fs').readFileSync(path.join(ROOT, 'public', 'final-order-core.js'), 'utf8');
+        coreOut = cut(head) === cut(now) ? '' : 'cashCheck 밖이 바뀜'; } catch (e) { coreOut = 'git 실패'; }
+    ok(diffFo === '' && coreOut === '', '최종발주 산출 파일 invoice-v2.js 무변경 · final-order-core.js 는 cashCheck 구간 밖 무변경(#900 의도된 변경 · final-order.js 는 화면 몫)', diffFo + ' ' + coreOut);
     ok(unknownSql.length === 0, '가짜 pool 이 모르는 SQL 0', unknownSql.join(' | '));
 
     console.log(`\n결과 ${pass}/${pass + fail}` + (fail ? ` — 실패 ${fail}` : ''));

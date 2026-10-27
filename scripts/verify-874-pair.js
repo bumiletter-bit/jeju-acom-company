@@ -186,9 +186,9 @@ function mkPool(db) {
     ok(u.pairHtml(c) === '', '고치기 카드 = 묻기 0');
     c = { mode: 'new', rows: [lineR, cashR(0), cashR(1), cashR(2, true)] };
     const h1 = u.pairHtml(c);
-    ok(/이 현금 줄 2개가 입력삭제 010-2600-0167 주소 줄인가요/.test(h1) && (h1.match(/type="checkbox"/g) || []).length === 2 && !/ checked/.test(h1) && /data-cact="p1go" disabled/.test(h1), '① 같은 카드 = 「이 현금 줄 2개가 입력삭제 … 주소 줄인가요?」 · 줄마다 고르기(기본 안 고름) · 짝짓기 단추 잠김', h1.slice(0, 300));
+    ok(/이 현금 줄 2개가 입력삭제 010-2600-0167 주소 줄인가요/.test(h1) && (h1.match(/data-cact="chk"/g) || []).length === 2 && (h1.match(/ checked/g) || []).length === 3 && /2줄 중 <b>2줄<\/b>/.test(h1) && !/data-cact="p1go" disabled/.test(h1), '① 같은 카드 = 「이 현금 줄 2개가 입력삭제 … 주소 줄인가요?」 · 줄마다 체크(#900 1-H 기본 전부 · 「전부」 칸) · 짝짓기 단추 풀림', h1.slice(0, 300));
     const keep = JSON.stringify(c.rows[2]);
-    c.pair1.sel.add(1); u.pair1Go(c);
+    c.pair1.sel.clear(); c.pair1.sel.add(c.rows[1]); u.pair1Go(c);   // 사람이 2번째 줄 체크를 끔 = 1줄만
     ok(c.rows[1].indiv && c.rows[1].cells[10] === BUY && c.rows[1].cells[0] === '김가우 드림' && JSON.stringify(c.rows[2]) === keep && c.dirty && /1줄을 입력삭제/.test(toasts.pop()), '[주소 줄로 짝짓기] = 고른 줄만 K = 그 번호 · ! 뗌 · 안 고른 줄 그대로', c.rows[1].cells);
     c = { mode: 'new', rows: [lineR, Object.assign({}, lineR, { key: '010-5555-0001', line: '010-5555-0001 입력o삭제x' }), cashR(0)] };
     const h2 = u.pairHtml(c);
@@ -215,15 +215,15 @@ function mkPool(db) {
     {   // ①·② 는 날짜 무관(어제 줄이어도 ② 그대로)
         OMs.list = [Object.assign({ id: 68, state: 'open', entry: { created_at: isoAt(kYest + 'T10:00') } }, lineR), Object.assign(cashR(3), { id: 63, cells: cashCells(RECV[3]) })];
         ok(/메모함에 이 번호/.test(u.pairHtml({ mode: 'new', rows: [lineR] })), '#875 ②(카드에 입력삭제 줄 · 번호 맞는 현금 줄) = 날짜 무관 그대로');
-        const c5 = { mode: 'new', rows: [Object.assign({}, lineR), cashR(0)] }; u.pairHtml(c5); c5.pair1.sel.add(1);
+        const c5 = { mode: 'new', rows: [Object.assign({}, lineR), cashR(0)] }; u.pairHtml(c5); c5.pair1.sel.add(c5.rows[1]);
         c5.rows[0].key = '010-7777-0000'; const before5 = JSON.stringify(c5.rows[1]); u.pair1Go(c5);
         ok(JSON.stringify(c5.rows[1]) === before5 && /번호가 바뀌었어요/.test(toasts.pop() || '') && c5.pair1.key === null, '#875 카드에서 입력삭제 번호를 고친 뒤 [주소 줄로 짝짓기] = 「번호가 바뀌었어요」 · 줄 안 바뀜');
     }
     OMs.list = [Object.assign({ id: 69, state: 'open', entry: { created_at: new Date().toISOString() } }, lineR)];
     c = { mode: 'new', cash: true, rows: [cashR(0), cashR(1)] };
     const h4 = u.pairHtml(c);
-    ok(/이 현금 줄 2개가 입력삭제 010-2600-0167 건\(메모함\) 주소 줄인가요/.test(h4) && !/ checked/.test(h4) && /data-cact="p1go" disabled/.test(h4) && !/p2yes/.test(h4), '③ 「이 현금 줄 2개가 입력삭제 … 건(메모함) 주소 줄인가요?」 · 기본 안 고름', h4.slice(0, 200));
-    c.pair1.sel.add(0); u.pair1Go(c);
+    ok(/이 현금 줄 2개가 입력삭제 010-2600-0167 건\(메모함\) 주소 줄인가요/.test(h4) && (h4.match(/ checked/g) || []).length === 3 && !/data-cact="p1go" disabled/.test(h4) && !/p2yes/.test(h4), '③ 「이 현금 줄 2개가 입력삭제 … 건(메모함) 주소 줄인가요?」 · 기본 전부 체크(#900 1-H)', h4.slice(0, 200));
+    c.pair1.sel.clear(); c.pair1.sel.add(c.rows[0]); u.pair1Go(c);   // 1줄만 남기고 끔
     ok(c.rows[0]._pairSaved === BUY && c.rows[0].cells[10] === BUY && c.rows[0].cells[1] === BUY && !c.rows[1]._pairSaved && c.rows[1].cells[10] === RECV[1][1], '③ 고른 줄만 K·B = 그 번호(B 가 옛 K 였으므로) · 표식 _pairSaved', c.rows[0].cells);
     sent = null; await u2.pair2Run(c, c.rows, [{ id: 501, kind: 'cash' }, { id: 502, kind: 'cash' }]);
     ok(sent && sent.key === BUY && sent.ids.join() === '501', '③ 저장 뒤 = POST pair {key, ids = 방금 저장한 고른 줄만}', sent);

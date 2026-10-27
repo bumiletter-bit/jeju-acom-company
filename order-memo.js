@@ -163,6 +163,7 @@ function markIndiv(rows, extra) {
     const keys = indivKeysOf(rows, extra);
     (rows || []).forEach(r => {
         if (!r || r.kind !== 'cash') return;
+        if (r.service || r.no_indiv) { r.indiv = false; r.indivKey = null; return; }   // #900 서비스 줄 · 1-H 체크 안 한 줄 = 현금(「!」) 그대로
         const c = r.cells || []; const hit = [c[10], c[1]].map(dg).find(d => d && keys.has(d)); const v = hit ? keys.get(hit) : null;
         r.indiv = !!hit; r.indivKey = v ? v.key : null;
         if (v && v.date && !isDay(r.ship_date)) r.ship_date = v.date;   // #850-a 날짜 지정 입력삭제 줄 = 주소 줄도 그날(그 전엔 for-ship waiting · 비우기에도 안 빠짐)
@@ -175,7 +176,7 @@ function markIndiv(rows, extra) {
 function pairCash(r, line, ctx, opt) {
     const c = Array.isArray(r && r.cells) ? r.cells.slice() : [];
     const key = String((line && line.line_key) || '').trim(), d = dg(key), any = !!(opt && opt.anyNumber);   // #894 F4 any = 후보 묶음에서 사람이 고른 줄(번호가 받는 분 번호여도)
-    if (!r || r.kind !== 'cash' || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || (!any && ![c[10], c[1]].map(dg).includes(d))) return null;
+    if (!r || r.kind !== 'cash' || r.service || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || (!any && ![c[10], c[1]].map(dg).includes(d))) return null;   // #900 서비스 줄 = 짝 아님
     if (!dg(c[1]) || dg(c[1]) === dg(c[10])) c[1] = key;
     c[10] = key;
     const own = r.ship_date ? String(r.ship_date).slice(0, 10) : null, ld = line.ship_date ? String(line.ship_date).slice(0, 10) : null;
@@ -192,7 +193,7 @@ function pairHint(orders, rows, key) {
     (rows || []).filter(r => cashOf(r) && !/[!！]/.test(String(r.cells[0] || '')) && dg(r.cells[10]) === d).forEach(r => add(paired, itemKeyOf(r.cells[4]), Math.max(0, parseInt(r.cells[5], 10) || 0)));
     const left = new Map(); need.forEach((n, k) => { const v = n - (paired.get(k) || 0); if (v > 0) left.set(k, v); });
     const total = m => [...m.values()].reduce((a, b) => a + b, 0), same = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
-    const byEntry = new Map(); (rows || []).filter(r => cashOf(r) && /[!！]/.test(String(r.cells[0] || ''))).forEach(r => { const g = byEntry.get(r.entry_id) || byEntry.set(r.entry_id, { entry_id: r.entry_id, created_at: r.entry_created_at || null, ids: [], items: new Map() }).get(r.entry_id); g.ids.push(r.id); add(g.items, itemKeyOf(r.cells[4]), Math.max(0, parseInt(r.cells[5], 10) || 0)); });
+    const byEntry = new Map(); (rows || []).filter(r => cashOf(r) && !r.service && /[!！]/.test(String(r.cells[0] || ''))).forEach(r => { const g = byEntry.get(r.entry_id) || byEntry.set(r.entry_id, { entry_id: r.entry_id, created_at: r.entry_created_at || null, ids: [], items: new Map() }).get(r.entry_id); g.ids.push(r.id); add(g.items, itemKeyOf(r.cells[4]), Math.max(0, parseInt(r.cells[5], 10) || 0)); });
     const groups = left.size ? [...byEntry.values()].filter(g => same(g.items, left)).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || b.entry_id - a.entry_id).slice(0, 5)
         .map(g => ({ entry_id: g.entry_id, created_at: g.created_at, ids: g.ids, boxes: total(g.items), items: [...g.items].map(([opt, qty]) => ({ opt, qty })) })) : [];
     return { order_boxes: total(need), paired_boxes: total(paired), short: total(left), need: [...left].map(([opt, qty]) => ({ opt, qty })), groups };
@@ -256,6 +257,7 @@ function pickForShip(rows, date) {
     }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
         cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
+        cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
         waiting, held, ids: lines.map(l => l.id).concat(cash.map(r => r.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부
@@ -303,7 +305,8 @@ function mount(app, deps) {
             used_on DATE, state TEXT NOT NULL DEFAULT 'open', cleared_at TIMESTAMPTZ, cleared_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_by TEXT)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS order_memo_rows_state ON order_memo_rows (state, entry_id)`);
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS checked JSONB`);   // #850-d 판매처 확인 표시 {plat, as, at}(개인정보 없음)
-        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS addr_ok JSONB`);   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS addr_ok JSONB`);
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS service BOOLEAN NOT NULL DEFAULT false`);   // #900 서비스(주문과 별개인 현금건 · A칸 「!」 꼴)   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
     })().catch(e => { ready = null; throw e; }));
     ensure().catch(e => console.error('[발주 메모함] 표 만들기 실패(다음 요청 때 다시):', e.message));
 
@@ -420,9 +423,10 @@ function mount(app, deps) {
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
         addr_ok: r.kind === 'cash' ? (r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : null) : undefined,   // #880-b 현금 줄만(파일·for-ship 엔 안 나감)
-        indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
+        indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,
+        service: r.kind === 'cash' ? !!r.service : undefined,   // #900 서비스 줄(indiv = false · 화면 알약 「서비스」)   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
-    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
+    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, service, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
     const saveVals = (r) => [r.kind, r.ship_date, r.kind === 'line' ? r.key : null, r.kind === 'line' ? r.note : null, r.kind === 'line' ? r.plat : null, r.kind === 'line' ? r.line : null,
         r.kind === 'cash' ? JSON.stringify(r.cells) : null, r.sure, JSON.stringify(r.check_why), r.src];
     async function getRow(id) {
@@ -472,7 +476,8 @@ function mount(app, deps) {
         const source = /^(manual|photo|sms:\d{1,12})$/.test(String(req.body.source || '')) ? String(req.body.source) : 'manual';
         const ctx = await ctxOf();
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
-            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null })))).map(r => Object.assign(checkRow(r, ctx), { checked: r._checked }));   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
+            ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null,
+            service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true) })))).map(r => Object.assign(checkRow(r, ctx), { checked: r._checked, service: r.service }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -480,8 +485,8 @@ function mount(app, deps) {
                 [actorName(req), req.user.id || null, raw || '(줄만 저장)', tags, source])).rows[0];
             const saved = [];
             for (const r of rows) {
-                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null])).rows[0]);
+                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked, service)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null, !!r.service])).rows[0]);
             }
             await client.query('COMMIT');
             await audit(req, 'create', e.id, { rows: rows.length, line: rows.filter(r => r.kind === 'line').length, cash: rows.filter(r => r.kind === 'cash').length, unsure: rows.filter(r => !r.sure).length, source: source.replace(/:\d+$/, '') });
@@ -512,15 +517,17 @@ function mount(app, deps) {
         const cur = await getRow(req.params.id);
         if (cur.state !== 'open') throw err(409, '비운 줄이에요 — 되살린 뒤 고쳐 주세요');
         const b = req.body || {}, ctx = await ctxOf();
+        const svc = cur.kind === 'cash' && typeof b.service === 'boolean' ? b.service : (cur.kind === 'cash' ? !!cur.service : false);   // #900 서비스 켜고 끄기(없으면 그대로)
+        if (cur.kind === 'cash' && svc && !cur.service && /[!！]/.test(String((cur.cells || [])[0] || ''))) throw err(400, '현금 손님 줄은 서비스 표시가 필요 없어요');
         const next = cur.kind === 'cash'
-            ? { kind: 'cash', cells: Array.isArray(b.cells) ? b.cells : cur.cells, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // 고치기 = 주소 줄/현금 손님 구분 그대로
+            ? { kind: 'cash', cells: Array.isArray(b.cells) ? b.cells : cur.cells, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄   // 고치기 = 주소 줄/현금 손님 구분 그대로
             : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [] };
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
         let checked = null;   // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
         if (cur.kind === 'line') { const moved = dg(r.key) !== dg(cur.line_key) || String(r.plat || '') !== String(cur.plat || ''); checked = 'checked' in b ? cleanChecked(b.checked) : (moved ? null : (cur.checked || null)); }
-        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13
-            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null])).rows[0];
+        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14
+            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
         let paired = 0, rekeyed = 0;
         // #867 입력삭제 줄 번호를 고치기로 바꿈(예: 받는 분 번호 → 구매자 번호) = 같은 묶음(entry) 열린 짝 주소 줄(「!」 없음 · K = 옛 번호)의 K 를 새 번호로
@@ -590,6 +597,29 @@ function mount(app, deps) {
         const rows = (await pool.query(`SELECT r.id, r.entry_id, r.kind, r.cells, r.state, to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS entry_created_at FROM order_memo_rows r JOIN order_memo_entries e ON e.id = r.entry_id WHERE r.state = 'open' AND r.kind = 'cash'`)).rows;
         const h = pairHint(orders.map(o => ({ option: o.option_text, qty: o.qty })), rows, np);
         res.json(Object.assign({ ok: true, key: np, src, orders: orders.map(o => ({ plat: CH_PLAT[o.channel] || o.channel, order_no: o.product_order_no || String(o.order_key || '').split('|')[0], option: o.option_text || '', qty: o.qty || 0 })) }, h));
+    }));
+
+    // #900 1-C 서비스 켜고 끄기(여러 줄 · 최종발주 카드·메모함 표) — body { ids, on } · 60줄까지 · 열린 현금 줄만
+    //   on = 주소 줄(「!」 없음)을 주문과 별개인 현금건으로(A칸 「!」 꼴 · service true) · 이미 서비스·현금 손님 줄은 skipped · off = 서비스 줄을 다시 주소 줄로(「!」 뗌)
+    app.post('/api/order-memo/service', authMiddleware, wrap(async (req, res) => {
+        if (req.user.role === 'accountant') throw err(403, '세무사 계정은 바꿀 수 없어요');
+        const b = req.body || {}, on = b.on === true, ctx = await ctxOf();
+        if (typeof b.on !== 'boolean') throw err(400, 'on(true/false)을 주세요');
+        const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 60);
+        if (!ids.length) throw err(400, '바꿀 줄이 없어요');
+        const cands = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = ANY($1::int[]) ORDER BY id`, [ids])).rows, byId = new Map(cands.map(r => [r.id, r]));
+        const out = [], skipped = [];
+        for (const id of ids) {
+            const r0 = byId.get(id), bang = r0 && /[!！]/.test(String((r0.cells || [])[0] || ''));
+            const why = !r0 ? '없는 줄' : r0.state !== 'open' ? '비운 줄' : r0.kind !== 'cash' ? '메모 줄' : on && r0.service ? '이미 서비스' : !on && !r0.service ? '서비스 아님' : on && bang ? '현금 손님 줄' : null;
+            if (why) { skipped.push({ id, why }); continue; }
+            const rc = checkRow({ kind: 'cash', cells: r0.cells, ship_date: r0.ship_date || null, src: r0.src, indiv: !on }, ctx);
+            const row = (await pool.query(`UPDATE order_memo_rows SET cells=$2, sure=$3, check_why=$4, service=$5, updated_at=NOW(), updated_by=$6 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
+                [id, JSON.stringify(rc.cells), rc.sure, JSON.stringify(rc.check_why), on, actorName(req)])).rows[0];
+            if (row) out.push(rowOut(row)); else skipped.push({ id, why: '방금 바뀜' });
+        }
+        await audit(req, on ? 'service' : 'service_off', null, { n: out.length, asked: ids.length });
+        res.json({ ok: true, n: out.length, rows: out, skipped });
     }));
 
     app.post('/api/order-memo/pair', authMiddleware, wrap(async (req, res) => {

@@ -545,3 +545,15 @@ html[data-ao-theme="dark"] .om-aseq { background: #4A3A12; color: #FBBF4A; }
 .om-barn { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--d-card); color: var(--d-sub); font-size: 12.5px; font-weight: 700; line-height: 1.45; }
 .om-barn.warn { background: #FFFAEB; color: #93370D; box-shadow: inset 0 0 0 1px #FEDF89; }
 html[data-ao-theme="dark"] .om-barn.warn { background: rgba(251, 191, 74, .08); color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .35); }
+
+/* #900 1-H 짝 묻기 체크 목록(「n줄 중 m줄 · m박스」 · 「전부」) · 스위치 카드 줄마다 「입력삭제」 체크 · 1-C 「서비스」 체크·알약 */
+.om-pair-n { margin: 0; font-size: 13px; color: var(--d-sub); font-variant-numeric: tabular-nums; }
+.om-pair-n b { color: var(--d-ink); }
+.om-pair-l .om-pair-all { padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--d-line); font-weight: 700; }
+.om-indchk { display: flex; align-items: center; gap: 8px; min-height: 40px; margin: 0; padding: 0 10px; border-radius: 10px; background: var(--d-soft); font-size: 13.5px; font-weight: 700; color: var(--d-ink); cursor: pointer; }
+.om-indchk input { width: 18px; height: 18px; flex: none; margin: 0; accent-color: var(--d-accent); }
+.om-indchk small { margin-left: 4px; color: var(--d-sub); font-size: 12px; font-weight: 600; }
+.om-indchk + .om-indchk { margin-top: 6px; }
+.om-pill.k-svc { background: #EDE9FE; color: #5B21B6; }
+html[data-ao-theme="dark"] .om-pill.k-svc { background: rgba(167, 139, 250, .18); color: #C4B5FD; }
+@media (max-width: 960px), (pointer: coarse) { .om-indchk { min-height: 44px; } }
