@@ -746,7 +746,8 @@
         const ids = new Set(rows.map(r => String(r.id)));
         document.querySelectorAll('#om-list .om-item, #om-ctw tr[data-id]').forEach(li => { if (ids.has(li.dataset.id)) li.classList.add('going'); });
         OM.delBusy = true; selSync(); cselSync();
-        const res = await Promise.all(rows.map(r => API.remove(r.id)));
+        const res = [];   // #900 2-A 고른 줄을 한꺼번에 지우면(500줄 = 동시 500요청) 서버 DB 연결이 꽉 참 → 10개씩 차례로(순서 = 고른 순서 · 결과 자리 그대로)
+        for (let i = 0; i < rows.length; i += 10) res.push(...await Promise.all(rows.slice(i, i + 10).map(r => API.remove(r.id))));
         OM.delBusy = false;
         const done = rows.filter((r, i) => res[i].ok), bad = rows.length - done.length;
         done.forEach(r => { OM.sel.delete(String(r.id)); OM.csel.delete(String(r.id)); });

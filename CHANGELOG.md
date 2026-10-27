@@ -1,3 +1,10 @@
+## v5.9.659 (2026-10-27) — #900-2A 명절 전 위험 3(현금 줄 500↑ 「오늘 씀」 · 열린 줄 목록 · 삭제 동시 요청)
+
+- 서버(order-memo.js · 69): POST /api/order-memo/used 상한 500 → USED_MAX 2,000 · GET 목록 묶음 LIMIT 200 = 비운 것만(열린 줄 묶음은 전부 = 화면과 최종발주 for-ship 어긋남 막음).
+- 최종발주(final-order.js · 69): omPost 500줄씩 차례로 · 묶음 실패 = 0.8초 뒤 1회 재시도 → 그래도 실패면 띠에 「⚠ 메모함 n줄은 「오늘 씀」 표시를 못 했어요 · 비우기 전에 메모함 확인」(다음 날 이중 발송 막기).
+- 메모함(ao-ordermemo.js · 2b): 고른 줄 삭제 = 10개씩 차례로(동시 500요청 → DB 연결 포화 막음).
+- 검증 verify-900-2a 18/18(1,200줄·250묶음 pglite · 실패 꼴 4) · 850 160 · 874 49 · 894 21 · ro-preload 기동 200 · 교차 점검(aa) 막을 것 0. 캐시 final-order 55 · ao-ordermemo 25.
+
 ## v5.9.658 (2026-10-27) — #894 입력삭제 손질 F1~F5 · #895 주문입력 화면 · #896 답변 카드 표 · #899 짝 60줄·다시 붙여 넣기(대표)
 
 - #894(69 · order-memo.js·invoice-auto.js·final-order.js·final-order-core.js): F1 같은 구매자 다른 주소 「!」 현금 줄이면 「일반 발송으로」 막고 안내 · F2 자동 송장 = 화면이 그날 입력삭제 주문 열쇠(localStorage akm_fo_indiv → body.indiv)를 보내 받는 분 짝에서 뺌 · 운송장 모자랄 때 수량 딱 맞는 주문 우선(indiv 받은 날만) · F3 합은 같은데 품목별 박스 다름 카드(optOf) · F4 GET /api/order-memo/pair-hint · POST pair {pick} · F5 현금파일·메모함 같은 줄 중복 카드([메모함 줄 빼기]/[둘 다 보냄] · 결정 전 파일 만들기 막힘) · cbox 「확인함 = 남는 주문은 오늘 안 나가요」 줄 · 요약·기록 = cashLive().

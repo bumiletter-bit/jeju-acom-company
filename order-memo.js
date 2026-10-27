@@ -16,7 +16,7 @@ const DEFAULTS = { keep_days: 30, unsure_days: 30, origin_addr: ORIGIN_DEFAULT, 
 //   ai.direct true 일 때만 서버가 직접 AI(아래 model) · 창구 꺼짐이면 규칙으로만 정리하고 남은 글은 그대로 돌려줌
 const DESK_PREFIX = '[발주 메모 읽기]', DESK_WAIT_SEC = 30;
 // 직접 AI 모델 = 오퍼스(대표 · 배송메세지·명절·특수 요청은 정확도 우선 · 최종발주 메모 읽기와 같은 판정)
-const MAX_RAW = 4000, MAX_ROWS = 60, LIST_MAX = 200, PREVIEW_PER_MIN = 20;
+const MAX_RAW = 4000, MAX_ROWS = 60, LIST_MAX = 200, PREVIEW_PER_MIN = 20, USED_MAX = 2000;   // #900-2A LIST_MAX = 비운 것 목록 묶음 수만(열린 줄 묶음은 상한 없음)
 const REQ_CELLS = { 3: '받는 분 이름이 없어요', 4: '품목을 못 정했어요', 5: '수량이 없어요', 6: '받는 분 연락처가 없어요', 8: '주소가 없어요' };
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const isDay = d => YMD.test(String(d || '')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
@@ -495,7 +495,7 @@ function mount(app, deps) {
         const rows = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = $1 ${state === 'cleared' ? `AND cleared_at > NOW() - ($2::int * INTERVAL '1 day')` : ''} ORDER BY id`,
             state === 'cleared' ? [state, c.keep_days] : [state])).rows;
         const ids = [...new Set(rows.map(r => r.entry_id))];
-        const ents = ids.length ? (await pool.query(`SELECT id, created_at, created_by, source, tags, raw FROM order_memo_entries WHERE id = ANY($1::int[]) ORDER BY id DESC LIMIT ${LIST_MAX}`, [ids])).rows : [];
+        const ents = ids.length ? (await pool.query(`SELECT id, created_at, created_by, source, tags, raw FROM order_memo_entries WHERE id = ANY($1::int[]) ORDER BY id DESC${state === 'open' ? '' : ' LIMIT ' + LIST_MAX}`, [ids])).rows : [];   // #900-2A 열린 줄 묶음 = 전부
         const by = new Map(ents.map(e => [e.id, Object.assign(e, { rows: [] })]));
         rows.forEach(r => { const e = by.get(r.entry_id); if (e) e.rows.push(rowOut(r)); });
         const open = state === 'open' ? rows : (await pool.query(`SELECT kind, sure, to_char(ship_date, 'YYYY-MM-DD') AS ship_date FROM order_memo_rows WHERE state = 'open'`)).rows;
@@ -768,7 +768,7 @@ function mount(app, deps) {
     app.post('/api/order-memo/used', authMiddleware, wrap(async (req, res) => {
         const b = req.body || {}, date = String(b.date || '');
         if (!isDay(date)) throw err(400, '기준 발송일이 없어요');
-        const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 500);
+        const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, USED_MAX);   // #900-2A 500 → 2,000
         if (!ids.length) return res.json({ ok: true, n: 0 });
         const r = b.undo
             ? await pool.query(`UPDATE order_memo_rows SET used_on=NULL WHERE id = ANY($1::int[]) AND state='open' AND used_on = $2::date`, [ids, date])
