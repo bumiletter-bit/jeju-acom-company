@@ -237,6 +237,8 @@
             if (l.date > today) { e.reqKind = 'future'; e.flag = 'excl'; if (!e.userTouched) e.excluded = true; l.applied++; return; }
             if (l.date < today) { e.reqKind = 'past'; e.flag = 'review'; if (!e.userTouched) e.excluded = false; return; }
             // 오늘
+            // #886 최종발주 박스 수 카드에서 「일반 발송으로」 고른 주문(e.indivOff · 최종발주만 세움 · 송장변환 메뉴·중간발주엔 없음) = 입력삭제 줄이 있어도 오늘 일반 발송(손님 메모 판정 그대로)
+            if (l.indiv && ctx.allowIndiv && e.indivOff) { e.req = null; e.flag = e.memoFlag; if (!e.userTouched) e.excluded = (e.memoFlag === 'excl'); return; }
             if (l.indiv && ctx.allowIndiv) { e.reqKind = 'indiv'; e.individual = true; e.flag = null; e.excluded = false; l.applied++; return; }
             e.reqKind = 'today'; e.reqToday = true; e.flag = 'review'; if (!e.userTouched) e.excluded = false; l.applied++;
         });

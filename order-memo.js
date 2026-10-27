@@ -63,6 +63,16 @@ function ruleLine(rawLine, today) {
         const bad = sz.bad[0];
         return { kind: 'line', key: keyOf, note: line.replace(keyOf, '').trim(), plat: platOf(line), line, ship_date: null, src: 'rule', _bad: bad ? [bad.why] : [] };
     }
+    // #883 과수 줄(「번호 13과로」) = 사이즈 줄과 같게 규칙 줄 · 최종발주 core.gwaLines 가 읽는 꼴 그대로(못 읽는 꼴 = 숫자 범위·박스별 건수 없음도 줄로 두고 checkLine 이 「확인」)
+    if (typeof core.gwaLines === 'function') {
+        const gw = core.gwaLines(line);
+        if (gw.gwas.length || gw.bad.length) {
+            const k = (gw.gwas[0] || gw.bad[0]).key, _bad = gw.bad.length ? [gw.bad[0].why] : [];
+            const p = V2 ? V2.parseLines(line, 'naver', today)[0] : null;   // 날짜·탭 줄(「10/30⇥번호⇥13과로⇥네이버」)은 v2 가 읽은 칸 그대로(번호·날짜·비고·판매처)
+            if (p && !p.bad && dg(p.key) === dg(k)) return { kind: 'line', key: p.key, note: p.note, plat: p.plat || platOf(p.note), line, ship_date: p.date || null, src: 'rule', _bad };
+            return { kind: 'line', key: k, note: line.replace(k, '').trim(), plat: platOf(line), line, ship_date: null, src: 'rule', _bad };
+        }
+    }
     if (!V2) return null;
     const p = V2.parseLines(line, 'naver', today)[0];
     if (!p || p.bad) return null;
@@ -103,6 +113,7 @@ function checkLine(r, today, keepRaw) {
         else if (out.ship_date && p.date !== out.ship_date) why.push('날짜를 다시 확인해 주세요');
     }
     const sz = core.sizeLines(out.line); sz.bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });
+    if (typeof core.gwaLines === 'function') core.gwaLines(core.sizeLines(out.line).text).bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });   // #883 과수 줄 못 읽음 = 「확인」
     if (out.ship_date && out.ship_date < today) why.push('지난 날짜예요');
     out.sure = !why.length; out.check_why = why; out.missing = keyBad ? ['key'] : [];   // line 빈 칸 = 'key'(화면 빨강)
     return out;

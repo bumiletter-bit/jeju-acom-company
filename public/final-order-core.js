@@ -568,6 +568,43 @@
         });
         return { text: out.join('\n'), sizes, ups, bad };
     }
+    // #883(대표 10/27 「사이즈·과수」) 메모 칸 과수 줄 = 「번호 13과로 [판매처]」 — sizeLines 와 같은 꼴(과수 낱말은 떼고 나머지만 종전 규칙으로 · 판매처 낱말만 남으면 빈 줄)
+    //   받는 낱말 = 13과로 · 13과로! · 13과 · 13과! · 13과으로 · 「과수 13」 · 「과수13」 (숫자 1~40) · 「13과로 2건」 = 건수(사이즈 줄 n건과 같게)
+    //   한 줄에 과수 둘 이상 = 박스마다(「13과로 1건 15과로 1건」 · 건수가 다 있어야 · 아니면 bad) → parts = boxTails 꼴 { size: '13과로!', n }
+    //   만감류인지는 화면(final-order.js)이 주문 옵션으로 가린다 · 이 함수는 줄만 읽는다(순수)
+    const GWA_TOK = /^[.,·/:;\-]*(\d{1,2})과(?:으로|로)?!?[.,]?$/, GWA_JOIN = /^과수(\d{1,2})(?:과)?(?:으로|로)?!?[.,]?$/, GWA_WORD = /^과수$/;
+    const GWA_FILLER = /^(?:요청|부탁|부탁해요?|부탁드려요?|부탁드립니다|해\s*줘요?|해주세요|로|으로|요|과수|지정)[!.]*$/;
+    function gwaLines(text) {
+        const lines = String(text == null ? '' : text).split('\n'), gwas = [], bad = [];
+        const out = lines.map((raw, srcLine) => {
+            const line = raw.replace(/\r/g, ''); const toks = line.split(/[ \t]+/).filter(Boolean);
+            const pick = [];
+            toks.forEach((t, i) => { const m = t.match(GWA_TOK) || t.match(GWA_JOIN); if (m) pick.push({ i, n: Number(m[1]) }); else if (GWA_WORD.test(t) && /^\d{1,2}$/.test(toks[i + 1] || '')) pick.push({ i, j: i + 1, n: Number(toks[i + 1]) }); });
+            if (!pick.length) return raw;
+            const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
+            if (!key) return raw;
+            const B = why => { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why, kind: 'gwa' }); return raw; };
+            if (pick.some(p => !(p.n >= 1 && p.n <= 40))) return B('과수 숫자를 다시 확인해 주세요(1~40)');
+            const used = new Set(); pick.forEach(p => { used.add(p.i); if (p.j != null) used.add(p.j); });
+            let parts = null, expect = null;
+            const cntAt = p => { const at = (p.j != null ? p.j : p.i) + 1, c = (toks[at] || '').match(SIZE_CNT); return c ? { at, n: Number(c[1]) } : null; };
+            if (pick.length >= 2) {
+                parts = [];
+                for (const p of pick) { const c = cntAt(p); if (!c || !(c.n > 0)) return B('박스마다 과수가 다르면 「13과로 1건 15과로 1건」처럼 건수를 같이 적어 주세요'); used.add(c.at); const hit = parts.find(x => x.size === p.n + '과로!'); if (hit) hit.n += c.n; else parts.push({ size: p.n + '과로!', n: c.n }); }
+            } else { const c = cntAt(pick[0]); if (c) { expect = c.n; used.add(c.at); } }
+            toks.forEach((t, i) => { if (!used.has(i) && t !== key && GWA_FILLER.test(t)) used.add(i); });
+            const rest = toks.filter((t, i) => !used.has(i));
+            // 오매칭 > 미매칭: 날짜·발송 말·판매처 말 밖의 한글 낱말이 남으면(「13과 이상 큰걸로」 등) 과수 줄로 안 읽음 = 종전 그대로(v2 확인 카드)
+            if (rest.some(t => t !== key && !PLAT_TOK.test(t) && /[가-힣]/.test(t) && !/^(?:\d{1,2}월?\d{0,2}일(?:날|에)?|\d{1,2}[\/.]\d{1,2}(?:일)?|[월화수목금토일]요일|오늘|내일|모레|발송|출고|보내(?:주세요|줘요?|주시면)?)[.,!]*$/.test(t))) return raw;
+            const g = { srcLine, raw: line.trim(), key, digits: dg(key), n: pick[0].n, tail: pick[0].n + '과로!', expect };
+            if (parts && parts.length >= 2) g.parts = parts; else if (parts) { g.n = Number(parts[0].size.replace(/\D/g, '')); g.tail = parts[0].size; g.expect = parts[0].n; }
+            gwas.push(g);
+            if (rest.filter(t => t !== key && !PLAT_TOK.test(t)).length === 0) return '';   // 번호 + 판매처 낱말뿐 = 빈 줄(#858 사이즈 줄과 같게)
+            let kept = line; toks.forEach((t, i) => { if (used.has(i)) kept = kept.replace(new RegExp('(^|[ \\t])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
+            return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');
+        });
+        return { text: out.join('\n'), gwas, bad };
+    }
     function prepLines(text, opt) {
         const o = opt || {}; const today = o.realToday || new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); const shipDays = Array.isArray(o.shipDays) ? o.shipDays : [];
         const noShip = o.noShip instanceof Set ? o.noShip : new Set(o.noShip || []);
@@ -819,7 +856,7 @@
         return !/[가-힣A-Za-z0-9]/.test(m.replace(SO_SIZE, ' ').replace(SO_WORDS, ' '));
     }
 
-    const api = { sizeOnlyMemo, prepLines, sizeLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
+    const api = { sizeOnlyMemo, prepLines, sizeLines, gwaLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

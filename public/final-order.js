@@ -519,7 +519,9 @@
         { const got = new Set(sz.sizes.map(z => z.srcLine));
           st.sizeMiss = String($('fo-memo').value || '').split('\n').map((raw, i) => ({ srcLine: i, raw: raw.replace(/\r/g, '').trim() }))
               .filter(x => !got.has(x.srcLine) && LINEISH.test(x.raw) && SIZE_HINT.test(x.raw.replace(LINEISH, ' '))); }
-        st.prep = core().prepLines(sz.text, { realToday: cal.realToday, shipDays: cal.shipDays, noShip: [...cal.noShip], shipDate: ship });
+        // #883 「번호 13과로」 과수 줄 — 사이즈 줄을 뗀 글에서 한 번 더(옛 core 면 없음 = 종전 그대로)
+        const gw = typeof core().gwaLines === 'function' ? core().gwaLines(sz.text) : { text: sz.text, gwas: [], bad: [] }; st.gwaLines = gw.gwas; st.gwaBad = gw.bad || [];
+        st.prep = core().prepLines(gw.text, { realToday: cal.realToday, shipDays: cal.shipDays, noShip: [...cal.noShip], shipDate: ship });
         dayGuard();
         st.judged = false; st.out = null; st.files = []; $('fo-result').hidden = true;
         const s = S();
@@ -532,6 +534,7 @@
         if (!s.today) { s.today = prevToday; const why = (D().getElementById('res-all').textContent || '').replace(/^⚠️?\s*/, '').trim(); throw new Error('판정을 끝내지 못했어요' + (why ? `(${why})` : '') + '. 잠시 뒤 [다시 판정]을 눌러 주세요.'); }
         if (s.shipDate !== ship) throw new Error(`기준 발송일이 ${s.shipDate}로 잡혔어요. 다시 골라 주세요.`);
         st.cal = s.calendar; st.phase = 'review'; st.stale = false; st.judged = true;
+        s.merged.forEach(e => { e._indivOff = !!e.indivOff; });   // #886 v2 applyLines 가 e.indivOff 주문은 입력삭제로 안 셈(그 표시 그대로) · 결정은 applyOrderDecisions 가 다시 건다
         buildCards(); applyOrderDecisions(); if (st.ai.done) aiToCards(); else renderSummaryOnly();   // 결정을 건 뒤 상태로 카드를 한 번 더 만든다(현금파일 대조 문구가 결정 전 상태로 뜨지 않게)
         st.autoAi = true;   // #520: 판정이 끝나면 AI 읽기를 버튼 없이 1회 시작한다(run() 이 끝난 뒤 — 읽을 메모가 앞서 읽은 것과 같으면 다시 읽지 않는다)
     }
@@ -632,7 +635,60 @@
             upRes.set(u.srcLine, { id, hit, okE, size, skip: d === 'skip' });
         });
         st.upRes = upRes;
+        gwaApply(s, tails, boxes, res, info);
         st.sizeTail = tails; st.sizeBoxes = boxes; st.boxAsk = asks; st.sizeRes = res; return info;
+    }
+    // #883(대표 10/27 「사이즈·과수」) 메모 칸 과수 줄(core gwaLines) — 그 번호(구매자 번호·주문번호) 주문 중 만감류만 옵션 끝에 「13과로!」(#856 꼬리 꼴 = 사이즈 꼬리와 같은 자리)
+    //   만감류 = 황금향·한라봉·레드향·천혜향(🔴 카라향 제외 = 대표 10/27 · 「만감」 일반어는 옵션 이름에 없어 안 넣음) · 그 밖 품목 = 안 붙이고 카드 · 박스마다 = boxTails
+    //   같은 주문에 과수만 다른 줄 둘 = 고르기 카드(고르기 전엔 안 붙음) · 같은 번호에 사이즈 줄과 과수 줄이 같이 있으면 확인 카드(각자 품목에 붙음)
+    const GWA_ITEM = /황금향|한라봉|레드향|천혜향/, GWA_NOT = /카라향/;
+    const gwaItem = o => { const b = core().stripTail(String(o || ''), inCatalog); return GWA_ITEM.test(b) && !GWA_NOT.test(b); };
+    const GWA_WHY = '과수 지정은 만감류(황금향·한라봉·레드향·천혜향)만이에요';
+    function gwaApply(s, tails, boxes, res, info) {
+        const ask = [], zs = st.gwaLines || [];
+        const hitOf = z => s.merged.filter(e => (z.digits.length >= 8 && !NO_TEL.has(z.digits) && buyerTel(e) === z.digits) || idsOf(e).includes(z.key));
+        const want = new Map();
+        zs.forEach(z => { if (z.parts) return; hitOf(z).filter(e => gwaItem(e.conv['옵션정보'])).forEach(e => { const k = keyOf(e), w = want.get(k) || { e, tails: new Set(), raws: [] }; w.tails.add(z.tail); if (!w.raws.includes(z.raw)) w.raws.push(z.raw); want.set(k, w); }); });
+        const dup = new Map();
+        want.forEach((w, k) => { if (w.tails.size < 2) return; const id = 'lgwad:' + w.raws.slice().sort().join('|'), g = dup.get(id) || { id, keys: [], tails: [...w.tails], raws: w.raws, es: [] }; g.keys.push(k); g.es.push(w.e); dup.set(id, g); });
+        const dOf = k => { for (const g of dup.values()) if (g.keys.includes(k)) { const d = st.dec.get(g.id); return { pick: d && d !== 'skip' && g.tails.includes(d) ? d : null, done: st.dec.has(g.id) }; } return null; };
+        dup.forEach(g => ask.push({ id: g.id, title: `같은 손님에 과수 요청이 둘이에요(${g.tails.join(' · ')})`, es: g.es, raws: g.raws, why: '과수만 다른 메모 줄이 둘이에요 — 하나를 골라 주세요', note: '고른 과수만 만감류 주문에 붙여요 · 「안 붙임」이면 과수 없이 나가요', choices: [...g.tails.map((t, i) => [t, t, i ? 0 : 1]), ['skip', '안 붙임']] }));
+        zs.forEach(z => {
+            const hit = hitOf(z);
+            if (!hit.length) {
+                const rv = recvMatches(z);
+                if (rv.length) { res.set(z.srcLine, { k: 'warn', t: '받는 분 번호', tip: '구매자가 아니라 받는 분 번호예요 — 과수를 붙이지 않았어요' }); ask.push({ id: 'lgwa:' + z.srcLine + ':' + z.raw, title: z.raw, es: rv, why: '이 번호는 구매자가 아니라 받는 분 번호예요 — 과수를 붙이지 않았어요', note: '구매자 번호(또는 주문번호)로 메모 줄을 고쳐 [다시 판정]을 눌러 주세요' }); }
+                else res.set(z.srcLine, { k: 'none', t: '주문 없음' });
+                return;
+            }
+            const ok = hit.filter(e => gwaItem(e.conv['옵션정보'])), no = hit.filter(e => !ok.includes(e) && !tails.has(keyOf(e)) && !boxes.has(keyOf(e)));   // 사이즈 줄로 꼬리가 붙은 귤 주문은 묻지 않음(같은 손님 사이즈+과수 = 아래 카드 하나)
+            if (no.length) ask.push({ id: 'lgwa:' + z.srcLine + ':' + z.raw, title: z.raw, es: no, why: GWA_WHY, note: ok.length ? `만감류 주문 ${ok.length}건에는 붙였어요 · 위 주문은 과수 없이 나가요` : '이 줄로는 과수를 붙이지 않았어요 — 위 주문은 과수 없이 나가요' });
+            if (!ok.length) { res.set(z.srcLine, { k: 'warn', t: '만감류 주문 없음', tip: GWA_WHY }); return; }
+            if (z.parts) {
+                const txt = z.parts.map(p => p.size.replace(/로!$/, '') + ' ' + p.n + '박스').join(' · ');
+                const r = ok.length === 1 ? core().boxTails(z.parts, qtyNow(ok[0]), x => x) : { ok: false, why: `박스별 과수는 주문 한 줄에만 붙여요 — 이 손님 만감류 주문이 ${ok.length}줄이에요` };
+                if (!r.ok) { res.set(z.srcLine, { k: 'warn', t: '박스 수 다름', tip: r.why, box: true }); ask.push({ id: 'lgwab:' + z.srcLine + ':' + z.raw, title: z.raw, es: ok, why: r.why + ' — 박스별 과수를 붙이지 않았어요.', note: '메모 줄 건수를 주문 박스 수에 맞춰 고친 뒤 [다시 판정]을 눌러 주세요 · 아니면 아래 「확인함」으로 과수 없이' }); return; }
+                const k = keyOf(ok[0]); boxes.set(k, r.boxes); tails.delete(k);
+                info.push({ t: `메모 줄로 박스별 과수: ${z.raw} → 만감류 ${txt}${r.note ? ' · ' + r.note : ''}`, keys: [k], line: z.srcLine });
+                if (r.note) ask.push({ id: 'lgwab:' + z.srcLine + ':' + z.raw, title: z.raw, es: ok, why: `주문 박스가 더 많아요 — ${r.note}개(그 박스는 과수 없이 나가요).`, note: '맞으면 「확인함」' });
+                res.set(z.srcLine, r.note ? { k: 'warn', t: `박스별 과수 ${txt} · ${r.note}`, n: 1, tip: r.note, box: true } : { k: 'ok', t: `박스별 과수 ${txt}`, n: 1, box: true });
+                return;
+            }
+            const open = ok.filter(e => { const x = dOf(keyOf(e)); return x && !x.done; });
+            const okE = ok.filter(e => { const x = dOf(keyOf(e)); return !x || (x.pick && x.pick === z.tail); });
+            okE.forEach(e => { if (!boxes.has(keyOf(e))) tails.set(keyOf(e), z.tail); });
+            if (open.length) { res.set(z.srcLine, { k: 'warn', t: '과수 요청 둘 — 고르기', n: open.length, tip: '같은 손님에 다른 과수 줄이 또 있어요 — 아래 카드에서 하나를 골라 주세요' }); return; }
+            if (!okE.length) { res.set(z.srcLine, { k: 'ok', t: '다른 과수로 정함', n: ok.length }); return; }
+            info.push({ t: `메모 줄로 과수 지정: ${z.raw} → 만감류 주문 ${okE.length}건에 「${z.tail}」`, keys: okE.map(keyOf), line: z.srcLine });
+            const cntOff = z.expect != null && z.expect !== hit.length;
+            if (cntOff) info.push({ t: `건수 다름: ${z.raw} — 적은 건수 ${z.expect}건 · 실제 주문 ${hit.length}건(만감류 ${okE.length}건에 붙임)`, line: z.srcLine });
+            res.set(z.srcLine, cntOff ? { k: 'warn', t: `건수 다름 ${hit.length}건 · 과수 ${okE.length}건`, n: okE.length, tip: `적은 건수 ${z.expect}건인데 실제 주문 ${hit.length}건` } : { k: 'ok', t: `과수 지정 ${okE.length}건`, n: okE.length });
+        });
+        // 같은 번호에 사이즈 줄과 과수 줄이 같이 = 확인(대표 10/27)
+        const szD = new Set((st.sizeLines || []).concat(st.upLines || []).map(z => z.digits).filter(d => d && d.length >= 8));
+        const both = new Map(); zs.forEach(z => { if (szD.has(z.digits)) { const b = both.get(z.digits) || []; b.push(z.raw); both.set(z.digits, b); } });
+        both.forEach((raws, d) => { const sr = (st.sizeLines || []).concat(st.upLines || []).filter(z => z.digits === d).map(z => z.raw); ask.push({ id: 'lszgwa:' + d + ':' + sr.concat(raws).join('|'), title: '같은 손님에 사이즈 줄과 과수 줄이 같이 있어요', es: s.merged.filter(e => buyerTel(e) === d), raws: sr.concat(raws), why: '사이즈는 귤 로얄과에만 · 과수는 만감류에만 붙어요', note: '맞으면 「확인함」 · 아니면 메모 줄을 고쳐 [다시 판정]' }); });
+        st.gwaAsk = ask;
     }
     // 그 주문만 가리키는 주문번호 열쇠(v2 가 찾을 수 있는 값 중 다른 주문과 겹치지 않는 것 · 없으면 첫 값)
     function uniqueId(e) {
@@ -708,6 +764,7 @@
         });
         // #570 사이즈 말이 있는데 못 읽은 줄 — 보통 줄로 먼저 「확인 필요」(같은 warn 등급)가 붙어 put() 으로는 못 덮으므로 직접 덮고 종전 표시는 뒤에 이어 적는다
         (st.sizeMiss || []).forEach(x => { if (x.srcLine < 0 || x.srcLine >= n) return; const prev = marks[x.srcLine]; marks[x.srcLine] = { k: 'warn', t: '사이즈 못 읽음' + (prev && prev.t ? ' · ' + prev.t : ''), tip: '사이즈 말이 있는데 읽지 못했어요 — 「번호 2S사이즈」처럼 다시 적어 주세요(지금은 사이즈 없이 보통 줄로 읽혔어요)' + (prev && prev.tip ? ' · ' + prev.tip : '') }; });
+        (st.gwaBad || []).forEach(b => { if (b.srcLine < 0 || b.srcLine >= n) return; marks[b.srcLine] = { k: 'warn', t: '과수 못 읽음', tip: b.why }; });   // #883
         (st.sizeBad || []).forEach(b => { if (b.srcLine < 0 || b.srcLine >= n) return; marks[b.srcLine] = { k: 'warn', t: b.kind === 'size' ? '로얄과 사이즈 아님' : '박스별 사이즈 못 읽음', tip: BOX_BAD_TIP(b) }; });   // #601
         // #583 ⑥ 업그레이드 줄 — 사이즈를 고르기 전에는 확인 필요
         (st.upRes || new Map()).forEach((r, i) => {
@@ -915,6 +972,8 @@
         (st.sizeDup || []).forEach(g => cards.push({ id: g.id, type: 'line', tag: '메모 줄', title: `같은 손님에 사이즈 요청이 둘이에요(${g.sizes.join(' · ')})`, keys: g.keys,
             lines: [...g.raws.map((r, i) => [`메모 줄 ${i + 1}`, r]), ...g.es.slice(0, 4).map((e, i) => [g.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ['처리', '고른 사이즈만 귤 로얄과 주문에 붙여요 · 「안 붙임」이면 사이즈 없이 나가요']],
             choices: [...g.sizes.map((z, i) => [z, z + '사이즈로!', i ? 0 : 1]), ['skip', '안 붙임']] }));
+        // #883 과수 줄 카드(만감류 아님 · 받는 분 번호 · 박스 수 · 과수 둘 · 사이즈+과수)
+        (st.gwaAsk || []).forEach(a => cards.push({ id: a.id, type: 'line', tag: '메모 줄', title: a.title, keys: (a.es || []).map(keyOf), lines: [...(a.raws || []).map((r, i) => [`메모 줄 ${i + 1}`, r]), ['이유', a.why], ...(a.es || []).slice(0, 4).map((e, i) => [a.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ...(a.note ? [['처리', a.note]] : [])], choices: a.choices || [['ok', '확인함', 1]] }));
         // #583 ⑥ 「번호 업그레이드」 줄 — 사이즈를 카드에서 눌러 고른다(귤 로얄과만 · 아니면 이유)
         (st.upLines || []).forEach(u => {
             const r = st.upRes && st.upRes.get(u.srcLine); if (!r) return;
@@ -984,7 +1043,20 @@
         });
         chk.notIndiv.forEach(m => cards.push({ id: `cnot:${m.digits}:${[].concat(m.cashRows).join('.')}:${m.allExcluded ? 'x' : 'o'}`, type: 'cash', tag: '현금파일', title: `${m.buyer} · 현금파일 ${[].concat(m.cashRows).length}행(엑셀 ${[].concat(m.cashRows).join(', ')}행)`, lines: [['이유', m.allExcluded ? '현금파일에 이 구매자의 줄이 있는데, 주문은 오늘 안 나가는 건(뒤 날짜)이에요. 이대로면 현금파일 주소로는 오늘 나가요.' : '현금파일에 이 구매자의 줄이 있는데 주문은 입력삭제가 아니에요. 이대로면 주문 주소로도 나가고 현금파일 주소로도 나가요.'], ['처리', '입력삭제가 맞으면 메모에 입력삭제 줄을 넣고 [다시 판정]을 눌러 주세요.']], choices: [['extra', m.allExcluded ? '현금파일 줄은 오늘 보내는 게 맞음' : '둘 다 보내는 게 맞음(추가 발송)']] }));
         (chk.mixed || []).forEach(m => info.push(`${m.buyer}: 입력삭제 주문과 주문 주소로 나가는 주문이 함께 있어요(주문 ${m.orderKeys.length}건은 택배사 양식에 그대로).`));
-        chk.boxDiff.forEach(m => cards.push({ id: `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, type: 'cash', tag: '박스 수', title: `${m.buyer} · 주문 ${m.orderQty}박스 / 현금파일 ${m.cashQty}박스`, lines: [['이유', m.cashQty > m.orderQty ? '현금파일이 주문보다 많아요(서비스·추가 발송일 수 있어요).' : '현금파일이 주문보다 적어요. 빠진 박스가 없는지 확인해 주세요.']], choices: [['ok', '확인함 — 이대로', 1]] }));
+        // #886 박스 수 카드 = 「일반 발송으로」를 고른 주문도 원래 입력삭제로 셈(카드가 그대로 남아 [바꾸기]로 되돌림) · 그 밖 카드는 지금 상태로
+        const chkO = s.merged.some(e => e._indivOff) ? c.cashCheck({ orders: s.merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), qty: qtyOf(e), individual: !!(e.individual || e._indivOff), excluded: !!e.excluded, buyer: buyerName(e) })), cash: st.cash && st.cash.ok ? st.cash.rows : [] }) : chk;
+        const bdList = chk.boxDiff.slice(); chkO.boxDiff.forEach(m => { const id = `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, v = st.dec.get(id); if (typeof v === 'string' && v.startsWith('norm:') && !bdList.some(x => x.digits === m.digits)) bdList.push(m); });
+        const normAddr = t => String(t || '').replace(/\s+/g, '').replace(/[,()]/g, '');
+        const boxNorm = m => {   // { key, e } | { block } | null
+            if (!(m.cashQty < m.orderQty)) return null;
+            const need = m.orderQty - m.cashQty, es = s.merged.filter(e => (e.individual || e._indivOff) && !e.excluded && buyerTel(e) === m.digits && qtyOf(e) === need);
+            if (es.length !== 1) return null;
+            const e = es[0], ad = normAddr(addrOf(e)), dup = (st.cash && st.cash.ok ? st.cash.rows : []).filter(r => r.bang && normAddr(r.addr) === ad);
+            return dup.length ? { e, block: `현금 줄(「!」) ${dup.length}줄이 이 주문과 같은 주소(${addrOf(e).slice(0, 30)})로 이미 나가요 — 일반 발송으로 바꾸면 그 집으로 ${dup.length + need}박스가 가요. 현금 줄을 지우고 [다시 판정]하면 단추가 생겨요(지금은 [확인함 — 이대로]로 현금 줄이 그 박스를 보내요).` } : { e, key: keyOf(e) };
+        };
+        bdList.forEach(m => { const nb = boxNorm(m), e = nb && nb.e, lab = e ? `이 주문(${core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog).split(':').pop().trim()} ${qtyOf(e)}박스 · ${String(addrOf(e)).split(/\s+/).slice(0, 3).join(' ')})은 일반 발송으로` : '';
+            if (nb && nb.key && st.dec.get(`cbox:${m.digits}:${m.orderQty}:${m.cashQty}`) === 'norm:' + nb.key) info.push({ t: `입력삭제에서 뺌(일반 발송): ${orderLine(e)} — 박스 수 카드에서 고름 · 택배사 양식에 주문 주소로`, keys: [nb.key] });
+            cards.push({ id: `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, type: 'cash', tag: '박스 수', title: `${m.buyer} · 주문 ${m.orderQty}박스 / 현금파일 ${m.cashQty}박스`, lines: [...(nb && nb.block ? [['주의', nb.block]] : nb ? [['따로 주문', `${orderLine(e)} — 남는 ${qtyOf(e)}박스와 수량이 딱 맞는 주문이에요. 손님이 따로 주문한 것이면 「일반 발송으로」(이 주문만 입력삭제에서 빼서 택배사 양식에 주문 그대로)`]] : []), ['이유', m.cashQty > m.orderQty ? '현금파일이 주문보다 많아요(서비스·추가 발송일 수 있어요).' : '현금파일이 주문보다 적어요. 빠진 박스가 없는지 확인해 주세요.']], choices: [...(nb && nb.key ? [['norm:' + nb.key, lab, 0]] : []), ['ok', '확인함 — 이대로', 1]] }); });
         (chk.strangers || []).forEach(x => info.push(`현금파일에만 있는 구매자(재발송 등): 엑셀 ${[].concat(x.rows).join(', ')}행`));
         (chk.unchecked || []).forEach(x => info.push(`번호가 가려진 입력삭제 주문(선물하기 등)은 현금파일과 대조하지 못했어요: ${x.buyer || ''} ${x.qty || ''}박스`));
         // ⑥ 거래처를 못 정한 품목
@@ -1022,6 +1094,10 @@
             // #583-h: 입력삭제 주문은 택배사 양식에서 빠지고 현금파일 주소 줄이 나간다 → 여기서는 옵션명 뒤 꼬리만(같은 구매자 번호의 현금파일 줄 옵션 끝에 붙는다)
             cards.push(e.individual ? { id: 'fix:' + k, type: 'fix', tag: '주문 열기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['opt'], tailOnly: true, lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)], ['입력삭제', '이 주문은 현금파일의 주소 줄로 나가요. 주소·보내는 분·배송메세지는 현금파일에서 고치고, 여기서는 옵션명 뒤에 붙일 말만 넣어요(같은 구매자 번호의 현금파일 줄 옵션 끝에 붙어요).']], choices: [] }
                 : { id: 'fix:' + k, type: 'fix', tag: '주문 열기', title: orderLineNow(e), keys: [k], fix: [k], fixF: ['name', 'phone', 'addr', 'memo', 'opt'], lines: [telLine(e), ['손님 메모', memoOf(e) || '(없음)'], ['지금 옵션', optOf(e)]], choices: [] }); }); }
+        (st.gwaBad || []).forEach(b => {   // #883 과수 줄 못 읽음(숫자 범위 · 박스별 건수 없음) = 붙이지 않고 카드
+            const msg = ['과수', b.why + ' — 과수를 붙이지 않았어요'], cd = cards.find(c => new RegExp('^l[a-z]+:' + b.srcLine + ':').test(c.id));
+            if (cd) cd.lines = [msg].concat(cd.lines || []); else cards.push({ id: 'lgbad:' + b.srcLine + ':' + b.raw, type: 'line', tag: '메모 재확인', recheck: true, title: b.raw, lines: [msg], choices: [['ok', '확인함', 1]] });
+        });
 (st.sizeBad || []).forEach(b => {   // #601
             const msg = [b.kind === 'size' ? '사이즈' : '박스별 사이즈', BOX_BAD_TIP(b)], cd = cards.find(c => new RegExp('^l[a-z]+:' + b.srcLine + ':').test(c.id));
             if (cd) cd.lines = [msg].concat(cd.lines || []); else cards.push({ id: 'lpbad:' + b.srcLine + ':' + b.raw, type: 'line', tag: '메모 재확인', recheck: true, title: b.raw, lines: [msg], choices: [['ok', '확인함', 1]] });
@@ -1035,6 +1111,10 @@
     const liveDec = id => (st.cards.some(cd => cd.id === id) ? st.dec.get(id) : undefined);
     function applyOrderDecisions() {   // 카드 결정 → v2 상태(제외 체크). 판정(saveLines) 뒤마다 다시 건다
         const byKey = new Map(S().merged.map(e => [keyOf(e), e]));
+        // #886(대표 10/27 김병우) 박스 수 카드 「이 주문은 일반 발송으로」 = 그 주문만 입력삭제에서 빼서 일반 주문처럼(택배사 양식에 주문 그대로) · [바꾸기]로 결정을 지우면 원래대로
+        { const off = new Set(); st.dec.forEach((v, id) => { if (/^cbox:/.test(id) && typeof v === 'string' && v.startsWith('norm:') && (st.cards || []).some(cd => cd.id === id)) off.add(v.slice(5)); });   // 지금 떠 있는 박스 수 카드의 결정만(박스 수가 바뀌어 카드가 달라지면 원래대로)
+          byKey.forEach((e, k) => { if (off.has(k)) { e.indivOff = true; if (e.individual) { e._indivOff = true; e.individual = false; e.reqKind = null; e.req = null; e.flag = e.memoFlag; } }
+              else if (e.indivOff) { e.indivOff = false; if (e._indivOff) { e._indivOff = false; e.individual = true; e.reqKind = 'indiv'; e.flag = null; e.excluded = false; } } }); }   // e.indivOff = v2 applyLines 가 보는 표시(파일 만들 때 v2 가 다시 판정해도 유지)
         // #583-f 「메모 확인」 카드의 [제외] — 카드가 사라졌거나 결정이 바뀌면 원래대로(오늘 발송)
         byKey.forEach((e, k) => { const id = st.missCard && st.missCard.get(k), ex = !!id && st.dec.get(id) === 'excl'; if (ex) { e.excluded = true; e.userTouched = true; e._missExcl = true; } else if (e._missExcl) { e.excluded = false; e.userTouched = false; e._missExcl = false; } });
         st.cards.forEach(cd => {
@@ -1070,7 +1150,7 @@
     const closed = cd => cd.type === 'fix' || st.dec.has(cd.id) || !!patchDec(cd);
     const pending = () => st.cards.filter(cd => !closed(cd));
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
-    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lsz: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
+    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lsz: 'line', lgwa: 'line', lgwad: 'line', lgwab: 'line', lszgwa: 'line', lgbad: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
     // #525: AI가 손님 메모에서 읽은 「품목 뒤에 붙일 말」 입력칸 — 사람이 [이대로 넣기]를 눌러야 옵션 칸 끝에 붙는다(비우면 안 붙임)
     const tailBoxHtml = (cd, d) => (cd.tail ? `<label class="wide">품목 뒤에 붙일 말(옵션 칸 끝에 붙어요 · 비우면 안 붙임)<input type="text" data-f="tail" value="${esc(d && d.tail != null ? d.tail : cd.tail)}" maxlength="80"></label>` : '');

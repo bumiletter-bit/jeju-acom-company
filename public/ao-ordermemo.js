@@ -64,7 +64,7 @@
     // #850-c ⑤ 꼬리표 = 누르면 메모장에 틀 한 줄 + 번호 자리 선택(바로 번호만 치면 됨) · #850-f 「현금 손님」도 상태 없이 「현금 손님」 한 줄(대표 정정) · 단추는 누르는 순간만 깜빡(켜짐 상태 없음)
     //   틀 꼴 = 서버 규칙 줄(order-memo.js · invoice-v2 parseLines · sizeLines)이 그대로 읽는 「번호 + 지시」 꼴
     const TEL_PH = '000-0000-0000';
-    const TAGS = [['cash', '현금 손님', '현금 손님'], ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
+    const TAGS = [['cash', '현금 손님', '현금 손님'], ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈·과수', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
     // 틀 자리를 안 고친 채 [입력하기] = 막고 그 자리를 골라 줌
     const TPL_HOLES = [[TEL_PH, '번호를 넣어 주세요 — 000-0000-0000 자리에 손님 번호를 써 주세요'], [/(^|[^0-9])00일/, '발송 날짜를 넣어 주세요 — 00일 자리에 날짜를 써 주세요'], ['보내는이 홍길동', '보내는 분 이름을 넣어 주세요 — 홍길동 자리를 바꿔 주세요']];
     const PLATS = ['네이버', '쿠팡', '자사몰'];
@@ -256,9 +256,10 @@
         $('om-tp-go').addEventListener('click', tpGo);
         const tp = $('om-tp');
         tp.addEventListener('input', e => { if (e.target.id === 'om-tp-tel' && !e.isComposing) telLive(e.target); if (e.target.closest('.om-tp-row')) tpNote(''); });
-        tp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'om-tp-tel' || e.target.id === 'om-tp-name')) { e.preventDefault(); tpGo(); } });
+        tp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'om-tp-tel' || e.target.id === 'om-tp-name' || e.target.id === 'om-tp-gw')) { e.preventDefault(); tpGo(); } });
         tp.addEventListener('change', e => { if (e.target.id === 'om-tp-date') { tpNote(''); if (!$('om-tp-tel').value.trim()) $('om-tp-tel').focus({ preventScroll: true }); else $('om-tp-go').focus({ preventScroll: true }); } });
-        tp.addEventListener('click', e => { const b = e.target.closest('[data-tpsz]'); if (!b || !OM.tp) return; OM.tp.sz = b.dataset.tpsz; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); tpNote(''); });
+        tp.addEventListener('click', e => { const b = e.target.closest('[data-tpsz]'); if (!b || !OM.tp) return; OM.tp.sz = b.dataset.tpsz; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); const g = $('om-tp-gw'); if (g) g.value = ''; tpNote(''); });   // #882 사이즈 고르면 과수 칸 비움(둘 중 하나)
+        tp.addEventListener('input', e => { if (e.target.id !== 'om-tp-gw' || !OM.tp || !e.target.value.trim() || !OM.tp.sz) return; OM.tp.sz = null; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', 'false')); });   // #882 과수 치면 사이즈 단추 풂(칸 값은 안 바꿈 · #857)
         OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
         $('om-list').addEventListener('click', onList);
         $('om-prev-open').addEventListener('click', () => prevShow(true));
@@ -335,7 +336,7 @@
     // #862 줄 입력판 — 꼬리표를 누르면 입력 칸에 틀을 넣지 않고 [번호 칸 + 꼬리표 칸 + 넣기] · [넣기]·Enter = 입력 칸 끝에 서버 규칙 줄 꼴 한 줄
     //   입력삭제 「010-1234-5678 입력o삭제x」 · 사이즈 「… S사이즈로」 · 날짜 「… 10/27 발송」(해 넘김 = 「1/3/27 … 발송」) · 보내는이 「… 보내는이 홍길동」 (ruleLine · invoice-v2 parseLines · sizeLines 가 읽는 꼴)
     //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
-    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈', '귤 로얄과 사이즈 요청'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'] };
+    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'] };
     const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
@@ -347,7 +348,7 @@
         const tp = $('om-tp'), tel = $('om-tp-tel'), was = OM.tp;
         OM.tp = { k, sz: null };
         $('om-tp-t').textContent = TP_KIND[k][0]; $('om-tp-s').textContent = TP_KIND[k][1];
-        $('om-tp-k').innerHTML = k === 'size' ? `<div class="om-seg om-tp-sz" role="radiogroup" aria-label="사이즈">${['2S', 'S', 'M'].map(z => `<button type="button" role="radio" class="om-seg-b" data-tpsz="${z}" aria-checked="false">${z}</button>`).join('')}</div>`
+        $('om-tp-k').innerHTML = k === 'size' ? `<div class="om-seg om-tp-sz" role="radiogroup" aria-label="사이즈">${['2S', 'S', 'M'].map(z => `<button type="button" role="radio" class="om-seg-b" data-tpsz="${z}" aria-checked="false">${z}</button>`).join('')}</div><label class="om-tp-gw"><input id="om-tp-gw" inputmode="numeric" autocomplete="off" maxlength="3" placeholder="과수" aria-label="과수(만감류 선물용 · 숫자만 · 예 13)"><span aria-hidden="true">과</span></label>`
             : k === 'date' ? '<input id="om-tp-date" class="akm-date om-tp-date" readonly autocomplete="off" placeholder="발송 날짜 고르기" aria-label="발송 날짜">'
             : k === 'sender' ? '<input id="om-tp-name" class="om-tp-name" autocomplete="off" maxlength="20" placeholder="보내는 분 이름" aria-label="보내는 분 이름">' : '';
         tp.dataset.k = k; tpNote('');
@@ -370,20 +371,21 @@
     }
     function tpLine(k, tel, x) {
         if (k === 'indiv') return tel + ' 입력o삭제x';
-        if (k === 'size') return x.sz ? tel + ' ' + x.sz + '사이즈로' : null;
+        if (k === 'size') { if (x.sz) return tel + ' ' + x.sz + '사이즈로'; const n = digits(x.gw).replace(/^0+/, ''); return n && Number(n) <= 40 ? gwLine(tel, n) : null; }   // #882 과수 = 숫자만(1~40 · 최종발주 #883 gwaLines 와 같은 범위)
         if (k === 'date') { const d = tpDay(x.date); return !d ? null : /^\d{1,2}\/\d{1,2}\/\d{2}$/.test(d) ? d + ' ' + tel + ' 발송' : tel + ' ' + d + ' 발송'; }   // 해 넘김 = 날짜를 앞에(「1/3/27 010-… 발송」)
         if (k === 'sender') { const n = String(x.name || '').replace(/\s+/g, ' ').trim(); return n ? tel + ' 보내는이 ' + n : null; }
         return null;
     }
+    const gwLine = (tel, n) => tel + ' ' + n + '과로';   // #882 만감류 선물용 과수 줄 꼴(최종발주 #883 gwaLines 가 먹는 꼴 = 사이즈 줄과 같게 판매처는 카드에서)
     function tpGo() {
         const x = OM.tp; if (!x) return;
         const te = $('om-tp-tel'), d = digits(te.value);
         if (!(isPhoneish(te.value) && d.length >= 9)) { tpNote('손님 번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
         te.value = fmtTel(te.value); const tel = lineTel(te.value);
         const name = $('om-tp-name'), date = $('om-tp-date');
-        const line = tpLine(x.k, tel, { sz: x.sz, date: date && date.value, name: name && name.value });
+        const gw = $('om-tp-gw'), line = tpLine(x.k, tel, { sz: x.sz, gw: gw && gw.value, date: date && date.value, name: name && name.value });
         if (!line) {
-            if (x.k === 'size') { tpNote('사이즈를 골라 주세요', 'err'); const b = $('om-tp').querySelector('[data-tpsz]'); if (b) b.focus({ preventScroll: true }); }
+            if (x.k === 'size') { if (gw && gw.value.trim()) { tpNote('과수는 1~40 숫자로 넣어 주세요 · 예) 13', 'err'); gw.focus({ preventScroll: true }); } else { tpNote('사이즈를 고르거나 과수를 넣어 주세요', 'err'); const b = $('om-tp').querySelector('[data-tpsz]'); if (b) b.focus({ preventScroll: true }); } }
             else if (x.k === 'date') { tpNote('발송 날짜를 골라 주세요', 'err'); if (date) { date.focus({ preventScroll: true }); date.click(); } }
             else { tpNote('보내는 분 이름을 넣어 주세요', 'err'); if (name) name.focus({ preventScroll: true }); }
             return;
@@ -395,7 +397,7 @@
         OM.tpLast = te.value;
         const nSaved = x.k === 'indiv' ? savedCashOf(digits(tel)).length : 0;   // #874 이 번호 현금 줄이 이미 메모함에 있으면 알림만(바꾸기는 [입력하기] 뒤 카드에서)
         inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote(nSaved ? `넣었어요 · 메모함에 이 번호 현금 줄 ${nSaved}개가 있어요 — [입력하기] 뒤 카드에서 입력삭제 주소 줄로 바꿀 수 있어요` : '넣었어요 · 같은 손님은 꼬리표만 바꿔 이어서, 다른 손님은 번호를 바꿔 넣으세요', 'ok');
-        x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(b => b.setAttribute('aria-checked', 'false')); if (name) name.value = ''; if (date) date.value = '';
+        x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(b => b.setAttribute('aria-checked', 'false')); if (gw) gw.value = ''; if (name) name.value = ''; if (date) date.value = '';
         te.focus({ preventScroll: true }); try { te.select(); } catch (e) { /* 그대로 */ }
     }
     // #850-f 꼬리표(서버로 보내는 tags) = 칸에 그 줄이 있을 때만 · 종전 「누른 단추」 tags 와 같은 값
