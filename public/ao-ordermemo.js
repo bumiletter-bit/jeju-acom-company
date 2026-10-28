@@ -74,7 +74,7 @@
     const recentPut = v => { if (!v) return; try { const a = [v].concat(recentGet().filter(x => x !== v)).slice(0, 5); localStorage.setItem(RECENT_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 그대로 */ } };
 
     const OM = { el: null, tab: 'open', list: null, cleared: null, counts: null, err: '', loading: false, shipDate: '', catalog: null, raw: '', tags: new Set(), busy: false,
-        card: null, opt: null, undo: null, undoT: 0, sel: new Set(), csel: new Set(), cq: '', delBusy: false, ask: null, prevOpen: false, ship: null, lastFocus: null };
+        card: null, opt: null, undo: null, undoT: 0, sel: new Set(), csel: new Set(), cq: '', cpage: 0, delBusy: false, ask: null, prevOpen: false, ship: null, lastFocus: null };
 
     // ── 서버(계약 = docs/850-api.md) ─────────────────────
     async function call(url, method, body) {
@@ -272,12 +272,12 @@
         $('om-ldel').addEventListener('click', () => askDel(memoRows().filter(r => OM.sel.has(String(r.id))), $('om-ldel')));
         $('om-del').addEventListener('click', () => askDel(cashPicked(), $('om-del')));   // #878 맨 아래 [삭제] = 오른쪽 현금 줄 고른 것(찾기에 보이는 것만)
         $('om-ctw').addEventListener('click', onCash);
-        const csAll = e => { cashShown().forEach(r => { const id = String(r.id); if (e.target.checked) OM.csel.add(id); else OM.csel.delete(id); }); renderCash(); };   // 찾은 줄 기준(머리 칸·폰 줄 같은 일)
+        const csAll = e => { cashPage(byRank(cashShown())).forEach(r => { const id = String(r.id); if (e.target.checked) OM.csel.add(id); else OM.csel.delete(id); }); renderCash(); };   // 찾은 줄 기준(머리 칸·폰 줄 같은 일)
         $('om-ctw').addEventListener('change', e => { if (e.target.dataset.csall) { csAll(e); return; } const c = e.target.closest('input[data-act="pick"]'); if (!c) return; const tr = c.closest('tr[data-id]'); if (!tr) return; if (c.checked) OM.csel.add(String(tr.dataset.id)); else OM.csel.delete(String(tr.dataset.id)); tr.classList.toggle('picked', c.checked); cselSync(); });
         $('om-cselall').addEventListener('change', csAll);
-        $('om-cash-q').addEventListener('input', e => { OM.cq = e.target.value; renderCash(); });
+        $('om-cash-q').addEventListener('input', e => { OM.cq = e.target.value; OM.cpage = 0; renderCash(); });
         $('om-clr-q').addEventListener('input', e => { OM.clq = e.target.value; renderList(); });   // #903 비운 것 찾기(목록만 다시 그림 · 칸 초점 그대로)
-        $('om-cneed').addEventListener('click', () => { OM.cneed = !OM.cneed; renderCash(); if (OM.cneed) aseqStart(); else OM.aseq = null; });   // #880-b 주소 확인 필요 줄만 보기 + 첫 줄 카드부터 이어서 ↔ 모두
+        $('om-cneed').addEventListener('click', () => { OM.cneed = !OM.cneed; OM.cpage = 0; renderCash(); if (OM.cneed) aseqStart(); else OM.aseq = null; });   // #880-b 주소 확인 필요 줄만 보기 + 첫 줄 카드부터 이어서 ↔ 모두
         $('om-ask-no').addEventListener('click', () => askClose(true));
         $('om-ask-back').addEventListener('click', () => askClose(true));
         $('om-ask-yes').addEventListener('click', askYes);
@@ -293,7 +293,7 @@
             if (e.key !== 'Escape' || !OM.el || OM.el.hidden || e.isComposing) return;
             e.stopPropagation(); e.preventDefault();
             if (OM.ask) { askClose(true); return; }   // #878 삭제 확인 창 = 취소
-            if (e.target && e.target.id === 'om-cash-q' && e.target.value) { e.target.value = ''; OM.cq = ''; renderCash(); return; }
+            if (e.target && e.target.id === 'om-cash-q' && e.target.value) { e.target.value = ''; OM.cq = ''; OM.cpage = 0; renderCash(); return; }
             if (e.target && e.target.id === 'om-clr-q' && e.target.value) { e.target.value = ''; OM.clq = ''; renderList(); return; }   // #903 같은 꼴   // #878 찾기 칸 Esc = 값만 비움(메모함 안 닫힘)
             if (OM.opt) { optClose(true); return; }
             if (OM.card) { cardClose(); return; }
@@ -697,26 +697,63 @@
             <td class="opt">${esc(shortOpt(c[4]))}</td><td class="n q">${esc(c[5])}</td><td class="n tel">${esc(c[6])}</td><td class="ad">${esc(c[8])}</td>
             <td class="x"><button type="button" class="om-x sm" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></td></tr>`;
     }
+    // #900 2-B 명절 = 현금 줄 100줄 넘으면 「촘촘히」 꼴(글씨 12 · 줄 36 · 폰 44 그대로) + 한 쪽 50줄 페이지 · 찾기는 전체에서 찾고 결과도 페이지
+    //   100줄까지 = 종전 그대로(그리는 글·동작 같음) · 주소 확인(주소 검색) = 보이는 쪽 줄만 · 전체 선택 = 보이는 쪽만 + 「찾은 n줄 전부 고르기」 따로
+    const CBIG_MIN = 100, CPAGE = 50;
+    const cashBig = () => cashRows().length > CBIG_MIN;
+    function cashPage(shown) {   // 큰 표 = 지금 쪽 줄 · 아니면 전부(같은 배열)
+        if (!cashBig()) return shown;
+        const pages = Math.max(1, Math.ceil(shown.length / CPAGE)); OM.cpage = Math.min(Math.max(0, OM.cpage | 0), pages - 1);
+        return shown.slice(OM.cpage * CPAGE, OM.cpage * CPAGE + CPAGE);
+    }
+    function pagerHtml(n) {   // ‹ 1 2 3 4 5 … 20 › (폰 = ‹ 3 / 20 › · css 로 바꿔 보임)
+        const pages = Math.ceil(n / CPAGE); if (pages <= 1) return '';
+        const cur = OM.cpage, want = new Set([0, pages - 1]), nums = [];
+        for (let i = cur - 2; i <= cur + 2; i++) if (i >= 0 && i < pages) want.add(i);
+        if (cur < 4) for (let i = 0; i < Math.min(5, pages); i++) want.add(i);
+        if (cur > pages - 5) for (let i = Math.max(0, pages - 5); i < pages; i++) want.add(i);
+        let prev = -1; [...want].sort((a, b) => a - b).forEach(i => { if (i - prev > 1) nums.push('<span class="om-pg-gap" aria-hidden="true">…</span>'); nums.push(`<button type="button" class="om-pg-b" data-pg="${i}"${i === cur ? ' aria-current="page"' : ''} aria-label="${i + 1}쪽">${i + 1}</button>`); prev = i; });
+        return `<nav class="om-pg" aria-label="현금 줄 쪽 넘기기"><button type="button" class="om-pg-b om-pg-a" data-pg="prev" aria-label="앞 쪽"${cur ? '' : ' disabled'}>‹</button><span class="om-pg-nums">${nums.join('')}</span><span class="om-pg-of" aria-hidden="true"><b>${cur + 1}</b> / ${pages}</span><button type="button" class="om-pg-b om-pg-a" data-pg="next" aria-label="다음 쪽"${cur < pages - 1 ? '' : ' disabled'}>›</button><span class="om-pg-n">${(cur * CPAGE + 1).toLocaleString()}–${Math.min(n, cur * CPAGE + CPAGE).toLocaleString()} / ${n.toLocaleString()}줄</span></nav>`;
+    }
+    function cashGo(k) {   // 쪽 넘기기 → 표 맨 위가 보이게 · 초점 = 같은 단추(끝에 닿아 꺼졌으면 지금 쪽 숫자)
+        const pages = Math.ceil(cashShown().length / CPAGE);
+        OM.cpage = k === 'prev' ? OM.cpage - 1 : k === 'next' ? OM.cpage + 1 : +k;
+        OM.cpage = Math.min(Math.max(0, OM.cpage | 0), Math.max(0, pages - 1));
+        renderCash();
+        const box = $('om-ctw'), tw = box && box.querySelector('.om-prev-tw'); if (tw) tw.scrollIntoView({ block: 'start' });
+        const f = box && (box.querySelector(`.om-pg-b[data-pg="${k}"]:not([disabled])`) || box.querySelector('.om-pg-b[aria-current]')); if (f) f.focus({ preventScroll: true });
+    }
+    function cashAllBtn(big, found) {   // 「찾은 n줄 전부 고르기」 = 큰 표에서 여러 쪽일 때만(종전 화면엔 안 생김)
+        let b = $('om-callfound');
+        if (!big || found.length <= CPAGE) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'om-callfound'; b.className = 'om-btn sm om-callfound'; b.addEventListener('click', () => { const ids = cashShown().map(r => String(r.id)), on = !ids.every(id => OM.csel.has(id)); ids.forEach(id => { if (on) OM.csel.add(id); else OM.csel.delete(id); }); renderCash(); }); $('om-cseln').after(b); }
+        const n = found.length.toLocaleString();
+        b.dataset.head = String(OM.cq || '').trim() || OM.cneed ? `찾은 ${n}줄 전부 ` : `${n}줄 전부 `;
+        b.textContent = b.dataset.head + (found.every(r => OM.csel.has(String(r.id))) ? '풀기' : '고르기');
+    }
     function renderCash() {
         const box = $('om-ctw'); if (!box) return;
         AQ.draw = new Set();   // #880 주소 확인 = 그리기마다 한 번만
         const all = cashRows(), have = new Set(all.map(r => String(r.id)));
         OM.csel.forEach(id => { if (!have.has(id)) OM.csel.delete(id); });
-        const shown = byRank(cashShown()), s = OM.ship, nIn = s && Array.isArray(s.cash_ids) ? s.cash_ids.length : null;
+        const big = all.length > CBIG_MIN, found = byRank(cashShown()), shown = cashPage(found), s = OM.ship, nIn = s && Array.isArray(s.cash_ids) ? s.cash_ids.length : null;
         $('om-prev-d').textContent = all.length ? `${all.length}줄${nIn != null ? ` · ${OM.shipDate ? md(OM.shipDate) + ' ' : ''}발주에 ${nIn}줄` : ''} · 현금파일과 합쳐서 대조해요` : '';
         $('om-cselbar').hidden = !shown.length;
+        { const l = $('om-cselall'), t = l && l.parentNode.lastChild; if (t && t.nodeType === 3) t.textContent = big ? '이 쪽 전체 선택' : '전체 선택'; }   // #900 2-B 큰 표 = 보이는 쪽만
+        cashAllBtn(big, found);
         const pb = $('om-prev-open'); if (pb) pb.textContent = all.length ? `현금 줄 ${all.length}` : '현금 줄';
         const nChk = all.filter(isCheck).length, nWait = all.filter(r => !isCheck(r) && isLater(r)).length, held = $('om-cheld');
         held.hidden = !(nChk || nWait); held.textContent = [nChk ? `확인 안 된 ${nChk}줄은 안 들어가요` : '', nWait ? `날짜 대기 ${nWait}줄은 그날 들어가요` : ''].filter(Boolean).join(' · ');
         if (!OM.list) box.innerHTML = OM.loading ? '<div class="om-skel" aria-hidden="true"></div>' : '';
         else if (!all.length) box.innerHTML = '<p class="om-empty"><b>현금 줄이 없어요</b><span>[주문입력]이나 입력삭제 주소 줄을 넣으면 여기에 쌓여요.</span></p>';
         else if (!shown.length) box.innerHTML = `<p class="om-empty"><b>「${esc(OM.cq.trim())}」 찾는 현금 줄이 없어요</b></p>`;
-        else box.innerHTML = `<div class="om-prev-tw"><table class="om-prev-t om-ct"><thead><tr><th class="ck"><label class="om-ck"><input type="checkbox" id="om-cselall2" data-csall="1" aria-label="찾은 현금 줄 전체 선택"></label></th><th>수취인명</th><th>옵션정보</th><th>수량</th><th>수취인연락처1</th><th>배송지</th><th class="x"><span class="om-sr">지우기</span></th></tr></thead><tbody>${shown.map(cashRowHtml).join('')}</tbody></table></div>`;
-        all.forEach(r => { if (!addrOkOf(r)) addrQueue(String(r.cells[8] || '').trim()); }); addrFailNote(); cneedSync();   // #880-b 둔 줄은 검색 안 함   // #880 주소 확인 = 캐시에 없는 것만(찾기·체크로 다시 그려도 호출 0)
+        else box.innerHTML = `<div class="om-prev-tw"><table class="om-prev-t om-ct${big ? ' dense' : ''}"><thead><tr><th class="ck"><label class="om-ck"><input type="checkbox" id="om-cselall2" data-csall="1" aria-label="${big ? '이 쪽 현금 줄 전체 선택' : '찾은 현금 줄 전체 선택'}"></label></th><th>수취인명</th><th>옵션정보</th><th>수량</th><th>수취인연락처1</th><th>배송지</th><th class="x"><span class="om-sr">지우기</span></th></tr></thead><tbody>${shown.map(cashRowHtml).join('')}</tbody></table></div>${big ? pagerHtml(found.length) : ''}`;
+        (big ? shown : all).forEach(r => { if (!addrOkOf(r)) addrQueue(String(r.cells[8] || '').trim()); }); addrFailNote(); cneedSync();   // #900 2-B 큰 표 = 보이는 쪽 줄만 주소 검색   // #880-b 둔 줄은 검색 안 함   // #880 주소 확인 = 캐시에 없는 것만(찾기·체크로 다시 그려도 호출 0)
         cselSync();
     }
     async function onCash(e) {
         if (e.target.closest('label.om-ck, input')) return;   // 고르기 칸 = change 에서
+        const pg = e.target.closest('.om-pg-b[data-pg]'); if (pg) { if (!pg.disabled) cashGo(pg.dataset.pg); return; }   // #900 2-B 쪽 넘기기
         const b = e.target.closest('[data-act]'), tr = e.target.closest('tr[data-id]'); if (!tr) return;
         const r = cashRows().find(x => String(x.id) === String(tr.dataset.id)); if (!r) return;
         if (b && b.dataset.act === 'del') { askDel([r], b); return; }
@@ -737,8 +774,10 @@
     const cashPicked = () => cashShown().filter(r => OM.csel.has(String(r.id)));
     function cselSync() {
         const shown = cashShown(), n = OM.csel.size, nv = cashPicked().length, b = $('om-del');
-        ['om-cselall', 'om-cselall2'].forEach(id => { const all = $(id); if (all) { all.checked = !!shown.length && nv === shown.length; all.indeterminate = nv > 0 && nv < shown.length; } });
-        const sn = $('om-cseln'); if (sn) sn.textContent = n ? (nv ? nv + '줄 고름' : '') + (nv < n ? `${nv ? ' · ' : ''}찾기 밖 ${n - nv}줄은 안 지워요` : '') : '';
+        const pg = cashBig() ? cashPage(byRank(shown)) : shown, pv = pg === shown ? nv : pg.filter(r => OM.csel.has(String(r.id))).length;   // #900 2-B 큰 표 = 머리 칸은 이 쪽 기준
+        ['om-cselall', 'om-cselall2'].forEach(id => { const all = $(id); if (all) { all.checked = !!pg.length && pv === pg.length; all.indeterminate = pv > 0 && pv < pg.length; } });
+        const fb = $('om-callfound'); if (fb) fb.textContent = (fb.dataset.head || '') + (shown.length && nv === shown.length ? '풀기' : '고르기');
+        const sn = $('om-cseln'); if (sn) sn.textContent = n ? (nv ? nv + '줄 고름' + (nv > pv ? ` · 다른 쪽 ${nv - pv}줄 포함` : '') : '') + (nv < n ? `${nv ? ' · ' : ''}찾기 밖 ${n - nv}줄은 안 지워요` : '') : '';   // #900 2-B 큰 표 = 다른 쪽에 고른 줄도 지움 대상이라 알림(작은 표는 pv = nv 라 글 그대로)
         if (b) { b.disabled = !nv || OM.delBusy; b.textContent = OM.delBusy ? '지우는 중…' : nv ? `현금 줄 삭제 ${nv}` : '현금 줄 삭제'; }
     }
     function askDel(rows, from) {
@@ -912,6 +951,36 @@
     function saveSync(sv) { if (!sv) return; const b = saveBlocked(); sv.classList.toggle('om-blocked', b); if (b) sv.setAttribute('aria-disabled', 'true'); else sv.removeAttribute('aria-disabled'); }
     const saveLabel = n => indivPendAt() >= 0 ? '번호 확인 중…' : indivBadAt() >= 0 ? '저장 <small>입력삭제 번호를 구매자 번호로 바꿔 주세요</small>' : n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? '고친 대로 저장' : '저장');   // #867
     const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length + (addrBad(r) ? 1 : 0), 0) : 0;   // #850-g 주소 확인 안 됨 = 빈칸 1
+    // #900 2-B 줄이 50장 넘는 카드(파일 1,500줄) = 앞에서부터 50장씩 그림 + 「더 보기」 · 위에 「빈칸 n줄 → 첫 빈칸으로」 · 50장 이하 = 종전 그대로
+    //   그리는 줄은 늘 앞부분(0 ~ shown) = 줄 번호(ri)와 .om-rowcard 순서가 같음(touched·lkPaint 등 종전 길 그대로) · 안 그린 줄의 칠하기는 칸이 없어 조용히 건너뜀
+    const CARD_PAGE = 50;
+    const rowBlank = r => !r._new && (blanksOf(r, true).length > 0 || addrBad(r));
+    const cardBig = c => !!c && c.rows.length > CARD_PAGE;
+    const cardShownN = c => cardBig(c) ? Math.min(c.rows.length, Math.max(CARD_PAGE, c.shown | 0)) : c.rows.length;
+    function cardReveal(c, ri) { if (!cardBig(c) || ri < cardShownN(c)) return false; c.shown = Math.ceil((ri + 1) / CARD_PAGE) * CARD_PAGE; renderCard(); return true; }
+    function jumpHtml(c) {
+        if (!cardBig(c)) return '';
+        const n = c.rows.filter(rowBlank).length;
+        return `<div class="om-jump${n ? '' : ' ok'}" id="om-jump"><span id="om-jump-t">${n ? `빈칸 있는 줄 ${n.toLocaleString()}개 · 앞에 모아 뒀어요` : `빈칸 있는 줄 없음 · ${c.rows.length.toLocaleString()}줄`}</span><button type="button" class="om-btn sm" data-cact="jumpblank"${n ? '' : ' hidden'}>빈칸 ${n.toLocaleString()}줄 → 첫 빈칸으로</button></div>`;
+    }
+    function jumpSync() {   // 칸을 고칠 때 숫자만(다시 그리지 않음)
+        const c = OM.card, j = $('om-jump'); if (!c || !j) return;
+        const n = c.rows.filter(rowBlank).length, t = $('om-jump-t'), b = j.querySelector('[data-cact="jumpblank"]');
+        j.classList.toggle('ok', !n); if (t) t.textContent = n ? `빈칸 있는 줄 ${n.toLocaleString()}개 · 앞에 모아 뒀어요` : `빈칸 있는 줄 없음 · ${c.rows.length.toLocaleString()}줄`;
+        if (b) { b.hidden = !n; b.textContent = `빈칸 ${n.toLocaleString()}줄 → 첫 빈칸으로`; }
+    }
+    function jumpBlank() {
+        const c = OM.card; if (!c) return; const ri = c.rows.findIndex(rowBlank); if (ri < 0) { jumpSync(); return; }
+        cardReveal(c, ri);
+        const rc = $('om-card').querySelectorAll('.om-rowcard')[ri]; if (!rc) return;
+        const t = rc.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || rc.querySelector('input, textarea, .om-combo');
+        rc.scrollIntoView({ block: 'start' }); if (t) t.focus({ preventScroll: true });
+    }
+    function cardMore() {
+        const c = OM.card; if (!cardBig(c)) return; const from = cardShownN(c);
+        c.shown = from + CARD_PAGE; renderCard();
+        const rc = $('om-card').querySelectorAll('.om-rowcard')[from], t = rc && rc.querySelector('input, textarea, .om-combo'); if (t) t.focus({ preventScroll: true });
+    }
     function askText(c) {
         if (c.ask) return c.ask;
         const need = new Set(); c.rows.forEach(r => blanksOf(r).forEach(f => need.add(f.i != null ? f.i : f.k)));
@@ -943,10 +1012,10 @@
             ${c.raw ? `<figure class="om-quote"><figcaption>${srcLabel}</figcaption><blockquote>${esc(c.raw)}</blockquote></figure>` : ''}
             ${c.wait ? `<div class="om-aiband" role="status" aria-live="polite"><i class="om-aiband-dot" aria-hidden="true"></i><b>창구가 남은 글을 정리 중이에요 · ${c.wait.sec}초쯤 걸려요</b><span class="om-aiband-sub">${c.rows.length ? '규칙으로 읽은 줄은 아래에 먼저 · ' : ''}<span id="om-wait-sec">${Math.floor((Date.now() - c.wait.start) / 1000)}</span>초</span><button type="button" class="om-btn sm" data-cact="stopwait">그만 기다리기</button></div>` : ''}
             ${!c.wait && c.deskNote ? `<div class="om-aiband off" role="status"><b>${esc(c.deskNote)}</b></div>` : ''}
-            ${cashBarHtml(c)}
+            ${cashBarHtml(c)}${jumpHtml(c)}
             ${tags.length ? `<div class="om-card-tags">${tags.join('')}</div>` : ''}
             ${pairHtml(c)}
-            ${c.rows.map((r, ri) => `
+            ${(cardBig(c) ? c.rows.slice(0, cardShownN(c)) : c.rows).map((r, ri) => `
               <section class="om-rowcard" aria-labelledby="om-rc-${ri}">
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
@@ -957,6 +1026,7 @@
                 ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
+            ${cardBig(c) && cardShownN(c) < c.rows.length ? `<button type="button" class="om-btn om-cmore" data-cact="morerows">줄 ${Math.min(CARD_PAGE, c.rows.length - cardShownN(c))}개 더 보기 <small>${cardShownN(c).toLocaleString()} / ${c.rows.length.toLocaleString()}줄</small></button>` : ''}
             ${c.leftover ? `<div class="om-left-over"><b>정리 못 한 글</b><p>${esc(c.leftover)}</p><p class="om-addlink">못 읽은 글이 있어요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : (!c.rows.length && !c.wait ? `<div class="om-left-over"><b>정리된 줄이 없어요</b><p class="om-addlink">판매처를 골라 직접 넣어 주세요 · <button type="button" class="om-link" data-cact="add" data-k="line">줄 추가</button></p></div>` : '')}
             ${ask ? `<div class="om-ask"><b>손님께 물어볼 문자 초안</b><p id="om-ask-t">${esc(ask)}</p><div class="om-acts"><button type="button" class="om-btn sm" data-cact="copy">복사</button>${c.from && c.from.threadId ? '<button type="button" class="om-btn sm" data-cact="toreply">답 칸에 넣기</button>' : ''}<span>보내기는 직접 · 자동으로 안 나가요</span></div></div>` : ''}
           </div>
@@ -1009,7 +1079,7 @@
         if (r.kind === 'line') { const lp = $('om-card').querySelectorAll('.om-rowcard')[ri]; const code = lp && lp.querySelector('.om-linepre code'); if (code) code.textContent = lineView(r.line); }
         c.dirty = JSON.stringify(c.rows.map(stripTmp)) !== JSON.stringify(c.orig.map(stripTmp));
         const rs = $('om-card').querySelector('.om-reset'); if (rs) rs.hidden = !c.dirty;
-        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
+        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); } jumpSync();
         const sv = $('om-card-save'); if (sv && !c.wait) { sv.innerHTML = saveLabel(n); saveSync(sv); }
     }
     // #850-a 입력삭제 주소 줄(indiv) 안내 — 짝인 「입력o삭제x」 메모 줄이 카드에서 빠지면(× · 할 일 칸 비움) 저장 때 서버가 현금 손님(「!」)으로 다시 정한다
@@ -1164,7 +1234,7 @@
             const back = clone(r._fromLine); back.plat = v; back.ship_date = r.ship_date || back.ship_date || null; back.line = [back.ship_date ? md(back.ship_date) : '', back.key, back.note, back.plat].join('\t');
             c.rows[ri] = back;
         } else return;
-        c.dirty = true; renderCard(); if (c.rows[ri].kind === 'line') lkRun(ri);
+        c.dirty = true; if (!cardReveal(c, ri)) renderCard(); if (c.rows[ri].kind === 'line') lkRun(ri);   // #900 2-B 안 그린 줄이면 그 쪽까지 펼침
         const fx = $('om-card').querySelectorAll('.om-rowcard')[ri]; const t2 = fx && (fx.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || fx.querySelector('.om-seg-b[aria-checked="true"]')); if (t2) t2.focus({ preventScroll: true });
     }
     const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; delete o._ik; delete o._ik0; delete o._ib0; delete o._k10typed; delete o._pairSaved; delete o._svcTouched; delete o._noIndiv; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
@@ -1251,7 +1321,7 @@
         const c = OM.card, r = c && c.rows[ri]; if (!r) return;
         const p = $('om-card').querySelector('#om-addr-' + ri); if (p) { p.innerHTML = addrHtml(r, ri); p.dataset.k = addrKind(r); }
         const w = $('om-card').querySelector(`[data-fwrap="om-f-${ri}-c8"]`); if (w && String(r.cells[8] || '').trim()) w.classList.toggle('blank', addrBad(r));
-        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); }
+        const n = blankN(), pill = $('om-card-n'); if (pill) { pill.textContent = n ? '빈칸 ' + n : '빈칸 없음'; pill.classList.toggle('ok', !n); } jumpSync();
     }
     // #880 주소 확인 한 곳(카드·표 같은 길) · 결과는 화면 메모리 캐시(주소 글 → 결과 · 페이지를 새로 열기 전까지) · 검색 실패만 카드에서 다시 물음
     const ACACHE = new Map(), AKEPT = new Set(), AQ = { q: [], run: 0, draw: new Set() }, AFAIL = new Set(), AF = { n: 0 };   // #880 손질: 검색 실패(fail)는 캐시에 안 둠 · 표는 그리기마다 한 번만 · 연속 실패 3번이면 이 창 동안 표에선 그만 물음
@@ -1357,6 +1427,8 @@
         if (a === 'stopwait') { waitEnd(c, { state: 'fail', leftover: '', message: '기다리지 않기로 했어요 — 남은 글은 직접 채워 주세요(위 원문 참고)' }); return; }
         if (a === 'discard') { cardClose(true); return; }
         if (a === 'indon') { indToggle(c, b.checked); return; }   // #895
+        if (a === 'morerows') { cardMore(); return; }   // #900 2-B
+        if (a === 'jumpblank') { jumpBlank(); return; }
         if (a === 'svcrow' && r) { r.service = !!b.checked; r._svcTouched = true; c.dirty = true; renderCard(); return; }   // #900 1-C
         if (a === 'indrow' && r) { r._indOff = !b.checked; if (r._indOff) r.service = false; indApply(c); renderCard(); const back = $('om-card').querySelector('input[data-cact="indrow"][data-ri="' + ri + '"]'); if (back) back.focus({ preventScroll: true }); return; }   // #900 1-H 줄마다 입력삭제 체크 · 다시 그림(그 줄 「서비스」 칸이 생기고 사라짐) · 끈 줄은 서비스도 끔
         if (a === 'h3pick') { (c.pick3 = c.pick3 || {})[b.dataset.k] = b.dataset.g; const go = b.closest('.om-pair').querySelector('[data-cact="h3yes"]'); if (go) go.disabled = false; return; }   // #895 ④
@@ -1472,7 +1544,7 @@
         const bad = indivBadAt();   // #867 입력삭제 줄이 받는 분 번호 = 저장 안 함(저장 안 되면 [메모함 적용하기]에도 안 들어감)
         if (bad >= 0) {
             toast('입력삭제는 구매자 번호로 넣어야 송장이 붙어요 · 구매자 번호로 바꾼 뒤 저장해 주세요');
-            const rc = $('om-card').querySelectorAll('.om-rowcard')[bad], t = rc && (rc.querySelector('.om-lk-fix') || rc.querySelector('#om-f-' + bad + '-key'));
+            cardReveal(c, bad); const rc = $('om-card').querySelectorAll('.om-rowcard')[bad], t = rc && (rc.querySelector('.om-lk-fix') || rc.querySelector('#om-f-' + bad + '-key'));
             if (t) { t.scrollIntoView({ block: 'center' }); t.focus({ preventScroll: true }); }
             return;
         }
@@ -1581,7 +1653,7 @@
         if (OM.opt) optClose(false, hist === false);
         if (OM.card) cardClose(true, hist === false);
         if (OM.prevOpen) prevShow(false, hist !== false);
-        tpClose(false); askClose(hist !== false); OM.sel.clear(); OM.csel.clear(); OM.cq = ''; OM.clq = ''; OM.cneed = false; AFAIL.clear(); AF.n = 0; const q = $('om-cash-q'); if (q) q.value = ''; const q2 = $('om-clr-q'); if (q2) q2.value = ''; selSync(); undoHide();   // #859 닫으면 고른 것도 풂 · #878 현금 줄 고른 것·찾기도
+        tpClose(false); askClose(hist !== false); OM.sel.clear(); OM.csel.clear(); OM.cq = ''; OM.cpage = 0; OM.clq = ''; OM.cneed = false; AFAIL.clear(); AF.n = 0; const q = $('om-cash-q'); if (q) q.value = ''; const q2 = $('om-clr-q'); if (q2) q2.value = ''; selSync(); undoHide();   // #859 닫으면 고른 것도 풂 · #878 현금 줄 고른 것·찾기도
         OM.el.hidden = true; document.body.classList.remove('om-open');
         if (hist !== false) hbDrop('om');
         OWN.on = false; OWN.stack = [];
@@ -1634,7 +1706,7 @@
     //      없으면 나중에 그 번호 입력삭제 줄을 넣을 때 짝지을지 물음(#874 ②) · 치는 동안은 칸을 안 바꿈(#857) — 떠날 때·Enter 때 하이픈·줄에 넣기
     //   ② [택배 양식 파일 올리기] = 최종발주 택배 양식 13칸(FinalOrderCore.HEADERS) xlsx 를 브라우저에서 읽어 현금 줄로 · 파일은 서버로 안 감(저장 = 줄만)
     //      머리줄 = 위 15줄 안에서 「수취인명·옵션정보·배송지」 칸 이름으로 찾음 · 빈 줄·합계 줄(받는 분·주소 없음) 뺌 · 옵션 = 단가표 이름과 맞을 때만(아니면 비워 고르게)
-    const IND_MIN = 9, FILE_MAX = 300, SAVE_CHUNK = 60;   // SAVE_CHUNK = 서버 한 번 저장 상한(order-memo.js MAX_ROWS)
+    const IND_MIN = 9, FILE_MAX = 1500, SAVE_CHUNK = 60;   // #900 2-B 명절 = 파일 1,500줄(카드는 50장씩 그림 · cardRows)   // SAVE_CHUNK = 서버 한 번 저장 상한(order-memo.js MAX_ROWS)
     const FILE_HEADERS = ['보내는사람', '보내는사람연락처', '출고지', '수취인명', '옵션정보', '수량', '수취인연락처1', '수취인연락처2', '배송지', '배송메세지', '구매자연락처', '박스타입(입력x)', '보내는이 변경주소'];   // final-order-core.js HEADERS 와 같은 순서(그 파일이 없을 때 대비)
     const savedIndivLine = d => (OM.list || []).some(x => x.kind === 'line' && x.state === 'open' && digits(x.key) === d && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')));
     // #902 「입력삭제 주소예요」가 넣은 구매자·보내는사람 번호(_ik)만 있는 줄도 = 손대지 않은 빈 줄(종전엔 그 번호 때문에 파일 줄로 안 바뀌고 빈 「현금 줄 1」이 남음)
@@ -1786,8 +1858,13 @@
         const keep = c.rows.map((r, i) => i).filter(i => !cashEmpty(c.rows[i]));   // 손대지 않은 빈 줄 = 파일 줄로 바꿈
         c.rows = keep.map(i => c.rows[i]); c.orig = keep.map(i => c.orig[i]);
         const room = Math.max(0, FILE_MAX - c.rows.length), take = got.rows.slice(0, room), over = got.rows.length - take.length;
-        const add = take.map(fileRow), miss = add.filter(r => !r.cells[4]).length;
+        const add = take.map(fileRow), miss = add.filter(r => !r.cells[4]).length, at = c.rows.length;
         add.forEach(r => { c.rows.push(r); c.orig.push(clone(r)); });   // 파일 값 = 처음 값(↺ 기준)
+        if (c.rows.length > CARD_PAGE) {   // #900 2-B 큰 카드 = 이번 파일 줄 안에서만 빈칸 있는 줄 먼저(손으로 넣은 앞 줄은 자리 그대로 · 줄·처음 값 같이 · 같은 무리 안 순서 그대로)
+            const ix = c.rows.map((r, i) => i).slice(at), bl = i => rowBlank(c.rows[i]) ? 0 : 1; ix.sort((a, b) => bl(a) - bl(b) || a - b);
+            const rows = c.rows.slice(0, at).concat(ix.map(i => c.rows[i])), orig = c.orig.slice(0, at).concat(ix.map(i => c.orig[i]));
+            c.rows = rows; c.orig = orig; c.shown = CARD_PAGE;
+        }
         c.fileN = (c.fileN || 0) + add.length; c.fileName = file.name;
         if (c.ind && c.ind.on) indApply(c);
         note(`「${file.name}」에서 ${add.length}줄을 넣었어요` + (miss ? ` · 품목을 못 맞춘 ${miss}줄은 골라 주세요` : '') + (got.skip ? ` · 빈·합계 줄 ${got.skip}개는 뺐어요` : '') + (over ? ` · ${FILE_MAX}줄이 넘어 ${over}줄은 못 넣었어요` : ''), miss || over);
