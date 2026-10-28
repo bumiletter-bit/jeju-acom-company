@@ -127,7 +127,7 @@
     const fieldWhy = (r, f) => (r.check_why || []).find(w => nk(w).includes(nk(f.why)) || (f.alias && nk(w).includes(nk(f.alias)))) || f.why;   // 서버 이유가 그 칸을 말하면 그 글(「주소가 없어요 · 『어머니댁』만 적혀 있어요」)을 칸 아래에
     const whyExtra = r => { const own = (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.why).flatMap(f => [f.why, f.alias].filter(Boolean)).map(w => w.replace(/[\s·]/g, '')); return r.check_why.filter(w => { const k = String(w).replace(/[\s·]/g, ''); return !own.some(o => k.includes(o) || o.includes(k)); }); };
     function pillOf(r) {
-        if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(30일 넘으면 서버가 지움)
+        if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(설정 unsure_days 넘으면 · 대표 10/28 30→10일 서버가 지움)
         if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
         // #873 다음 발주에 들어갈 줄 = 머리 줄과 같은 날짜 글 하나(「내일」은 자정 넘으면 틀림 · 그 발주를 미리 열어 used_on 이 찍혀도 같은 글)
         //   used_on 이 다음 발주와 다른 날 = 지난 발주에 넣고 안 비운 줄 → 그날 표시(for-ship 은 used_on 을 안 봐서 다음 발주에도 들어감)
@@ -188,7 +188,7 @@
                 <div class="om-nexth" id="om-nexth"><b>다음 발주에 들어갈 것</b><span id="om-next-d"></span></div>
                 <div class="om-tabs" role="tablist" aria-label="메모 목록">
                   <button type="button" class="om-tabb" role="tab" data-tab="open" aria-selected="true">지금 메모 <b id="om-n-open"></b></button>
-                  <button type="button" class="om-tabb" role="tab" data-tab="cleared" aria-selected="false">비운 것(30일)</button>
+                  <button type="button" class="om-tabb" role="tab" data-tab="cleared" aria-selected="false" id="om-tab-clr">비운 것</button>
                 </div>
                 <p class="om-sum" id="om-sum" role="status"></p>
                 <div class="om-cash-q om-clr-q" id="om-clr-qw" hidden><label class="om-sr" for="om-clr-q">비운 것 찾기</label><input type="search" id="om-clr-q" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
@@ -561,6 +561,7 @@
         OM.err = '';
         const b = res.body || {};
         OM.shipDate = b.ship_date ? String(b.ship_date).slice(0, 10) : (OM.shipDate || nextShip());
+        { const k = Number(b.keep_days); if (Number.isInteger(k) && k >= 1 && k <= 365) { OM.keepDays = k; const t = $('om-tab-clr'); if (t) t.textContent = `비운 것(${k}일)`; } }   // #905 비운 줄 보관 날(설정 · 대표 10/28 30→15) · 응답 전엔 「비운 것」만
         const rows = []; (Array.isArray(b.entries) ? b.entries : []).forEach(e => (Array.isArray(e.rows) ? e.rows : []).forEach(r => { const x = normRow(r, e); if (x && (tab === 'cleared' ? x.state === 'cleared' : x.state !== 'cleared')) rows.push(x); }));
         if (tab === 'open') { OM.list = rows; OM.counts = b.counts || null; } else OM.cleared = rows;
         renderList(); if (tab === 'open') loadShip();
@@ -574,7 +575,7 @@
     const cashRows = () => (OM.list || []).filter(r => r.kind === 'cash');
     const rankOf = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on && r.used_on !== OM.shipDate ? 3 : 1;   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
     const byRank = rows => rows.slice().sort((a, b) => rankOf(a) - rankOf(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
-    // #879(대표 10/27 · #878 다시) 왼쪽 = 「다음 발주에 들어갈 것」 메모 칸 꼴 상자(고정폭 글 한 줄씩 · 줄마다 체크·× · 누르면 고치기) · 비운 것(30일) 탭은 종전 카드
+    // #879(대표 10/27 · #878 다시) 왼쪽 = 「다음 발주에 들어갈 것」 메모 칸 꼴 상자(고정폭 글 한 줄씩 · 줄마다 체크·× · 누르면 고치기) · 비운 것(keep_days일) 탭은 종전 카드
     const badgeOf = r => { const p = pillOf(r); return p.k === 'next' ? null : p; };   // 다음 발주에 그냥 들어가는 줄 = 표시 없음 · 확인·날짜 대기·지난 발주 줄만 작은 표시(#873 배지 뜻)
     const whoOf = r => nameOf(r) || (last4(numOf(r)) ? '…' + last4(numOf(r)) : '이 줄');
     // #880 현금 줄 알약 = 입력삭제 주소 줄은 「입력삭제 …끝4」(구매자 번호 · 현금 알약과 다른 색) · 현금 손님은 「현금」
@@ -610,12 +611,12 @@
             const ready = open.filter(r => !isCheck(r) && !isLater(r));
             const nLine = ready.filter(r => r.kind === 'line').length, nCash = ready.filter(r => r.kind === 'cash').length, nLater = open.filter(r => !isCheck(r) && isLater(r)).length;
             sum.innerHTML = `메모 ${nLine}줄 · 현금 ${nCash}줄 들어가요` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
-        } else sum.textContent = isOpenTab ? '' : (rows && rows.length ? (OM.clq && OM.clq.trim() ? `${clrShown(rows).length}줄 찾음 · ` : '') + '최근 비운 줄이 위 · 비운 지 30일이 지나면 영구로 지워져요.' : '');
+        } else sum.textContent = isOpenTab ? '' : (rows && rows.length ? (OM.clq && OM.clq.trim() ? `${clrShown(rows).length}줄 찾음 · ` : '') + '최근 비운 줄이 위 · ' + (OM.keepDays ? `비운 지 ${OM.keepDays}일이 지나면` : '오래 지나면') + ' 영구로 지워져요.' : '');
         if (!rows || !rows.length) {
             const nc = cashRows().length;
             ul.innerHTML = isOpenTab
                 ? (nc ? `<li class="om-empty"><b>메모 줄이 없어요</b><span>현금 줄 ${nc}개는 「현금 줄」 표에 있어요${window.matchMedia('(max-width: 899px)').matches ? ' · 아래 [현금 줄]' : ' · 오른쪽'}</span></li>` : '<li class="om-empty"><b>다음 발주에 넣을 메모가 없어요</b><span>손님 글을 위 칸에 붙여 넣으면 여기에 쌓여요.</span></li>')
-                : '<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 30일 동안 여기서 되살릴 수 있어요.</span></li>';
+                : `<li class="om-empty"><b>비운 메모가 없어요</b><span>비운 줄은 ${OM.keepDays ? OM.keepDays + '일 동안' : '한동안'} 여기서 되살릴 수 있어요.</span></li>`;
             return;
         }
         if (isOpenTab) { ul.classList.add('om-mbox'); $('om-mnote').hidden = false; ul.innerHTML = byRank(rows).map(memoLineHtml).join(''); return; }
@@ -745,7 +746,7 @@
         OM.ask = { rows, from: from || document.activeElement };
         const names = rows.slice(0, 3).map(r => nameOf(r) || (last4(numOf(r)) ? '…' + last4(numOf(r)) : '이름 없는 줄')).join(', ') + (rows.length > 3 ? ` 외 ${rows.length - 3}줄` : '');
         $('om-ask-h').textContent = `${rows.length}줄을 지우면 다음 발주에서 빠져요. 정말 삭제할까요?`;
-        $('om-ask-s').textContent = names + ' · 「비운 것(30일)」에서 되살릴 수 있어요';
+        $('om-ask-s').textContent = names + ` · 「비운 것${OM.keepDays ? '(' + OM.keepDays + '일)' : ''}」에서 되살릴 수 있어요`;   // #905
         $('om-ask-back').hidden = false; $('om-ask').hidden = false;
         hbPush('omask', () => askClose(false));
         requestAnimationFrame(() => $('om-ask-no').focus({ preventScroll: true }));

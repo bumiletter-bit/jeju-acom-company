@@ -792,7 +792,7 @@ function mount(app, deps) {
         const date = String(req.query.date || '');
         if (!isDay(date)) throw err(400, '기준 발송일(date=YYYY-MM-DD)이 없어요');
         const rows = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' ORDER BY entry_id, id`)).rows;
-        res.json(Object.assign({ ok: true }, pickForShip(rows, date)));
+        res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, pickForShip(rows, date)));   // #905 keep_days = 화면 「n일 동안 되살림」 글
     }));
 
     app.post('/api/order-memo/used', authMiddleware, wrap(async (req, res) => {
@@ -815,7 +815,7 @@ function mount(app, deps) {
         const r = ids.length ? await pool.query(`UPDATE order_memo_rows SET state='cleared', cleared_at=NOW(), cleared_by=$2, updated_at=NOW(), updated_by=$2 WHERE id = ANY($1::int[]) AND state='open'`, [ids, actorName(req)]) : { rowCount: 0 };
         const leftRows = rows.filter(x => !ids.includes(x.id)), today = kstToday();
         await audit(req, all ? 'clear_all' : 'clear', null, { date: date || null, cleared: r.rowCount, left: leftRows.length });
-        res.json({ ok: true, cleared: r.rowCount, left: { open: leftRows.length, wait: leftRows.filter(x => x.sure && x.ship_date && x.ship_date > (isDay(date) ? date : today)).length, unsure: leftRows.filter(x => !x.sure).length } });
+        res.json({ ok: true, keep_days: (await cfg()).keep_days, cleared: r.rowCount, left: { open: leftRows.length, wait: leftRows.filter(x => x.sure && x.ship_date && x.ship_date > (isDay(date) ? date : today)).length, unsure: leftRows.filter(x => !x.sure).length } });
     }));
 
     // 비운 줄 영구 삭제(결정 A · 6시간마다) — 줄이 다 지워진 건은 원문째
@@ -834,7 +834,9 @@ function mount(app, deps) {
         if (a.rowCount || u.rowCount || b.rowCount || d.rowCount || pre) console.log(`[발주 메모함] 비운 지 ${c.keep_days}일 지난 줄 ${a.rowCount} · 확인 ${c.unsure_days}일 넘어 비운 것으로 ${u.rowCount} · 빈 건 ${b.rowCount} 영구 삭제 · 창구 요청 글 ${d.rowCount} 지움 · 발송 전 주문 7일 지난 ${pre}`);
         return { rows: a.rowCount, unsure: u.rowCount, entries: b.rowCount, desk: d.rowCount, pre };
     }
-    if (!noTimers) { const t = setInterval(() => purge().catch(e => console.error('[발주 메모함] 영구 삭제 실패:', e.message)), 6 * 3600e3); if (t && t.unref) t.unref(); }
+    if (!noTimers) { const t = setInterval(() => purge().catch(e => console.error('[발주 메모함] 영구 삭제 실패:', e.message)), 6 * 3600e3); if (t && t.unref) t.unref();
+        // #905(대표 10/28) 서버 켜질 때 한 번 바로(배포마다 6시간 기다리지 않게 · 기동 뒤 60초 · 실패해도 기동은 그대로)
+        const t0 = setTimeout(() => purge().then(r => console.log(`[발주 메모함] 기동 정리 끝 · 비운 줄 영구 삭제 ${r.rows} · 확인 줄 비움 ${r.unsure} · 빈 건 ${r.entries} · 발송 전 주문 ${r.pre}`)).catch(e => console.error('[발주 메모함] 기동 정리 실패:', e.message)), Number.isFinite(deps.bootPurgeMs) ? deps.bootPurgeMs : 60e3); if (t0 && t0.unref) t0.unref(); }
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 

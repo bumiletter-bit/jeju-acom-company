@@ -341,13 +341,16 @@
         const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
         OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
         OMF.ids = Array.isArray(r.ids) ? r.ids.slice() : [];
-        const held = Array.isArray(r.held) ? r.held.length : 0, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
-        if (!OMF.lines.length && !OMF.cash.length) { OMF.ids = []; omBand(held ? `발주 메모함: 확인 안 된 ${held}줄은 안 넣었어요 <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
+        const pastN = Array.isArray(r.held) ? r.held.filter(h => (h.why || []).includes('지난 날짜예요')).length : 0;   // #905 날짜 지정 현금 줄이 발주일보다 지남 = 「확인 안 된」과 따로(넣지 않음 = 종전)
+        const held = (Array.isArray(r.held) ? r.held.length : 0) - pastN, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
+        OMF.keepDays = Number.isInteger(r.keep_days) ? r.keep_days : null;
+        const pastTxt = pastN ? `지난 날짜 ${pastN}줄 = 메모함에서 날짜 고치면 들어가요` : '';
+        if (!OMF.lines.length && !OMF.cash.length) { OMF.ids = []; omBand(held || pastN ? `발주 메모함: ${[held ? `확인 안 된 ${held}줄은 안 넣었어요` : '', pastTxt].filter(Boolean).join(' · ')} <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
         const ta = $('fo-memo');
         if (ta && OMF.lines.length) { const cur = ta.value.replace(/\s+$/, ''); ta.value = (cur ? cur + '\n' : '') + OMF.lines.map(x => x.text).join('\n'); }
         omApplyCash();
         omPost(OMF.ids.slice(), false);
-        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
+        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${pastN ? ` · ${pastTxt}` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
         markStale(); syncInput();
     }
     // #861 [메모함 적용하기] = 메모함 오늘 몫(for-ship)을 지금 바로 넣고 판정까지 · 이미 넣었으면 뺀 뒤 새로(바꿔 넣기) · 길은 자동 넣기(omInsert)와 같음
@@ -392,8 +395,9 @@
             if (!r || !r.ok) { b.disabled = false; toast('메모함을 비우지 못했어요 · 다시 눌러 주세요', 3000); return; }
             const left = r.left || {};
             const done = `${Number(r.cleared) || 0}줄 비웠어요${left.wait ? ` · 날짜 대기 ${left.wait}줄` : ''}${left.unsure ? ` · 확인 ${left.unsure}줄` : ''}${left.wait || left.unsure ? '은 남았어요' : ''}`;
-            if (box) box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> ${done} <span class="fo-settle-note">비운 줄은 30일 동안 되살릴 수 있어요</span>`;
-            if (b.closest('#fo-om-band')) omBand(`<b>발주 메모함:</b> ${done} · 비운 줄은 30일 동안 메모함 「비운 것」에서 되살릴 수 있어요`);
+            const kd = Number.isInteger(r.keep_days) ? r.keep_days : OMF.keepDays, kdTxt = Number.isInteger(kd) ? `${kd}일 동안 ` : '';   // #905 보관 날짜 = 서버 설정(keep_days)
+            if (box) box.innerHTML = `<span class="fo-note-k">발주 메모함:</span> ${done} <span class="fo-settle-note">비운 줄은 ${kdTxt}되살릴 수 있어요</span>`;
+            if (b.closest('#fo-om-band')) omBand(`<b>발주 메모함:</b> ${done} · 비운 줄은 ${kdTxt}메모함 「비운 것」에서 되살릴 수 있어요`);
             OMF.ids = []; OMF.cleared = true;
         }
     });
