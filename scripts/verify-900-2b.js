@@ -1,6 +1,6 @@
 // #900-2B 검증 — 메모함 명절 화면(현금 줄 100줄 넘으면 촘촘 꼴·50줄 페이지·찾기·이 쪽 전체 선택·「찾은 n줄 전부 고르기」·보이는 쪽만 주소 검색 · 주문입력 카드 1,500줄 50장씩·빈칸 먼저·첫 빈칸으로)
 //   🔴 실DB 쓰기 없음 · 서버(server.js) 안 띄움 · 네트워크 0 — 이 스크립트가 띄우는 작은 가짜 서버(가짜 /api/*)에 public/ao-ordermemo.js·css 만 얹어 Playwright 로 봄
-//   무회귀 = 100줄 이하 · 50장 이하 카드는 지금 커밋(HEAD)의 같은 파일과 화면 픽셀 비교(같아야 함)
+//   무회귀 = 100줄 이하 · 50장 이하 카드는 지금 커밋(HEAD)의 ao-ordermemo.js(+ 지금 css · #909)와 화면 픽셀 비교(같아야 함)
 //   실행: node scripts/verify-900-2b.js   (PORT2B 로 포트 · 기본 3458)
 'use strict';
 const path = require('path'), http = require('http'), fs = require('fs'), { execSync } = require('child_process');
@@ -15,6 +15,7 @@ const SRC = {
     new: { js: fs.readFileSync(path.join(ROOT, 'public', 'ao-ordermemo.js'), 'utf8'), css: fs.readFileSync(path.join(ROOT, 'public', 'ao-ordermemo.css'), 'utf8') },
     old: { js: execSync('git show HEAD:public/ao-ordermemo.js', { cwd: ROOT, maxBuffer: 64 << 20 }).toString(), css: execSync('git show HEAD:public/ao-ordermemo.css', { cwd: ROOT, maxBuffer: 64 << 20 }).toString() },
 };
+SRC.mix = { js: SRC.old.js, css: SRC.new.css };   // #909 현금 표 CSS 를 바꿨으니 ≤100줄 픽셀 비교 = 종전(HEAD) js + 지금 css(그리는 js 무회귀만 봄 · CSS 꼴은 #909 PNG 로 눈 확인)
 const XLSX_JS = fs.readFileSync(path.join(ROOT, 'node_modules', 'xlsx-js-style', 'dist', 'xlsx.bundle.js'));
 const CAT = ['타이벡감귤 5kg', '타이벡감귤 3kg', '황금향 3kg'];
 const SHIP = '2026-10-29';
@@ -40,7 +41,7 @@ window.__ooTest={splitAddr:function(r){return [r,'']},searchBody:function(b){ret
 function serve(port) {
     const srv = http.createServer((req, res) => {
         const u = new URL(req.url, 'http://x'), send = (code, body, type) => { res.writeHead(code, { 'Content-Type': type || 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
-        const v = u.searchParams.get('v') === 'old' ? 'old' : 'new';
+        const v = ['old', 'mix'].includes(u.searchParams.get('v')) ? u.searchParams.get('v') : 'new';
         if (u.pathname === '/') return send(200, page0(v), 'text/html; charset=utf-8');
         if (u.pathname === '/om.js') return send(200, SRC[v].js, 'text/javascript; charset=utf-8');
         if (u.pathname === '/om.css') return send(200, SRC[v].css, 'text/css; charset=utf-8');
@@ -143,13 +144,13 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
         await pctx.close();
 
         // ── ③ 100줄 이하 = 종전과 픽셀 같음 ─────────────
-        console.log('③ 무회귀 = 100줄·60줄 · 50장 이하 카드는 종전(HEAD)과 픽셀 같음');
+        console.log('③ 무회귀 = 100줄·60줄 · 50장 이하 카드는 종전(HEAD) js 와 픽셀 같음(css 는 지금 것 · #909)');
         for (const [w, h, phone] of [[1280, 900, false], [390, 844, true]]) {
             for (const n of [60, 100]) {
                 const shots = {};
                 for (const v of ['old', 'new']) {
                     const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: phone, isMobile: phone }); const p = await c.newPage();
-                    await openMemo(p, v, n, 30, phone); await jusoQuiet(); await p.waitForTimeout(150);
+                    await openMemo(p, v === 'old' ? 'mix' : v, n, 30, phone); await jusoQuiet(); await p.waitForTimeout(150);
                     const html = await p.evaluate(() => document.getElementById('om-ctw').innerHTML + '|' + document.getElementById('om-cselbar').outerHTML);
                     shots[v] = { png: await p.locator('.om-win').screenshot(), html, juso: S.juso, rows: await p.evaluate(() => document.querySelectorAll('#om-ctw tbody tr').length) };
                     await c.close();
@@ -158,10 +159,20 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
                 ok(shots.old.html === shots.new.html && shots.new.rows === n && shots.old.juso === shots.new.juso, `${w}폭 ${n}줄 = 표 HTML 같음 · ${n}줄 전부 · 주소 검색 수 같음(${shots.new.juso})`, { rows: shots.new.rows, juso: [shots.old.juso, shots.new.juso] });
             }
         }
+        // #909 보통 꼴(≥721 표) = 창 가로 넘침 0 · 체크·× 칸 높이 ≥36(손가락 화면 44) · PC 1280 60줄 · 폴드 펼침(880 · 손가락 · 덮개 창 꼴)
+        for (const [w, h, coarse] of [[1280, 900, false], [880, 1000, true]]) {
+            const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: coarse, isMobile: coarse }); const p = await c.newPage();
+            await openMemo(p, 'new', 60, 30, coarse); await jusoQuiet();
+            const st = await p.evaluate(() => { const win = document.querySelector('.om-win'), tw = document.querySelector('#om-ctw .om-prev-tw'), hs = [...document.querySelectorAll('#om-ctw tbody label.om-ck, #om-ctw tbody .om-x')].map(e => Math.round(e.getBoundingClientRect().height)); return { dense: document.querySelector('#om-ctw table').classList.contains('dense'), winOver: win.scrollWidth - win.clientWidth, twOver: tw.scrollWidth - tw.clientWidth, minH: Math.min(...hs), n: hs.length }; });
+            const need = coarse ? 44 : 36;
+            ok(!st.dense && st.winOver <= 0 && st.twOver <= 0, `${w}폭${coarse ? '(손가락)' : ''} 60줄 보통 꼴 = 창·표 가로 넘침 0`, st);
+            ok(st.n === 120 && st.minH >= need, `${w}폭 60줄 체크·× 칸 높이 ≥${need}`, st);
+            await c.close();
+        }
         { const shots = {};
             for (const v of ['old', 'new']) {
                 const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 }); const p = await c.newPage();
-                await openMemo(p, v, 5, 2); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+                await openMemo(p, v === 'old' ? 'mix' : v, 5, 2); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
                 shots[v] = await p.locator('#om-card').screenshot(); await c.close();
             }
             ok(shots.old.equals(shots.new), '빈 주문입력 카드(1줄) = 픽셀 동일'); }
@@ -170,7 +181,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             for (const v of ['old', 'new']) {
                 const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 }); const p = await c.newPage();
                 const pe = []; p.on('pageerror', e => pe.push(String(e)));
-                await openMemo(p, v, 60, 30); await jusoQuiet(); await p.waitForTimeout(150);
+                await openMemo(p, v === 'old' ? 'mix' : v, 60, 30); await jusoQuiet(); await p.waitForTimeout(150);
                 const b0 = await p.evaluate(() => { const b = document.getElementById('om-cneed'); return { hidden: b.hidden, text: b.textContent, png: null }; });
                 const png = await p.locator('.om-win').screenshot();
                 await p.click('#om-cneed'); await p.waitForTimeout(150);
