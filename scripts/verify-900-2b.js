@@ -34,7 +34,7 @@ function listBody(n, ent) {
 const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false };   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
-<link rel="stylesheet" href="/om.css?v=${v}"></head><body>
+<link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
 <script>localStorage.setItem('jwt_token','x');window.showToast=function(m){(window.__toasts=window.__toasts||[]).push(m)};
 window.__ooTest={splitAddr:function(r){return [r,'']},searchBody:function(b){return b},exactMatches:function(){return []}};</script>
 <script src="/xlsx.js"></script><script src="/om.js?v=${v}"></script></body></html>`;
@@ -44,6 +44,7 @@ function serve(port) {
         const v = ['old', 'mix'].includes(u.searchParams.get('v')) ? u.searchParams.get('v') : 'new';
         if (u.pathname === '/') return send(200, page0(v), 'text/html; charset=utf-8');
         if (u.pathname === '/om.js') return send(200, SRC[v].js, 'text/javascript; charset=utf-8');
+        if (/^\/app\/(styles|theme|ao-desk)\.css$/.test(u.pathname)) return send(200, fs.readFileSync(path.join(ROOT, 'public', path.basename(u.pathname))), 'text/css; charset=utf-8');   // #911 앱 공통 CSS(box-sizing 등)도 실어 실화면 꼴로(빠지면 입력 칸이 10px 넘쳐 보임)
         if (u.pathname === '/om.css') return send(200, SRC[v].css, 'text/css; charset=utf-8');
         if (u.pathname === '/xlsx.js') return send(200, XLSX_JS, 'text/javascript; charset=utf-8');
         S.calls.push(req.method + ' ' + u.pathname);
@@ -173,9 +174,19 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             for (const v of ['old', 'new']) {
                 const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 }); const p = await c.newPage();
                 await openMemo(p, v === 'old' ? 'mix' : v, 5, 2); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
-                shots[v] = await p.locator('#om-card').screenshot(); await c.close();
+                shots[v] = await p.evaluate(() => document.getElementById('om-card').innerHTML.replace(/ fk-(?:ship|\d+)/g, '').replace(/om-grid cash(?:-more)?/g, 'om-grid').replaceAll(' <small>비우면 다음 발주</small>', '').replaceAll('placeholder="예) 10/30"', 'placeholder="비우면 다음 발주 · 예) 10/30"')); await c.close();   // #911 카드 꼴을 일부러 바꿈 = 픽셀 대신 칸 HTML(자리 이름 fk-·cash 빼고)이 종전과 같은지
             }
-            ok(shots.old.equals(shots.new), '빈 주문입력 카드(1줄) = 픽셀 동일'); }
+            // #911 카드 꼴 = 넘침 0 · 수량 묶음 좁게 · 입력 칸 높이(폰 44)
+            for (const [w, h, phone] of [[1280, 900, false], [390, 844, true]]) {
+                const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: phone, isMobile: phone }); const p = await c.newPage();
+                await openMemo(p, 'new', 12, 1, phone); await jusoQuiet(); await p.click('#om-ctw tbody tr:nth-child(2) .om-ct-open'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+                const st = await p.evaluate(() => { const card = document.getElementById('om-card'), cr = card.getBoundingClientRect(), b = card.querySelector('.om-card-b'); const ins = [...card.querySelectorAll('input, textarea')].filter(e => e.offsetParent && e.type !== 'checkbox'); return { over: [...card.querySelectorAll('input, textarea, button')].filter(e => e.offsetParent && e.getBoundingClientRect().right > cr.right + 0.5).length, bodyX: b.scrollWidth - b.clientWidth, step: Math.round(card.querySelector('.om-step').getBoundingClientRect().width), minH: Math.min(...ins.map(e => Math.round(e.getBoundingClientRect().height))), scroll: b.scrollHeight - b.clientHeight }; });
+                ok(st.over === 0 && st.bodyX <= 0, `${w}폭 메모 고치기 카드 = 가로 넘침 0`, st);
+                ok(st.step <= (phone ? 180 : 160) && st.minH >= (phone ? 44 : 36), `${w}폭 수량 묶음 ≤${phone ? 180 : 160} · 입력 칸 높이 ≥${phone ? 44 : 36}`, st);
+                if (phone) ok(st.scroll <= 0, '390폭 카드 본문 스크롤 0(저장 단추까지 한 화면)', st);
+                await c.close();
+            }
+            ok(shots.old === shots.new, '빈 주문입력 카드(1줄) = 칸 HTML 종전과 같음(#911 자리 이름·발송일 안내 글 빼고)', (() => { let i = 0; while (i < shots.old.length && shots.old[i] === shots.new[i]) i++; return [shots.old.slice(i - 40, i + 80), shots.new.slice(i - 40, i + 80)]; })()); }   // 다르면 처음 어긋난 곳 앞뒤 글을 보여 줌
         // 「주소 확인 필요 n줄」 단추(#880-b) = 종전과 같은 글·보임 · 그 줄들을 지워 n=0 이 되면 단추 사라지고 「그 줄만 보기」도 풀림(워커2 점검 #900-2B 막을 것 1)
         { const st2 = {}; S.multi = true;
             for (const v of ['old', 'new']) {

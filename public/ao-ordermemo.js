@@ -919,7 +919,7 @@
         if (gwaItem(base)) return `<div class="om-tailrow"><label class="om-tail-l" for="om-f-${ri}-gwa">과수</label><input id="om-f-${ri}-gwa" class="om-gwa" inputmode="numeric" pattern="[0-9]*" maxlength="2" placeholder="예) 15" data-ri="${ri}" data-ftail="1" value="${esc((t.match(/^(\d+)과로!$/) || [])[1] || '')}"><span class="om-tail-s">과로!</span><small class="om-tail-h">비우면 과수 지정 안 함</small></div>`;
         return '';
     }
-    const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', ph: '비우면 다음 발주 · 예) 10/30' }]);
+    const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', hint: '비우면 다음 발주', ph: '예) 10/30' }]);
     function fieldHtml(ri, r, f) {
         const v = getV(r, f), o = getV(origOf(ri) || r, f), id = fid(ri, f);
         const blank = !r._new && f.need && !String(v).trim();
@@ -942,7 +942,7 @@
             if (r.kind === 'cash' && f.i === 10) input = `<div class="om-telrow">${input}${sameBtn(r, ri)}</div>`;   // #862 구매자 연락처 = 받는 분 연락처 그대로 넣기
         }
         const wide = f.kind === 'area' || f.kind === 'option' || f.kind === 'platform' || (r.kind === 'line' && f.k === 'note');
-        return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
+        return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}${r.kind === 'cash' ? ' fk-' + (f.kind === 'shipdate' ? 'ship' : f.i) : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
     const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
     const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary${saveBlocked() ? ' om-blocked' : ''}" id="om-card-save" data-cact="save"${saveBlocked() ? ' aria-disabled="true"' : ''}>${saveLabel(n)}</button>`; };
@@ -1020,10 +1020,10 @@
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
                 ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
-                <div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
+                <div class="om-grid${r.kind === 'cash' ? ' cash' : ''}">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
                 ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c))}</p>` : ''}
-                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
+                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
             ${cardBig(c) && cardShownN(c) < c.rows.length ? `<button type="button" class="om-btn om-cmore" data-cact="morerows">줄 ${Math.min(CARD_PAGE, c.rows.length - cardShownN(c))}개 더 보기 <small>${cardShownN(c).toLocaleString()} / ${c.rows.length.toLocaleString()}줄</small></button>` : ''}

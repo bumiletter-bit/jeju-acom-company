@@ -616,3 +616,34 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 /* #909-b PC(≥1101) = 왼쪽 붙여 넣기 칸 400 고정 · 오른쪽 현금 칸이 남는 폭 전부(1280 = 약 720) · 그 밖 폭은 종전 그대로 */
 @media (min-width: 900px) and (max-width: 1100px) { .om-cols { grid-template-columns: 360px minmax(0, 1fr); } }   /* #909-d 900~1100 = 왼쪽 360 */
 @media (min-width: 1101px) { .om-cols { grid-template-columns: 400px minmax(0, 1fr); } }
+/* #911 메모 고치기 카드(현금 줄) 손질 · 대표 「사이즈 조정 · 수량 칸 너무 크고」 — 칸 두세 개씩 한 줄 · 이름 줄 낮게 · 수량 묶음 좁게 · 배송지 1줄부터
+   현금 줄 칸 자리 = fieldHtml 의 fk-<칸 번호>(fk-ship = 발송일) · 칸 틀(두세 칸 한 줄)은 현금 줄만
+   공통(의도) = 카드 폭 700 · 간격 · 이름 줄 18/12px · 발송일 안내 글은 메모 칸 줄 카드·정리 결과 카드에도 같이 걸림 · 색 0 */
+@media (min-width: 721px) { .om-card:not([hidden]) { width: min(700px, calc(100vw - 48px)); } }
+.om-card .om-card-b { gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+.om-card .om-rowcard { gap: 8px; }
+.om-card .om-f { gap: 4px; }
+.om-card .om-f-l { min-height: 18px; }
+.om-card .om-f-l .om-undo1 { margin-block: -5px; }   /* 「처음 값」 단추(28)가 나와도 이름 줄 높이 18 그대로 = 옆 칸과 입력 칸 높이가 어긋나지 않게 */
+@media (max-width: 960px), (pointer: coarse) { .om-card .om-f-l .om-undo1 { margin-block: -9px; } }   /* 손가락 화면 단추 36 그대로 */
+.om-card .om-f-l label { font-size: 12px; }
+.om-card .om-f-l label small { font-size: 11px; }
+.om-card .om-grid.cash, .om-card .om-grid.cash-more { gap: 10px; }
+.om-card .om-grid.cash > .om-f, .om-card .om-grid.cash-more > .om-f { grid-column: auto; }
+.om-card .om-grid.cash > .wide, .om-card .om-grid.cash > .fk-8, .om-card .om-grid.cash-more > .fk-12 { grid-column: 1 / -1; }
+@media (min-width: 721px) {   /* PC·폴드 펼침 = 다섯 칸 틀(수량 묶음 148 + 1fr×4) · 수량·받는 분·연락처 한 줄 / 구매자 연락처(+수취인과 동일)·배송메세지·발송일 한 줄 */
+    .om-card .om-grid.cash { grid-template-columns: 148px repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr); }   /* 끝 칸(발송일) = 「발송일 비우면 다음 발주」 한 줄 들어가게 조금 넓게 */
+    .om-card .om-grid.cash > .fk-3, .om-card .om-grid.cash > .fk-6, .om-card .om-grid.cash > .fk-10, .om-card .om-grid.cash > .fk-9 { grid-column: span 2; }
+    .om-card .om-grid.cash-more { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (min-width: 961px) and (pointer: fine) { .om-card .om-addr .om-link { min-height: 36px; } }   /* 마우스 PC [도로명으로 바꾸기] 32 → 36 · 손가락 화면 44 그대로 */
+@media (max-width: 720px) {   /* 폰 = 수량+발송일 · 받는 분+연락처 · 배송지 · 구매자 연락처(+수취인과 동일) · 배송메세지 */
+    .om-card .om-grid.cash, .om-card .om-grid.cash-more { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+    .om-card .om-grid.cash > .om-f { order: 9; }
+    .om-card .om-grid.cash > .fk-4 { order: 0; } .om-card .om-grid.cash > .fk-5 { order: 1; } .om-card .om-grid.cash > .fk-ship { order: 2; }
+    .om-card .om-grid.cash > .fk-3 { order: 3; } .om-card .om-grid.cash > .fk-6 { order: 4; } .om-card .om-grid.cash > .fk-8 { order: 5; }
+    .om-card .om-grid.cash > .fk-10 { order: 6; grid-column: 1 / -1; } .om-card .om-grid.cash > .fk-9 { order: 7; grid-column: 1 / -1; }
+}
+@supports (field-sizing: content) {   /* 배송지 = 1줄(44)부터 · 글이 길면 저절로 늘어남(지원 안 하는 브라우저 = 종전 2줄 70) */
+    .om-card .om-f textarea { field-sizing: content; min-height: 44px; max-height: 9.5em; }
+}
