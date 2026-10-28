@@ -1,3 +1,11 @@
+## v5.9.664 (2026-10-28) — #906 DB 용량 상한(720MB) · 보관 정리 하한 7일 · 1회 비우기(대표 「15일로 변경 · 7일 이내만 놔두고 지워도 돼」)
+
+- 원인(워커2 조사 · 읽기만): 10/26~27 이틀에 창구 디자인 시안 그림(300~900dpi 투명 PNG · 한 장 4~9MB · 수정 회차마다) 270MB → report_files 491MB(살아 있는 435행 457MB · 10월분 434MB). 종전 report_days 90 은 1월 전까지 0MB 비움 · 하한 30 이라 14 를 넣으면 조용히 90 으로.
+- 서버(server.js · 워커2 · +7 −2): dbRetentionCfg report_days 하한 30 → 7(image_days 7 그대로 · 하한보다 작으면 기본값 = 종전 설계 유지 · verify-579 기대 그대로) · 내려받기 404 글 「90일 경과 정리분」 → 설정값 n일 · MCP get_reports 목록도 purged_at IS NULL 거름(비운 파일 이름만 보이던 것). 떼어 실행 15→15·7→7·6→90 · ro-preload 기동 200 · 워커1 읽기 점검.
+- 운영(총괄 · 배포 뒤): 실DB db_retention report_days 15 · image_days 15 · 1회 비우기 SQL = report_files(is_deleted 또는 7일 지남 · 영상 5개 포함 · dry 851행 167MB) · pending_orders image_data(끝난 상태 6종 · 7일 지남 · 오류확인·승인됨 제외 · dry 268행 25MB) · VACUUM FULL 2표(ACCESS EXCLUSIVE · 08:30~10:30 피함) · audit db_purge. 결과 수치는 CLAUDE.md 머리.
+- 창구 업무지식 6-1 「결과 올리기」: 첨부 그림 = 긴 변 1,600px·150dpi·1MB 안팎 · 300dpi 원본은 최종본 한 장만 · 15일 뒤 본문 비워짐(총괄).
+- 지우지 않는 것 = 알림 이력 2종 · 상품 보관본 2종 · tax_invoices PDF · payslips·company_rules · 문자 사진(30일 자동 · 글은 영구) · 오류확인 지시 그림. 🔵 7일 안 308MB(시안 270MB)는 15일 규칙으로 11/10~11 비워짐 → 그 사이 비슷한 작업 몰리면 다시 700 근처.
+
 ## v5.9.663 (2026-10-28) — #905 메모함 보관 15일·확인 줄 10일(설정) · 기동 때 정리 1회 · 최종발주 「지난 날짜 n줄」 띠(대표)
 
 - 실DB 설정 order_memo = keep_days 15 · unsure_days 10(총괄 · audit 19688 · 첫 시도는 트랜잭션 안 audit 오류로 롤백 → 다시 넣음).

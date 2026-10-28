@@ -10545,6 +10545,7 @@ setInterval(naverAutoCollectTick, 60 * 1000);
 
 // ===== #579 DB 보관 정리 — 시작 (verify-579-db.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) =====
 // 대표 10/8: DB 가 해마다 쌓여도 느려지지 않게. 설정 = agent_office_config 'db_retention' { enabled, report_days, image_days, log_days, image_statuses }.
+//   하한 = report_days·image_days 7일 · log_days·mail_days 180일(#906 대표 10/28 「15일」 · 종전 report_days 하한 30) — 하한보다 작은 값은 기본값으로 돌아간다(올림 아님).
 //   🔴 enabled 가 true 가 아니면(설정 행이 없을 때 포함) 아무것도 지우지 않는다 — 하루 한 번 「지울 대상 건수·용량」만 'db_retention_last' 에 적는다(텔레그램 없음).
 //   켜면 한 틱(1분)에 한 가지만: ⓐ report_files 본문 비우기(행·이름·크기는 남김 · purged_at) ⓑ 끝난 지시의 첨부 그림 비우기 ⓒ 알림 이력 2종을 보관표(_archive)로 옮김(지우는 게 아니라 이사).
 //   DB 크기는 켜짐·꺼짐과 무관하게 매일 'db_size_log' 에 한 줄(월요일 아침 브리핑의 「DB ○MB · 이번 주 +○MB」 재료).
@@ -10557,7 +10558,7 @@ function dbRetentionCfg(raw) {
     const v = (raw && typeof raw === 'object') ? raw : {};
     const num = (x, d, min) => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= min ? n : d; };   // 하한보다 작으면 기본값(실수로 「1일」을 넣어도 안 지워지게)
     const st = Array.isArray(v.image_statuses) ? v.image_statuses.map(s => String(s).slice(0, 20)).filter(Boolean).slice(0, 12) : [];
-    return { enabled: v.enabled === true, report_days: num(v.report_days, DB_RET_DEFAULT.report_days, 30), image_days: num(v.image_days, DB_RET_DEFAULT.image_days, 7),
+    return { enabled: v.enabled === true, report_days: num(v.report_days, DB_RET_DEFAULT.report_days, 7), image_days: num(v.image_days, DB_RET_DEFAULT.image_days, 7),
         log_days: num(v.log_days, DB_RET_DEFAULT.log_days, 180), mail_days: num(v.mail_days, DB_RET_DEFAULT.mail_days, 180), image_statuses: st.length ? st : DB_RET_DEFAULT.image_statuses.slice() };
 }
 // 지울 대상 세기 — 읽기만
@@ -15596,7 +15597,11 @@ app.get('/api/agent-office/files/:id/download', authMiddleware, /* 직원 가능
     try {
         const r = await pool.query(
             `SELECT filename, data FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [req.params.id]);
-        if (r.rows.length === 0) throw { status: 404, message: '파일을 찾을 수 없습니다 (90일 경과 정리분은 재생성 가능 — 같은 조회를 다시 지시해주세요)' };
+        if (r.rows.length === 0) {
+            let days = DB_RET_DEFAULT.report_days;   // #906 글 속 기간 = 지금 보관 설정(못 읽으면 기본값)
+            try { days = dbRetentionCfg(await naverCfgGet('db_retention')).report_days; } catch (_) { }
+            throw { status: 404, message: `파일을 찾을 수 없습니다 (${days}일 경과 정리분은 재생성 가능 — 같은 조회를 다시 지시해주세요)` };
+        }
         // 지시 #33·#34: 확장자 기반 MIME (전엔 전 파일 xlsx MIME 고정 → 모바일이 jpg를 엑셀로 인식한 원인).
         // 이미지·영상은 inline(브라우저·OS가 이미지로 표시), ?download=1이면 강제 저장. 문서는 기존 attachment 유지
         const fname = r.rows[0].filename;
@@ -19134,7 +19139,7 @@ async function svcGetReports({ id, limit }, actor) {
         const fid = res.report && res.report.file_id;
         if (fid) {
             const f = await pool.query(
-                `SELECT id, filename, size_bytes, created_at FROM report_files WHERE id = $1 AND is_deleted = false`, [fid]);
+                `SELECT id, filename, size_bytes, created_at FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [fid]);   // #906 비운 파일은 목록에서도 뺌
             if (f.rows.length) file = {
                 id: f.rows[0].id, filename: f.rows[0].filename, size_bytes: f.rows[0].size_bytes,
                 created_at: f.rows[0].created_at,
