@@ -80,7 +80,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
         info('첫 그림 시간(ms) 종전 → 지금', `${Math.round(tOld)} → ${Math.round(tNew)} (주소 검색 종전 ${jOld}번)`);
         ok(tNew < 1500, '첫 그림 1.5초 안', Math.round(tNew));
         let st = await pg.evaluate(() => { const t = document.querySelector('#om-ctw table'), td = t && t.querySelector('tbody td.nm'); return { dense: t && t.classList.contains('dense'), rows: document.querySelectorAll('#om-ctw tbody tr').length, fs: td && getComputedStyle(td).fontSize, h: td && Math.round(td.getBoundingClientRect().height), pg: !!document.querySelector('#om-ctw .om-pg'), nums: [...document.querySelectorAll('.om-pg-nums > *')].map(x => x.textContent).join(' '), n: (document.querySelector('.om-pg-n') || {}).textContent, first: (document.querySelector('#om-ctw tbody .om-ct-open') || {}).textContent }; });
-        ok(st.dense && st.rows === 50 && st.fs === '12px' && st.h >= 36 && st.h <= 46, '촘촘 꼴 · 한 쪽 50줄 · 글씨 12px · 줄 36px 안팎', st);
+        ok(st.dense && st.rows === 50 && st.fs === '11px' && st.h >= 36 && st.h <= 46, '촘촘 꼴 · 한 쪽 50줄 · 글씨 11px · 줄 36px 안팎', st);
         ok(st.pg && st.nums === '1 2 3 4 5 … 20' && st.n === '1–50 / 1,000줄', '쪽 단추 「‹ 1 2 3 4 5 … 20 ›」 · 1–50 / 1,000줄', st);
         ok(S.juso > 0 && S.juso <= 50, '주소 검색 = 보이는 쪽 줄만(50 이하)', S.juso);
         await pg.click('.om-pg-b[data-pg="next"]');

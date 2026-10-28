@@ -559,7 +559,7 @@ html[data-ao-theme="dark"] .om-pill.k-svc { background: rgba(167, 139, 250, .18)
 @media (max-width: 960px), (pointer: coarse) { .om-indchk { min-height: 44px; } }
 
 /* #900 2-B 명절 대비 = 현금 줄 100줄 넘으면 「촘촘히」(글씨 12 · 줄 36 · 폰은 누름 칸 44 그대로) + 쪽 넘기기 · 주문입력 카드 50장씩 */
-.om-ct.dense { font-size: 12px; }
+.om-ct.dense { font-size: 11px; }
 .om-ct.dense td { height: 36px; padding: 4px 8px; vertical-align: middle; }
 .om-ct.dense th { padding: 6px 8px; }
 .om-ct.dense .om-ct-p { margin-top: 2px; }
