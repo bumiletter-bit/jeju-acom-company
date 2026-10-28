@@ -446,6 +446,8 @@ async function initDB() {
             UNIQUE(date, keyword)
         )
     `);
+    // #910 자동 수집 줄 표시 — 'auto' = 창구 PC keyword-rank.js(created_by NULL) · 'manual' = 화면 붙여 넣기 · 옛 줄 NULL
+    await pool.query(`ALTER TABLE keyword_rankings ADD COLUMN IF NOT EXISTS source TEXT`);
 
     // 박스 입고/이동 기록 — 거래처 자료 + 이력 추적용
     await pool.query(`
@@ -3315,6 +3317,7 @@ app.get('/api/rankings', authMiddleware, async (req, res) => {
             shoppingRank: row.shopping_rank,
             adRank: row.ad_rank,
             powerlinkRank: row.powerlink_rank,
+            source: row.source || null,   // #910 'auto' 면 화면에 「자동」
             createdAt: row.created_at,
             updatedAt: row.updated_at
         })));
@@ -3335,12 +3338,13 @@ app.post('/api/rankings/bulk', authMiddleware, async (req, res) => {
             const ad = r.adRank != null ? Number(r.adRank) : null;
             const pl = r.powerlinkRank != null ? Number(r.powerlinkRank) : null;
             const upsert = await pool.query(
-                `INSERT INTO keyword_rankings (date, keyword, shopping_rank, ad_rank, powerlink_rank, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO keyword_rankings (date, keyword, shopping_rank, ad_rank, powerlink_rank, created_by, source)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'manual')
                  ON CONFLICT (date, keyword) DO UPDATE
                    SET shopping_rank = EXCLUDED.shopping_rank,
                        ad_rank = EXCLUDED.ad_rank,
                        powerlink_rank = EXCLUDED.powerlink_rank,
+                       source = 'manual',   -- #910 직원이 같은 날 손으로 넣으면 자동 줄을 덮음
                        updated_at = NOW()
                  RETURNING (xmax = 0) AS inserted`,
                 [date, k, sh, ad, pl, req.user.id]
@@ -3348,6 +3352,27 @@ app.post('/api/rankings/bulk', authMiddleware, async (req, res) => {
             if (upsert.rows[0].inserted) inserted++; else updated++;
         }
         res.json({ success: true, inserted, updated });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// #910 자동 수집 키워드 목록(설정 keyword_rank.keywords) — 전 직원 · 다른 칸(enabled·time·store)은 총괄이 실DB 로
+app.get('/api/rankings/keywords', authMiddleware, async (req, res) => {
+    try {
+        const cfg = await naverCfgGet('keyword_rank'), last = await naverCfgGet('keyword_rank_last');
+        const c = cfg && typeof cfg === 'object' ? cfg : {};
+        res.json(Object.assign({}, c, { enabled: c.enabled === true, time: c.time || '09:30', keywords: Array.isArray(c.keywords) ? c.keywords : [], store: c.store || null, last: last || null }));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.put('/api/rankings/keywords', authMiddleware, async (req, res) => {
+    try {
+        const kws = krCleanKeywords(req.body && req.body.keywords);
+        if (!kws) return res.status(400).json({ error: 'keywords 배열 필요' });
+        if (!kws.length || kws.length > KR_MAX_KEYWORDS) return res.status(400).json({ error: `키워드는 1~${KR_MAX_KEYWORDS}개(1~30자)` });
+        const before = await naverCfgGet('keyword_rank');
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('keyword_rank', jsonb_build_object('keywords', $1::jsonb))
+            ON CONFLICT (key) DO UPDATE SET value = agent_office_config.value || jsonb_build_object('keywords', $1::jsonb), updated_at = NOW()`, [JSON.stringify(kws)]);   // 다른 칸은 그대로(합치기)
+        await writeAudit({ action: 'keyword_rank_keywords', targetType: 'config', changes: { before: before && Array.isArray(before.keywords) ? before.keywords : null, after: kws }, source: 'rankings', actor: req.user });
+        res.json({ success: true, keywords: kws });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -15874,6 +15899,90 @@ async function deskLoginExpiredTick() {
 }
 setInterval(() => { deskLoginExpiredTick().catch(e => console.error('[#813 창구 로그인 만료] 알림 실패:', String(e.message || e).slice(0, 120))); }, 60000);
 // ── #813 창구 로그인 만료 알림 끝
+// ── #910 키워드 순위 알림 시작 — 창구 PC scripts/desk/keyword-rank.js(09:30)가 keyword_rankings(source 'auto')와 설정 keyword_rank_last {date, at, errors} 를 쓰면(보낸 날 = notified_date · 서버가 씀)
+//   ⓐ 그날 한 번 텔레그램(카톡 글 꼴 + 어제 대비 ↑↓) + 알림 종(전 직원 · 순위관리) ⓑ miss_alert(기본 10:00) 지나도 오늘 auto 줄 0 이면 텔레그램 「미수집」 1번
+//   설정 keyword_rank 가 없으면(배포 뒤 총괄이 넣기 전) 둘 다 아무것도 안 함 · 보낼 자격은 UPDATE … RETURNING 으로 먼저 집음(배포 겹침 때 2통 막음)
+//   텔레그램은 400자에서 잘리므로(tgMask) 380자씩 나눠 보냄
+const KR_MAX_KEYWORDS = 20;
+function krCleanKeywords(list) {
+    if (!Array.isArray(list)) return null;
+    const out = [];
+    for (const x of list) {
+        const k = String(x == null ? '' : x).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!k || k.length > 30 || out.includes(k)) continue;   // 1~30자(대표 키워드 「귤」이 1자)
+        out.push(k);
+    }
+    return out;
+}
+function krDelta(t, y) { if (t == null || y == null || t === y) return ''; return t < y ? '↑' + (y - t) : '↓' + (t - y); }
+function krRank(t, y) { return t == null ? '-' : t + '위' + krDelta(t, y); }
+// day = 'YYYY-MM-DD' · hm = 'HH:MM'(KST) · today/yest = Map(키워드 → 줄) · errors = Set(키워드) → 글 줄 배열
+function krFormatLines({ day, hm, keywords, today, yest, errors }) {
+    const lines = [`아꼼이네 주요 키워드 순위기준 (${day.slice(2, 4)}.${day.slice(5, 7)}.${day.slice(8, 10)}. ${hm} 기준)`, '쇼핑검색-모바일'];
+    for (const k of keywords) {
+        const t = today.get(k), y = yest.get(k) || {};
+        const allNull = !t || (t.shopping_rank == null && t.ad_rank == null && t.powerlink_rank == null);
+        if (errors.has(k) && allNull) { lines.push(`${k} (읽기 실패)`); continue; }
+        if (!t) { lines.push(`${k}(-) 광고- 파워링크-`); continue; }
+        lines.push(`${k}(${krRank(t.shopping_rank, y.shopping_rank)}) 광고${krRank(t.ad_rank, y.ad_rank)} 파워링크${krRank(t.powerlink_rank, y.powerlink_rank)}`);
+    }
+    return lines;
+}
+function krChunks(lines, max) {
+    const out = []; let cur = '';
+    for (const l of lines) { const add = cur ? cur + '\n' + l : l; if (add.length > max && cur) { out.push(cur); cur = l; } else cur = add; }
+    if (cur) out.push(cur);
+    return out;
+}
+async function krCfg(db, key) { const r = await db.query('SELECT value FROM agent_office_config WHERE key=$1', [key]); return r.rows.length ? r.rows[0].value : null; }
+function krKstHM(ms) { return new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(11, 16); }
+// o = { db, send, noti, today, hm } — 검증이 가짜를 넣음 · 평소엔 실제 pool·notifyTelegram·createNotification
+async function keywordRankNotifyTick(o = {}) {
+    const db = o.db || pool, send = o.send || notifyTelegram, noti = o.noti || createNotification, day = o.today || kstTodayStr();
+    const cfg = await krCfg(db, 'keyword_rank');
+    if (!cfg || typeof cfg !== 'object') return 0;
+    const got = await db.query(`UPDATE agent_office_config SET value = value || jsonb_build_object('notified_date', $1::text, 'notified_at', NOW()::text), updated_at = NOW()
+        WHERE key = 'keyword_rank_last' AND value->>'date' = $1 AND COALESCE(value->>'notified_date', '') <> $1 RETURNING value`, [day]);   // 날짜 짝 — 수집기가 || 합치기로 써서 전날 칸이 남아도 그날 1번(옛 notified:true 칸은 안 봄)
+    if (!got.rows.length) return 0;
+    const last = got.rows[0].value || {};
+    const rows = (await db.query(`SELECT date = $1::date AS is_today, keyword, shopping_rank, ad_rank, powerlink_rank FROM keyword_rankings WHERE date IN ($1::date, $1::date - 1)`, [day])).rows;
+    const today = new Map(), yest = new Map();
+    for (const r of rows) (r.is_today ? today : yest).set(r.keyword, r);
+    const errors = new Set((Array.isArray(last.errors) ? last.errors : []).map(e => String(e && typeof e === 'object' ? e.keyword : e)));
+    const keywords = (Array.isArray(cfg.keywords) ? cfg.keywords.map(String) : []).slice();
+    for (const k of [...today.keys(), ...errors]) if (k && !keywords.includes(k)) keywords.push(k);
+    const at = last.at && !isNaN(Date.parse(last.at)) ? krKstHM(Date.parse(last.at)) : (o.hm || krKstHM());
+    const lines = krFormatLines({ day, hm: at, keywords, today, yest, errors });
+    for (const msg of krChunks(lines, 380)) await send(msg);
+    const users = (await db.query('SELECT id FROM users WHERE deleted_at IS NULL')).rows;
+    const md = `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
+    const short = keywords.slice(0, 6).map(k => { const t = today.get(k); return `${k} ${t && t.shopping_rank != null ? t.shopping_rank + '위' : '-'}`; }).join(' · ');
+    for (const u of users) await noti(u.id, 'rank', `키워드 순위 (${md})`, short + (keywords.length > 6 ? ` 외 ${keywords.length - 6}` : ''), 'rankings');
+    return 1;
+}
+async function keywordRankMissTick(o = {}) {
+    const db = o.db || pool, send = o.send || notifyTelegram, day = o.today || kstTodayStr(), hm = o.hm || krKstHM();
+    const cfg = await krCfg(db, 'keyword_rank');
+    if (!cfg || typeof cfg !== 'object' || cfg.enabled !== true) return 0;
+    const at = /^\d{2}:\d{2}$/.test(String(cfg.miss_alert || '')) ? cfg.miss_alert : '10:00';
+    if (hm < at || cfg.miss_notified === day) return 0;
+    const n = (await db.query(`SELECT COUNT(*)::int AS n FROM keyword_rankings WHERE date = $1::date AND source = 'auto'`, [day])).rows[0].n;
+    if (n > 0) return 0;
+    const got = await db.query(`UPDATE agent_office_config SET value = value || jsonb_build_object('miss_notified', $1::text), updated_at = NOW()
+        WHERE key = 'keyword_rank' AND COALESCE(value->>'miss_notified', '') <> $1 RETURNING 1`, [day]);
+    if (!got.rows.length) return 0;
+    await send(`⚠️ 오늘(${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}) 키워드 순위 미수집 — 직원 손 입력(순위관리 탭 붙여 넣기)`);
+    return 1;
+}
+let _krBusy = false;
+setInterval(() => {
+    if (_krBusy) return; _krBusy = true;
+    (async () => {
+        try { await keywordRankNotifyTick(); } catch (e) { console.error('[#910 키워드 순위] 알림 실패:', String(e.message || e).slice(0, 120)); }
+        try { await keywordRankMissTick(); } catch (e) { console.error('[#910 키워드 순위] 미수집 알림 실패:', String(e.message || e).slice(0, 120)); }
+    })().finally(() => { _krBusy = false; });
+}, 60000);
+// ── #910 키워드 순위 알림 끝
 
 // ══════════════ 지시 #395: 주문 정리기 (현금·단체주문 주소 정리 → CJ 발송 엑셀) ══════════════
 //   juso 프록시: 승인키 = env JUSO_API_KEY만 (코드·화면·브라우저 노출 0). 같은 검색어 5분 캐시 + 과호출 가드(대표 조건 4).

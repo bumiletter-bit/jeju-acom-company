@@ -9869,8 +9869,63 @@ async function renderRankingsPage() {
         startEl.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
     }
 
-    await loadRankings();
+    await Promise.all([loadRankings(), loadRankKeywords()]);
 }
+
+// #910 자동 수집 키워드 목록 — GET/PUT /api/rankings/keywords (전 직원 · PUT 응답 {success, keywords} · 1~20개) · 옛 서버(없는 길)면 칸·안내 줄 숨김
+let _rankKw = null;           // 화면에서 고치는 중인 목록
+let _rankKwSaved = '';        // 마지막으로 서버에서 받은 목록(JSON) = 저장 단추 켜짐 판정
+const _rankKwEsc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function renderRankKw(msg, err) {
+    const box = document.getElementById('rank-kw-chips'); if (!box || !_rankKw) return;
+    box.innerHTML = _rankKw.length
+        ? _rankKw.map((k, i) => `<span class="rank-kw-chip">${_rankKwEsc(k)}<button type="button" data-kw-del="${i}" aria-label="${_rankKwEsc(k)} 빼기" title="빼기">×</button></span>`).join('')
+        : '<span class="rank-kw-empty">키워드가 없어요 · 아래에서 추가해 주세요</span>';
+    const dirty = JSON.stringify(_rankKw) !== _rankKwSaved;
+    const save = document.getElementById('rank-kw-save-btn'); if (save) save.disabled = !dirty || !_rankKw.length;   // 0개는 서버가 400 → 단추부터 꺼 둠
+    const m = document.getElementById('rank-kw-msg');
+    if (m) { m.textContent = msg != null ? msg : (dirty && !_rankKw.length ? '키워드가 1개 이상 있어야 저장돼요' : dirty ? '바꾼 것이 있어요 · [저장]을 눌러야 다음 09:30 부터 반영돼요' : ''); m.classList.toggle('err', !!err); }
+}
+async function loadRankKeywords() {
+    const card = document.getElementById('rank-kw-card'), note = document.getElementById('rank-auto-note');
+    if (!card) return;
+    try {
+        const r = await api('/api/rankings/keywords');
+        if (!r || !Array.isArray(r.keywords)) throw new Error('no keywords');
+        _rankKw = r.keywords.map(k => String(k)); _rankKwSaved = JSON.stringify(_rankKw);
+        card.hidden = false; if (note) note.hidden = false;
+        renderRankKw();
+    } catch (e) {
+        _rankKw = null; card.hidden = true; if (note) note.hidden = true;   // 옛 서버 = 종전 화면 그대로
+    }
+}
+function rankKwAdd() {
+    const inp = document.getElementById('rank-kw-input'); if (!inp || !_rankKw) return;
+    const k = inp.value.replace(/\s+/g, ' ').trim();
+    if (!k) { inp.focus(); return; }
+    if (_rankKw.some(x => x.replace(/\s+/g, '') === k.replace(/\s+/g, ''))) { renderRankKw(`「${k}」은(는) 이미 있어요`, true); inp.select(); return; }
+    if (_rankKw.length >= 20) { renderRankKw('키워드는 최대 20개까지예요', true); return; }
+    _rankKw.push(k); inp.value = ''; renderRankKw(); inp.focus();
+}
+document.getElementById('rank-kw-add-btn')?.addEventListener('click', rankKwAdd);
+document.getElementById('rank-kw-input')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); rankKwAdd(); } });
+document.getElementById('rank-kw-chips')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-kw-del]'); if (!b || !_rankKw) return;
+    const i = +b.dataset.kwDel; _rankKw.splice(i, 1); renderRankKw();
+    const next = document.querySelector(`#rank-kw-chips [data-kw-del="${Math.min(i, _rankKw.length - 1)}"]`) || document.getElementById('rank-kw-input'); if (next) next.focus();
+});
+document.getElementById('rank-kw-save-btn')?.addEventListener('click', async () => {
+    if (!_rankKw) return;
+    const btn = document.getElementById('rank-kw-save-btn'); btn.disabled = true; btn.textContent = '저장 중…';
+    try {
+        const r = await api('/api/rankings/keywords', 'PUT', { keywords: _rankKw });
+        if (r && Array.isArray(r.keywords)) _rankKw = r.keywords.map(k => String(k));
+        _rankKwSaved = JSON.stringify(_rankKw);
+        renderRankKw(`저장했어요 · 키워드 ${_rankKw.length}개 · 다음 09:30 부터 이 목록으로 모아요`);
+    } catch (err) {
+        renderRankKw('저장 못 했어요 · ' + err.message, true);
+    } finally { btn.textContent = '저장'; if (JSON.stringify(_rankKw) !== _rankKwSaved && _rankKw.length) btn.disabled = false; }
+});
 
 // 카톡 텍스트 파싱
 // "(26.06.02. 10:16 기준)" → 날짜 추출
@@ -10000,7 +10055,7 @@ async function loadRankings() {
         const keywords = [...new Set(_rankData.map(r => r.keyword))].sort((a,b) => a.localeCompare(b, 'ko'));
         sel.innerHTML = keywords.length === 0
             ? '<option value="">(없음)</option>'
-            : keywords.map(k => `<option value="${k}">${k}</option>`).join('');
+            : keywords.map(k => `<option value="${_rankKwEsc(k)}">${_rankKwEsc(k)}</option>`).join('');
         if (prev && keywords.includes(prev)) sel.value = prev;
         renderRankTable();
         drawRankChart();
@@ -10041,7 +10096,7 @@ function renderRankTable() {
         const prev = idx > 0 ? list[idx - 1] : null;
         return `<tr>
             <td>${r.date}</td>
-            <td><strong>${r.keyword}</strong></td>
+            <td><strong>${_rankKwEsc(r.keyword)}</strong>${r.source === 'auto' ? '<span class="rank-auto-badge" title="09:30 자동 수집">자동</span>' : ''}</td>
             <td>${rankCell(r.shoppingRank, prev, 'shoppingRank', false)}</td>
             <td>${rankCell(r.adRank, prev, 'adRank', true)}</td>
             <td>${rankCell(r.powerlinkRank, prev, 'powerlinkRank', true)}</td>

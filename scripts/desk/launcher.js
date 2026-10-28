@@ -774,6 +774,41 @@ function scratchMaybe() {
     })().catch(e => log('.scratch 정리 실패(무시): ' + e.message)).finally(() => { scr.busy = false; });
 }
 
+// #910 네이버 키워드 순위 자동 수집 — 설정 agent_office_config 'keyword_rank' {enabled:true, time:"09:30"} 일 때만(없으면 아무것도 안 함).
+//   1분에 한 번 확인 · KST 그 시각 지나면 하루 한 번 node scripts/desk/keyword-rank.js --apply 를 띄움(기다리지 않음 · AI 0 · 처리 중 지시와 무관)
+//   로그 = ~/.akkome/logs/keyword-rank-YYYY-MM-DD.log · 하루 한 번 기록 = ~/.akkome/keyword-rank.json(띄우기 전에 적음 = 실패해도 그날 다시 안 띄움) · 20분 넘으면 끔
+//   결과 알림(텔레그램·알림 종)은 서버 1분 틱이 keyword_rank_last 를 보고 보냄
+const KR_STATE = path.join(os.homedir(), '.akkome', 'keyword-rank.json');
+const krs = { nextAt: Date.now() + 60000, child: null, busy: false, noFileDay: '' };
+function rankMaybe() {
+    if (krs.busy || krs.child || Date.now() < krs.nextAt) return;
+    krs.nextAt = Date.now() + 60000;
+    krs.busy = true;
+    (async () => {
+        const k = new Date(Date.now() + 9 * 3600e3).toISOString(), today = k.slice(0, 10), hm = k.slice(11, 16);   // KST
+        let last = null; try { last = JSON.parse(fs.readFileSync(KR_STATE, 'utf8')).day; } catch (e) { /* 처음 */ }
+        if (last === today) return;
+        const cfg = await cfgGet('keyword_rank');
+        if (!cfg || cfg.enabled !== true) return;
+        const at = /^\d{2}:\d{2}$/.test(String(cfg.time || '')) ? cfg.time : '09:30';
+        if (hm < at) return;
+        const script = path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js');
+        if (!fs.existsSync(script)) { if (krs.noFileDay !== today) { krs.noFileDay = today; log('키워드 순위: scripts/desk/keyword-rank.js 없음 — 건너뜀(파일 생기면 그날 다시 확인)'); } return; }
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+        fs.writeFileSync(KR_STATE, JSON.stringify({ day: today, at: new Date().toISOString() }));
+        const outPath = path.join(LOG_DIR, `keyword-rank-${today}.log`);
+        const fd = fs.openSync(outPath, 'a');
+        let ch;
+        try { ch = spawn(process.execPath, [script, '--apply'], { cwd: ROOT, stdio: ['ignore', fd, fd], windowsHide: true }); } finally { fs.closeSync(fd); }
+        krs.child = ch;
+        const kill = setTimeout(() => { killTree(ch); log('키워드 순위: 20분 넘어 끔(자식 트리 · aside 포함)'); }, 20 * 60000); kill.unref();
+        const done = (msg) => { clearTimeout(kill); if (krs.child === ch) krs.child = null; log(msg); try { fs.writeFileSync(KR_STATE, JSON.stringify({ day: today, at: new Date().toISOString(), result: msg })); } catch (e) { /* 다음 날은 그대로 */ } };
+        ch.on('error', e => done('키워드 순위 띄우기 실패: ' + e.message));
+        ch.on('exit', code => done(`키워드 순위 끝(exit ${code}) · 로그 ${outPath}`));
+        log(`키워드 순위 수집 시작(pid ${ch.pid}) · ${outPath}`);
+    })().catch(e => log('키워드 순위 확인 실패(무시): ' + e.message)).finally(() => { krs.busy = false; });
+}
+
 // 10초마다: 화면 버튼 신호·설정·상태 기록(종전 tick의 앞부분 그대로)
 async function slowTick() {
     const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
@@ -781,6 +816,7 @@ async function slowTick() {
     st.fast = fast.settings(ENV_FAST || fastCfg);
     if (Date.now() - st.lastTrim > 86400e3) { st.lastTrim = Date.now(); trimLog(); }   // 하루 한 번(상주 시작 때는 main 이 이미 돌렸다)
     scratchMaybe();   // #827-B 끝난 지시의 .scratch 폴더 정리(설정 켰을 때만 · 하루 한 번 · 기다리지 않음)
+    rankMaybe();      // #910 키워드 순위 자동 수집(설정 켰을 때만 · 09:30 지나면 하루 한 번 · 기다리지 않음)
     warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
     // 화면 버튼 신호(켜기/끄기)

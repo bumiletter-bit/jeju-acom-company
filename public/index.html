@@ -293,12 +293,49 @@
                     <h1>순위관리</h1>
                 </div>
 
+                <!-- #910 자동 수집 키워드 목록(전 직원 편집 · 옛 서버면 숨김 = app.js loadRankKeywords) -->
+                <style>
+                    #rank-kw-card .rank-kw-sub { font-size: 12px; color: #667085; }
+                    .rank-kw-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+                    .rank-kw-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 2px 0 12px; border-radius: 999px; background: #EEF2FF; color: #3730A3; font-size: 13px; font-weight: 700; }
+                    .rank-kw-chip button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 999px; background: none; color: #4F46E5; font-size: 16px; line-height: 1; cursor: pointer; }
+                    .rank-kw-chip button:hover { background: rgba(79, 70, 229, .12); }
+                    .rank-kw-chip button:focus-visible { outline: 2px solid #4F46E5; outline-offset: 1px; }
+                    .rank-kw-empty { font-size: 13px; color: #667085; }
+                    .rank-kw-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+                    .rank-kw-add .form-input { flex: 1 1 180px; max-width: 280px; }
+                    .rank-kw-msg { margin-top: 8px; font-size: 12px; color: #667085; min-height: 1em; }
+                    .rank-kw-msg.err { color: #B42318; }
+                    .rank-auto-note { margin: -4px 0 12px; font-size: 13px; color: #344054; }
+                    .rank-auto-badge { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #ECFDF3; color: #067647; font-size: 11px; font-weight: 700; vertical-align: 1px; }
+                    @media (max-width: 960px), (pointer: coarse) {
+                        .rank-kw-chip { min-height: 44px; }
+                        .rank-kw-chip button { width: 44px; height: 44px; }
+                        .rank-kw-add .form-input { max-width: none; min-height: 44px; font-size: 16px; }
+                        .rank-kw-add .btn-outline, .rank-kw-add .btn-primary { min-height: 44px; }
+                    }
+                </style>
+                <div class="card" id="rank-kw-card" hidden>
+                    <div class="card-header-row">
+                        <h2>자동 수집 키워드</h2>
+                        <span class="rank-kw-sub">매일 09:30 이 키워드들로 순위를 모아요</span>
+                    </div>
+                    <div class="rank-kw-chips" id="rank-kw-chips"></div>
+                    <div class="rank-kw-add">
+                        <input type="text" id="rank-kw-input" class="form-input" placeholder="키워드 추가 (예: 제주귤)" maxlength="30" autocomplete="off" aria-label="추가할 키워드">
+                        <button type="button" class="btn-outline" id="rank-kw-add-btn">추가</button>
+                        <button type="button" class="btn-primary" id="rank-kw-save-btn" disabled>저장</button>
+                    </div>
+                    <div class="rank-kw-msg" id="rank-kw-msg" role="status"></div>
+                </div>
+
                 <!-- 입력 카드 -->
                 <div class="card">
                     <div class="card-header-row">
                         <h2>카톡 텍스트 붙여넣기</h2>
                         <span style="font-size:12px;color:#9ca3af;">예: "귤(16위) 광고2위 파워링크1위"</span>
                     </div>
+                    <div class="rank-auto-note" id="rank-auto-note" hidden>09:30 자동 수집 · 안 들어온 날만 붙여 넣기</div>
                     <div class="form-group">
                         <label>날짜 (자동 추출, 수정 가능)</label>
                         <input type="text" id="rank-input-date" class="form-input akm-date" style="width:200px;" readonly autocomplete="off" placeholder="날짜 선택">
@@ -2364,7 +2401,7 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=431"></script>
+    <script src="app.js?v=432"></script>
     <script src="ao-desk.js?v=100"></script>
     <script src="ao-inbox.js?v=4"></script>
     <script src="ao-ordermemo.js?v=30"></script>
