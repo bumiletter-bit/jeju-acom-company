@@ -1,7 +1,7 @@
 /* #428 최종 — 결제창(주문서) 최종 결제 금액 = 네이버 결제가, 상품·옵션 골고루 (비회원 구매 경로·주문 완료 안 함·매 건 장바구니 비움)
    #400/#426 유형(화면가 맞는데 결제가 다름) 재발 여부를 실결제창에서 판정. */
-const PROJ = 'C:\\Users\\전승범\\OneDrive\\문서\\★제주아꼼이네 회사프로그램';
-const { chromium } = require(PROJ + '\\node_modules\\playwright');
+const path = require('path'), PROJ = path.join(__dirname, '..');   // #917 리포 자리(나스 리눅스에서도) · 종전 = 'C:\\Users\\전승범\\OneDrive\\문서\\★제주아꼼이네 회사프로그램'
+const { chromium } = require(path.join(PROJ, 'node_modules', 'playwright'));
 let pass = 0, fail = 0;
 const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + d : '')); };
 const V = 'ck428' + (Date.now() % 9973);

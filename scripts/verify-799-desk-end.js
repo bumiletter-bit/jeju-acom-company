@@ -90,8 +90,8 @@ function fakeOrders(rows) {
     await sleep(150);
     ok(killed.length === 2 && killed[1] === c2, '로그인 만료로 다시 켠 창구도 끔(한 번씩)');
     w.stop();
-    // 진짜 트리 끄기(Windows taskkill /T /F) — node 자식이 손자 node 를 띄운 채 기다림
-    const kid = spawn(process.execPath, ['-e', "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1000)"], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    // 진짜 트리 끄기(Windows taskkill /T /F · 리눅스 = spawnG 프로세스 그룹째 #917) — node 자식이 손자 node 를 띄운 채 기다림
+    const kid = require('./desk/launcher.js')._t916.spawnG(process.execPath, ['-e', "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1000)"], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     const gpid = await new Promise(res => kid.stdout.once('data', d => res(Number(String(d).trim()))));
     const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return false; } };
     ok(alive(kid.pid) && alive(gpid), `시험 자식(${kid.pid})·손자(${gpid}) 살아 있음`);

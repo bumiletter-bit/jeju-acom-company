@@ -22,7 +22,7 @@ function mkPool(db, hook) {
 function mkPdf(file, text, pw) {
     const py = `import sys\ntry:\n    import pymupdf as fitz\nexcept Exception:\n    import fitz\nd=fitz.open();p=d.new_page()\ny=60\nfor ln in sys.argv[3].split("\\n"):\n    p.insert_text((40,y),ln,fontname="korea",fontsize=10);y+=16\nif sys.argv[2]:\n    d.save(sys.argv[1],encryption=fitz.PDF_ENCRYPT_AES_256,user_pw=sys.argv[2],owner_pw=sys.argv[2])\nelse:\n    d.save(sys.argv[1])\n`;
     const pf = path.join(os.tmpdir(), 'mk814.py'); fs.writeFileSync(pf, py);
-    const r = spawnSync('python', ['-P', pf, file, pw || '', text], { encoding: 'utf8' });
+    const r = spawnSync(process.env.PYTHON || 'python', ['-P', pf, file, pw || '', text], { encoding: 'utf8' });   // #917 나스 = env PYTHON(/opt/venv/bin/python)
     if (r.status !== 0) throw new Error('시험 PDF 못 만듦: ' + r.stderr);
 }
 const SION_TXT = '전자계산서\n승인번호 20261005-41000000-12345678\n작성일자 2026-10-05\n공급자 등록번호 616-82-12345 상호 조천감귤농협 제주조천점\n공급받는자 등록번호 422-81-04127 상호 제주아꼼이네\n공급가액 1,250,000\n세액 0\n합계금액 1,250,000';
