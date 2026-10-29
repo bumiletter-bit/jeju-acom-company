@@ -5,7 +5,8 @@
 #   desk     : 창구 대기 프로그램 = launcher-guard.js(감시자) 를 앞에서 돌림 → 죽으면 docker restart 가 다시 켬(= PC 의 시작프로그램 vbs 자리)
 #              🔴 desk 는 총괄이 「나스 창구 켜」라고 한 뒤에만 — 대표 PC 창구와 둘이 돌면 같은 지시를 동시에 집는다
 set -u
-mode="${1:-${DESK_MODE:-idle}}"
+# 모드 고르기 = 인자가 idle(이미지 기본 CMD)이거나 없으면 env DESK_MODE 를 따른다 — compose 에서 DESK_MODE: desk 로 바꿔 올리면 창구가 켜지게(10/29 전환 때 CMD 「idle」이 env 를 이겨 idle 로 뜬 것 고침)
+mode="${1:-idle}"; [ "$mode" = idle ] && mode="${DESK_MODE:-idle}"
 ver() {
     echo "node     $(node -v 2>&1)"
     echo "python   $(/opt/venv/bin/python -c 'import sys,pymupdf;print(sys.version.split()[0], "PyMuPDF", pymupdf.__version__)' 2>&1)"
