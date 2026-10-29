@@ -9,6 +9,7 @@
 #   켜는 길 = 대표가 앱에서 창구에 「나스 터미널 켜줘 / 꺼줘 / 상태」(관리자 지시 · 바로 실행) → 창구가 이 스크립트를 돎(업무지식 문장은 설계서 6절).
 #   붙기(나스 ssh) = sudo docker exec -it -u akkome akkome-desk tmux attach -t akm  (창 Ctrl-b 0~3 · 떼기 Ctrl-b d)
 #   마지막 줄은 항상 JSON(창구가 읽기 쉽게). 열쇠·값은 찍지 않는다.
+#   #918 상태는 실DB agent_office_config 'nas_terminal' = {on, windows, idle_min, rss_mb, at, host, refused?} 에도 적는다(on/off 끝·status·watch 60초마다 · 화면 머리 카드 터미널 칩 몫 = 워커1 · DB 오류는 조용히)
 set -u
 export LANG=${LANG:-ko_KR.UTF-8} TZ=${TZ:-Asia/Seoul}
 S=akm
@@ -56,11 +57,20 @@ idle_min() {   # 마지막 활동 뒤 지난 분 = max(① ~/.claude/projects/-w
     [ "$last" -gt 0 ] || last=$(tmux display -p -t "=$S" '#{session_created}' 2>/dev/null || echo "$now")
     echo $(( (now - last) / 60 ))
 }
-status_json() {
+# #918 상태를 실DB agent_office_config 'nas_terminal' 에 적는다(화면 머리 카드 터미널 칩이 읽음 · 워커1) — {on, windows, idle_min, rss_mb, at(ISO UTC), host:"akkome-nas", refused?} · UPSERT 한 줄 · DB 오류면 조용히(출력·종료 코드에 영향 0)
+db_state() {   # $1 = JSON 글(on·windows·idle_min·rss_mb[·refused]) → at·host 를 더해 저장
+    local j="$1"
+    (cd /work && timeout 15 node -e '
+const {pool}=require("./scripts/desk/_db.js");const j=JSON.parse(process.argv[1]);j.at=new Date().toISOString();j.host="akkome-nas";
+(async()=>{try{await pool.query("INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",["nas_terminal",JSON.stringify(j)])}catch(e){}finally{try{await pool.end()}catch(e){}}})();' "$j" >/dev/null 2>&1) || true
+}
+status_json() {   # 화면용 JSON 한 줄 + DB nas_terminal 갱신(DB_EXTRA = 덧붙일 칸 · 예 ,"refused":"notebook")
     local on=false w="" im=-1 rss=0 wp=""
     if has; then on=true; w="$(wins_now)"; im=$(idle_min); rss=$(rss_mb); fi
     wpid_ok && wp=$(cat "$WPID")
-    printf '{"on":%s,"windows":"%s","idle_min":%s,"idle_limit_h":%s,"rss_mb":%s,"watcher_pid":"%s","attach":"sudo docker exec -it -u akkome akkome-desk tmux attach -t %s"}\n' "$on" "${w% }" "$im" "$(idle_limit_h)" "$rss" "$wp" "$S"
+    printf '{"on":%s,"windows":"%s","idle_min":%s,"idle_limit_h":%s,"rss_mb":%s,"watcher_pid":"%s","attach":"sudo docker exec -it -u akkome akkome-desk tmux attach -t %s"}
+' "$on" "${w% }" "$im" "$(idle_limit_h)" "$rss" "$wp" "$S"
+    db_state "$(printf '{"on":%s,"windows":"%s","idle_min":%s,"rss_mb":%s%s}' "$on" "${w% }" "$im" "$rss" "${DB_EXTRA:-}")"
 }
 start_win() {
     local name="$1" cmd; cmd="$(win_cmd "$name")"
@@ -80,7 +90,7 @@ do_on() {
     if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -le "$NOTEBOOK_FRESH_MIN" ]; then   # -10 ≤ n ≤ 5 = 켜짐(작은 음수 = 노트북 시계가 조금 빠름)
         log "켜지 않음 · 노트북(${nb#* }) 이 ${nbm}분 전까지 살아 있음"
         echo "노트북이 켜져 있어 나스 터미널은 켜지 않아요(노트북 창을 쓰세요) · 노트북 ${nb#* } · ${nbm}분 전 신호"
-        status_json; exit 2
+        DB_EXTRA=',"refused":"notebook"' status_json; exit 2
     fi
     [[ "$nb" == ERR* ]] && log "노트북 신호를 못 읽음(DB) → 그래도 켬: ${nb#ERR }"
     ensure_trust
@@ -118,7 +128,8 @@ do_watch() {   # 60초마다 · ①노트북이 살아 있으면(5분 안) off �
     local n=0 errLogged=0
     while :; do
         sleep 60; n=$((n+1))
-        has || { rm -f "$WPID"; exit 0; }
+        has || { db_state '{"on":false,"windows":"","idle_min":-1,"rss_mb":0}'; log "세션이 밖에서 끝나 감시 종료(DB nas_terminal off 로)"; rm -f "$WPID"; exit 0; }   # 창을 손으로 닫아 tmux 가 저절로 끝난 경우 on:true 로 굳지 않게(#918 교차 점검)
+        db_state "$(printf '{"on":true,"windows":"%s","idle_min":%s,"rss_mb":%s}' "$(wins_now | sed 's/ $//')" "$(idle_min)" "$(rss_mb)")"   # #918 60초마다 상태
         local nb=NONE; [ "${AKM_FORCE:-0}" = 1 ] || nb=$(notebook_alive_min); local nbm=${nb%% *}
         if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -lt "-10" ]; then [ "$errLogged" = 0 ] && log "노트북 신호 시각이 ${nbm}분 미래(시계 틀림) → 없음 취급"; nbm=NONE; fi
         if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -le "$NOTEBOOK_FRESH_MIN" ]; then

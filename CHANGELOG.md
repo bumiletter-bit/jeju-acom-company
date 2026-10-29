@@ -1,3 +1,12 @@
+## v5.9.670 (2026-10-29) — #918 에이전트 오피스 머리 카드 「터미널」 칩(나스/노트북/둘 다 · 누르면 나스 터미널 켜고 끄기 · 대표 아이디어) + 나스 이전 #912~#917 코드 묶음
+
+- 칩(ao-desk.js · 연도 줄 위 · 워커1): 「터미널 · 나스 / 노트북 / 나스 + 노트북(노랑 = 총괄 겹침 주의) / 없음」 · 대표만 누름 → 한 줄 물음 「나스 터미널을 끌까요/켤까요?」(노트북 켜져 있으면 「안 켜질 수 있어요」) → POST 토글 = 「나스 터미널 켜줘/꺼줘」 지시를 대표 이름으로 pending_orders 에 넣음(창구가 `bash /work/docs/914/sessions.sh on|off`) → 「지시 보냈어요(#id) · 1분 뒤 갱신」 · 직원은 표시만 · 30초마다 GET · 옛 서버 404 = 숨김 · 44px · 야간 토큰.
+- 서버: GET /api/agent-office/terminal(전 직원 · agent_office_config notebook_alive·nas_terminal 두 키 · 노트북 = at −10~5분 · 나스 = on 이고 3분 안(넘으면 stale) · 비밀 0) · POST …/terminal/toggle(ownerOnly · POST /orders 와 같은 INSERT 꼴 · audit via terminal_toggle · 같은 글 120초 dupDecide 에 묶임).
+- 나스 쪽(워커3 · docs/914/sessions.sh): on/off/status/watch 가 nas_terminal {on, windows, idle_min, rss_mb, at, host, refused} 를 UPSERT(node 길 · ps 에 비밀 0 · 실패 조용히) · watch 끝날 때 on:false.
+- 검증: t918 41/41(390·900·1280 × 4상태 · 누르기·Esc·직원·404·야간) · ro 기동 5/5 · verify-610-ui 570/575(실패 5 = HEAD 와 같은 낡은 기대) · 교차 점검 워커2 막을 것 0 · 손질 2(낡은 켜짐 3분 · 시계 하한).
+- 같은 날 나스 이전(코드 = #912 공유폴더 주소 → `\192.168.0.22\아꼼` · #916 launcher 리눅스 분기·xlsx no_excel·색인 경로 split · #917 sessions.sh·install-notebook-alive·pack-keys --only/--pull) 은 각 커밋 글 · CLAUDE.md 머리 줄 · 메모리 jeju-nas-migration-plan.
+- 미확인 = 실서버 대표 첫 누름 왕복(폰) · 폴드7 실기기.
+
 ## v5.9.669 (2026-10-28) — #911 메모함 「메모 고치기」 카드 촘촘히(대표 「순위 메모함 고치기 고」 · 총괄 아이디어 7 중 1 은 시험 틀 탓 정정)
 
 - ao-ordermemo.css 끝 #911 묶음 31줄 + js 그리는 꼴 8줄(워커1 · 저장·검사·짝·주소 확인·data-* 무접촉): 수량 [−][n][+] 묶음 358→175(폰)·278→148(PC) · 폰 = 수량+발송일 / 받는 분+연락처 / 배송지 / 구매자 연락처+[수취인과 동일] / 배송메세지 두 칸 한 줄(order) · 폄·PC = 다섯 칸 틀(수량 148 + 1fr×3 + 1.35fr · 수량+받는 분+연락처 / 배송지 전부 / 구매자+배송메세지+발송일) · 이름 줄 22→18 · 글 13→12 · 카드 폭 600→700(≥721) · 본문 gap 10 · 배송지 textarea field-sizing content(@supports · 1줄 44 · 길면 자동 · 미지원 = 종전 70) · 마우스 PC [도로명으로 바꾸기] 32→36 · 발송일 안내 = 이름 옆 「비우면 다음 발주」 + placeholder 「예) 10/30」 · 공통 규칙(카드 700·간격·이름 줄)은 메모 칸 줄 카드·정리 결과 카드에도 같이(의도) · 「발송일+보내는 분」 한 줄은 안 함(보내는 분은 접힌 「보내는이 변경」 안).

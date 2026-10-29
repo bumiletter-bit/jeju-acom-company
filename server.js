@@ -15002,6 +15002,50 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// #918(대표 10/29 「연도 위에 터미널 창 표시 = 나스/노트북/둘 다 · 누르면 나스 꺼지고 또 누르면 켜지게」) 총괄·워커 터미널이 어디서 켜져 있나
+//   읽기 = 실DB agent_office_config 두 키만: notebook_alive {at, host}(노트북 작업이 2분마다 · #917) · nas_terminal {on, at, windows, idle_min, rss_mb, refused}(나스 sessions.sh 가 씀 · 없으면 unknown)
+//   노트북 켜짐 = at 이 5분 안(sessions.sh NOTEBOOK_FRESH_MIN 과 같은 기준 · 노트북 시계가 빠른 음수 분도 켜짐) · 시각 계산은 SQL 안에서(naive timestamp 함정 없음 · jsonb 글자 at 을 timestamptz 로)
+const TERMINAL_FRESH_MIN = 5;
+async function terminalState() {
+    const r = await pool.query(`SELECT key, value,
+                                       CASE WHEN jsonb_typeof(value->'at') = 'string' AND (value->>'at') ~ '^\\d{4}-\\d{2}-\\d{2}T' THEN EXTRACT(EPOCH FROM (NOW() - (value->>'at')::timestamptz)) / 60 END AS ago_min
+                                  FROM agent_office_config WHERE key IN ('notebook_alive', 'nas_terminal')`);
+    const by = Object.fromEntries(r.rows.map(x => [x.key, x]));
+    const nb = by.notebook_alive, ns = by.nas_terminal;
+    const nbAgo = nb && nb.ago_min != null ? Number(nb.ago_min) : null;
+    const nsAgo = ns && ns.ago_min != null ? Number(ns.ago_min) : null;
+    const nv = (ns && ns.value && typeof ns.value === 'object') ? ns.value : null;
+    const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+        notebook: { on: nbAgo != null && nbAgo >= -10 && nbAgo <= TERMINAL_FRESH_MIN,   // -10 = 노트북 시계가 빠른 만큼만 봐줌(sessions.sh 와 같은 하한)
+                    at: nb && nb.value ? String(nb.value.at || '') || null : null, host: nb && nb.value ? String(nb.value.host || '').slice(0, 60) || null : null, ago_min: nbAgo == null ? null : Math.floor(nbAgo) },
+        nas: nv ? { on: nv.on === true && nsAgo != null && nsAgo <= 3, stale: nv.on === true && !(nsAgo != null && nsAgo <= 3), unknown: false,   // 3분 넘게 안 갱신된 「켜짐」 = 꺼짐으로(stale 표시만)
+                   at: nv.at ? String(nv.at) : null, windows: Array.isArray(nv.windows) ? nv.windows.map(String).slice(0, 8) : (typeof nv.windows === 'string' ? nv.windows.split(/\s+/).filter(Boolean).slice(0, 8) : []),
+                  idle_min: num(nv.idle_min), rss_mb: num(nv.rss_mb), refused: !!nv.refused, ago_min: nsAgo == null ? null : Math.floor(nsAgo) }
+                : { on: false, stale: false, unknown: true, at: null, windows: [], idle_min: null, rss_mb: null, refused: false, ago_min: null },
+        fresh_min: TERMINAL_FRESH_MIN,
+    };
+}
+app.get('/api/agent-office/terminal', authMiddleware, async (req, res) => {   // 전 직원 읽기(표시만)
+    try { res.json(Object.assign({ ok: true, can_toggle: isOwnerUser(req.user) }, await terminalState())); }
+    catch (err) { handleAdminErr(res, err); }
+});
+//   누르기 = 대표만 · 나스가 켜져 있으면 「나스 터미널 꺼줘」 · 아니면 「나스 터미널 켜줘」 지시를 그 사람 이름으로 넣는다(POST /api/agent-office/orders 와 같은 꼴 · 실행은 창구가 sessions.sh 로 · 노트북이 켜져 있으면 창구 답이 「켜지 않아요」)
+app.post('/api/agent-office/terminal/toggle', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const st = await terminalState();
+        const want = st.nas.on ? 'off' : 'on';
+        const content = want === 'off' ? '나스 터미널 꺼줘' : '나스 터미널 켜줘';
+        const engine = await aoEngine();
+        const row = (await pool.query(
+            `INSERT INTO pending_orders (content, created_by, created_by_id, status) VALUES ($1, $2, $3, $4) RETURNING *`,
+            [content, `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null, engine === 'desk' ? '처리중' : '대기'])).rows[0];
+        await writeAudit({ action: 'create', targetType: 'pending_order', targetId: row.id, changes: { after: { content, status: row.status, via: 'terminal_toggle' } }, source: 'agent_office', actor: adminActor(req) });
+        if (engine === 'desk') await deskIntake(row, adminActor(req));   // AI 호출 없음 — 종전 지시와 같은 길
+        res.json({ ok: true, order_id: row.id, want, content });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // #543(대표 GO 10/5): 지시 첨부 = 이미지 또는 파일 1개(엑셀·CSV·PDF·텍스트). 같은 칸(image_data = data URL)에 담고, 파일이면 file_name 에 이름을 적는다.
 //   허용 밖 종류는 400. 이미지는 종전과 같다(file_name 없음 → 종전 판독·미리 보기 경로 무변경).
 const DESK_FILE_EXT = ['xlsx', 'xls', 'csv', 'pdf', 'txt'];

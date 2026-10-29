@@ -163,6 +163,7 @@
                 <div class="desk-theme-slot"><button type="button" class="desk-theme" id="desk-theme" aria-pressed="false" aria-label="야간 화면으로 바꾸기" title="야간 화면으로 바꾸기"></button></div>
                 <div class="desk-hero">
                     <div class="desk-hero-info">
+                        <div class="desk-term" id="desk-term" hidden><button type="button" class="desk-term-chip" id="desk-term-chip" data-s="none" aria-live="polite"><i></i><span id="desk-term-text">터미널</span></button><span class="desk-term-ask" id="desk-term-ask" hidden><span id="desk-term-q"></span><button type="button" class="desk-btn sm primary" id="desk-term-yes">네</button><button type="button" class="desk-btn sm" id="desk-term-no">아니요</button></span><span class="desk-term-note" id="desk-term-note" role="status"></span></div>
                         <div class="desk-date" id="desk-date"></div>
                         <div class="desk-clock" id="desk-clock" aria-live="off"></div>
                         <div class="desk-hero-line">
@@ -355,6 +356,10 @@
         $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) { plusClose(false); hbIdle(() => window.AkmFinalOrder.open()); } else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } S.pickImg = true; $('desk-file').accept = 'image/*'; $('desk-file').click(); });   // 정산 이미지는 이미지 전용 그대로
         $('desk-wake-btn').addEventListener('click', () => wake());
+        $('desk-term-chip').addEventListener('click', () => termAsk());   // #918
+        $('desk-term-yes').addEventListener('click', () => termToggle());
+        $('desk-term-no').addEventListener('click', () => termAsk(false));
+        $('desk-term').addEventListener('keydown', e => { if (e.key === 'Escape' && !$('desk-term-ask').hidden) { e.stopPropagation(); termAsk(false); $('desk-term-chip').focus(); } });
         $('desk-file').addEventListener('change', e => { const fl = Array.from(e.target.files || []); addFiles(S.pickImg ? fl.filter(isImg) : fl); e.target.value = ''; });
         const ask = $('desk-ask');
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
@@ -2579,6 +2584,49 @@
             $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
             $('desk-hist-mine-wrap').hidden = !isOwner() || S.tab !== 'all';
         } catch (e) { /* 다음 주기에 다시 */ }
+        if (Date.now() - (S.termAt || 0) >= 30000) loadTerminal();   // #918 터미널 칩 = 30초에 한 번(상태 조회 주기에 얹음 · 화면 열려 있을 때만)
+    }
+
+    // #918(대표 10/29) 연도 줄 위 「터미널」 칩 — 총괄·워커 Claude 창이 노트북/나스 어디서 켜져 있나 · 대표가 누르면 나스 터미널 끄기/켜기 지시를 넣는다(실행 = 창구 sessions.sh)
+    //   옛 서버(라우트 없음 404)·읽기 실패 = 칩 숨김 · 대표 아니면 표시만(누름 없음)
+    const TERM_LABEL = { both: '터미널 · 나스 + 노트북', nas: '터미널 · 나스', notebook: '터미널 · 노트북', none: '터미널 · 없음' };
+    async function loadTerminal() {
+        S.termAt = Date.now();
+        const box = $('desk-term'); if (!box) return;
+        let d; try { d = await api('/api/agent-office/terminal', 'GET', null, POLL_T); } catch (e) { if (!S.term) box.hidden = true; return; }
+        if (!d || !d.notebook || !d.nas) { box.hidden = true; return; }
+        S.term = d;
+        const nb = !!d.notebook.on, ns = !!d.nas.on;
+        const k = nb && ns ? 'both' : ns ? 'nas' : nb ? 'notebook' : 'none';
+        const chip = $('desk-term-chip');
+        chip.dataset.s = k;
+        chip.dataset.can = d.can_toggle ? '1' : '0';
+        chip.disabled = !d.can_toggle;
+        $('desk-term-text').textContent = TERM_LABEL[k];
+        const tip = [nb ? `노트북 켜짐${d.notebook.host ? ' (' + d.notebook.host + ')' : ''}` : '노트북 꺼짐', d.nas.unknown ? '나스 상태 모름' : ns ? `나스 켜짐${d.nas.idle_min != null ? ' · 쉰 지 ' + d.nas.idle_min + '분' : ''}` : '나스 꺼짐'].join(' · ');
+        chip.title = tip + (d.can_toggle ? ` — 누르면 나스 터미널 ${ns ? '끄기' : '켜기'}` : '');
+        chip.setAttribute('aria-label', TERM_LABEL[k] + ' · ' + tip + (d.can_toggle ? ` · 누르면 나스 터미널 ${ns ? '끄기' : '켜기'}` : ''));
+        box.hidden = false;
+    }
+    function termAsk(show) {
+        const ask = $('desk-term-ask'), d = S.term;
+        if (show === false || !d || !d.can_toggle) { ask.hidden = true; return; }
+        if (!ask.hidden) { ask.hidden = true; return; }
+        $('desk-term-q').textContent = d.nas.on ? '나스 터미널을 끌까요?' : (d.notebook.on ? '노트북이 켜져 있어 안 켜질 수 있어요. 나스 터미널을 켤까요?' : '나스 터미널을 켤까요?');
+        $('desk-term-note').textContent = '';
+        ask.hidden = false;
+        $('desk-term-yes').focus();
+    }
+    async function termToggle() {
+        const yes = $('desk-term-yes'); yes.disabled = true;
+        try {
+            const r = await api('/api/agent-office/terminal/toggle', 'POST', {});
+            $('desk-term-ask').hidden = true;
+            $('desk-term-note').textContent = `지시 보냈어요(#${r.order_id}) · 1분 뒤 갱신`;
+            setTimeout(() => { if (S.mounted && pageActive()) loadTerminal(); }, 60000);
+            if (!S.loading) loadOrders(true);
+        } catch (e) { showToast(e.message || '지시를 보내지 못했어요', 'error'); }
+        yes.disabled = false;
     }
 
     async function wake() {
