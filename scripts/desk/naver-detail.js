@@ -787,7 +787,7 @@ async function main(argv, deps) {
             const dir = String(o.ref);
             let names;
             try { names = (deps.readDir || fs.readdirSync)(dir).filter(n => IMG_EXT[path.extname(n).toLowerCase()]).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true })); }
-            catch (e) { throw new Error('공유폴더를 못 열었어요: ' + dir + ' — 경로를 다시 확인(예: \\\\192.168.0.10\\공유폴더\\…)'); }
+            catch (e) { throw new Error('공유폴더를 못 열었어요: ' + dir + ' — 경로를 다시 확인(예: \\\\192.168.0.22\\아꼼\\…)'); }
             refs = names.map((n, i) => ({ no: i + 1, file: path.join(dir, n) }));
             if (!refs.length) throw new Error('그 폴더에 사진(jpg·png·gif·bmp)이 없어요: ' + dir);
             for (const p of parts) if (p.img && /^ref:\d+$/i.test(p.img)) { const r = refs[Number(p.img.slice(4)) - 1]; if (!r) throw new Error(`${p.img}: 참고 사진은 1~${refs.length}번`); p.img = r.file; }

@@ -84,7 +84,7 @@ function refreshIndex(force) {
 // 송장 엑셀의 둘째 시트(택배사 접수 목록)를 직접 읽는다 — 운송장 한 줄 = 상자 하나.
 //   색인은 운송장을 「받는 분 전화+이름」으로 맞춰 붙여서, 한 분께 상자가 둘 이상 가면 운송장 하나만 남는다(10/07 실측: 실제 1,684 · 색인 1,609).
 //   그래서 올릴 때는 색인으로 「그 날짜 파일이 어느 것인지」만 찾고, 운송장은 파일에서 읽는다. 둘째 시트가 없거나 운송장이 없으면 null(→ 색인 줄로 대신).
-const SHARE = process.env.AKM_SHARE || '\\\\192.168.0.10\\공유폴더';
+const SHARE = process.env.AKM_SHARE || '\\\\192.168.0.22\\아꼼';
 const cellStr = v => { if (v == null) return ''; if (typeof v === 'object') { if (v.richText) return v.richText.map(t => t.text).join(''); if (v.result !== undefined) return cellStr(v.result); if (v.text) return String(v.text); if (v instanceof Date) return v.toISOString().slice(0, 10); return ''; } return String(v); };
 async function readSheet2(rel) {
     const ExcelJS = require(path.join(__dirname, '..', '..', 'node_modules', 'exceljs'));

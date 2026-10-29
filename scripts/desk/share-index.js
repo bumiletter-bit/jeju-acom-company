@@ -1,5 +1,5 @@
 // #582 공유폴더 색인 — 사용: node scripts/desk/share-index.js [--update] [--files-only] [--status]
-//   대상 = 사무실 공유 서버 \\192.168.0.10\공유폴더 (전 직원 공유 · 대표 확정 2026-10-08 「지금 자료는 다 공유돼도 돼」).
+//   대상 = 사무실 나스 \\192.168.0.22\아꼼 (#912 10/29 · 종전 발주컴퓨터 \\192.168.0.10\공유폴더 · 전 직원 공유 · 대표 확정 2026-10-08 「지금 자료는 다 공유돼도 돼」).
 //   만드는 것(대표 PC 비공개 폴더 · 저장소 제외 · 손님 정보가 들어 있으므로 DB·리포에 넣지 않는다):
 //     ★에이전트오피스/비공개/공유폴더_색인/files.json     — 공유폴더 전체 파일 이름·경로·크기·수정 시각(파일 찾기용)
 //     ★에이전트오피스/비공개/공유폴더_색인/invoices.json  — ★송장 엑셀(Sheet1)의 줄 = 날짜·거래처·수취인·연락처(숫자만)·옵션·수량·주소·송장번호·파일(주문 이력 찾기용)
@@ -7,7 +7,7 @@
 //   share-find.js · invoice-find.js 가 색인이 60분 넘게 오래됐으면 이 스크립트를 먼저 부른다.
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
-const SHARE = process.env.AKM_SHARE || '\\\\192.168.0.10\\공유폴더';
+const SHARE = process.env.AKM_SHARE || '\\\\192.168.0.22\\아꼼';
 const INV_DIR = path.join(SHARE, '★송장');
 // 🔴 색인은 OneDrive 밖(로컬 앱 데이터)에 둔다 — 손님 이름·번호·주소 78만 줄이라 클라우드 동기화·저장소 어디에도 올리지 않는다(워커2 지적 10/8)
 const OUT = path.join(process.env.LOCALAPPDATA || require('os').homedir(), 'akkome', '공유폴더_색인');
