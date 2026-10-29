@@ -198,7 +198,39 @@ rm -rf "$TEMP/akkome-keys"
 **④ 창구 켬(한 줄 · 총괄 신호 뒤)** = 나스 `cd /volume1/docker/akkome && sudo sed -i 's/DESK_MODE: idle/DESK_MODE: desk/' docker-compose.yml && sudo docker compose up -d && sudo docker logs -f --tail 30 akkome-desk`(컨테이너 재생성 · 볼륨 그대로 · 「감시자 시작 … 창구 켬 pid=」 보이면 Ctrl-C)
 **되돌리기(한 줄)** = 나스 `cd /volume1/docker/akkome && sudo sed -i 's/DESK_MODE: desk/DESK_MODE: idle/' docker-compose.yml && sudo docker compose up -d`(idle 로 재생성 = 창구 0) → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」. 옛 글 = 나스 `docker compose stop` → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」 · DB 는 그대로라 되돌릴 것 없음(처리 중이던 지시는 다음 기동 복구가 「대기」로).
 
-## 6. 미확인·다음
+## 6. 세션 이전(#917 · 10/29) = 나스 터미널 4개는 「필요할 때만」 · 대표 결정
+
+### 6-1. 구도
+- **늘 켜 두지 않는다**(대표 「내 PC 가 꺼져 있을 때만 쓰려고」 · 램). 자동 기동 0 · 컨테이너 재시작 때도 안 뜸 · 창구(launcher)만 늘 켜짐.
+- 도구 = `docs/914/sessions.sh`(리포 · 컨테이너 안 `/work/docs/914/sessions.sh` · 창구와 같은 컨테이너 akkome-desk · 사용자 akkome · 이미지 재빌드 0)
+  - `on` = tmux 세션 「akm」 창 4개 · chief = `claude remote-control --name "총괄 나스" --spawn=same-dir`(→ 대표 폰·claude.ai/code 리모트 컨트롤 목록에 「총괄 나스」) · worker1·2·3 = `claude`(대화형 · 켜 두기만) · cwd /work · `/work` 신뢰 표시를 `~/.claude.json` 에 미리 넣음(없으면 「Trust /work?」에서 멈춤)
+  - **노트북이 켜져 있으면 안 켠다** = 실DB `agent_office_config 'notebook_alive' {at, host}`(노트북 창구 쪽이 2분마다 씀 · 워커2 #917) 의 at 이 5분 안이면 「노트북이 켜져 있어 나스 터미널은 켜지 않아요(노트북 창을 쓰세요)」 + exit 2
+  - `off` = 창마다 `/exit` 보내 claude 정상 종료(최대 20초) → tmux 세션 끔 → 감시 끔 · 창구 로그 한 줄
+  - `status` = JSON {on, windows, idle_min, idle_limit_h, rss_mb, watcher_pid, attach}
+  - `watch`(on 이 띄움 · setsid 로 창구 claude 그룹과 분리) = 60초마다 노트북 신호 보고 5분 안(음수 포함)이면 off(로그 「노트북 켜짐 → 나스 터미널 끔」) · 5분마다 마지막 활동(세션 jsonl mtime · 워커 창 활동 · chief 창의 remote-control 주기 출력은 제외 · tmux session_activity 는 붙은 클라이언트가 없으면 안 갱신돼 안 씀 = 10/29 실측) 보고 **6시간**(`~/.akkome/sessions.json {"idle_hours":6}` 또는 env AKM_SESSIONS_IDLE_H) 입력·출력 없으면 off · DB 못 읽으면 끄지 않음(로그만)
+  - `on --force` = 노트북 신호 무시(총괄 시험 전용 · 업무지식엔 안 적음)
+- 켜는 길 = **대표가 폰 앱에서 창구에 「나스 터미널 켜줘 / 꺼줘 / 상태」**(관리자 지시 · 바로 실행) → 창구가 `bash /work/docs/914/sessions.sh on|off|status` → 마지막 줄 JSON 을 답에.
+- 붙기(나스 ssh) = `sudo docker exec -it -u akkome akkome-desk tmux attach -t akm`(창 Ctrl-b 0~3 · 떼기 Ctrl-b d).
+
+### 6-2. 업무지식 문장 초안(넣기는 총괄)
+> **나스 터미널(총괄·워커 Claude 창 4개 · #917)**: 관리자(대표)가 「나스 터미널 켜줘」「나스 터미널 꺼줘」「나스 터미널 상태」라고 하면 창구가 `bash /work/docs/914/sessions.sh on|off|status` 를 돌리고 마지막 줄 JSON 을 읽어 한 줄로 답한다(켜짐 여부 · 창 이름 · 쉰 시간 · 램 MB). 켜지면 대표 폰 리모트 컨트롤 목록에 「총괄 나스」가 보인다. **노트북이 켜져 있으면 켜지지 않는다**(답 = 「노트북이 켜져 있어 나스 터미널은 켜지 않아요(노트북 창을 쓰세요)」) · 켜져 있는 동안 노트북이 켜지면 저절로 꺼진다 · 6시간 아무 입력이 없으면 저절로 꺼진다(「상태」로 확인). 직원 계정(staff) 지시는 거절(「대표 계정에서만」). 창구 자신(launcher)은 이 명령과 무관하게 계속 돈다.
+
+### 6-3. git · 메모리 · 램
+- **GitHub push 열쇠(새로)** = 컨테이너 `~/.ssh/id_ed25519_github`(ed25519 · 주석 akkome-nas-github · `~/.ssh/config` 로 github.com 에만 · 기존 id_ed25519 는 중계서버용 그대로) · origin = `git@github.com:bumiletter-bit/jeju-acom-company.git` · user.name bumiletter-bit · email bumiletter-bit@users.noreply.github.com · **대표가 GitHub 리포 Settings → Deploy keys 에 공개 열쇠를 「Allow write access」로 등록해야 push 됨**(등록 전 = `Permission denied (publickey)` · 그 전엔 fetch 도 안 됨 → https 로 읽기만 필요하면 `git -c remote.origin.url=https://github.com/bumiletter-bit/jeju-acom-company.git fetch`)
+- **pg_dump 불필요** = `npm run backup`(scripts/db-backup.js) 은 pg 라이브러리로 덤프 · deploy.js 는 git 만 → 이미지 재빌드 0 · DB = PostgreSQL 18.3
+- **메모리 덮기(나스 세션을 쓸 때마다 1회 · 정본 = 워커2 pack-keys)** = 노트북 `node scripts/desk/pack-keys.js --only memory --out "$TEMP/akkome-mem"` → 전송(3-4절 ② 꼴 · user1 홈 거쳐) → 나스 `sudo rm -rf /volume1/docker/akkome/home/.claude/projects/-work/memory && sudo cp -a <올린 폴더>/home/.claude/projects/-work/memory /volume1/docker/akkome/home/.claude/projects/-work/ && sudo chown -R 1001:100 /volume1/docker/akkome/home/.claude/projects/-work`(폴더를 비우고 넣기 = 노트북에서 지운 메모리도 같이 사라지게 · 96+개 · 나스 쪽은 15:xx 사본)
+- **컨테이너용 claude 설정** = `home/.claude/settings.json` {model opus · language korean · effortLevel high}(훅·statusline 없음 · 노트북 설정은 settings.json.pc 참고)
+- **램 실측(10/29 15:5x)** = 세션 4개 켜짐 → 컨테이너 **1.09~1.52GB**(claude 창 1개 ≈ 270MB · remote-control 140MB + spawn 자식 228MB · 창구 자식 230MB 포함) · 나스 여유 4.7GB · mem_limit 5g 안(창구 피크 1.4GB 더해도 3GB) → 7g 올릴 필요 지금은 없음(올리려면 compose `mem_limit: 7g` 한 줄)
+
+### 6-4. 위험 · 되돌리기
+- 창구와 같은 컨테이너 = 세션 4개가 CPU 를 먹으면(N100 4코어) 창구 응답이 느려질 수 있음 → `cpus: 3` 안에서 나눠 씀 · 느리면 세션 off.
+- 총괄 둘 겹침 = 노트북 총괄과 나스 「총괄 나스」가 동시에 살면 지시 번호·배포가 갈림 → 노트북 신호(notebook_alive) 로 나스를 자동으로 끔 · 그래도 켜려면 --force 만(총괄 시험).
+- 메모리 어긋남 = 나스 memory 는 사본 → 세션 쓰기 전 6-3 한 줄 · 나스에서 적은 메모리는 `pack-keys --pull memory`(워커2) 로 노트북에 받아 온다(안 받으면 다음 덮기 때 사라짐).
+- GitHub 열쇠 등록 전엔 나스에서 push·fetch 불가(배포는 노트북에서).
+- 6시간 무입력 자동 off 는 돌던 작업을 끊을 수 있음 → 긴 일은 `~/.akkome/sessions.json {"idle_hours":12}` 로.
+- 되돌리기 = `sessions.sh off` 한 줄(창구 무접촉) · 도구 자체를 없애려면 docs/914/sessions.sh 삭제 + 업무지식 문장 삭제.
+
+## 7. 미확인·다음
 - UGOS 가상 머신 앱의 Windows 11 설치 실측(ISO·TPM 우회)은 램 도착 뒤 — 대표 입회.
 - 컨테이너 안 `claude /login` 코드 붙이기 흐름 · `/remote-control` 은 실측 전(문서·종전 경험 기준).
 - A2 로 가면 2-2절 3·4·9·14·15 코드 손질 + 교차 점검 + 창구 24시간 병행.
