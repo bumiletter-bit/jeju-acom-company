@@ -122,7 +122,7 @@ async function main() {
             // 형식 v2(#582-b 운송장 전부): 옛 형식으로 읽어 둔 파일 중 운송장이 붙어 있던 파일만 한 번 다시 읽는다(운송장 없는 파일은 달라질 것이 없어 그대로)
             const same = old && old.m === f.m && old.s === f.s;
             if (same && (old.v === FMT || !(rowsByFile[f.p] || []).some(r => r.tr))) { keep[f.p] = Object.assign({}, old, { v: FMT }); newRows.push(...(rowsByFile[f.p] || [])); continue; }
-            try { const rows = await readInvoice(path.join(SHARE, f.p), f.p); keep[f.p] = { m: f.m, s: f.s, n: rows.length, v: FMT }; newRows.push(...rows); read++; }
+            try { const rows = await readInvoice(path.join(SHARE, ...f.p.split('\\')), f.p); keep[f.p] = { m: f.m, s: f.s, n: rows.length, v: FMT }; newRows.push(...rows); read++; }
             catch (e) { if (same) { keep[f.p] = old; newRows.push(...(rowsByFile[f.p] || [])); } else keep[f.p] = { m: f.m, s: f.s, n: 0, err: String(e.message).slice(0, 80) }; failed++; }
             if (read && read % 200 === 0) process.stderr.write(`  …송장 ${read}개 읽음\n`);
         }

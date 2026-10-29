@@ -16,6 +16,8 @@ const src = pos[0] ? path.resolve(pos[0]) : '';
 const out = (o) => { console.log(JSON.stringify(o)); process.exit(o.ok ? 0 : 1); };
 if (!src || !fs.existsSync(src)) out({ ok: false, error: '엑셀 파일 경로를 주세요(없음: ' + src + ')' });
 if (!/\.xlsx?$/i.test(src)) out({ ok: false, error: 'xlsx·xls 만 됩니다' });
+// #916 엑셀이 없는 컴퓨터(나스 리눅스 창구 · 또는 env XLSX_IMAGE_NO_EXCEL=1 로 흉내) = 그림·PDF 는 만들지 않는다 → 엑셀 파일만 첨부(LibreOffice 는 후보)
+if (process.platform !== 'win32' || process.env.XLSX_IMAGE_NO_EXCEL === '1') out({ ok: true, files: [], no_excel: true, xlsx: src, note: '이 컴퓨터엔 엑셀이 없어 그림·PDF 는 만들지 않았어요 — attachments 에 엑셀 파일만 넣고, 답 글에 「그림 미리 보기 없이 엑셀 파일만 첨부했어요」 한 줄을 적어 주세요' });
 const outDir = path.resolve(opt.out || path.join(ROOT, '★에이전트오피스', '받은파일'));
 fs.mkdirSync(outDir, { recursive: true });
 const base = path.basename(src).replace(/\.xlsx?$/i, '');

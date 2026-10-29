@@ -100,8 +100,8 @@
 ### 3-2. 볼륨(밖에 두는 것) · compose
 | 컨테이너 | 나스 | 내용 |
 |---|---|---|
-| `/home/akkome` | `/volume1/docker/akkome-desk/home` | `.akkome/`(desk-api-key.txt · 로그 · 상태 json · nas.txt 제외) · `.claude/`(settings · .credentials.json · projects/<프로젝트>/memory 96개 · hooks 제외) · `.claude.json`(mcpServers · oauthAccount) · `.ssh/`(중계서버 열쇠 id_ed25519) · `.config/higgsfield/`(config·credentials) |
-| `/work` | `/volume1/docker/akkome-desk/work` | 리포 clone(`git clone …/jeju-acom-company.git`) + `.env`(DATABASE_URL · CAFE24_FTP_*) + `npm install` + `npm i --no-save playwright@1.63.0` + 저장소 밖 폴더 `★에이전트오피스/비공개`(451MB)·`브랜드`(56MB) 복사 |
+| `/home/akkome` | `/volume1/docker/akkome/home` | `.akkome/`(desk-api-key.txt · 로그 · 상태 json · nas.txt 제외) · `.claude/`(settings · .credentials.json · projects/<프로젝트>/memory 96개 · hooks 제외) · `.claude.json`(mcpServers · oauthAccount) · `.ssh/`(중계서버 열쇠 id_ed25519) · `.config/higgsfield/`(config·credentials) |
+| `/work` | `/volume1/docker/akkome/work` | 리포 clone(`git clone …/jeju-acom-company.git`) + `.env`(DATABASE_URL · CAFE24_FTP_*) + `npm install` + `npm i --no-save playwright@1.63.0` + 저장소 밖 폴더 `★에이전트오피스/비공개`(451MB)·`브랜드`(56MB) 복사 |
 | `/share` | `/volume1/아꼼` **읽기 전용(:ro)** | 공유폴더(창구 규칙 「읽기만」을 마운트가 강제) |
 - 공유폴더 경로 규칙 = Windows `\\192.168.0.22\아꼼\상품사진\귤\…` ↔ 컨테이너 `/share/상품사진/귤/…`(`AKM_SHARE` 가 앞머리 · 나머지 그대로 · 구분자만 `/`).
 - `restart: unless-stopped` · `hostname: akkome-nas` · `shm_size: 1g`(Chromium) · `mem_limit: 5g` · `cpus: 3` · 잠금 포트 47469·47470 은 컨테이너 안 127.0.0.1(밖으로 안 연다 · 서버와는 DB 로만).
@@ -111,28 +111,24 @@
 - `idle`(기본) = 아무것도 안 켬 · `docker exec -it -u akkome akkome-desk tmux new -As chief|worker1|worker2|worker3` 로 세션 · 리모트 컨트롤은 그 안에서 `claude` → `/remote-control`(바깥으로 열 포트 없음 · 아웃바운드만).
 - `desk` = `node scripts/desk/launcher-guard.js` 를 앞에서 → 죽으면 docker 가 컨테이너를 다시 켬(= 시작프로그램 vbs 자리 · 감시자 + docker 두 겹). 🔴 **총괄 지시 뒤에만**(대표 PC 창구 먼저 내림 · 둘이면 같은 지시를 동시에 집음).
 
-### 3-4. 열쇠·설정 옮기기 절차(명령만 · 실제 복사는 안 함 · 대표 또는 총괄이 실행)
+### 3-4. 열쇠·설정 옮기기 절차(워커2 `scripts/desk/pack-keys.js` · 복사는 총괄 지시 뒤 · 실물 경로 /volume1/docker/akkome/)
 ```bash
-# 대표 PC(Git Bash) → 나스 user1 홈 거쳐 docker 폴더(비번은 ssh 가 묻음 · 메신저·메일로 보내지 않음)
-NAS=user1@192.168.0.22; B=/volume1/docker/akkome-desk
-ssh $NAS "mkdir -p $B/home/.akkome $B/home/.claude $B/home/.ssh $B/home/.config $B/work"
-scp ~/.akkome/desk-api-key.txt            $NAS:$B/home/.akkome/          # 콘솔 키(창구 과금)
-scp ~/.claude/.credentials.json           $NAS:$B/home/.claude/          # 대표 요금제 로그인(또는 컨테이너 안 claude /login 1회 · 아래)
-scp ~/.claude/settings.json               $NAS:$B/home/.claude/settings.json.pc   # 참고용 · 컨테이너용은 훅 빼고 새로
-scp -r ~/.claude/projects/C--Users-----OneDrive------------------/memory $NAS:$B/home/.claude/projects/-work/memory   # 🔴 폴더 이름 = 프로젝트 경로(/work) 꼴로 바꿔 둠(96개)
-scp ~/.claude.json                        $NAS:$B/home/.claude.json      # mcpServers(sequential-thinking·playwright · aside 는 지움) · oauthAccount
-scp ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub $NAS:$B/home/.ssh/            # 중계서버 SSH 열쇠(chmod 600)
-scp -r ~/.config/higgsfield               $NAS:$B/home/.config/           # 힉스필드 CLI 로그인
-scp "★제주아꼼이네 회사프로그램/.env"     $NAS:$B/work/.env               # DATABASE_URL · CAFE24_FTP_*
-rsync -a "★제주아꼼이네 회사프로그램/★에이전트오피스/비공개/" $NAS:$B/work/★에이전트오피스/비공개/   # 저장소 제외 451MB
-rsync -a "★제주아꼼이네 회사프로그램/★에이전트오피스/브랜드/" $NAS:$B/work/★에이전트오피스/브랜드/
-ssh $NAS "sudo chown -R 1001:100 $B/home $B/work && chmod 700 $B/home/.ssh && chmod 600 $B/home/.ssh/id_ed25519 $B/home/.akkome/desk-api-key.txt"
-# 나스 안: 리포
-ssh $NAS "cd $B/work && git clone https://github.com/bumiletter-bit/jeju-acom-company.git . && sudo docker run --rm -v $B/work:/work akkome-desk:0.1 bash -lc 'cd /work && npm install && npm i --no-save playwright@1.63.0'"
+# ① 노트북(Git Bash · 회사프로그램 루트) — 미리 보기(복사 0 · 값 0) → 총괄 지시 뒤 꾸러미 폴더로 모음(나스 모양 home/… · work/… 그대로 · nas.txt·logs·shots-* 제외 · .claude.json 은 aside 줄 지운 사본)
+node scripts/desk/pack-keys.js                 # --dry(기본) · 묶음마다 파일 수·크기·나스에서 줄 권한
+node scripts/desk/pack-keys.js --out "$TEMP/akkome-keys"    # 🔴 총괄 지시 뒤에만
+# ② 나스로 전송(비번은 ssh 가 묻음 · 메신저·메일 0) — 이미 있는 home/·work/ 위에 덮음(리포 clone·node_modules 는 그대로)
+NAS=user1@192.168.0.22; B=/volume1/docker/akkome
+MSYS_NO_PATHCONV=1 scp -r "$TEMP/akkome-keys/home/." $NAS:/home/user1/akkome-keys-home/ && MSYS_NO_PATHCONV=1 scp -r "$TEMP/akkome-keys/work/." $NAS:/home/user1/akkome-keys-work/
+ssh $NAS "sudo cp -a /home/user1/akkome-keys-home/. $B/home/ && sudo cp -a /home/user1/akkome-keys-work/. $B/work/ && sudo rm -rf /home/user1/akkome-keys-home /home/user1/akkome-keys-work"
+# ③ 권한(나스 · 공유 docker 는 SMB 가 파일 권한을 건너뛰므로 share 권한도 함께 — 5-1절)
+ssh $NAS "sudo chown -R 1001:100 $B/home $B/work && sudo chmod 750 $B/work $B/home && sudo chmod 700 $B/home/.akkome $B/home/.ssh $B/home/.claude && sudo chmod 600 $B/work/.env $B/home/.akkome/desk-api-key.txt $B/home/.ssh/id_ed25519 $B/home/.claude.json"
+# ④ 꾸러미 폴더 삭제(노트북)
+rm -rf "$TEMP/akkome-keys"
 ```
-- MCP 등록 = `.claude.json` 의 `mcpServers` 를 가져오되 `aside`(Windows 전용) 줄은 지우고, 리눅스 `npx` 로 뜨는 sequential-thinking·playwright 만 둔다. 힉스필드 MCP(claude.ai 연결)는 로그인 뒤 저절로.
-- **대표 Claude 로그인 1회**(대표 요금제) = `docker exec -it -u akkome akkome-desk claude` → `/login` → 브라우저 없는 기기용으로 **주소를 찍어 주면 대표 폰·노트북 브라우저로 열어 코드를 붙임** → `~/.claude/.credentials.json` 생김(볼륨 안에 남음). 창구 지시는 종전처럼 콘솔 키 파일(desk-api-key.txt)로 · 시험(--sub)만 대표 요금제.
-- 리모트 컨트롤 = 로그인 뒤 세션 안 `/remote-control`(지금 노트북과 같음 · 나스가 켜져 있으면 폰에서 이어짐).
+- /work 리포 clone + `npm install` + `npm i --no-save playwright@1.63.0` 은 **10/29 끝남**(컨테이너 안 · 254 모듈 · 407MB · `node --check` 8파일 ✓ · 라이브 커밋 5cb775c). 전환 날 `git pull` 만.
+- MCP 등록 = `.claude.json` 의 `mcpServers` 에서 `aside`(Windows 전용) 줄은 빼고(pack-keys 가 지움), 리눅스 `npx` 로 뜨는 sequential-thinking·playwright 만. 힉스필드 MCP(claude.ai 연결)는 로그인 뒤 저절로.
+- **대표 Claude 로그인 1회**(대표 요금제 · 10/29 실측 흐름) = 총괄이 tmux 안에서 `docker exec -it -u akkome akkome-desk claude auth login` → 화면에 「If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?…」 + 「Paste code here if prompted >」 → **그 주소를 대표 폰·노트북으로 보내 대표가 열고 로그인 → 나오는 코드를 총괄에 전달 → 같은 창에 붙임**(코드는 그 실행 1회에만 맞음 · 창을 닫으면 다시) → `~/.claude/.credentials.json` 생김(볼륨에 남음). `claude setup-token` 도 같은 꼴(장기 토큰). 창구 지시는 종전처럼 콘솔 키 파일(desk-api-key.txt · env ANTHROPIC_API_KEY)로 · 시험(--sub)만 대표 요금제.
+- 리모트 컨트롤 = 로그인 뒤 `claude remote-control --name 나스-총괄`(또는 세션 안 `/remote-control`) · 10/29 실측 = 로그인 전엔 「You must be logged in … claude.ai subscriptions」 한 줄로 거절 · 바깥으로 열 포트 없음(아웃바운드만 · 컨테이너에서 platform.claude.com 200 · claude.ai 403 은 봇 거름 정상).
 
 ### 3-5. 램 가늠(PC 실측 10/29 15:xx · 작업 집합 RSS)
 | 것 | 실측·가늠 | 메모 |
@@ -171,6 +167,35 @@ ssh $NAS "cd $B/work && git clone https://github.com/bumiletter-bit/jeju-acom-co
 
 **위험**: N100 4코어 · VM 과 컨테이너가 코어를 나눠 씀(VM 2~3 · 컨테이너 2~3 · 동시에 무거우면 느림) / ext4 라 VM 스냅샷 없음 → VM 내보내기 백업 주 1회 / Windows 업데이트 재시작 → 감시자가 창구 살림(지금과 같음) / 어사이드 무거운 캡처 때 탭 끊김(#907) 은 VM 에서 더 쉬움 / 나스가 꺼지면 공유폴더·창구·세션 전부 멈춤(단일 지점 · UPS 고려) / 열쇠가 나스 한 곳에 모임(docker 폴더 권한 = akkome·admin 만 · SMB 로 열어 두지 말 것).
 **비용 요약**: 램 32~36만 · 그 밖 0(Docker 무료 · 요금 구도 그대로 = 대표 계정 지시 대표 요금제 · 직원 지시 콘솔 키 · Windows 라이선스는 VM 길을 고를 때만).
+
+## 5-1. 전환 절차 체크리스트(#916 · 총괄이 시각을 정해 순서대로 · 각 줄 = 한 사람이 한 번)
+
+**준비(창구 전환 전 · 언제든)**
+- [ ] 코드 6곳(#916-A 워커1) 배포 · 노트북 창구가 그 판으로 돌고 있음(Windows 길 무변경 확인 = 교차 점검)
+- [ ] 나스 `docker ps` = akkome-desk Up(idle) · `docker exec akkome-desk ps` 에 sleep 하나뿐(창구 0)
+- [ ] /work 리포 = `git log -1` 이 라이브 커밋과 같음(`git pull`) · `node --check server.js scripts/desk/launcher.js` ✓
+- [ ] 노트북 `node scripts/desk/install-keyword-rank.js --print` 로 미리 보기(등록은 전환 날 ①~④ 뒤 · 09:30 · 꺼져 있던 날은 건너뜀 = 10:00 알림)
+- [ ] **색인 처음 만들기 1회**(워커1 #916-A2 경로 구분자 커밋 뒤 · 그 전엔 0줄로 만들어지니 돌리지 말 것) = `docker exec -u akkome akkome-desk bash -lc 'cd /work && git pull && node scripts/desk/share-index.js'`(/share 기준 · OUT = home/akkome/akkome/공유폴더_색인 · 노트북 10~20분 · N100 은 더) → `--status` 로 **파일 36,0xx · 송장 엑셀 3,547 · 줄 794,396**(노트북 수치)과 대조 · 🔴 이걸 전환 전에 끝내야 첫 10:00 송장 올리기(shipMaybe 30분 상한)가 색인 만들기와 겹쳐 그날 송장이 빠지는 일이 없다 · 노트북 색인 복사는 안 함(손님 정보 · 새로 만드는 게 깨끗)
+- [ ] 대표 로그인 1회(3-4절 흐름 · `docker exec -it -u akkome akkome-desk claude auth login` → 주소 → 대표 코드 → 붙임 → `~/.claude/.credentials.json`) · 세션·시험용 · 창구 지시는 콘솔 키
+- [ ] 공유 「docker」 SMB 권한(관리 화면 · 공유 폴더 → docker → 권한) = **akkome 접근 없음 · 관리자(user1)만**(10/29 실측 smbshare.conf `valid users = @admin akkome` · `skip smb perm = Yes` 라 파일 권한을 건너뜀 → 직원 PC 가 akkome 로 붙어 있으면 .env·열쇠가 보임) · 컨테이너는 uid 로 쓰므로 영향 0
+
+**전환(한 번에 · 평일 08:30~10:30 피함 · 처리 중 지시 0 일 때)**
+- [ ] ①노트북 창구 내림 = `node scripts/desk/install-launcher.js --remove` → `taskkill /PID <감시자 pid> /T` → `--status` 로 감시자·창구 둘 다 false · 화면 「자리 비움」 확인
+- [ ] ②열쇠 투입(총괄 지시 · `pack-keys.js --out` → scp → cp -a · 3-4절 ①~④) → 권한 = **work 750 · .env 600 · home/.akkome 700 · desk-api-key.txt 600 · .ssh 700/600 · .claude.json 600** · `ls -la` 로 임자 1001:100 확인 · 노트북 꾸러미 폴더 삭제
+- [ ] ③색인 갱신(준비 절에서 처음 만든 색인 위에 바뀐 엑셀만 · 1~2분) = `docker exec -u akkome akkome-desk bash -lc 'cd /work && node scripts/desk/share-index.js --update'` → `--status` 줄 수가 노트북과 같은지
+- [ ] ④창구 켬 = compose `DESK_MODE: desk` 로 바꿔 `docker compose up -d`(컨테이너 재생성 · home·work 는 볼륨이라 그대로) → `docker logs -f akkome-desk` 에 「감시자 시작 … 창구 켬 pid=」 · home/.akkome/launcher.log 「대기 프로그램 시작 host=akkome-nas」 · DB desk_launcher.host = akkome-nas · 화면 「대기 중」
+- [ ] ⑤첫 지시 확인 = 대표 계정으로 「오늘 날짜 알려줘」 1건 → 30초 안 완료 · home/.akkome/logs/order-N.log 생김 · 콘솔 키 과금인지(launcher 로그의 「콘솔 키」 줄)
+- [ ] ⑥노트북 `install-keyword-rank.js --install`(09:30 어사이드 일만 노트북에) · `--status` ✓
+
+**24시간 감시(총괄 · 다음 날 같은 시각까지)**
+- [ ] desk_heartbeat.at 가 30초 주기로 갱신(2분 넘게 멈추면 화면 「자리 비움」)
+- [ ] launcher.log 에 「창구 다시 켬」·「치명 오류」·「기동 복구」 줄 0 · docker `RestartCount` 0
+- [ ] 지시 처리 시각 = 접수 → 완료 중앙값이 노트북 때(71초)와 비슷 · 「오류」 상태 0
+- [ ] 10:00 송장 올리기 = 나스 launcher 틱(#916-A ③)이 돌아 delivery_shipments 에 어제 운송장 줄이 들어왔는지(launcher.log 「송장 올리기」 줄 · `SELECT max(uploaded_at)`) → **첫 10:00 성공을 본 뒤에** 노트북 `node scripts/desk/install-ship-upload.js --remove`(그 전엔 노트북 작업 유지 · 둘이 돌아도 같은 줄 덮어쓰기라 무해) · 09:30 키워드 순위 = 노트북 스케줄러가 돌았는지(keyword_rank_last.at · `install-keyword-rank.js --status`) · 나스 launcher.log 에 「키워드 순위」 줄 0(DESK_NO_ASIDE)
+- [ ] 메일·계산서·공유폴더 찾기 지시 각 1건(share-find · invoice-find = /share 경로로 답하는지) · 엑셀 그림 지시는 「파일만 첨부」로 답하는지
+- [ ] 램 = `docker stats --no-stream akkome-desk` 가 5g 안 · 나스 free 여유 1GB↑
+
+**되돌리기(한 줄)** = 나스 `docker compose stop` → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」 · DB 는 그대로라 되돌릴 것 없음(처리 중이던 지시는 다음 기동 복구가 「대기」로).
 
 ## 6. 미확인·다음
 - UGOS 가상 머신 앱의 Windows 11 설치 실측(ISO·TPM 우회)은 램 도착 뒤 — 대표 입회.

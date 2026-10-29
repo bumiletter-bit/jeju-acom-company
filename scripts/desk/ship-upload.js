@@ -88,7 +88,7 @@ const SHARE = process.env.AKM_SHARE || '\\\\192.168.0.22\\아꼼';
 const cellStr = v => { if (v == null) return ''; if (typeof v === 'object') { if (v.richText) return v.richText.map(t => t.text).join(''); if (v.result !== undefined) return cellStr(v.result); if (v.text) return String(v.text); if (v instanceof Date) return v.toISOString().slice(0, 10); return ''; } return String(v); };
 async function readSheet2(rel) {
     const ExcelJS = require(path.join(__dirname, '..', '..', 'node_modules', 'exceljs'));
-    const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path.join(SHARE, rel));
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path.join(SHARE, ...rel.split('\\')));   // #916 색인 rel 은 역슬래시(노트북 색인과 같은 꼴) → 리눅스(나스)에서도 열리게 낱말로 나눠 붙임
     const ws = wb.worksheets[1]; if (!ws) return null;
     let head = 0, col = {};
     for (let r = 1; r <= Math.min(5, ws.rowCount) && !head; r++) { const m = {}; ws.getRow(r).eachCell((c, i) => { const k = cellStr(c.value).replace(/\s/g, ''); if (k) m[k] = i; }); if (m['운송장번호']) { head = r; col = m; } }

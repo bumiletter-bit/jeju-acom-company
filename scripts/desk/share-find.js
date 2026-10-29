@@ -30,5 +30,5 @@ for (const f of idx.files) {
 }
 hits.sort((a, b) => b.score - a.score || b.f.m - a.f.m);
 const limit = opt.limit || 15;
-const items = hits.slice(0, limit).map(({ f }) => ({ name: f.n, folder: path.dirname(f.p) === '.' ? '(맨 위)' : path.dirname(f.p), path: path.join(idx.share, f.p), size_kb: Math.round(f.s / 1024), modified: new Date(f.m).toISOString().slice(0, 10), attach: f.s > 0 && f.s <= MAX_ATTACH && ATTACH_EXT.includes(path.extname(f.n).slice(1).toLowerCase()) }));
+const items = hits.slice(0, limit).map(({ f }) => ({ name: f.n, folder: f.p.lastIndexOf('\\') < 0 ? '(맨 위)' : f.p.slice(0, f.p.lastIndexOf('\\')), path: path.join(idx.share, ...f.p.split('\\')), size_kb: Math.round(f.s / 1024), modified: new Date(f.m).toISOString().slice(0, 10), attach: f.s > 0 && f.s <= MAX_ATTACH && ATTACH_EXT.includes(path.extname(f.n).slice(1).toLowerCase()) }));
 console.log(JSON.stringify({ ok: true, query: q.join(' '), total: hits.length, shown: items.length, indexed_at: idx.at, items }, null, 1));

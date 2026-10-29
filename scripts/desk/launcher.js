@@ -149,6 +149,8 @@ function killTree(child, dep) {
     const d = dep || {};
     if (!child || child.exitCode != null) return false;
     try {
+        // #916 리눅스(나스 창구) = spawnG 로 띄운 자식은 프로세스 그룹 우두머리 → 그룹째(claude 가 띄운 node·bash 손자까지) 끔 · 그룹이 없으면 아래 종전 길
+        if ((d.platform || process.platform) !== 'win32' && child.pid && child._akmGroup) { try { (d.kill || process.kill)(-child.pid, 'SIGKILL'); return true; } catch (_) { /* 종전 길로 */ } }
         if ((d.platform || process.platform) === 'win32' && child.pid) (d.spawn || spawn)('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => { try { child.kill(); } catch (_) { } });
         else child.kill('SIGKILL');
         return true;
@@ -173,9 +175,37 @@ function kidsSave(dep) {
 //   ①자기 pid·부모(감시자) pid 건너뜀 ②PowerShell Get-Process 의 이름이 claude/node/cmd 이고 **시작 시각이 파일에 적은 시각(at)보다 앞**일 때만(뒤면 다른 프로세스) · 시작 시각을 못 읽으면 안 끈다 ③부팅 시각이 at 보다 뒤면(재부팅 뒤) 파일 통째 버림
 //   돌려주는 값 = { killed: [{order_id, pid}], order_ids: 파일에 있던 지시 번호 전부(죽였든 이미 없든) } — recoverOrphans({dead}) 가 그 지시를 heartbeat·3분 조건 없이 「대기」로 되돌린다(자식을 끈 지시는 결과를 올릴 길이 없으므로)
 function procInfo(pids) {   // Windows: { boot: ISO, procs: [{pid, name, start: ISO|null}] } · 실패·다른 OS = null(= 아무도 안 끈다)
+    if (process.platform !== 'win32' && pids.length && fs.existsSync('/proc/stat')) return procInfoProc(pids);   // #916 리눅스 = /proc 에서 같은 꼴로
     if (process.platform !== 'win32' || !pids.length) return null;
     const ps = `$ids=@(${pids.map(Number).join(',')}); $o=@{boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o'); procs=@()}; foreach($i in $ids){ try{ $p=Get-Process -Id $i -ErrorAction Stop; $st=$null; try{ $st=$p.StartTime.ToUniversalTime().ToString('o') }catch{}; $o.procs += @{pid=$i; name=$p.ProcessName; start=$st} }catch{} }; $o | ConvertTo-Json -Compress -Depth 3`;
     try { const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 20000 }); const j = JSON.parse(String(r.stdout || '').trim()); if (!Array.isArray(j.procs)) j.procs = j.procs ? [j.procs] : []; return j; } catch (_) { return null; }
+}
+// #916 리눅스(나스 창구)용 — Windows 에서는 쓰이지 않는다
+//   procInfoProc = procInfo 의 /proc 판(부팅 = /proc/stat btime · 이름 = /proc/<pid>/stat 괄호 안 comm · 시작 = btime + starttime(22번째 칸)/CLK_TCK)
+function procInfoProc(pids, dep) {
+    const d = dep || {}; const rd = d.read || (f => fs.readFileSync(f, 'utf8'));
+    try {
+        const bt = /^btime\s+(\d+)/m.exec(rd('/proc/stat')); if (!bt) return null;
+        const btime = Number(bt[1]);
+        let hz = Number(d.hz) || 0;
+        if (!hz) { try { hz = parseInt(String(spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8', timeout: 3000 }).stdout).trim(), 10) || 100; } catch (_) { hz = 100; } }
+        const procs = [];
+        for (const pid of pids.map(Number)) {
+            let s; try { s = rd(`/proc/${pid}/stat`); } catch (_) { continue; }   // 없음 = 이미 끝남
+            const a = s.indexOf('('), b = s.lastIndexOf(')'); if (a < 0 || b < a) continue;
+            const rest = s.slice(b + 2).split(' ');   // rest[0] = 3번째 칸(state) → starttime(22번째) = rest[19]
+            const ticks = Number(rest[19]);
+            procs.push({ pid, name: s.slice(a + 1, b), start: Number.isFinite(ticks) ? new Date((btime + ticks / hz) * 1000).toISOString() : null });
+        }
+        return { boot: new Date(btime * 1000).toISOString(), procs };
+    } catch (_) { return null; }
+}
+//   spawnG = 리눅스면 새 프로세스 그룹으로 띄워(detached) killTree 가 그룹째 끄게 · Windows 는 spawn 그대로(인자·옵션 손대지 않음)
+function spawnG(cmd, args, opt) {
+    if (process.platform === 'win32') return spawn(cmd, args, opt);
+    const ch = spawn(cmd, args, Object.assign({}, opt, { detached: true }));
+    ch._akmGroup = true;
+    return ch;
 }
 function killOrphanKids(dep) {
     const d = dep || {}; const file = d.file || KIDS_FILE; let v = null;
@@ -197,7 +227,7 @@ function killOrphanKids(dep) {
         if (!/^(claude|node|cmd)(\.exe)?$/.test(name)) { L(`기동 복구: #${id} pid ${pid} 는 다른 프로그램(${name}) — 건너뜀`); continue; }
         const start = Date.parse(p.start || '');
         if (!Number.isFinite(start) || !Number.isFinite(at) || start > at + 2000) { L(`기동 복구: #${id} pid ${pid}(${name}) 시작 시각 ${p.start || '모름'} 이 기록(${e.at || '모름'}) 뒤 = 다른 프로세스 — 건너뜀`); continue; }
-        try { if (process.platform === 'win32') (d.spawnSync || spawnSync)('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 10000 }); else process.kill(pid, 'SIGKILL'); killed.push({ order_id: Number(id), pid }); L(`기동 복구: #${id} 앞 창구가 남긴 자식 pid ${pid}(${name}) 끔(트리)`); } catch (err) { L(`기동 복구: #${id} pid ${pid} 끄기 실패(무시): ${err.message}`); }
+        try { if (process.platform === 'win32') (d.spawnSync || spawnSync)('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 10000 }); else { try { process.kill(-pid, 'SIGKILL'); } catch (_) { process.kill(pid, 'SIGKILL'); } } killed.push({ order_id: Number(id), pid }); L(`기동 복구: #${id} 앞 창구가 남긴 자식 pid ${pid}(${name}) 끔(트리)`); } catch (err) { L(`기동 복구: #${id} pid ${pid} 끄기 실패(무시): ${err.message}`); }
     }
     try { fs.unlinkSync(file); } catch (_) { /* 없음 */ }
     return { killed, order_ids: orderIds };
@@ -287,7 +317,7 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
         const exe = findClaude();
         if (!exe) { try { fs.closeSync(out); } catch (_) { } return resolve({ code: -1, err: 'claude 실행 파일을 찾지 못했습니다', outPath, info: {} });
         }
-        const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', opt.stream ? 'pipe' : out, out], windowsHide: true });
+        const child = spawnG(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', opt.stream ? 'pipe' : out, out], windowsHide: true });
         kids.set(order.id, child); kidsSave();   // #799 · #829 pid 파일
         child.stdin.on('error', () => { /* 바로 죽은 자식에 쓰려 한 경우 — exit 가 처리한다 */ });
         try { child.stdin.end(promptText); } catch (e) { /* 위 error 핸들러로 */ }   // #829 문장 전체를 넣고 닫는다 — 닫아야 -p 가 읽기를 끝내고 시작한다
@@ -344,7 +374,7 @@ function warmSpawn(key, model, lean, effort) {
         '--model', model, '--dangerously-skip-permissions', '--add-dir', ROOT];
     if (lean) args.push('--setting-sources', 'project,local', '--strict-mcp-config');
     if (effort) args.push('--effort', effort);
-    const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawnG(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     const w = { k: warmKey(key, model, effort), child, busy: false, dead: false, last: Date.now(), onLine: null, onExit: null, used: 0 };
     let buf = '';
     child.stdout.setEncoding('utf8');
@@ -781,6 +811,7 @@ function scratchMaybe() {
 const KR_STATE = path.join(os.homedir(), '.akkome', 'keyword-rank.json');
 const krs = { nextAt: Date.now() + 60000, child: null, busy: false, noFileDay: '' };
 function rankMaybe() {
+    if (process.env.DESK_NO_ASIDE === '1') return;   // #916 나스 창구엔 어사이드 없음 — 띄우면 모든 키워드 오류로 keyword_rank_last 를 덮음(노트북 작업 스케줄러가 돌림)
     if (krs.busy || krs.child || Date.now() < krs.nextAt) return;
     krs.nextAt = Date.now() + 60000;
     krs.busy = true;
@@ -809,6 +840,38 @@ function rankMaybe() {
     })().catch(e => log('키워드 순위 확인 실패(무시): ' + e.message)).finally(() => { krs.busy = false; });
 }
 
+// #916 송장 올리기(ship-upload.js --days 3) — 리눅스(나스) 창구만. Windows 는 작업 스케줄러(install-ship-upload.js · 매일 10:00 + 로그온)가 하므로 첫 줄에서 돌아간다.
+//   1분에 한 번 확인 · KST 10:00 지나면 하루 한 번 · 하루 한 번 기록 = ~/.akkome/ship-upload-day.json(띄우기 전에 적음 = 실패해도 그날 다시 안 띄움 · 노트북 vbs 와 같은 「하루 1회」)
+//   로그 = ~/.akkome/logs/ship-upload-YYYY-MM-DD.log · 30분 넘으면 끔(그룹째)
+const SHIP_STATE = path.join(os.homedir(), '.akkome', 'ship-upload-day.json');
+const shs = { nextAt: Date.now() + 60000, child: null, busy: false };
+function shipMaybe() {
+    if (process.platform === 'win32') return;
+    if (shs.busy || shs.child || Date.now() < shs.nextAt) return;
+    shs.nextAt = Date.now() + 60000;
+    shs.busy = true;
+    try {
+        const k = new Date(Date.now() + 9 * 3600e3).toISOString(), today = k.slice(0, 10), hm = k.slice(11, 16);   // KST
+        if (hm < '10:00') return;
+        let last = null; try { last = JSON.parse(fs.readFileSync(SHIP_STATE, 'utf8')).day; } catch (e) { /* 처음 */ }
+        if (last === today) return;
+        const script = path.join(ROOT, 'scripts', 'desk', 'ship-upload.js');
+        if (!fs.existsSync(script)) return;
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+        fs.writeFileSync(SHIP_STATE, JSON.stringify({ day: today, at: new Date().toISOString() }));
+        const outPath = path.join(LOG_DIR, `ship-upload-${today}.log`);
+        const fd = fs.openSync(outPath, 'a');
+        let ch;
+        try { ch = spawnG(process.execPath, [script, '--days', '3'], { cwd: ROOT, stdio: ['ignore', fd, fd], windowsHide: true }); } finally { fs.closeSync(fd); }
+        shs.child = ch;
+        const kill = setTimeout(() => { killTree(ch); log('송장 올리기: 30분 넘어 끔(그룹째)'); }, 30 * 60000); kill.unref();
+        const done = (msg) => { clearTimeout(kill); if (shs.child === ch) shs.child = null; log(msg); try { fs.writeFileSync(SHIP_STATE, JSON.stringify({ day: today, at: new Date().toISOString(), result: msg })); } catch (e) { /* 다음 날은 그대로 */ } };
+        ch.on('error', e => done('송장 올리기 띄우기 실패: ' + e.message));
+        ch.on('exit', code => done(`송장 올리기 끝(exit ${code}) · 로그 ${outPath}`));
+        log(`송장 올리기 시작(pid ${ch.pid}) · ${outPath}`);
+    } catch (e) { log('송장 올리기 확인 실패(무시): ' + e.message); } finally { shs.busy = false; }
+}
+
 // 10초마다: 화면 버튼 신호·설정·상태 기록(종전 tick의 앞부분 그대로)
 async function slowTick() {
     const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
@@ -816,6 +879,7 @@ async function slowTick() {
     st.fast = fast.settings(ENV_FAST || fastCfg);
     if (Date.now() - st.lastTrim > 86400e3) { st.lastTrim = Date.now(); trimLog(); }   // 하루 한 번(상주 시작 때는 main 이 이미 돌렸다)
     scratchMaybe();   // #827-B 끝난 지시의 .scratch 폴더 정리(설정 켰을 때만 · 하루 한 번 · 기다리지 않음)
+    shipMaybe();      // #916 리눅스(나스) 창구만 = 송장 올리기 KST 10:00 하루 한 번(Windows 는 작업 스케줄러 install-ship-upload.js 그대로 · 여기선 바로 돌아감)
     rankMaybe();      // #910 키워드 순위 자동 수집(설정 켰을 때만 · 09:30 지나면 하루 한 번 · 기다리지 않음)
     warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
@@ -956,4 +1020,4 @@ async function main() {
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t916: { procInfoProc, spawnG, shipMaybe, rankMaybe, shs, krs }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)

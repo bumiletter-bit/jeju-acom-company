@@ -1,5 +1,5 @@
-# #914 나스 창구·세션 컨테이너 compose 초안 — 나스의 /volume1/docker/akkome-desk/ 에 Dockerfile·entrypoint.sh 와 함께 둔다.
-#   올리기:   cd /volume1/docker/akkome-desk && sudo docker compose up -d        (기본 DESK_MODE=idle = 창구 안 켬)
+# #914 나스 창구·세션 컨테이너 compose 초안 — 나스의 /volume1/docker/akkome/ 에 Dockerfile·entrypoint.sh 와 함께 둔다.
+#   올리기:   cd /volume1/docker/akkome && sudo docker compose up -d        (기본 DESK_MODE=idle = 창구 안 켬)
 #   세션:     sudo docker exec -it -u akkome akkome-desk tmux new -As chief     (총괄 · 워커는 worker1·2·3 · 리모트 컨트롤은 그 안에서 claude → /remote-control)
 #   창구 켬:  DESK_MODE=desk 로 바꿔 up -d  (🔴 총괄 지시 뒤 · 대표 PC 창구를 먼저 내린 다음)
 #   볼륨 = home(열쇠·로그·메모리·설정 전부) · work(리포 clone) · share(= /volume1/아꼼 읽기 전용 · 창구 규칙 「공유폴더는 읽기만」)
@@ -31,7 +31,10 @@ services:
       AKKOME_CLAUDE_EXE: /usr/local/bin/claude
       DESK_NO_ASIDE: "1"    # 나스엔 어사이드가 없다 → launcher rankMaybe 건너뜀(설계서 1-0절 ② · launcher.js 1줄 손질 뒤 효력 · 키워드 순위는 노트북 작업 스케줄러가 09:30)
     volumes:
-      - /volume1/docker/akkome-desk/home:/home/akkome
-      - /volume1/docker/akkome-desk/work:/work
-      - /volume1/아꼼:/share:ro
+      - /volume1/docker/akkome/home:/home/akkome     # 열쇠·로그(.akkome/launcher.log · logs/order-N.log)·메모리·설정 — 임자 1001:100
+      - /volume1/docker/akkome/work:/work            # 리포 clone(main) + .env + node_modules + ★에이전트오피스/비공개·브랜드
+      - /volume1/아꼼:/share:ro                       # 공유폴더 읽기 전용
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }    # 컨테이너 표준 출력(entrypoint·감시자 줄) · 창구 본 로그는 home/.akkome/launcher.log
     # 잠금 포트(47469·47470)는 컨테이너 안 127.0.0.1 — 바깥으로 열지 않는다. 회사프로그램 서버와는 DB(DATABASE_URL)로만 만난다.
