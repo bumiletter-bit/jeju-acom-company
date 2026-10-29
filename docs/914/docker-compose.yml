@@ -1,0 +1,37 @@
+# #914 나스 창구·세션 컨테이너 compose 초안 — 나스의 /volume1/docker/akkome-desk/ 에 Dockerfile·entrypoint.sh 와 함께 둔다.
+#   올리기:   cd /volume1/docker/akkome-desk && sudo docker compose up -d        (기본 DESK_MODE=idle = 창구 안 켬)
+#   세션:     sudo docker exec -it -u akkome akkome-desk tmux new -As chief     (총괄 · 워커는 worker1·2·3 · 리모트 컨트롤은 그 안에서 claude → /remote-control)
+#   창구 켬:  DESK_MODE=desk 로 바꿔 up -d  (🔴 총괄 지시 뒤 · 대표 PC 창구를 먼저 내린 다음)
+#   볼륨 = home(열쇠·로그·메모리·설정 전부) · work(리포 clone) · share(= /volume1/아꼼 읽기 전용 · 창구 규칙 「공유폴더는 읽기만」)
+services:
+  akkome-desk:
+    build:
+      context: .
+      args:
+        UID: "1001"          # 나스 akkome 계정(id akkome = uid 1001 · gid 100 users · 10/29 실측)
+        GID: "100"
+        CLAUDE_CODE_VERSION: "2.1.312"
+        PLAYWRIGHT_VERSION: "1.63.0"
+        WITH_WHISPER: "0"
+    image: akkome-desk:0.1
+    container_name: akkome-desk
+    hostname: akkome-nas     # launcher 가 desk_launcher.host · 로그에 적는 이름(화면 「창구 PC」 구분용)
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    shm_size: 1g             # Chromium(xlsx-image·_preview) 공유 메모리
+    mem_limit: 5g            # 램 16GB 기준: UGOS 1.5 + Windows VM(어사이드) 8 → 남는 6.5 중 5 (8GB 나스면 VM 없이 3g 로)
+    cpus: "3"                # N100 4코어 중 3 (Windows VM 과 같이 돌면 2)
+    environment:
+      DESK_MODE: idle        # idle | desk
+      TZ: Asia/Seoul
+      LANG: ko_KR.UTF-8
+      AKM_SHARE: /share
+      PYTHON: /opt/venv/bin/python
+      AKKOME_CLAUDE_EXE: /usr/local/bin/claude
+      DESK_NO_ASIDE: "1"    # 나스엔 어사이드가 없다 → launcher rankMaybe 건너뜀(설계서 1-0절 ② · launcher.js 1줄 손질 뒤 효력 · 키워드 순위는 노트북 작업 스케줄러가 09:30)
+    volumes:
+      - /volume1/docker/akkome-desk/home:/home/akkome
+      - /volume1/docker/akkome-desk/work:/work
+      - /volume1/아꼼:/share:ro
+    # 잠금 포트(47469·47470)는 컨테이너 안 127.0.0.1 — 바깥으로 열지 않는다. 회사프로그램 서버와는 DB(DATABASE_URL)로만 만난다.
