@@ -195,7 +195,8 @@ rm -rf "$TEMP/akkome-keys"
 - [ ] 메일·계산서·공유폴더 찾기 지시 각 1건(share-find · invoice-find = /share 경로로 답하는지) · 엑셀 그림 지시는 「파일만 첨부」로 답하는지
 - [ ] 램 = `docker stats --no-stream akkome-desk` 가 5g 안 · 나스 free 여유 1GB↑
 
-**되돌리기(한 줄)** = 나스 `docker compose stop` → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」 · DB 는 그대로라 되돌릴 것 없음(처리 중이던 지시는 다음 기동 복구가 「대기」로).
+**④ 창구 켬(한 줄 · 총괄 신호 뒤)** = 나스 `cd /volume1/docker/akkome && sudo sed -i 's/DESK_MODE: idle/DESK_MODE: desk/' docker-compose.yml && sudo docker compose up -d && sudo docker logs -f --tail 30 akkome-desk`(컨테이너 재생성 · 볼륨 그대로 · 「감시자 시작 … 창구 켬 pid=」 보이면 Ctrl-C)
+**되돌리기(한 줄)** = 나스 `cd /volume1/docker/akkome && sudo sed -i 's/DESK_MODE: desk/DESK_MODE: idle/' docker-compose.yml && sudo docker compose up -d`(idle 로 재생성 = 창구 0) → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」. 옛 글 = 나스 `docker compose stop` → 노트북 `node scripts/desk/install-launcher.js`(시작프로그램 재등록 + 바로 켬) → 화면 「대기 중」 · DB 는 그대로라 되돌릴 것 없음(처리 중이던 지시는 다음 기동 복구가 「대기」로).
 
 ## 6. 미확인·다음
 - UGOS 가상 머신 앱의 Windows 11 설치 실측(ISO·TPM 우회)은 램 도착 뒤 — 대표 입회.
