@@ -76,7 +76,8 @@ if(!w.hasTrustDialogAccepted){w.hasTrustDialogAccepted=true;w.allowedTools=w.all
 FORCE=0; [ "${2:-}" = "--force" ] && FORCE=1    # on --force = 노트북 신호 무시(총괄 시험 전용 · 업무지식엔 안 적음 · 그 실행의 감시도 노트북 조건 끔 · 6시간 무입력 off 는 그대로)
 do_on() {
     local nb=NONE; [ "$FORCE" = 1 ] || nb=$(notebook_alive_min); local nbm=${nb%% *}
-    if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -le "$NOTEBOOK_FRESH_MIN" ]; then   # 음수 = 노트북 시계가 빠름 = 켜짐
+    if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -lt "-10" ]; then log "노트북 신호 시각이 ${nbm}분 미래(시계 틀림) → 없음 취급"; nbm=NONE; fi
+    if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -le "$NOTEBOOK_FRESH_MIN" ]; then   # -10 ≤ n ≤ 5 = 켜짐(작은 음수 = 노트북 시계가 조금 빠름)
         log "켜지 않음 · 노트북(${nb#* }) 이 ${nbm}분 전까지 살아 있음"
         echo "노트북이 켜져 있어 나스 터미널은 켜지 않아요(노트북 창을 쓰세요) · 노트북 ${nb#* } · ${nbm}분 전 신호"
         status_json; exit 2
@@ -113,11 +114,13 @@ do_off() {
     status_json
 }
 do_watch() {   # 60초마다 · ①노트북이 살아 있으면(5분 안) off ②쉰 시간이 한도 넘으면 off · DB 못 읽으면 끄지 않음(로그만 · 상태 바뀔 때 한 번)
+    echo $$ > "$WPID"   # 스스로 적기(setsid 가 fork 하는 경우에도 pid 파일이 맞게)
     local n=0 errLogged=0
     while :; do
         sleep 60; n=$((n+1))
         has || { rm -f "$WPID"; exit 0; }
         local nb=NONE; [ "${AKM_FORCE:-0}" = 1 ] || nb=$(notebook_alive_min); local nbm=${nb%% *}
+        if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -lt "-10" ]; then [ "$errLogged" = 0 ] && log "노트북 신호 시각이 ${nbm}분 미래(시계 틀림) → 없음 취급"; nbm=NONE; fi
         if [[ "$nbm" =~ ^-?[0-9]+$ ]] && [ "$nbm" -le "$NOTEBOOK_FRESH_MIN" ]; then
             log "노트북 켜짐(${nb#* } · ${nbm}분 전 신호) → 나스 터미널 끔"
             rm -f "$WPID"; bash "$0" off > /dev/null 2>&1; exit 0

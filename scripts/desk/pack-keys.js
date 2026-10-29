@@ -79,27 +79,35 @@ const SYNC_STATE = process.env.PACK_KEYS_SYNC_STATE || path.join(HOME, '.akkome'
 const sha = buf => require('crypto').createHash('sha256').update(buf).digest('hex');
 const qsh = n => "'" + String(n).replace(/'/g, "'\\''") + "'";
 function memState() { try { const j = JSON.parse(fs.readFileSync(SYNC_STATE, 'utf8')); return { files: new Set(j.files || []), hashes: j.hashes || {} }; } catch (e) { return null; } }
-// 보내기(--out) 기록은 곧바로 확정하지 않는다 — 꾸러미가 나스에 실제로 들어갔는지 모르므로 .pending 에 두었다가,
-// 다음 --pull/--out 때 나스 내용이 그 꾸러미와 똑같으면(이름·해시 전부) 그때 확정한다. 안 들어갔으면 옛 기록 그대로(노트북 최신 파일을 옛 나스 것으로 되돌리는 일 막음).
+// 보내기(--out) 기록은 곧바로 확정하지 않는다 — 꾸러미가 나스에 실제로 들어갔는지 모르므로 .pending 에 두었다가, 다음 --pull/--out 때 확정한다:
+//   ①나스 memory 폴더의 표식 파일(MARK · 꾸러미에 같이 넣음 · 「비우고 넣기」로 들어감)의 id 가 pending id 와 같으면 = 들어감 → 꾸러미 해시 전부 기준으로(그 뒤 나스에서 고친 파일은 「나스만 바뀜」으로 받힘)
+//   ②표식이 다르거나 없으면(안 넣음 · 옛 꾸러미) = 파일 단위로 나스 해시 = 꾸러미 해시인 파일만 기준 갱신 · 나머지는 pending 유지(노트북 최신 파일을 옛 나스 것으로 되돌리는 일 막음)
 const SYNC_PENDING = SYNC_STATE.replace(/\.json$/, '') + '.pending.json';
+const MARK = '.akm-memory-sync.json';   // 점으로 시작 = 나스 목록(for f in *)·Claude 메모리 색인에 안 잡힘
 function promotePending(nas) {
     let p; try { p = JSON.parse(fs.readFileSync(SYNC_PENDING, 'utf8')); } catch (e) { return null; }
-    const b = p.bundle || {}, names = Object.keys(b);
-    const delivered = names.length === nas.size && names.every(n => nas.get(n) && nas.get(n).h === b[n]);
-    if (!delivered) return '지난 보내기(' + String(p.at).slice(0, 16) + ')가 나스에 안 들어감 — 기록 확정 안 함';
-    delete p.bundle; fs.writeFileSync(SYNC_STATE, JSON.stringify(p)); fs.unlinkSync(SYNC_PENDING);
-    return '지난 보내기(' + String(p.at).slice(0, 16) + ') 나스 들어감 확인 → 기록 확정';
+    const b = p.bundle || {}, st = memState() || { files: new Set(), hashes: {} };
+    const files = [...new Set([...st.files, ...(p.files || [])])].sort(), hashes = Object.assign({}, st.hashes);
+    const when = String(p.at).slice(0, 16);
+    if (p.id && nas.mark && nas.mark.id === p.id) {
+        Object.assign(hashes, b);
+        fs.writeFileSync(SYNC_STATE, JSON.stringify({ at: p.at, how: 'push', files, hashes })); fs.unlinkSync(SYNC_PENDING);
+        return `지난 보내기(${when}) 나스 들어감(표식 확인) → 기록 확정`;
+    }
+    let n = 0; for (const [name, h] of Object.entries(b)) { const v = nas.get(name); if (v && v.h === h) { hashes[name] = h; n++; } }
+    fs.writeFileSync(SYNC_STATE, JSON.stringify({ at: p.at, how: 'push-part', files, hashes }));
+    return `지난 보내기(${when}) 표식 없음(안 넣었거나 다른 꾸러미) → 나스와 같은 ${n}개만 기준 갱신 · 나머지 ${Object.keys(b).length - n}개는 대기`;
 }
 function localMem() { return new Map(fs.readdirSync(LOCAL_MEM).filter(n => fs.statSync(path.join(LOCAL_MEM, n)).isFile()).map(n => { const p = path.join(LOCAL_MEM, n); return [n, { m: fs.statSync(p).mtimeMs, h: sha(fs.readFileSync(p)) }]; })); }
 // 새 기록 = 맞춘 뒤 양쪽이 같은 파일만 그 해시로 · 아직 다른 파일(양쪽 바뀜 등)은 옛 기준 해시 유지 · files = 노트북 + 안 받고 둔 나스 전용(지운 것·확인필요)
-function memSyncSave(how, after, extra, bundle) {   // bundle 이 있으면(보내기) .pending 으로만
+function memSyncSave(how, after, extra, bundle, id) {   // bundle 이 있으면(보내기) .pending 으로만(id = 꾸러미 표식 id)
     try {
         const old = memState() || { files: new Set(), hashes: {} };
         const hashes = {};
         for (const [n, v] of after.local) { const nv = after.nas.get(n); if (nv && nv.h === v.h) hashes[n] = v.h; else if (old.hashes[n]) hashes[n] = old.hashes[n]; }
         const known = new Set(after.local.keys()); for (const n of extra || []) known.add(n);
         const rec = { at: new Date().toISOString(), how, files: [...known].sort(), hashes };
-        if (bundle) fs.writeFileSync(SYNC_PENDING, JSON.stringify(Object.assign(rec, { bundle })));
+        if (bundle) fs.writeFileSync(SYNC_PENDING, JSON.stringify(Object.assign(rec, { bundle, id })));
         else { fs.writeFileSync(SYNC_STATE, JSON.stringify(rec)); try { fs.unlinkSync(SYNC_PENDING); } catch (e) { /* 없음 */ } }
     } catch (e) { /* 기록 실패 = 다음엔 「처음」처럼 보수적으로 */ }
 }
@@ -116,10 +124,13 @@ function nasExec(cmd, sudo, binary) {
         })).on('error', reject).connect({ host: '192.168.0.22', port: 22, username: kv.id, password: kv.pw, readyTimeout: 15000 });
     });
 }
-// 나스 목록: 이름 \t 수정 시각(초) \t sha256 — 맨 위 파일만(메모리 폴더는 평평함)
+// 나스 목록: 이름 \t 수정 시각(초) \t sha256 — 맨 위 파일만(메모리 폴더는 평평함) · 끝 줄 「#MARK\t표식 JSON」(있을 때) → Map 의 .mark
 async function nasMem() {
-    const raw = await nasExec(`sh -c 'cd ${NAS_MEM} && for f in *; do [ -f "$f" ] || continue; printf "%s\\t%s\\t%s\\n" "$f" "$(stat -c %Y "$f")" "$(sha256sum "$f" | cut -c1-64)"; done'`, true);
-    return new Map(raw.split('\n').filter(Boolean).map(l => { const [n, m, h] = l.split('\t'); return [n, { m: Number(m) * 1000, h }]; }));
+    const raw = await nasExec(`sh -c 'cd ${NAS_MEM} && for f in *; do [ -f "$f" ] || continue; printf "%s\\t%s\\t%s\\n" "$f" "$(stat -c %Y "$f")" "$(sha256sum "$f" | cut -c1-64)"; done; [ -f ${MARK} ] && printf "#MARK\\t%s\\n" "$(tr -d "\\n" < ${MARK})"; true'`, true);
+    const lines = raw.split('\n').filter(Boolean);
+    const map = new Map(lines.filter(l => !l.startsWith('#MARK\t')).map(l => { const [n, m, h] = l.split('\t'); return [n, { m: Number(m) * 1000, h }]; }));
+    const mk = lines.find(l => l.startsWith('#MARK\t')); try { map.mark = mk ? JSON.parse(mk.slice(6)) : null; } catch (e) { map.mark = null; }
+    return map;
 }
 async function nasFetch(names, dir) {   // 나스 파일들을 dir 에 풀어 둔다(tar)
     const tarBuf = await nasExec(`tar -C ${qsh(NAS_MEM)} -cf - -- ${names.map(qsh).join(' ')}`, true, true);
@@ -163,7 +174,9 @@ async function pushPlan(force) {
         const base = st && st.hashes[n];
         if (base && l.h !== base && v.h !== base) { if (force.includes(n)) forced.push(n); else conflict.push(n); }
     }
-    return { nas, local, conflict, forced, pend };
+    // 나스에만 있고 기록(files)에 없는 파일 = 나스에서 새로 썼는데 아직 안 받은 것 → 「비우고 넣기」가 지워 버리므로 보내기를 멈춘다(먼저 --pull memory)
+    const nasNew = [...nas.keys()].filter(n => !local.has(n) && !(st && st.files.has(n)));
+    return { nas, local, conflict, forced, pend, nasNew };
 }
 
 const args = process.argv.slice(2);
@@ -204,6 +217,7 @@ const FORCE = fi >= 0 ? String(args[fi + 1] || '').split(',').map(s => s.trim())
     const memIt = items.find(i => i.key === 'memory' && i.exists);
     // #917 메모리가 들어가면 나스와 먼저 견줌 — 양쪽 다 바뀐 파일은 노트북 것을 넣지 않고 나스 것을 넣는다(나스 폴더를 비우고 넣어도 나스 쪽이 지켜짐)
     const plan = memIt ? await pushPlan(FORCE) : null;
+    if (plan && plan.nasNew.length) { console.log(JSON.stringify({ ok: false, error: '나스에만 있고 아직 안 받은 메모리 ' + plan.nasNew.length + '개 — 먼저 node scripts/desk/pack-keys.js --pull memory --apply(비우고 넣기가 지우지 않게) · 노트북에서 지운 것이면 받은 뒤 다시 지우세요', 나스에만: plan.nasNew, 지난보내기: plan.pend || '없음' })); process.exit(1); }
     let copied = 0, bytes = 0;
     for (const it of items) {
         if (!it.exists) continue;
@@ -220,9 +234,12 @@ const FORCE = fi >= 0 ? String(args[fi + 1] || '').split(',').map(s => s.trim())
     if (plan && plan.conflict.length) { const d = path.join(OUT, ...memIt.dest.split('/')); fs.mkdirSync(d, { recursive: true }); await nasFetch(plan.conflict, d); copied += plan.conflict.length; }
     if (plan) {   // 나스가 받게 될 내용 = 꾸러미 내용 → 그것과 노트북이 같은 파일만 기준 해시로(양쪽 바뀜은 옛 기준 유지 = 다음에도 확인필요)
         const after = new Map([...plan.local].map(([n, v]) => [n, { h: plan.conflict.includes(n) ? plan.nas.get(n).h : v.h }]));
-        memSyncSave('push', { local: plan.local, nas: after }, null, Object.fromEntries([...after].map(([n, v]) => [n, v.h])));   // .pending — 나스에 실제로 들어간 것이 확인될 때 확정
+        // 표식 파일을 꾸러미에 같이 넣는다(나스에 「비우고 넣기」로 들어가면 다음 맞추기가 id 로 확인) · 양쪽 바뀜 파일은 pending 꾸러미 해시에서 뺌(확정돼도 옛 기준 유지 = 계속 확인필요)
+        const id = require('crypto').randomBytes(8).toString('hex');
+        fs.mkdirSync(path.join(OUT, ...memIt.dest.split('/')), { recursive: true }); fs.writeFileSync(path.join(OUT, ...memIt.dest.split('/'), MARK), JSON.stringify({ id, at: new Date().toISOString() }));
+        memSyncSave('push', { local: plan.local, nas: after }, null, Object.fromEntries([...after].filter(([n]) => !plan.conflict.includes(n)).map(([n, v]) => [n, v.h])), id);   // .pending — 나스에 실제로 들어간 것이 확인될 때 확정
     }
     console.log(JSON.stringify({ ok: true, out: OUT, only: ONLY, copied, size: kb(bytes), overwrite_ok: items.filter(i => OVERWRITE_OK.has(i.key)).map(i => i.dest), new_only: items.filter(i => !OVERWRITE_OK.has(i.key)).map(i => i.dest),
         메모리_확인필요_양쪽바뀜_나스것넣음: plan ? plan.conflict : [], 메모리_force_노트북것넣음: plan ? plan.forced : [], 지난보내기: plan ? (plan.pend || '없음') : undefined,
-        다음: '나스로 옮긴 뒤 sudo chown -R 1001:100 · .ssh 700 · 열쇠·키·.env·.credentials 600 (설계서 3-4절) · memory 는 나스 폴더를 비우고 넣기' + (plan && plan.conflict.length ? ' · 양쪽 바뀐 파일은 노트북 파일에 손으로 합친 뒤 --force 로 다시' : '') }));
+        다음: '나스로 옮긴 뒤 sudo chown -R 1001:100 · .ssh 700 · 열쇠·키·.env·.credentials 600 (설계서 3-4절) · memory 는 나스 폴더를 비우고 넣기(점 파일 ' + MARK + ' 도 같이 · cp -a <꾸러미 memory>/. <나스 memory>/)' + (plan && plan.conflict.length ? ' · 양쪽 바뀐 파일은 노트북 파일에 손으로 합친 뒤 --force 로 다시' : '') }));
 })().catch(e => { console.log(JSON.stringify({ ok: false, error: String(e.message || e).slice(0, 300) })); process.exit(1); });

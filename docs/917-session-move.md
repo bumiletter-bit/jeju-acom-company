@@ -48,7 +48,8 @@ sudo docker exec -it -u akkome akkome-desk tmux attach -t akm
 1. **메모리 맞추기(먼저)** — 나스 메모리 사본(`/home/akkome/.claude/projects/-work/memory`)은 지난번 것이라 낡았을 수 있다.
    - PC 를 끄기 직전 넘어가는 경우(노트북 총괄이 PC 끄기 전에 · 🔴 순서 지킬 것):
      ① `node scripts/desk/pack-keys.js --pull memory` → `--apply` = **지난 나스 세션에서 적은 메모리를 먼저 받는다**(안 받고 덮으면 그것이 지워짐)
-     ② `node scripts/desk/pack-keys.js --only memory --out <빈 폴더>` → 나스 중간 자리로 올림 → 나스에서 memory 폴더만 **비우고 넣기**(다른 묶음은 덮지 않음) → 노트북 꾸러미 지움
+     ② `node scripts/desk/pack-keys.js --only memory --out <빈 폴더>` → 나스 중간 자리로 올림 → 나스에서 memory 폴더만 **비우고 넣기**(다른 묶음은 덮지 않음 · 🔴 점 파일 `.akm-memory-sync.json` 도 같이 = `cp -a <꾸러미 memory>/. <나스 memory>/` · `*` 로 복사하면 빠져 다음 맞추기가 「들어감」을 못 알아봄) → 노트북 꾸러미 지움
+     · 나스에만 있고 아직 안 받은 메모리가 있으면 ②가 `ok:false · 먼저 --pull memory` 로 멈춘다(비우고 넣기가 나스 새 메모리를 지우지 않게)
      ③ 그 뒤 PC 를 끈다 → 5분 뒤 「나스 터미널 켜줘」
    - **「확인필요(양쪽 바뀜)」** = 지난 맞추기 뒤 노트북과 나스 둘 다 고친 파일(특히 MEMORY.md 색인). 도구는 덮지 않는다(받기 = 노트북 유지 · 보내기 = 꾸러미에 나스 것을 넣어 나스 유지) → 총괄이 노트북 파일에 손으로 합친 뒤 `--only memory --out <빈 폴더> --force 그파일` 로 다시 보낸다(MEMORY.md 는 한 줄 한 메모라 합치기 쉬움).
    - 보내기 기록은 꾸러미가 나스에 실제로 들어간 것이 확인될 때(다음 --pull/--out 이 나스 내용 = 꾸러미임을 볼 때) 확정된다. 안 넣었으면 확정하지 않는다.
@@ -74,7 +75,7 @@ sudo docker exec -it -u akkome akkome-desk tmux attach -t akm
 1. 나스 총괄에게 「하던 일 정리 · 미커밋 0 · CLAUDE.md 머리 줄 갱신 · 커밋·푸시」(배포·커밋은 총괄 몫 그대로).
 2. **나스 메모리를 노트북으로 거꾸로 맞춘다** — 나스에서 쓴 메모리가 노트북에 없으면 사라진다. 노트북이 켜진 뒤 노트북 총괄이:
    ```
-   node scripts/desk/pack-keys.js --pull memory            (미리 보기 · 쓰기 0)
+   node scripts/desk/pack-keys.js --pull memory            (미리 보기 · 메모리 쓰기 0 · 맞추기 기록만 확정될 수 있음)
    node scripts/desk/pack-keys.js --pull memory --apply    (받기)
    ```
    - 내용이 같으면 건너뛴다. 지난 맞추기 뒤 **나스만 바뀐 파일은 받고**, 노트북만 바뀐 파일은 노트북 유지, **둘 다 바뀐 파일은 「확인필요(양쪽 바뀜)」**로 덮지 않는다(2절 1번처럼 손으로 합침). 기준 해시가 없는 파일(처음)은 수정 시각이 늦은 쪽을 따른다. 받은 파일은 나스 수정 시각으로 맞춘다.
