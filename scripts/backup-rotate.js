@@ -9,7 +9,9 @@ const fs = require('fs');
 const path = require('path');
 
 const dir = process.env.BACKUP_DIR || path.join(__dirname, '..', '..', '제주아꼼이네_DB백업');
-const KEEP_DAYS = 30;
+// #922 나스(_DB백업)는 env 로 「14일 하루 1 + 그 밖 월 1」 — ROTATE_DAILY_DAYS=14 ROTATE_OLD=month · 안 주면 종전 B(30일 + 주 1) 그대로
+const KEEP_DAYS = Math.max(1, parseInt(process.env.ROTATE_DAILY_DAYS, 10) || 30);
+const OLD_BY_MONTH = process.env.ROTATE_OLD === 'month';
 
 function dayKey(ms) { // 로컬(KST PC) 기준 날짜
     const d = new Date(ms);
@@ -24,6 +26,9 @@ function isoWeekKey(ms) {
     const week = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
     return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
+
+function monthKey(ms) { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+const oldKey = ms => OLD_BY_MONTH ? monthKey(ms) : isoWeekKey(ms);
 
 function main() {
     const confirmed = process.argv.includes('--yes');
@@ -41,8 +46,8 @@ function main() {
         if (x.m >= cutoff) {                                               // ② 하루 1개
             const k = dayKey(x.m);
             if (!dayBest.has(k) || dayBest.get(k).m < x.m) dayBest.set(k, x);
-        } else {                                                           // ③ 주 1개
-            const k = isoWeekKey(x.m);
+        } else {                                                           // ③ 주 1개(ROTATE_OLD=month 면 달 1개)
+            const k = oldKey(x.m);
             if (!weekBest.has(k) || weekBest.get(k).m < x.m) weekBest.set(k, x);
         }
     }
@@ -55,12 +60,12 @@ function main() {
     const daysKept = new Set(files.filter(x => keep.has(x.f) && x.m >= cutoff).map(x => dayKey(x.m)));
     const missing = [...daysAll].filter(d => !daysKept.has(d));
     // 주 정책 구간도 검증: 모든 주에 최소 1개 잔존
-    const weeksAll = new Set(files.filter(x => x.m < cutoff).map(x => isoWeekKey(x.m)));
-    const weeksKept = new Set(files.filter(x => keep.has(x.f) && x.m < cutoff).map(x => isoWeekKey(x.m)));
+    const weeksAll = new Set(files.filter(x => x.m < cutoff).map(x => oldKey(x.m)));
+    const weeksKept = new Set(files.filter(x => keep.has(x.f) && x.m < cutoff).map(x => oldKey(x.m)));
     const missingW = [...weeksAll].filter(w => !weeksKept.has(w));
 
     const mb = n => (n / 1048576).toFixed(1) + 'MB';
-    console.log(`백업 폴더: ${dir}`);
+    console.log(`백업 폴더: ${dir} · 정책 = ${KEEP_DAYS}일 하루 1 + 그 밖 ${OLD_BY_MONTH ? '월' : '주'} 1`);
     console.log(`전체 ${files.length}개 / 유지 ${keep.size}개 / 삭제 ${confirmed ? '실행' : '예정'} ${toDelete.length}개 (${mb(toDelete.reduce((s, x) => s + x.s, 0))})`);
     console.log(`안전검증 — 날짜 커버: ${missing.length === 0 ? '✅ 모든 날짜 최소 1개 잔존' : '❌ 누락: ' + missing.join(', ')}`
         + ` / 주 커버: ${missingW.length === 0 ? '✅' : '❌ 누락: ' + missingW.join(', ')}`);

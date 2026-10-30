@@ -45,6 +45,26 @@ async function uploadAttachments(list, runId) {
     }
     return out;
 }
+// #922 ② 첨부 한 부를 나스 「아꼼」 _에이전트오피스/YYYY-MM/<지시번호>_<파일이름> 에도 둔다(DB 첨부는 10일 뒤 지워짐 · 나스는 영구).
+//   나스 컨테이너 = /share-ao(rw 마운트) · 노트북 창구 등 폴더가 없으면 조용히 건너뜀 · 실패해도 답변은 막지 않는다(로그 한 줄)
+const AO_ARCHIVE = process.env.AKM_AO_ARCHIVE || '/share-ao';
+function archiveAttachments(list, id) {
+    const out = [];
+    try { if (!fs.statSync(AO_ARCHIVE).isDirectory()) return out; } catch (e) { return out; }
+    const ym = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 7);   // KST 달
+    for (const p of (Array.isArray(list) ? list : []).slice(0, 5)) {
+        try {
+            const dir = path.join(AO_ARCHIVE, ym); fs.mkdirSync(dir, { recursive: true });
+            const base = String(path.basename(String(p))).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 180);
+            const ext = path.extname(base), stem = base.slice(0, base.length - ext.length);
+            let dst = path.join(dir, id + '_' + base);
+            for (let n = 2; fs.existsSync(dst) && n < 100; n++) dst = path.join(dir, id + '_' + stem + ' (' + n + ')' + ext);
+            fs.copyFileSync(String(p), dst, fs.constants.COPYFILE_EXCL);
+            out.push(dst);
+        } catch (e) { console.error('나스 보관 실패(무시):', path.basename(String(p)), e.message); }
+    }
+    return out.length ? { ym, files: out } : null;
+}
 (async () => {
     const id = parseInt(process.argv[2], 10), file = process.argv[3];
     if (!id || !file) throw new Error('사용: respond.js <지시 id> <결과.json>');
@@ -52,7 +72,7 @@ async function uploadAttachments(list, runId) {
     const o = (await pool.query(`SELECT id, status, run_id, created_by_id, content, (payload IS NULL) AS no_payload FROM pending_orders WHERE id = $1 AND is_deleted = false`, [id])).rows[0];
     if (!o) throw new Error('없는 지시');
     if (!['처리중', '대기'].includes(o.status)) throw new Error(`'${o.status}' 상태라 결과를 올릴 수 없습니다(처리중만 가능)`); // '대기' = 처리 도중 서버 재시작으로 되돌려진 건
-    let status, result, stepText, runStatus = 'done', uploadedIds = [];   // #799 올린 첨부 id(결과를 못 올리면 숨김)
+    let status, result, stepText, runStatus = 'done', uploadedIds = [], archived = null;   // #799 올린 첨부 id(결과를 못 올리면 숨김) · #922 나스 보관본
     if (j.kind === 'answer') {
         if (!j.answer) throw new Error('answer가 비었습니다');
         status = '완료';
@@ -63,6 +83,8 @@ async function uploadAttachments(list, runId) {
             files: (Array.isArray(j.files) ? j.files.slice(0, 10).map(f => ({ label: clean(f.label, 60), url: clean(f.url, 500) })) : []).concat(uploaded),
             summary: clean(j.title || j.answer, 80),
         };
+        if (uploaded.length && (archived = archiveAttachments(j.attachments, id)))
+            result.answer = clean(result.answer.replace(/\s+$/, '') + `\n\n첨부는 10일 뒤 여기서 지워지고, 나스 폴더(직원 PC 의 아꼼 › _에이전트오피스 › ${archived.ym})에 보관돼 있어요`, 20000);
         // #518 최종발주 메모 읽기의 판정 결과(화면이 받아 가면 서버가 지운다) — 최종발주 요청에만, 400KB 이하
         if (j.data && typeof j.data === 'object' && /^(\[검증469\]\s*)?\[(?:최종발주 (?:메모 읽기|대화)|발주 메모 읽기)\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000
             && !(o.no_payload && /^\[발주 메모 읽기\]/.test(o.content || ''))) result.data = j.data;   // #850 발주 메모함도 · 화면이 이미 그만둔(손님 글 지운) 요청에 늦게 온 답은 data 버림
@@ -104,6 +126,7 @@ async function uploadAttachments(list, runId) {
     const up = await pool.query(`UPDATE pending_orders SET status = $2, result = $3, processed_at = NOW() WHERE id = $1 AND status IN ('처리중', '대기')`, [id, status, JSON.stringify(result)]);
     if (!up.rowCount) {
         if (uploadedIds.length) await pool.query(`UPDATE report_files SET is_deleted = true WHERE id = ANY($1::int[])`, [uploadedIds]).catch(() => { });   // 고아 첨부 숨김(물리 삭제 X)
+        if (archived) for (const f of archived.files) { try { fs.unlinkSync(f); } catch (e) { /* 이미 없음 */ } }   // #922 올리지 못한 답의 나스 보관본도 거둠
         throw new Error('그 사이 상태가 바뀌어(사람이 채팅 종료 등) 결과를 올리지 않았습니다');
     }
     await appendStep(o.run_id, runStatus === 'error' ? 'error' : 'report', stepText);
