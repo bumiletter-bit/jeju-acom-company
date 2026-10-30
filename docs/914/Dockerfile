@@ -11,6 +11,7 @@ ARG UID=1001
 ARG GID=100
 ARG CLAUDE_CODE_VERSION=2.1.312
 ARG PLAYWRIGHT_VERSION=1.63.0
+ARG HIGGSFIELD_VERSION=1.1.26
 ARG WITH_WHISPER=0
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -38,6 +39,9 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} playwright@$
     && chmod -R a+rX /ms-playwright \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
+
+# 힉스필드 CLI(#920 · 노트북과 같은 판 · 바이너리는 꾸러미 vendor/hf 에 들어 있음 · 로그인 = 볼륨 /home/akkome/.config/higgsfield)
+RUN npm install -g --allow-scripts=@higgsfield/cli @higgsfield/cli@${HIGGSFIELD_VERSION} && npm cache clean --force
 
 # 컨테이너 안 계정 = 나스 akkome(uid 1001 · gid 100 users) 와 같은 번호 → /share·/work 에 남는 파일의 임자가 나스 쪽과 같다
 RUN (getent group ${GID} >/dev/null || groupadd -g ${GID} akkome) \

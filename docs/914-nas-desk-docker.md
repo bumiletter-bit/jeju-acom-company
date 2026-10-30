@@ -93,6 +93,7 @@
 - OS 겹: locales(ko_KR.UTF-8) · tzdata(Asia/Seoul) · git · tmux · openssh-client · rsync · jq · procps · iproute2 · tini · **ffmpeg** · **python3+venv** · 글꼴(fonts-noto-cjk · fonts-nanum = xlsx-image·_preview 한글).
 - `/opt/venv` = **PyMuPDF**(계산서 보안메일 PDF · pdf-unlock.py) · `WITH_WHISPER=1` 이면 faster-whisper+numpy.
 - `npm -g` = **Claude Code CLI 2.1.312**(PC 와 같은 판) + **Playwright 1.63.0** → `playwright install --with-deps chromium`(브라우저 /ms-playwright · 의존 lib).
+- `npm -g` = **힉스필드 CLI `@higgsfield/cli@1.1.26`**(#920 · 10/30 · 노트북과 같은 판 · `/usr/local/bin/higgsfield` · 로그인 = 볼륨 `.config/higgsfield` 그대로 먹음 · 지금 컨테이너엔 root 로 직접 깔아 둠 = 재생성하면 사라지니 다음 빌드부터 이미지에 포함).
 - 계정 akkome **uid 1001 · gid 100** = 나스 akkome 와 같은 번호(/share·/work 파일 임자 일치).
 - env = `AKKOME_CLAUDE_EXE=/usr/local/bin/claude` · `PYTHON=/opt/venv/bin/python` · `AKM_SHARE=/share` · `DESK_MODE=idle` · compose 에서 `DESK_NO_ASIDE=1`(1-0절 ②).
 - 호스트(UGOS)에는 아무것도 깔지 않는다(apt 전부 이미지 안).
