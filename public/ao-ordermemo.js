@@ -54,6 +54,7 @@
         { i: 10, label: '구매자 연락처', kind: 'tel' },
         { i: 9, label: '배송메세지', ph: '비우면 최종발주가 기본 문구로' },
         { i: 0, label: '보내는 분(선물)', hint: '「드림」 자동', more: true, kind: 'sender', ph: '예) 홍길동' },   // #862 힌트 = 최종발주 「보내는 분 이름(「드림」 자동)」과 같은 글자
+        { i: 1, label: '보내는 분 연락처', more: true, kind: 'tel', ph: '비우면 구매자 번호' },   // #927 대신 주문 = 부탁한 분 번호(택배사 양식 B) · 비우면 서버가 K 로(checkCash #858)
         { i: 12, label: '보내는 분 주소', more: true },
     ];
     const LINE_FIELDS = [
@@ -135,6 +136,8 @@
         return { k: 'next', t: OM.shipDate ? mdw(OM.shipDate) + ' 발주' : '다음 발주' };
     }
     const senderShow = v => String(v || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim();   // #863 「!」 어디든(서버가 맨 뒤에 붙임) 떼고 보임
+    const senderTelSame = r => !!digits(r.cells[1]) && digits(r.cells[1]) === digits(r.cells[10]);   // #927 보내는사람연락처(B) = 구매자연락처(K) → 따로 넣은 번호 아님
+    const senderTelOwn = r => !!digits(r.cells[1]) && !senderTelSame(r);
     // #862 보내는 분 이름만 치면 「○○ 드림」 — 서버 cashSender(order-memo.js) · 최종발주 IvtSender(「이름 드림」) 와 같은 판정(이미 드림·올림 · 제주아꼼이네 · 「○○(제주아꼼이네)」 는 그대로)
     const senderDrim = v => { const n = senderShow(v); return !n || /(?:드림|올림)$|제주아꼼이네\)?$/.test(n) ? n : n + ' 드림'; };
     const nameOf = r => r.kind === 'cash' ? (r.cells[3] || '') : '';
@@ -835,7 +838,7 @@
         if (OM.card) cardClose(true);   // 앞 카드가 떠 있으면 먼저 닫음(기다리던 창구 요청은 취소·지움)
         c.rows.forEach(r => {   // #850-c 번호 = 000-0000-0000 꼴로 보이게(전화번호 꼴만 · 주문번호 그대로) — 「처음 값」보다 먼저(고친 것으로 안 셈)
             if (r.kind === 'line') { const k = telShow(r.key); if (k !== r.key) { r.key = k; r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t'); } }
-            else { [1, 6, 7, 10].forEach(i => { r.cells[i] = telShow(r.cells[i]); }); if (c.mode !== 'edit') tailFromNote(r); }   // #856 손님 글의 사이즈·과수 = 미리 고름(처음 값으로 셈)
+            else { [1, 6, 7, 10].forEach(i => { r.cells[i] = telShow(r.cells[i]); }); if (senderTelSame(r)) r.cells[1] = ''; if (c.mode !== 'edit') tailFromNote(r); }   // #856 손님 글의 사이즈·과수 = 미리 고름(처음 값으로 셈)   // #927 B = K(서버가 채운 값) = 빈 칸으로 보임 · 저장 '' = 서버가 다시 K
         });
         c.orig = clone(c.rows); c.dirty = false; c.confirm = false;
         OM.card = c; OM.lastFocus = document.activeElement;
@@ -1023,7 +1026,7 @@
                 <div class="om-grid${r.kind === 'cash' ? ' cash' : ''}">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
                 ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c))}</p>` : ''}
-                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
+                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] || senderTelOwn(r) ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
             ${cardBig(c) && cardShownN(c) < c.rows.length ? `<button type="button" class="om-btn om-cmore" data-cact="morerows">줄 ${Math.min(CARD_PAGE, c.rows.length - cardShownN(c))}개 더 보기 <small>${cardShownN(c).toLocaleString()} / ${c.rows.length.toLocaleString()}줄</small></button>` : ''}

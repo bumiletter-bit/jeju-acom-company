@@ -27,11 +27,11 @@ function listBody(n, ent) {
     for (let i = 0; i < n; i++) {
         const k = String(i + 1).padStart(4, '0');
         entries[i % ent].rows.push({ id: 10000 + i, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null,
-            cells: ['', '', '', '손님' + k, CAT[i % 2], '1', '010-55' + k.slice(0, 2) + '-' + k, '', '제주특별자치도 제주시 연동 ' + (S.multi && i % 6 === 0 ? '다중 ' : '') + (i + 1) + '번지', '', '', '', ''] });
+            cells: ['', S.tel && i === 1 ? '010-7777-8888' : S.tel && i === 0 ? '010-1111-2222' : '', '', '손님' + k, CAT[i % 2], '1', '010-55' + k.slice(0, 2) + '-' + k, '', '제주특별자치도 제주시 연동 ' + (S.multi && i % 6 === 0 ? '다중 ' : '') + (i + 1) + '번지', '', S.tel && i < 2 ? '01011112222' : '', '', ''] });   // #927 tel = 0번 줄 B=K(서버가 채운 꼴) · 1번 줄 B≠K(대신 주문)
     }
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries };
 }
-const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false };   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
+const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [] };   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
@@ -52,6 +52,7 @@ function serve(port) {
         if (u.pathname === '/api/order-memo/for-ship') return send(200, { ok: true, cash_ids: [], lines: [] });
         if (u.pathname === '/api/invoice/catalog') return send(200, { byPartner: { a: CAT } });
         if (u.pathname === '/api/agent-office/juso') { S.juso++; const kw = u.searchParams.get('keyword') || ''; const one = n => ({ roadAddrPart1: '제주특별자치도 제주시 연동로 ' + n, zipNo: '63' + String(n).padStart(3, '0'), bdNm: '' }); return send(200, { results: { common: { errorCode: '0' }, juso: /다중/.test(kw) ? [one(kw.length), one(kw.length + 500)] : [one(kw.length)] } }); }
+        if (req.method === 'PUT') { let b = ''; req.on('data', d => b += d); req.on('end', () => { try { S.puts.push(JSON.parse(b)); } catch (e) { } send(200, { ok: true }); }); return; }   // #927 고친 줄 본문 기록(가짜 서버 안에서만)
         if (req.method !== 'GET') return send(200, { ok: true });   // 쓰기 꼴 요청 = 이 가짜 서버 안에서만(아무 데도 안 감)
         return send(404, { ok: false });
     });
@@ -174,7 +175,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             for (const v of ['old', 'new']) {
                 const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 }); const p = await c.newPage();
                 await openMemo(p, v === 'old' ? 'mix' : v, 5, 2); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
-                shots[v] = await p.evaluate(() => document.getElementById('om-card').innerHTML.replace(/ fk-(?:ship|\d+)/g, '').replace(/om-grid cash(?:-more)?/g, 'om-grid').replaceAll(' <small>비우면 다음 발주</small>', '').replaceAll('placeholder="예) 10/30"', 'placeholder="비우면 다음 발주 · 예) 10/30"')); await c.close();   // #911 카드 꼴을 일부러 바꿈 = 픽셀 대신 칸 HTML(자리 이름 fk-·cash 빼고)이 종전과 같은지
+                shots[v] = await p.evaluate(() => { const k = document.getElementById('om-card').cloneNode(true); k.querySelectorAll('[data-fwrap$="-c1"]').forEach(e => e.remove()); return k.innerHTML; }).then(h => h.replace(/ fk-(?:ship|\d+)/g, '').replace(/om-grid cash(?:-more)?/g, 'om-grid').replaceAll(' <small>비우면 다음 발주</small>', '').replaceAll('placeholder="예) 10/30"', 'placeholder="비우면 다음 발주 · 예) 10/30"')); await c.close();   // #927 새 칸 「보내는 분 연락처」(c1)는 빼고 비교 · #911 카드 꼴을 일부러 바꿈 = 픽셀 대신 칸 HTML(자리 이름 fk-·cash 빼고)이 종전과 같은지
             }
             // #911 카드 꼴 = 넘침 0 · 수량 묶음 좁게 · 입력 칸 높이(폰 44)
             for (const [w, h, phone] of [[1280, 900, false], [390, 844, true]]) {
@@ -187,6 +188,33 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
                 await c.close();
             }
             ok(shots.old === shots.new, '빈 주문입력 카드(1줄) = 칸 HTML 종전과 같음(#911 자리 이름·발송일 안내 글 빼고)', (() => { let i = 0; while (i < shots.old.length && shots.old[i] === shots.new[i]) i++; return [shots.old.slice(i - 40, i + 80), shots.new.slice(i - 40, i + 80)]; })()); }   // 다르면 처음 어긋난 곳 앞뒤 글을 보여 줌
+        // #927 「보내는 분 연락처」(B) 칸 = 「보내는이 변경」 묶음 안 · B=K 면 빈 칸(안내 글) · B≠K 면 값 보이고 묶음 열림 · 저장 때 빈 칸 = '' · 세 폭 넘침 0 + PNG
+        { S.tel = true; const outDir = process.env.PNG927 || require('os').tmpdir();
+            for (const [w, h, phone] of [[1280, 900, false], [900, 900, true], [390, 844, true]]) {
+                const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: phone, isMobile: phone && w < 721 }); const p = await c.newPage();
+                const pe = []; p.on('pageerror', e => pe.push(String(e)));
+                await openMemo(p, 'new', 4, 1, w < 721); await jusoQuiet();
+                const openRow = async nm => { if (await p.evaluate(() => !document.getElementById('om-card').hidden)) { await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100); } await p.locator('#om-ctw tbody tr', { hasText: nm }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150); };
+                const read = () => p.evaluate(() => { const i = document.getElementById('om-f-0-c1'), d = document.querySelector('#om-card details.om-more'); return { v: i && i.value, ph: i && i.placeholder, tel: i && i.getAttribute('inputmode'), open: d && d.open, inMore: !!(i && i.closest('details.om-more')), order: [...document.querySelectorAll('#om-card .cash-more > .om-f label')].map(l => l.firstChild.textContent.trim()) }; });
+                await openRow('손님0001'); const a = await read();
+                ok(a.v === '' && /비우면 구매자 번호/.test(a.ph) && a.tel === 'tel' && a.open === false && a.inMore && a.order.join('|') === '보내는 분(선물)|보내는 분 연락처|보내는 분 주소', w + '폭 B=K 줄 = 보내는 분 연락처 빈 칸(「비우면 구매자 연락처」) · 묶음 닫힘 · 이름 다음·주소 앞', a);
+                await p.click('#om-card details.om-more summary'); await p.locator('#om-card details.om-more').screenshot({ path: path.join(outDir, '927-' + w + '-empty.png') });   // 빈 칸 안내 글 눈 확인
+                await openRow('손님0002'); const b = await read();
+                ok(b.v === '010-7777-8888' && b.open === true, w + '폭 B≠K 줄 = 번호 보임 · 「보내는이 변경」 묶음 저절로 열림', b);
+                const st = await p.evaluate(() => { const card = document.getElementById('om-card'), cr = card.getBoundingClientRect(), b = card.querySelector('.om-card-b'), m = card.querySelector('.cash-more'); return { over: [...card.querySelectorAll('input, textarea, button')].filter(e => e.offsetParent && e.getBoundingClientRect().right > cr.right + 0.5).length, bodyX: b.scrollWidth - b.clientWidth, moreX: m.scrollWidth - m.clientWidth, telW: Math.round(document.getElementById('om-f-0-c1').getBoundingClientRect().width) }; });
+                ok(st.over === 0 && st.bodyX <= 0 && st.moreX <= 0, w + '폭 「보내는이 변경」 묶음 가로 넘침 0', st);
+                await p.locator('#om-card details.om-more').scrollIntoViewIfNeeded(); await p.locator('#om-card .om-rowcard').first().screenshot({ path: path.join(outDir, '927-' + w + '.png') });
+                if (w === 1280) {   // 고쳐 저장 = 칸 값 그대로 · 빈 칸은 ''(서버가 K 로 채움)
+                    S.puts = []; await p.fill('#om-f-0-c1', ''); await p.click('#om-card-save'); await until(() => S.puts.length);
+                    ok(S.puts[0] && S.puts[0].cells && S.puts[0].cells[1] === '' && S.puts[0].cells[10] === '010-1111-2222', '1280폭 B 비우고 저장 = cells[1] \'\' · K 그대로', S.puts[0] && S.puts[0].cells); await until(() => p.evaluate(() => document.getElementById('om-card').hidden)); await p.waitForTimeout(150);
+                    await openRow('손님0001'); S.puts = []; await p.click('#om-card details.om-more summary'); await p.fill('#om-f-0-c1', '01099998888'); await p.locator('#om-f-0-c1').blur();
+                    const tv = await p.inputValue('#om-f-0-c1'); await p.click('#om-card-save'); await until(() => S.puts.length);
+                    ok(tv === '010-9999-8888' && S.puts[0] && S.puts[0].cells[1] === '010-9999-8888', '1280폭 B 새로 넣음 = 하이픈 꼴 · 저장 cells[1] 그 번호', { tv, cells: S.puts[0] && S.puts[0].cells });
+                }
+                ok(pe.length === 0, w + '폭 #927 스크립트 오류 0', pe);
+                await c.close();
+            }
+            info('#927 PNG', outDir + '/927-{1280,900,390}.png'); S.tel = false; }
         // 「주소 확인 필요 n줄」 단추(#880-b) = 종전과 같은 글·보임 · 그 줄들을 지워 n=0 이 되면 단추 사라지고 「그 줄만 보기」도 풀림(워커2 점검 #900-2B 막을 것 1)
         { const st2 = {}; S.multi = true;
             for (const v of ['old', 'new']) {
