@@ -9,6 +9,7 @@
 //   node scripts/desk/coupang-item.js plan-full <backup_id> --name "<글>" | --item-name <vendorItemId 또는 지금 옵션명>=<새 이름>(여러 번) | --detail <html 파일>   전/후 카드(보내지 않음)
 //                                     | --detail-from-naver <네이버 상품번호>(#733 네이버 상세 → 블록 → 미리보기 PNG · naver-detail show 로 보관한 상세를 씀) | --add-item "<옵션명>=<가격>[=<재고>]"(#733 새 옵션 · 여러 번)
 //                                     | --detail-blocks <파일>(#756 detail-compare.js fix 가 만든 「네이버와 같게 보이게 맞춘」 블록 · --detail-from-naver 대신)
+//                                     | --brand "<브랜드 이름>" [--brand-id KR-숫자](#924 브랜드 연결 · 상품 위 칸 brand·brandId 둘만 · brandId 는 글자 그대로 · 승인행)
 //   node scripts/desk/coupang-item.js apply-full <backup_id> <지시 id> (plan-full 과 같은 인자)   전체 수정 → 「🟡 쿠팡 승인 대기」 카드
 //   node scripts/desk/coupang-item.js revert-full <backup_id> <지시 id> [--force]      보관본 그대로 다시 저장(이것도 승인행)
 //   node scripts/desk/coupang-item.js approval <상품 번호>                             승인 상태 · 반려 사유(읽기만)
@@ -43,7 +44,8 @@ function parseOpts(args) {
         else if (a === '--stop') o.stop = true;
         else if (a === '--resume') o.resume = true;
         else if (a === '--force') o.force = true;
-        else if (a === '--name' || a === '--detail' || a === '--from') o[a.slice(2)] = args[++i];
+        else if (a === '--name' || a === '--detail' || a === '--from' || a === '--brand') o[a.slice(2)] = args[++i];
+        else if (a === '--brand-id') o.brandId = args[++i];   // #924
         else if (a === '--item-name') (o.itemName = o.itemName || []).push(args[++i]);
         else if (a === '--item') (o.item = o.item || []).push(args[++i]);
         else if (a === '--detail-from-naver') o.fromNaver = args[++i];
@@ -156,8 +158,21 @@ const shapeOf = it => ((it && it.contents) || []).map(c => `${c.contentsType || 
 // 상품 통째 보관본 + 인자 → { patch(계약 꼴), rows, errs } — 서버(cpwApplyFull)와 같은 거절을 먼저(보내지 않음)
 function planFull(before, o, readFile) {
     const patch = {}, rows = [], errs = [], items = (before && before.items) || [];
-    if (o.name == null && !(o.itemName || []).length && o.detail == null && !o.blocks && !(o.addItem || []).length) errs.push('바꿀 것을 주세요: --name "<글>" | --item-name <vendorItemId>=<새 이름> | --detail <html 파일> | --detail-from-naver <네이버 상품번호> | --add-item "<옵션명>=<가격>=<재고>"');
+    if (o.name == null && !(o.itemName || []).length && o.detail == null && !o.blocks && !(o.addItem || []).length && o.brand == null && o.brandId == null) errs.push('바꿀 것을 주세요: --name "<글>" | --item-name <vendorItemId>=<새 이름> | --detail <html 파일> | --detail-from-naver <네이버 상품번호> | --add-item "<옵션명>=<가격>=<재고>" | --brand "<브랜드 이름>" [--brand-id KR-숫자]');
     if (o.detail != null && o.blocks) errs.push('--detail 과 --detail-from-naver 는 하나만');
+    if (o.brand == null && o.brandId != null) errs.push('--brand-id 는 --brand 와 같이');   // #924 교차 점검 손질 1
+    else if (o.brand != null) {   // #924 브랜드 연결 — 상품 위 칸 brand(이름) · brandId(「KR-숫자」 글자 그대로 · 서버가 같은 꼴 검사)
+        const nm = String(o.brand).trim();
+        const bid = o.brandId == null ? null : String(o.brandId).trim();
+        const curId = before.brandId == null || before.brandId === '' ? null : String(before.brandId);
+        if (!nm || nm.length > 100) errs.push('브랜드 이름은 1~100자예요(--brand "<이름>")');
+        else if (bid != null && !/^[A-Z]{2}-\d{1,30}$/.test(bid)) errs.push(`--brand-id 「${bid}」: KR-숫자 꼴이어야 해요`);
+        else if (nm === (before.brand || '') && (bid == null || bid === curId)) errs.push('지금 브랜드와 같아요');
+        else {
+            patch.brand = bid != null ? { name: nm, brandId: bid } : { name: nm };
+            rows.push({ field: '브랜드', before: `${before.brand || '(없음)'} · brandId ${curId || '(없음)'}`, after: `${nm} · brandId ${bid != null ? bid : (curId || '(없음)')}` });
+        }
+    }
     if (o.blocks) {   // #733 네이버 상세 → 블록(detail-blocks.js) — 모든 옵션 상세를 통째로 바꿈(그림 구성 상품도 됨)
         const S = o.blocksSummary || {};
         if (!o.blocks.length) errs.push('네이버 상세에서 블록을 못 만들었어요(빈 상세)');

@@ -1,3 +1,10 @@
+## v5.9.671 (2026-10-30) — #924 쿠팡 상품 브랜드 연결(brand·brandId 수정 길) + #923 brandId 설정(대표 「작업해줘」)
+
+- 배경: 쿠팡 셀러지원 답(10/26) 「브랜드 제주아꼼이네 등록 완료」 → 워커1이 윙 상품등록 브랜드 검색에서 brandId 읽음(brandIdV2 KR-1117943334103437312 · JS 숫자로 다루면 끝자리 뭉개짐 → 문자열) → 설정 coupang_item_write.create_set {brand 제주아꼼이네, brandId KR-…}(새 상품용 · 종전 GENERIC 시험값) · owner_todo 23 done.
+- 판매 중 5개(타이벡·황금향·유라·레몬·키위)는 brand 이름은 이미 「제주아꼼이네」, brandId 만 null → 서버 update_full 이 brand 칸을 안 받아 코드 고침(워커3): server.js cpwApplyFull OK 에 'brand' + patch.brand {name, brandId}(글자만 · KR-숫자 꼴 · 1~100자 · 같으면 거절 · 다른 칸 무접촉 · fingerprint·승인 흐름 그대로) · scripts/desk/coupang-item.js plan-full `--brand "<이름>" --brand-id <KR-…>`(둘 같이 · rows 한 줄) · 업무지식 「쿠팡 브랜드 연결」 1줄.
+- 검증: 떼어 실행 23/23(brand 없는 patch = 종전 바이트 동일 · 숫자형 거절 · 이름 같고 id 새로 = 통과) · node --check · ro 기동 version 200 · 워커1 교차 점검 막을 것 0(손질 1 = --brand-id 만 주면 오류).
+- 배포 뒤(워커3 · 지시 3358): 레몬 → 승인 → full 재조회 brandId 찼는지(쿠팡이 PUT brandId 를 무시할 가능성 = docs/728 미확정) → 타이벡·황금향·유라 → 키위(품절 · 400 이면 보고만) · 되돌리기 revert-full <보관본> 3358.
+
 ## v5.9.670 (2026-10-29) — #918 에이전트 오피스 머리 카드 「터미널」 칩(나스/노트북/둘 다 · 누르면 나스 터미널 켜고 끄기 · 대표 아이디어) + 나스 이전 #912~#917 코드 묶음
 
 - 칩(ao-desk.js · 연도 줄 위 · 워커1): 「터미널 · 나스 / 노트북 / 나스 + 노트북(노랑 = 총괄 겹침 주의) / 없음」 · 대표만 누름 → 한 줄 물음 「나스 터미널을 끌까요/켤까요?」(노트북 켜져 있으면 「안 켜질 수 있어요」) → POST 토글 = 「나스 터미널 켜줘/꺼줘」 지시를 대표 이름으로 pending_orders 에 넣음(창구가 `bash /work/docs/914/sessions.sh on|off`) → 「지시 보냈어요(#id) · 1분 뒤 갱신」 · 직원은 표시만 · 30초마다 GET · 옛 서버 404 = 숨김 · 44px · 야간 토큰.

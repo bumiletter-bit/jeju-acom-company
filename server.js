@@ -18397,13 +18397,26 @@ function cpwBlocksToContents(blocks, conv) {
 //   opt = { allowExternal, convert }(#733-B)
 function cpwApplyFull(before, patch, opt = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { error: 'patch 가 필요해요' };
-    const OK = ['name', 'item_names', 'item_attrs', 'detail_html', 'detail_blocks', 'images', 'images_replace', 'items_add'];
+    const OK = ['name', 'item_names', 'item_attrs', 'detail_html', 'detail_blocks', 'images', 'images_replace', 'items_add', 'brand'];
     const bad = Object.keys(patch).filter(k => !OK.includes(k));
-    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · item_attrs · detail_html · detail_blocks · images · images_replace · items_add (가격·재고·판매는 1차 옵션 op)' };
+    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · item_attrs · detail_html · detail_blocks · images · images_replace · items_add · brand (가격·재고·판매는 1차 옵션 op)' };
     if ('detail_html' in patch && 'detail_blocks' in patch) return { error: 'detail_html 과 detail_blocks 는 하나만' };
     if (!Object.keys(patch).length) return { error: '바꿀 칸이 없어요' };
     const b = JSON.parse(JSON.stringify(before));
     const items = b.items || [];
+    // #924 브랜드 연결(대표 10/30) — patch.brand = { name, brandId } · 상품 위 칸 brand(이름)·brandId(「KR-숫자」 글자) 둘만 · 🔴 brandId 는 글자 그대로(숫자로 바꾸면 끝자리가 뭉개짐 · 설정 create_set 과 같은 값)
+    if ('brand' in patch) {
+        const p = patch.brand;
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return { error: 'brand 는 { name, brandId } 꼴' };
+        const nm = typeof p.name === 'string' ? p.name.trim() : '';
+        const bid = p.brandId == null || p.brandId === '' ? null : String(p.brandId).trim();
+        if (!nm || nm.length > CPW_MAX_NAME) return { error: `브랜드 이름은 1~${CPW_MAX_NAME}자` };
+        if (bid != null && !/^[A-Z]{2}-\d{1,30}$/.test(bid)) return { error: 'brandId 는 「KR-숫자」 꼴 글자' };
+        const curId = b.brandId == null || b.brandId === '' ? null : String(b.brandId);
+        if (nm === (b.brand || '') && (bid == null || bid === curId)) return { error: '지금 브랜드와 같아요' };
+        b.brand = nm;
+        if (bid != null) b.brandId = bid;
+    }
     if ('name' in patch) {
         const n = typeof patch.name === 'string' ? patch.name.trim() : '';
         if (!n || n.length > CPW_MAX_NAME) return { error: `상품명은 1~${CPW_MAX_NAME}자` };
