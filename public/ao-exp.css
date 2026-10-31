@@ -208,6 +208,10 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
 .xp-tp:hover { border-color: var(--x-acc); }
 .xp-tp.on { background: var(--x-acc-fill); border-color: var(--x-acc-fill); color: #fff; font-weight: 700; }
 .xp-tp:focus-visible { outline: 2px solid var(--x-acc); outline-offset: 2px; }
+/* #930 수기 시간 「미정」 알약 = 점선 테두리(시간 알약과 구분) · 줄 머리 「미정」 = 주황 글 */
+.xp-tp.tbd { border-style: dashed; color: var(--x-warn); font-weight: 700; }
+.xp-tp.tbd.on { border-style: solid; background: var(--x-warn); border-color: var(--x-warn); color: #fff; }
+.xp-wt.tbd { color: var(--x-warn); font-size: 14px; }
 .xp-err { color: var(--x-err); font-size: 12px; }
 .xp-err[hidden] { display: none; }
 .xp-edit input[aria-invalid="true"] { border-color: var(--x-err); }

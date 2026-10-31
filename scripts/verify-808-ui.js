@@ -70,7 +70,10 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v808-')); const page = path.j
             await tap(pg.locator('#xp-add .xp-tp[data-tp="11:30"]'));
             ok(await pg.locator('#xp-a-time').inputValue() === '11:30' && await pg.locator('#xp-add .xp-tp.on').textContent() === '11:30', `[${tag}] 시간 알약 11:30 = 칸에 · 켜짐 표시`);
             const tps = await pg.locator('#xp-add .xp-tp').evaluateAll(n => n.map(x => x.getBoundingClientRect().height));
-            ok(tps.length === 14 && Math.min(...tps) >= (mob ? 44 : 30), `[${tag}] 시간 알약 14개(10:00~16:30) · 높이 ${Math.round(Math.min(...tps))}px`, tps.length);
+            ok(tps.length === 15 && Math.min(...tps) >= (mob ? 44 : 30) && await pg.locator('#xp-add .xp-tp').last().textContent() === '미정', `[${tag}] 시간 알약 14개(10:00~16:30) + 「미정」(#930) · 높이 ${Math.round(Math.min(...tps))}px`, tps.length);
+            await tap(pg.locator('#xp-add .xp-tp[data-tp="미정"]'));   // #930 미정 고르면 칸에 「미정」 → 다시 11:30 으로(뒤 흐름 그대로)
+            ok(await pg.locator('#xp-a-time').inputValue() === '미정' && await pg.locator('#xp-add .xp-tp.on').textContent() === '미정', `[${tag}] #930 「미정」 알약 = 칸에 · 켜짐`);
+            await tap(pg.locator('#xp-add .xp-tp[data-tp="11:30"]'));
             // 금액 자동 셈
             await pg.fill('#xp-a-exp', '2'); await pg.fill('#xp-a-entry', '1');
             ok(await pg.locator('#xp-a-amount').inputValue() === '46000', `[${tag}] 금액 자동 = 체험 2·입장 1 → 46,000`);
@@ -116,7 +119,7 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v808-')); const page = path.j
             // 「번호 미입력 없음」
             await pg.evaluate(() => { DATA.items.forEach(b => { if (b.source === 'place') { b.phone = '01055556666'; b.contact_at = 'x'; } }); });
             await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
-            await tap(pg.locator('[data-nav="0"]')); await pg.waitForTimeout(600);
+            await tap(pg.locator('.xp-btn[data-nav="0"]')); await pg.waitForTimeout(600);   // #930 달 넘김 날(「‹ 이번 달」 링크도 data-nav 0) 겹침 막음
             const pill = pg.locator('#xp-nophone');
             ok(await pill.isVisible() && await pill.textContent() === '번호 미입력 없음' && /none/.test(await pill.getAttribute('class')), `[${tag}] 0건 = 흐린 알약 「번호 미입력 없음」`);
             await tap(pill); await pg.waitForTimeout(300);
@@ -124,7 +127,7 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'v808-')); const page = path.j
             // 번호 없이 넣은 수기도 「번호 미입력」에 잡힘
             await pg.evaluate(d => { DATA.items.push({ id: 900, source: 'manual', order_no: 'M900', name: '이현금', phone: null, contact_at: 'x', visit_date: d, visit_time: '10:00', exp_count: 1, entry_count: 0, infant_count: 0, status: 'confirmed', date_ok: true }); }, D1);
             await pg.evaluate(() => { const c = document.querySelector('[data-act="close-panel"]'); if (c) c.click(); }); await pg.waitForTimeout(200);
-            await tap(pg.locator('[data-nav="0"]')); await pg.waitForTimeout(600);
+            await tap(pg.locator('.xp-btn[data-nav="0"]')); await pg.waitForTimeout(600);   // #930 달 넘김 날(「‹ 이번 달」 링크도 data-nav 0) 겹침 막음
             ok(await pill.textContent() === '번호 미입력 1건', `[${tag}] 번호 없는 수기 = 「번호 미입력 1건」`, await pill.textContent());
             await tap(pill); await pg.waitForSelector('#xp-panel:not([hidden]) .xp-quick', { timeout: 3000 });
             ok(/플레이스·수기/.test(await pg.locator('.xp-panel-h h3').textContent()) && await pg.locator('#xp-panel .xp-row[data-id="900"] .xp-quick').count() === 1, `[${tag}] 판 = 「번호 미입력(플레이스·수기)」 · 수기 줄에 바로 넣기 칸`);

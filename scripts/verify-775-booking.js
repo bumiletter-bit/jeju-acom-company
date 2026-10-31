@@ -591,6 +591,34 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const t3 = mk(); t3.db.S.failExtKey = true;
         const r3 = res(); await t3.app.routes[POST]({ body: { visit_date: fut, visit_time: '11:00', name: '최현금', exp_count: 1 }, user: { name: '직원' } }, r3);
         ok(r3.code === 500 && t3.db.S.deleted === 1 && !t3.db.S.rows.some(x => x.source === 'manual'), '번호 붙이기 실패 = 임시 줄 지움(반쪽 줄 0) · 500', { code: r3.code, del: t3.db.S.deleted });
+        // #930(대표 10/31) 수기 시간 「미정」 = visit_time NULL · 확인 끝(date_ok) · 글에는 「시간 미정」 · 스토어·플레이스는 종전
+        {
+            const t9 = mk(); const d9 = t9.db.S;
+            d9.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+            const add9 = async (body) => { const q = res(); await t9.app.routes[POST]({ body, user: { id: 7, name: '직원' } }, q); return q; };
+            const pat9 = async (id, body) => { const q = res(); await t9.app.routes[PATCH]({ params: { id: String(id) }, body, user: { id: 7, name: '직원' } }, q); return q; };
+            let q = await add9({ visit_date: fut, visit_time: '미정', name: '한손님', phone: '010-3333-4444', exp_count: 2 });
+            const mm = d9.rows.find(x => x.source === 'manual');
+            ok(q.code === 200 && mm && mm.visit_time === null && mm.date_ok === true, '#930 수기 「미정」 저장 = 시간 NULL · 확인 끝', { code: q.code, t: mm && mm.visit_time });
+            const msg = (t9.sent[0] || {}).message || '', fo = (t9.sent[0] || {}).failoverMessage || '';
+            ok(q.body.sent === 'sent' && t9.sent.length === 1 && /시간 미정/.test(msg) && !/null|undefined|00:00/.test(msg + fo), '#930 접수 알림톡 방문일시 = 「…(요일) 시간 미정」(빈 값·00:00 0)', msg.split('\n').find(l => /미정/.test(l)));
+            q = await add9({ visit_date: fut, visit_time: '', name: '빈시간', exp_count: 1 });
+            ok(q.code === 400 && /미정/.test(q.body.error), '#930 빈 시간은 여전히 거절(「미정」 안내)', q.body);
+            q = await pat9(mm.id, { visit_time: '14:00' });
+            ok(q.code === 200 && d9.lastPatch.args.includes('14:00') && /date_ok=TRUE/.test(d9.lastPatch.sql) && q.body.sent === null && t9.sent.length === 1, '#930 미정 → 14:00 수정 = 알림톡 다시 안 보냄(sendRecvNow 0)', q.body.sent);
+            q = await pat9(mm.id, { visit_time: '미정' });
+            const ti = d9.lastPatch.sql.match(/visit_time=\$(\d+)/);
+            ok(q.code === 200 && ti && d9.lastPatch.args[+ti[1] - 1] === null && /date_ok=TRUE/.test(d9.lastPatch.sql) && /date_why=NULL/.test(d9.lastPatch.sql) && t9.sent.length === 1, '#930 시간 → 미정 수정 = NULL · 확인 끝 유지 · 발송 0', d9.lastPatch.sql.slice(0, 120));
+            d9.rows.push({ id: 95, source: 'place', ext_key: 'place:95', status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '11:00', exp_count: 1, entry_count: 0, infant_count: 0, name: '정플레', phone: null });
+            q = await pat9(95, { visit_time: '미정' });
+            ok(q.code === 400, '#930 플레이스 줄은 「미정」 안 받음(종전 = 시간 꼴만)', q.body);
+            const base = { visit_date: '2026-11-05', exp_count: 1, entry_count: 0, infant_count: 0, name: '김' };
+            ok(T.renderTpl('{월}/{일} {시간} 방문', { ...base, source: 'manual', visit_time: null }) === '11/5 시간 미정 방문' && T.renderTpl('{월}/{일} {시간} 방문', { ...base, source: 'store', visit_time: null }) === '11/5  방문'
+                && T.alimVars({ ...base, source: 'manual', visit_time: null })['방문일시'] === '11월 5일(목) 시간 미정' && T.alimVars({ ...base, source: 'place', visit_time: null })['방문일시'] === '', '#930 문자·알림톡 변수 = 수기만 「시간 미정」 · 스토어·플레이스 빈 시간 = 종전(빈 값)');
+            const wb = await T.buildXlsx([{ ...base, id: 1, source: 'manual', visit_time: null, status: 'confirmed', date_ok: true }, { ...base, id: 2, source: 'place', visit_time: null, status: 'confirmed', date_ok: false }], [], '2026-11-01', '2026-11-30');
+            const ws9 = wb && wb.getWorksheet ? wb.getWorksheet('체험 예약') : null;
+            ok(ws9 && ws9.getRow(2).getCell(3).value === '미정' && (ws9.getRow(3).getCell(3).value || '') === '', '#930 엑셀 시간 칸 = 수기 「미정」 · 플레이스 빈 시간 = 빈칸(종전)', ws9 && [ws9.getRow(2).getCell(3).value, ws9.getRow(3).getCell(3).value]);
+        }
         ok(/source IN \('place','manual'\) AND contact_at IS NOT NULL/.test(src) && /s: r\.source === 'store' \? '스토어' : r\.source === 'manual' \? '수기' : '플레이스'/.test(src), '문자 대상에 수기 · 엑셀 출처 「수기」');
     }
 

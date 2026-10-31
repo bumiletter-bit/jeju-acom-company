@@ -66,7 +66,7 @@ function buildXlsx(rows, sales, from, to) {
     const live = { e: 0, en: 0, i: 0, a: 0, n: 0 };
     for (const r of rows) {
         const off = r.status === 'canceled' || r.status === 'returned', vis = r.status === 'visited';
-        const row = ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || '', s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: fmtTelXl(r.phone),
+        const row = ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || (timeTbd(r) ? TIME_TBD : ''), s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: fmtTelXl(r.phone),
             e: r.exp_count == null ? null : Number(r.exp_count), en: r.entry_count == null ? null : Number(r.entry_count), i: r.infant_count == null ? null : Number(r.infant_count), a: r.amount == null ? null : Number(r.amount), st: ST[r.status] || r.status, sm: r.sms_recv_at ? (r.sms_recv_via === 'alimtalk' ? '알림톡' : '문자') : '', dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
         if (!off) { live.e += Number(r.exp_count) || 0; live.en += Number(r.entry_count) || 0; live.i += Number(r.infant_count) || 0; live.a += Number(r.amount) || 0; live.n++; }
         body(row, N, (c, i) => {
@@ -187,11 +187,15 @@ function parsePlaceMail(subject, text) {
 const { imapOpen, imapDate, imapFromCrit, decodeCharset, decodeWords, splitHead, headers, param, decodeBody, htmlText, mimeText, parseMail, fromAddr } = require('./naver-mail.js');
 const maskSubject = (s) => String(s || '').replace(/\d/g, '#').replace(/([가-힣])[가-힣]{1,3}(?=\s*님)/g, '$1**').slice(0, 80);
 
+// ── #930(대표 10/31) 수기 예약 시간 「미정」 = visit_time NULL · source manual · 방문일 있음 → 글에는 「시간 미정」(스토어·플레이스의 빈 시간은 종전 그대로 = 확인 필요)
+const TIME_TBD = '미정';
+const timeTbd = b => !!(b && b.source === 'manual' && !b.visit_time && b.visit_date);
+const timeText = b => b.visit_time || (timeTbd(b) ? '시간 ' + TIME_TBD : '');
 // ── 알림톡 변수(꼴 = 총괄 10/20: 방문일시 「11월 30일(일) 12:30」 · 인원 「체험 2명 · 입장 1명」 · 0명 칸은 뺌 · 유아 있으면 뒤에) ──
 function alimVars(b) {
     const [, mo, da] = String(b.visit_date || '').split('-');
     const people = [Number(b.exp_count) > 0 ? `체험 ${b.exp_count}명` : '', Number(b.entry_count) > 0 ? `입장 ${b.entry_count}명` : '', Number(b.infant_count) > 0 ? `유아 ${b.infant_count}명` : ''].filter(Boolean).join(' · ');
-    return { '고객명': b.name || '', '방문일시': mo && da && b.visit_time ? `${+mo}월 ${+da}일(${dowOf(b.visit_date)}) ${b.visit_time}` : '', '인원': people };
+    return { '고객명': b.name || '', '방문일시': mo && da && timeText(b) ? `${+mo}월 ${+da}일(${dowOf(b.visit_date)}) ${timeText(b)}` : '', '인원': people };   // #930 미정 = 「11월 5일(수) 시간 미정」
 }
 // 원문의 #{변수} 를 전부 채운 글 — 하나라도 빈 값이면 null(알림톡 대신 LMS · 줄을 빼면 원문과 달라져 거절됨)
 function fillAlim(content, vars) {
@@ -208,7 +212,7 @@ function renderTpl(tpl, b) {
     const [, mo, da] = String(b.visit_date || '').split('-');
     const inf = Number(b.infant_count) > 0 ? ` · 유아 ${b.infant_count}명` : '';
     return String(tpl || '').replace(/\{이름\}/g, b.name || '고객').replace(/\{월\}/g, mo ? String(+mo) : '').replace(/\{일\}/g, da ? String(+da) : '')
-        .replace(/\{시간\}/g, b.visit_time || '').replace(/\{체험\}/g, String(b.exp_count || 0)).replace(/\{입장\}/g, String(b.entry_count || 0)).replace(/\{유아\}/g, inf)
+        .replace(/\{시간\}/g, timeText(b)).replace(/\{체험\}/g, String(b.exp_count || 0)).replace(/\{입장\}/g, String(b.entry_count || 0)).replace(/\{유아\}/g, inf)
         .replace(/\{요일\}/g, b.visit_date ? dowOf(b.visit_date) : '')
         .replace(/\{인원\}/g, alimVars(b)['인원'] || '인원 확인 필요');   // #782(총괄 10/20) 0명 칸 빼고 = 알림톡 #{인원} 과 같은 함수 · {체험}{입장}{유아} 는 옛 문구용으로 남김
 }
@@ -714,7 +718,10 @@ module.exports = function mountExperience(app, deps) {
             const set = [], val = [id], ch = {};
             const put = (col, v) => { val.push(v); set.push(`${col}=$${val.length}`); ch[col] = v; };
             if ('visit_date' in b) { if (b.visit_date !== null && !ymdOk(b.visit_date)) return res.status(400).json({ error: '날짜는 YYYY-MM-DD' }); if (b.visit_date && !validYmd(+b.visit_date.slice(0, 4), +b.visit_date.slice(5, 7), +b.visit_date.slice(8, 10))) return res.status(400).json({ error: '없는 날짜예요' }); put('visit_date', b.visit_date); }
-            if ('visit_time' in b) { const t = b.visit_time ? parseTime(b.visit_time) : null; if (b.visit_time && !t) return res.status(400).json({ error: '시간은 13:30 꼴로' }); put('visit_time', t); }
+            if ('visit_time' in b) {
+                const tbd = old.source === 'manual' && String(b.visit_time || '').trim() === TIME_TBD;   // #930 수기만 「미정」 = 시간 비움
+                const t = b.visit_time && !tbd ? parseTime(b.visit_time) : null; if (b.visit_time && !tbd && !t) return res.status(400).json({ error: '시간은 13:30 꼴로' }); put('visit_time', t);
+            }
             for (const k of ['exp_count', 'entry_count', 'infant_count']) if (k in b) { const n = Math.floor(Number(b[k])); if (!(n >= 0 && n <= 200)) return res.status(400).json({ error: '인원은 0~200' }); put(k, n); }
             if ('memo' in b) put('memo', String(b.memo || '').slice(0, 500) || null);
             // #804(대표 10/21) 플레이스 손님 이름·번호 = 사람이 넣음(메일엔 번호가 없고 이름은 가려 옴) · 스토어는 주문 정보가 정본이라 안 받음
@@ -734,7 +741,8 @@ module.exports = function mountExperience(app, deps) {
             if (!set.length) return res.status(400).json({ error: '바꿀 칸이 없어요' });
             if ('visit_date' in b || 'visit_time' in b) {   // 직원이 날짜·시간을 정함 = 확인 끝 · 수집이 다시 덮지 않음
                 const nd = 'visit_date' in b ? b.visit_date : old.visit_date, nt = 'visit_time' in b ? ch.visit_time : old.visit_time;
-                set.push(`date_fixed=TRUE`, `date_ok=${nd && nt ? 'TRUE' : 'FALSE'}`, `date_why=${nd && nt ? 'NULL' : "'시간 없음'"}`);
+                const okNow = !!(nd && (nt || old.source === 'manual'));   // #930 수기는 시간 미정이어도 확인 끝(방문일만 있으면)
+                set.push(`date_fixed=TRUE`, `date_ok=${okNow ? 'TRUE' : 'FALSE'}`, `date_why=${okNow ? 'NULL' : "'시간 없음'"}`);
                 if (nd !== old.visit_date) set.push('sms_eve_at=NULL');   // 날짜가 바뀌면 전날 문자를 새 날짜로
             }
             set.push('updated_at=NOW()');
@@ -755,7 +763,8 @@ module.exports = function mountExperience(app, deps) {
             await ready;
             const b = req.body || {};
             if (!ymdOk(b.visit_date) || !validYmd(+b.visit_date.slice(0, 4), +b.visit_date.slice(5, 7), +b.visit_date.slice(8, 10))) return res.status(400).json({ error: '방문일을 골라 주세요' });
-            const vt = parseTime(b.visit_time); if (!vt) return res.status(400).json({ error: '시간은 13:30 꼴로' });
+            const tbd = String(b.visit_time || '').trim() === TIME_TBD;   // #930 「미정」 = 시간 비워 저장(글에는 「시간 미정」) · 빈 칸은 종전대로 막음
+            const vt = tbd ? null : parseTime(b.visit_time); if (!tbd && !vt) return res.status(400).json({ error: '시간은 13:30 꼴로(모르면 「미정」)' });
             const nm = String(b.name || '').replace(/\s+/g, ' ').trim();
             if (!nm || nm.length > 30) return res.status(400).json({ error: '이름은 1~30자' });
             if (/\*/.test(nm)) return res.status(400).json({ error: '이름에 *(가린 글자)가 있어요 — 손님 이름으로 넣어 주세요' });

@@ -22,7 +22,7 @@
         if (!b.visit_date) return '<span class="xp-wd">날짜 미정</span><span class="xp-wt">' + esc(b.visit_time || '--:--') + '</span>';
         const t = today(), d = b.visit_date, [, m, dd] = d.split('-');
         const day = d === t ? '오늘' : d === addDays(t, 1) ? '내일' : `${+m}/${+dd}(${DOW[new Date(d + 'T00:00:00Z').getUTCDay()]})`;
-        return `<span class="xp-wd${d === t ? ' now' : ''}">${day}</span><span class="xp-wt">${esc(b.visit_time || '--:--')}</span>`;
+        return `<span class="xp-wd${d === t ? ' now' : ''}">${day}</span><span class="xp-wt${b.visit_time ? '' : b.source === 'manual' ? ' tbd' : ''}">${esc(b.visit_time || (b.source === 'manual' ? '미정' : '--:--'))}</span>`;   // #930
     };
     const byWhen = (a, b) => String(a.visit_date || '9999').localeCompare(String(b.visit_date || '9999')) || String(a.visit_time || '99').localeCompare(String(b.visit_time || '99')) || a.id - b.id;
     const MULTI = ['need', 'nophone', 'offnodate'];   // 여러 날짜가 섞이는 판
@@ -94,7 +94,9 @@
     const srcOf = b => SRC[b.source] || SRC.store;
     const PRICE = { exp: 18000, entry: 10000 };   // #808 수기 금액 기본 셈(체험 18,000 · 입장 10,000 · 유아 0) — 사람이 고칠 수 있음
     const TIMES = []; for (let h = 10; h <= 16; h++) for (const m of ['00', '30']) TIMES.push(String(h).padStart(2, '0') + ':' + m);   // 10:00~16:30
-    const tpick = (forId, cur) => `<div class="xp-tpick" data-for="${forId}" role="group" aria-label="시간 고르기">${TIMES.map(t => `<button type="button" class="xp-tp${t === cur ? ' on' : ''}" data-tp="${t}" aria-pressed="${t === cur}">${t}</button>`).join('')}</div>`;
+    const TBD = '미정';   // #930(대표 10/31) 수기 예약만 시간 「미정」 = 서버가 시간 비워 저장 · 글에는 「시간 미정」
+    const tpick = (forId, cur, tbd) => `<div class="xp-tpick" data-for="${forId}" role="group" aria-label="시간 고르기">${TIMES.concat(tbd ? [TBD] : []).map(t => `<button type="button" class="xp-tp${t === TBD ? ' tbd' : ''}${t === cur ? ' on' : ''}" data-tp="${t}" aria-pressed="${t === cur}">${t}</button>`).join('')}</div>`;
+    const timeOf = b => b.visit_time || (b.source === 'manual' && b.visit_date ? TBD : '');   // #930 수기 빈 시간 = 「미정」
     const fmtTel = v => { const d = String(v || '').replace(/[^0-9]/g, '').slice(0, 11); return d.length < 4 ? d : d.length < 8 ? d.slice(0, 3) + '-' + d.slice(3) : d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7); };
     const telOk = v => { const d = String(v || '').replace(/[^0-9]/g, ''); return !d || /^01[0-9]{8,9}$/.test(d); };
     const telInput = (id, val) => `<label>번호<input type="tel" inputmode="numeric" class="xp-ph" id="${id}" maxlength="13" value="${esc(fmtTel(val))}" placeholder="010-0000-0000" autocomplete="off"><small class="xp-err" id="${id}-err" hidden>번호는 010 으로 시작하는 10~11자리</small></label>`;
@@ -143,8 +145,8 @@
         return `<div class="xp-edit" data-id="${b.id}">
             ${who ? `<label>이름<input type="text" id="xp-e-name" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label>${telInput('xp-e-phone', b.phone)}` : ''}
             <label>방문일<input type="text" class="akm-date xp-date" id="xp-e-date" value="${esc(b.visit_date || '')}" placeholder="날짜 선택" readonly autocomplete="off"></label>
-            <label>시간<input type="text" id="xp-e-time" value="${esc(b.visit_time || '')}" placeholder="13:30" autocomplete="off"></label>
-            ${tpick('xp-e-time', b.visit_time)}
+            <label>시간<input type="text" id="xp-e-time" value="${esc(mn ? timeOf(b) : b.visit_time || '')}" placeholder="13:30" autocomplete="off"></label>
+            ${tpick('xp-e-time', mn ? timeOf(b) : b.visit_time, mn)}
             <label>체험<input type="number" min="0" max="200" id="xp-e-exp" value="${b.exp_count || 0}"></label>
             <label>입장<input type="number" min="0" max="200" id="xp-e-entry" value="${b.entry_count || 0}"></label>
             <label>유아<input type="number" min="0" max="200" id="xp-e-inf" value="${b.infant_count || 0}"></label>
@@ -162,8 +164,8 @@
             <b class="xp-add-h">수기 예약 추가 <small>현금 등 · 직원이 받은 예약</small></b>
             <label>이름<input type="text" id="xp-a-name" maxlength="30" placeholder="손님 이름" autocomplete="off"></label>${telInput('xp-a-phone', '')}
             <label>방문일<input type="text" class="akm-date xp-date" id="xp-a-date" value="${esc(day)}" placeholder="날짜 선택" readonly autocomplete="off"></label>
-            <label>시간<input type="text" id="xp-a-time" placeholder="13:30" autocomplete="off"></label>
-            ${tpick('xp-a-time', '')}
+            <label>시간<input type="text" id="xp-a-time" placeholder="13:30 · 모르면 미정" autocomplete="off"></label>
+            ${tpick('xp-a-time', '', true)}
             <label>체험<input type="number" min="0" max="200" id="xp-a-exp" value="1"></label>
             <label>입장<input type="number" min="0" max="200" id="xp-a-entry" value="0"></label>
             <label>유아<input type="number" min="0" max="200" id="xp-a-inf" value="0"></label>
@@ -208,7 +210,7 @@
             const list = byDay.get(ds) || [], live = list.filter(b => !OFF.includes(b.status));
             const ppl = live.reduce((a, b) => a + headCount(b), 0);
             const cls = ['xp-cell', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', ds === t ? 'today' : '', ds < t ? 'past' : '', list.length ? 'has' : ''].filter(Boolean).join(' ');
-            const names = list.slice(0, 3).map(b => `<span class="xp-nm${srcCls(b)}${OFF.includes(b.status) ? ' off' : ''}">${esc(b.visit_time || '')} ${esc(b.name || '(이름 없음)')}</span>`).join('');
+            const names = list.slice(0, 3).map(b => `<span class="xp-nm${srcCls(b)}${OFF.includes(b.status) ? ' off' : ''}">${esc(timeOf(b))} ${esc(b.name || '(이름 없음)')}</span>`).join('');
             const more = list.length > 3 ? `<span class="xp-more">+${list.length - 3} 더보기</span>` : '';
             const sl = saleOf(ds), sale = sl && Number(sl.amount) > 0 ? `<span class="xp-sale" title="현장 판매(귤) ${won(sl.amount)}원"><i>₩</i><em>현장 ${won(sl.amount)}</em></span>` : '';   // #822
             const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}${sale ? ` · 현장 판매 ${won(sl.amount)}원` : ''}`;
@@ -311,7 +313,7 @@
             if (body.name.includes('*')) { toast('이름에 *(가린 글자)가 있어요 — 손님 이름으로 넣어 주세요'); return; }
             if (!telCheck($('xp-a-phone'))) { $('xp-a-phone').focus(); return; }
             if (!body.visit_date) { toast('방문일을 골라 주세요'); return; }
-            if (!body.visit_time) { toast('시간을 골라 주세요'); $('xp-a-time').focus(); return; }
+            if (!body.visit_time) { toast('시간을 골라 주세요(모르면 「미정」)'); $('xp-a-time').focus(); return; }
             if (body.exp_count + body.entry_count + body.infant_count < 1) { toast('인원을 1명 이상 넣어 주세요'); return; }
             btn.disabled = true; const r = await call('/api/agent-office/experience', 'POST', body);
             if (!r.ok) { toast(r.body.error || '추가하지 못했어요'); btn.disabled = false; return; }
@@ -347,7 +349,8 @@
             if (act === 'save') {
                 const nd = String(v('xp-e-date') || '').trim(), nt = String(v('xp-e-time') || '').trim();
                 if (nd !== (b.visit_date || '')) body.visit_date = nd || null;
-                if (nt !== (b.visit_time || '')) body.visit_time = nt || null;
+                const ot = b.source === 'manual' ? timeOf(b) : (b.visit_time || '');   // #930 수기 미정 줄은 칸에 「미정」이 들어 있음 → 안 바꾸면 안 보냄
+                if (nt !== ot) body.visit_time = nt || null;
                 for (const [k, f] of [['exp_count', 'xp-e-exp'], ['entry_count', 'xp-e-entry'], ['infant_count', 'xp-e-inf']]) { const n = Number(v(f)); if (n !== Number(b[k] || 0)) body[k] = n; }
                 const memo = String(v('xp-e-memo') || ''); if (memo !== (b.memo || '')) body.memo = memo;
                 if (b.source === 'manual') { const am = String(v('xp-e-amount') == null ? '' : v('xp-e-amount')).trim(); if (am !== '' && Number(am) !== Number(b.amount)) body.amount = Number(am); }   // #808
