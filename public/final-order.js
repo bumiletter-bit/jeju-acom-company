@@ -2395,15 +2395,18 @@
     const whoOf = e => { const b = buyerName(e), r = String(e.conv['수취인명'] || ''); return b + (r && r !== b ? ' → ' + r : ''); };
     const partnerShort = opt => { const c = core(), p = c.partnerOf(opt, st.byPartner || {}) || st.dec.get('pick:' + opt) || null; return p ? c.shortPartner(p) : ''; };
     // 제주도 배송(주소가 「제주」로 시작 — 택배사 양식에서 맨 아래 노란 줄과 같은 기준) 거래처별 건수
-    function jejuCount() {
+    // #932: 박스 수도 같이 셈(주문 = qtyNow · 현금 줄 = qty — chatSummary 거래처별 집계와 같은 셈법)
+    function jejuTally() {
         const c = core(), m = new Map(); if (!c || !st.byPartner) return m;
-        Object.keys(st.byPartner).forEach(p => m.set(c.shortPartner(p), 0));
-        const add = (opt, addr) => { if (!c.isJeju(addr)) return; const k = partnerShort(opt) || '거래처 미정'; m.set(k, (m.get(k) || 0) + 1); };
-        S().merged.forEach(e => { if (goingOut(e)) add(optOf(e), addrOf(e)); });
-        (cashLive()).forEach(r => add(String(r.opt || ''), String((r.cells || [])[8] || '')));
+        Object.keys(st.byPartner).forEach(p => m.set(c.shortPartner(p), { n: 0, q: 0 }));
+        const add = (opt, addr, q) => { if (!c.isJeju(addr)) return; const k = partnerShort(opt) || '거래처 미정'; const x = m.get(k) || { n: 0, q: 0 }; x.n++; x.q += q; m.set(k, x); };
+        S().merged.forEach(e => { if (goingOut(e)) add(optOf(e), addrOf(e), qtyNow(e)); });
+        (cashLive()).forEach(r => add(String(r.opt || ''), String((r.cells || [])[8] || ''), Number(r.qty) || 0));
         return m;
     }
-    function jejuText() { const m = jejuCount(); return m.size ? [...m].map(([k, n]) => `${k} ${n ? n + '건' : '없음'}`).join(' · ') : '없음'; }
+    function jejuCount() { return new Map([...jejuTally()].map(([k, x]) => [k, x.n])); }
+    // 건수 == 박스 수면 「2건」 · 다르면 「2건(3박스)」(대표 11/1)
+    function jejuText() { const m = jejuTally(); return m.size ? [...m].map(([k, x]) => `${k} ${x.n ? x.n + '건' + (x.q !== x.n ? `(${x.q}박스)` : '') : '없음'}`).join(' · ') : '없음'; }
     // #839(대표 「스토어 양식 안 받아도 되게 · 그 파일에서 보던 정산예정금액을 띄워 줘」): 만든 스토어 시트의 「정산예정금액」 칸(U · 21번째)을 줄마다 더한다 = 파일과 1원까지 같음 · 네이버만(쿠팡·자사몰 칸 없음)
     function storeSettle(ws) {
         const XLSX = window.XLSX, out = { sum: 0, n: 0, none: 0 }; if (!ws || !ws['!ref']) return out;
