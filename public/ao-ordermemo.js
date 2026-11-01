@@ -97,12 +97,14 @@
         restore: id => safe(call('/api/order-memo/restore/' + encodeURIComponent(id), 'POST')),
         addrOk: (id, body) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id) + '/addr-ok', 'POST', body)),   // #880-b { raw } = 「이대로 둘게요」 남김 · { undo: true } = 지움 · raw ≠ 지금 주소 = 409
         pair: body => safe(call('/api/order-memo/pair', 'POST', body)),
+        service: body => safe(call('/api/order-memo/service', 'POST', body)),   // #936 추가 매칭 판 「붙은 주소 줄」 서비스 켜고 끄기(#900 1-C 길 그대로)
         pairHint: key => safe(call('/api/order-memo/pair-hint?key=' + encodeURIComponent(key))),   // #894 F4 번호로 못 찾은 현금 줄 묶음 후보(읽기만 · 옛 서버 404 = 종전 화면)   // #874 저장된 현금(「!」) 줄 → 입력삭제 주소 줄 · { undo, rows } = 되돌리기
         forShip: date => safe(call('/api/order-memo/for-ship?date=' + encodeURIComponent(date))),
         catalog: () => safe(call('/api/invoice/catalog')),
         lookup: (key, plat) => safe(call('/api/order-memo/lookup?key=' + encodeURIComponent(key) + '&plat=' + encodeURIComponent(plat || ''))),   // #850-c 판매처 확인(계약 §7 · 읽기만)
     };
     // 서버 줄(계약 1절) → 화면 줄 — 칸은 그대로 두고 빠진 것만 채움
+    // #936 메모 줄 badge = 서버가 센 입력삭제 매칭 미리보기(옛 서버 = null)
     function normRow(r, entry) {
         if (!r) return null;
         const o = { id: r.id != null ? r.id : null, kind: r.kind === 'cash' ? 'cash' : 'line', ship_date: r.ship_date ? String(r.ship_date).slice(0, 10) : null,
@@ -110,7 +112,7 @@
             stale: r.stale === true, indiv: r.indiv === true, state: r.state || 'open', used_on: r.used_on ? String(r.used_on).slice(0, 10) : null, cleared_at: r.cleared_at || '', entry: entry || {},
             addr_ok: r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : ('addr_ok' in r ? null : undefined) };   // #880-b 주소 「이대로 둘게요」 서버 기록 · undefined = 옛 서버(화면 기억 AKEPT 로)
         if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; }   // #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
-        else { o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
+        else { o.badge = r.badge && typeof r.badge === 'object' ? r.badge : null; o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
         return o;
     }
     const outRow = r => Object.assign(r.kind === 'cash' ? Object.assign({ kind: 'cash', ship_date: r.ship_date || null, cells: r.cells.slice(), indiv: !!r.indiv }, r.service ? { service: true } : {}, !r.service && (r._indOff || r._noIndiv) ? { no_indiv: true } : {}) : { kind: 'line', ship_date: r.ship_date || null, key: r.key, note: r.note, plat: r.plat, line: r.line, checked: r.checked || null }, r.src ? { src: r.src } : {});   // 미리보기에서 받은 src·line 을 그대로(출처 보존 · 고쳤으면 서버가 다시 만듦 · 계약 §6)
@@ -627,12 +629,22 @@
         const shown = clrShown(byCleared(rows));   // #903
         ul.innerHTML = shown.length ? shown.map(r => rowHtml(r, false, OM.sel)).join('') : '<li class="om-empty"><b>찾는 줄이 없어요</b><span>이름·번호 끝자리·주소·품목으로 찾아요.</span></li>';
     }
+    // #936(대표 11/1) 입력삭제 줄 배지 = 서버 badge(메모함 기준 미리보기 · 최종 판정은 최종발주 카드) · 누르면 ④ 추가 매칭 판 · 옛 서버(badge 없음) = 종전 [추가 매칭] 글 단추
+    const BADGE_K = { ok: 'ok', split: 'later', short: 'short', over: 'over', unknown: 'unk', pre: 'unk', sent: 'sent', personal: 'pers' };   // split = 오늘 n + 뒤 날짜 later 가 딱 m(중립 · 대기 색)
+    function badgeText(b) {
+        if (!b) return '';
+        const lt = Number(b.later) || 0, wait = lt ? ` 오늘 · ${lt}박스 ${b.later_date ? md(b.later_date) + ' ' : ''}대기` : '';   // 날짜 나눔(#870) = 「14/15 오늘 · 1박스 11/4 대기」
+        const main = b.state === 'sent' ? '발송됨' : b.state === 'personal' ? `개인결제창 · 주소 줄 ${b.n}` : b.state === 'unknown' ? `${b.n}/? 주문 확인 중${wait}` : b.state === 'pre' ? `${b.n}/${b.m} 발주확인 전${wait}` : b.state === 'ok' ? `${b.n}/${b.m} 매칭완료` : b.state === 'split' ? `${b.n}/${b.m}${wait}` : b.state === 'short' ? `${b.n}/${b.m}${wait} · ${b.m - b.n - lt}박스 모자람` : `${b.n}/${b.m}${wait} · ${b.n + lt - b.m}박스 초과`;
+        const tail = [b.service ? `· 서비스 ${b.service}` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');
+        return tail ? main + ' ' + tail : main;
+    }
+    const badgeHtml = r => r.badge ? `<button type="button" class="om-pill om-badge k-${BADGE_K[r.badge.state] || 'unk'}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(telShow(r.key) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
     function memoLineHtml(r) {
         const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r);
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>
             <button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + ' 열어 고치기')}"><span class="om-ml-l">${esc(lineView(r.line) || '(빈 줄)')}</span>${b ? `<span class="om-pill k-${b.k}">${esc(b.t)}</span>` : ''}${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button>
-            ${INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || '')) && digits(r.key).length >= 8 ? `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(telShow(r.key) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>` : ''}
+            ${INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || '')) && digits(r.key).length >= 8 ? (r.badge ? badgeHtml(r) : `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(telShow(r.key) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>`) : ''}
             <button type="button" class="om-x" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></li>`;
     }
     function rowHtml(r, isOpen, sel) {
@@ -1181,8 +1193,23 @@
         return `<div class="om-pair om-pairx" role="group" data-px="${esc(d)}" aria-labelledby="om-px-t-${esc(d)}"><b id="om-px-t-${esc(d)}">${c.pxOnly ? `입력삭제 ${esc(x.key)} 주소 줄로 바꿀 현금 줄을 고르세요` : `번호가 다른 현금 줄 가운데 입력삭제 ${esc(x.key)} 주소 줄을 고르세요`}</b>
                 <p class="om-pair-s">${c.pxOnly ? '같은 번호 줄은 미리 체크했어요 · 손님이 「따로 보내 달라」며 다른 번호로 들어온 줄도 체크하면 같이' : '손님이 「따로 보내 달라」며 다른 번호로 들어온 줄 등'} · 체크한 줄은 저장하면 주소 줄이 돼요(단추를 안 눌러도) · 체크 안 한 줄은 현금 그대로 · 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
                 <div class="om-cash-q om-pairx-q"><label class="om-sr" for="om-px-q-${esc(d)}">현금 줄 찾기</label><input type="search" id="om-px-q-${esc(d)}" data-cact="pxq" data-k="${esc(d)}" value="${esc(x.q)}" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
-                <div class="om-pairx-b">${pxListHtml(c, d)}</div>
+                <div class="om-pairx-b">${pxListHtml(c, d)}</div>${c.pxOnly ? pxPairedHtml(c, d) : ''}
                 <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pxgo" data-k="${esc(d)}"${n ? '' : ' disabled'}>${pxGoLabel(n)}</button><button type="button" class="om-btn sm" data-cact="pxclose" data-k="${esc(d)}">닫기</button></div></div>`;
+    }
+    // #936 ④ 판 아래 「붙은 주소 줄」 = 이미 그 번호에 붙은 줄(「!」 없음) + 서비스 줄 · 줄마다 서비스 체크(POST /service · 「!」 없는 줄만 켜짐 = 서버 규칙 그대로) · 바뀌면 목록 다시(배지 갱신)
+    const pxPaired = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && r.id != null && (r.indiv || r.service) && [r.cells[10], r.cells[1]].map(digits).includes(d));
+    function pxPairedHtml(c, d) {
+        const L = pxPaired(d); if (!L.length) return '';
+        return `<p class="om-pair-n">붙은 주소 줄 <b>${L.length}줄</b> · ${L.reduce((t, r) => t + qtyOf(r), 0)}박스 · 서비스 = 주문과 별개 현금건(대조·운송장 밖 · 양식엔 나감)</p>
+                <ul class="om-pair-l om-px-paired">${L.map(r => `<li><span>${esc(pairWhoQ(r))}</span><label class="om-px-svc"><input type="checkbox" data-cact="pxsvc" data-v="${esc(String(r.id))}"${r.service ? ' checked' : ''}> <span>서비스</span></label></li>`).join('')}</ul>`;
+    }
+    async function pxSvc(c, b) {
+        const id = Number(b.dataset.v), on = !!b.checked; b.disabled = true;
+        const res = await API.service({ ids: [id], on });
+        if (OM.card !== c) return;
+        if (!res.ok || !(res.body && res.body.n)) { b.disabled = false; b.checked = !on; toast(res.ok ? ((res.body && res.body.skipped && res.body.skipped[0] && res.body.skipped[0].why) || '바꾸지 못했어요') : errText(res, '서비스 표시를 못 바꿨어요')); return; }
+        toast(on ? '서비스 줄로 바꿨어요 · 대조·운송장에서 빠져요' : '서비스를 끄고 주소 줄로 돌렸어요');
+        await load(); if (OM.card === c) renderCard();   // 목록(배지)·판 다시
     }
     const pxEmptyHtml = (c, k) => pxCands(c, k.d).length ? `<div class="om-pair ok" role="group"><b>메모함에 이 번호(${esc(k.show)}) 현금 줄이 없어요 · 다른 번호로 들어온 줄이면 [추가 매칭]으로 고를 수 있어요</b><div class="om-acts">${pxBtn(k.d, k.show)}</div></div>` : '';
     const pxAllHtml = c => { const X = c.pairX || {}; return Object.keys(X).map(d => pxHtml(c, d, X[d].key)).join(''); };
@@ -1580,6 +1607,7 @@
         if (a === 'pxclose') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) x.open = false; renderCard(); return; }
         if (a === 'pxchk') { const x = pxState(c, b.dataset.k); if (b.checked) x.sel.add(b.dataset.v); else x.sel.delete(b.dataset.v); pxRefresh(c, b.dataset.k); const back = $('om-card').querySelector(`.om-pairx input[data-cact="pxchk"][data-v="${b.dataset.v}"]`); if (back) back.focus({ preventScroll: true }); return; }
         if (a === 'pxgo') { const d = b.dataset.k, x = pxState(c, d), ids = pxSelIds(c, d); if (!ids.length) return; if (c.mode === 'edit') { pxRunNow(c, d); return; } x.picked = ids.map(Number); x.open = false; renderCard(); toast(`${ids.length}줄을 더 골랐어요 · 저장하면 입력삭제 ${x.key} 주소 줄로 바꿔요`); return; }
+        if (a === 'pxsvc') { pxSvc(c, b); return; }   // #936
         if (a === 'pxundo') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) { x.picked = null; x.sel.clear(); } renderCard(); return; }
         if (a === 'pyopen') { load().then(() => { if (OM.card !== c) return; (c.pairY = c.pairY || { open: false, pick: null }).open = true; renderCard(); const f = $('om-card').querySelector('input[data-cact="pypick"]'); if (f) f.focus({ preventScroll: true }); }); return; }   // #934 ⑤ · #935 목록 1회 재조회 뒤 그림
         if (a === 'pyclose') { if (c.pairY) c.pairY.open = false; renderCard(); return; }
@@ -1745,6 +1773,7 @@
         cardClose(true);
         inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
         OM.tab = 'open'; syncTabs(); const ld = load();
+        if (c.rows.some(r => r.kind === 'line')) setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(x => x.kind === 'line' && x.badge && x.badge.state === 'unknown')) load(); }, 6000);   // #936 즉시 조회가 끝난 숫자로 배지 한 번 더
         if (goNext) ld.then(() => aseqNext());   // #880-b 이어서 확인 = 저장 뒤 다음 줄 카드
     }
 

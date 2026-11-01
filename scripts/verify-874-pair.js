@@ -86,8 +86,9 @@ function mkPool(db) {
     const pool = mkPool(db), audits = [];
     const app = express(); app.use(express.json());
     const auth = (req, res, next) => { req.user = { id: 990874, name: '검증', position: '', role: 'staff' }; next(); };
+    const rfCalls = [];   // #936 즉시 조회 스파이
     const api = OM.mount(app, { pool, authMiddleware: auth, writeAudit: async a => { audits.push(a); }, adminActor: req => ({ id: req.user.id }), handleErr: (res, e) => res.status(e.status || 500).json({ error: e.message }),
-        cfgGet: async k => (k === 'order_memo' ? { ai: { enabled: false } } : null), deskAlive: async () => false, kstToday: () => T, noTimers: true, anthropic: null,
+        cfgGet: async k => (k === 'order_memo' ? { ai: { enabled: false } } : null), deskAlive: async () => false, kstToday: () => T, noTimers: true, anthropic: null, refreshPreorders: async d => { rfCalls.push(d); return 'done'; },
         shipCal: async () => ({ realToday: T, shipDays: [T, SHIP], suggested: SHIP }) });
     const srv = await new Promise(r => { const s = http.createServer(app).listen(PORT, () => r(s)); });
     const call = async (method, url, body) => { const r = await fetch('http://127.0.0.1:' + PORT + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json() }; };
@@ -100,6 +101,8 @@ function mkPool(db) {
         const before0 = await forShip();
         const e2 = await call('POST', '/api/order-memo', { raw: BUY + ' 입력o삭제x 네이버', rows: [{ kind: 'line', key: BUY, note: '입력o삭제x', plat: '네이버', line: BUY + ' 입력o삭제x 네이버', src: 'rule' }] });
         ok(e2.s === 200 && e2.j.rows.length === 1, '7분 뒤 입력삭제 줄 따로 저장(다른 묶음)');
+        await new Promise(r => setTimeout(r, 80));
+        ok(rfCalls.length === 1 && rfCalls[0] === BUY.replace(/\D/g, ''), '#936 입력삭제 줄 저장 = 그 번호 발송 전 주문이 없으면 즉시 조회 1회(응답 뒤 · 현금 줄 저장 땐 0)', rfCalls);
         const fsBefore = await forShip(), before = await allRows();
         ok(JSON.stringify(fsBefore.cash_aoa) === JSON.stringify(before0.cash_aoa), '입력삭제 줄만 넣음(안 바꿈) = 현금파일 줄 바이트 동일(종전)');
         const fo0 = finalOrder(fsBefore, SHIP);

@@ -2951,7 +2951,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     const RULE = {
         auto: '이름·번호·주소 일치', auto_multi: '이름·번호·주소 일치 · 박스 여러 개(첫 운송장 등록)', auto_qty_diff: '이름·번호·주소 일치 · 박스 수 다름',
         by_product: '같은 분 다른 품목 · 상품명으로 가름', same_item_any: '같은 분 같은 품목 · 하나씩 배정', indiv_store_addr: '개별 주소 · 스토어 주소 운송장', indiv_any: '개별 주소 · 그 구매자 운송장 하나',
-        todo_product: '같은 분 여러 주문인데 상품명으로 못 가름', todo_pick: '짝이 안 맞아요 · 운송장을 골라 주세요',
+        todo_product: '같은 분 여러 주문인데 상품명으로 못 가름', todo_pick: '짝이 안 맞아요 · 운송장을 골라 주세요', todo_indiv_none: '입력삭제 주문인데 운송장을 못 찾았어요',
     };
     const MAX_FILES = 4, MAX_BYTES = 5 * 1024 * 1024;
     const API = '/api/agent-office/invoice-auto/';
@@ -3050,7 +3050,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     }
     const todoRows = () => ((ia.res && ia.res.rows) || []).filter(r => r.status === 'todo');
     // #841 서버가 미리 고른 운송장(suggest · 고를 목록 안의 것만) = 선택해 두고 「확인 필요」 · 사람이 바꾸면 「고름」
-    function seedSuggest() { todoRows().forEach(x => { const v = x.suggest == null ? '' : String(x.suggest); if (v && (x.pick_options || []).some(o => String(o.tracking) === v)) { ia.picks.set(x.id, v); ia.sugg.add(x.id); } }); }
+    function seedSuggest() { todoRows().forEach(x => { const v = x.suggest == null ? '' : String(x.suggest); if (v && (x.pick_options || []).some(o => String(o.tracking) === v)) { ia.picks.set(x.id, v); ia.sugg.add(x.id); } else if (x.rule === 'todo_indiv_none' && !(x.pick_options || []).length) ia.picks.set(x.id, 'manual'); }); }   // #937 고를 운송장 0 = 등록 안 막음(수기 줄로)
     const todoLeft = () => todoRows().filter(r => !ia.picks.has(r.id)).length;
 
     function render() {
@@ -3086,12 +3086,12 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         return `<details class="fo-ia-list"><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
     }
     function cardHtml(x) {
-        const v = ia.picks.get(x.id), done = v != null, sg = done && ia.sugg.has(x.id);
+        const v = ia.picks.get(x.id), noOpt = x.rule === 'todo_indiv_none' && !(x.pick_options || []).length, done = v != null && !noOpt, sg = done && ia.sugg.has(x.id);
         const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(who(o))} · ${esc(o.product || '')}</option>`).join('');
         return `<div class="fo-card" data-state="${sg ? 'open' : done ? 'done' : 'open'}" data-ia-id="${esc(x.id)}">
             <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(CH_LABEL[x.channel] || x.channel)}</span><b>${esc(who(x))} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
-            <div class="fo-card-body"><div class="fo-line"><span>왜</span><p>${esc(RULE[x.rule] || x.rule)}</p></div><div class="fo-line"><span>주문번호</span><p>${esc(x.order_key)}</p></div></div>
-            <div class="fo-card-acts"><label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(who(x))} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${sg ? `<span class="fo-ia-sg">${esc(x.suggest_why || '확인 필요 · 미리 고름')}</span>` : done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}</div>
+            <div class="fo-card-body"><div class="fo-line"><span>왜</span><p>${esc(x.why || RULE[x.rule] || x.rule)}</p></div><div class="fo-line"><span>주문번호</span><p>${esc(x.order_key)}</p></div></div>
+            <div class="fo-card-acts">${noOpt ? '<span class="fo-wait">고를 운송장이 없어요 · 채널에서 직접 등록하거나 빠진 거래처 파일을 넣어 다시 짝 맞추기</span>' : `<label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(who(x))} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${sg ? `<span class="fo-ia-sg">${esc(x.suggest_why || '확인 필요 · 미리 고름')}</span>` : done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}`}</div>
         </div>`;
     }
     function onPick(e) {

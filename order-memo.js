@@ -199,6 +199,35 @@ function pairHint(orders, rows, key) {
         .map(g => ({ entry_id: g.entry_id, created_at: g.created_at, ids: g.ids, boxes: total(g.items), items: [...g.items].map(([opt, qty]) => ({ opt, qty })) })) : [];
     return { order_boxes: total(need), paired_boxes: total(paired), short: total(left), need: [...left].map(([opt, qty]) => ({ opt, qty })), groups };
 }
+// #936(대표 11/1) 입력삭제 줄 배지 = 「메모함 기준 미리보기」(최종 판정은 최종발주 카드 cashCheck 그대로 · 여기선 숫자만 · 순수)
+//   line = 입력삭제 줄(line_key·plat·used_on) · rows = 열린 현금 줄 전부(표 행 꼴) · orders = order_memo_preorders 그 구매자 번호 줄 [{channel, buyer_digits, option_text, qty, pre?}] · base = 기준 발송일 · opt.catalog = 단가표 이름 Set
+//   m = 주문 박스 합(줄의 판매처 채널만 · 글 없으면 네이버 · 같은 번호 여러 주문 합 · 번호 빈 주문(선물하기)은 표 조회에 안 걸려 자연히 뺌 · remainQuantity 는 수집 때 qty 에 이미 반영)
+//   n = 주소 줄 박스 합(pickForShip 과 같은 규칙 = 열림·sure·「!」 없음·서비스 X·K/B==번호·날짜 없음 또는 ≤base) · later = 뒤 날짜 박스·첫 날짜 · service = 서비스 줄 수 · item_diff = 합 같은데 품목 열쇠(itemKeyOf)별 수량 다름
+//   state = sent(used_on) | personal(자사몰 수량 1 주문 + 단가표 밖 품목 = 개인결제창) | unknown(주문 0 · m null) | pre(전부 발주확인 전 · 표에 상태 칸이 없어 orders[].pre 가 올 때만) | ok | short | over
+const BADGE_CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' };
+//   워커1 점검(11/1) = ① sent 는 used_on 있고 (줄 날짜 없음 또는 줄 날짜 ≤ used_on) 일 때만(뒤 날짜 줄도 pickForShip ids 에 들어 used_on 이 찍힘) ② n + later == m 이면 split(「오늘 · 대기」 중립) · 모자람 = m − n − later
+//   ③ 자사몰 = item_diff 안 봄 · personal 은 price-check optionKey(최종발주·송장변환과 같은 품목 변환)로 단가표에 못 맞출 때만 ④ n 은 K 만(최종발주 cashCheck 와 같게 · 서비스 수는 K/B) ⑤ 지난 날짜 줄(sd < base)은 n 에서 뺌(pickForShip held 와 같게)
+let _pcB; const pcMatch = (text, cat) => { if (_pcB === undefined) { try { _pcB = require('./price-check.js'); } catch (e) { _pcB = null; } } if (!_pcB || typeof _pcB.optionKey !== 'function' || !String(text || '').trim()) return null; try { const r = _pcB.optionKey([String(text)], cat ? [...cat] : []); return !!(r && r.by === 'match'); } catch (e) { return null; } };
+function indivBadge(line, rows, orders, base, opt) {
+    const d = dg(line && line.line_key), ch = BADGE_CH[String((line && line.plat) || '').trim()] || 'naver', cat = opt && opt.catalog instanceof Set ? opt.catalog : null;
+    const od = (orders || []).filter(o => o && (o.channel || 'naver') === ch && (o.buyer_digits == null || dg(o.buyer_digits) === d));
+    const q = v => Math.max(0, parseInt(v, 10) || 0), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
+    const sd = r => r && r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null;
+    const mine = (rows || []).filter(r => r && r.kind === 'cash' && r.state === 'open' && Array.isArray(r.cells) && [r.cells[10], r.cells[1]].map(dg).includes(d));
+    const addr = mine.filter(r => dg(r.cells[10]) === d && r.sure !== false && !r.service && !/[!！]/.test(String(r.cells[0] || '')));
+    const now = addr.filter(r => !sd(r) || !base || sd(r) === base), later = addr.filter(r => sd(r) && base && sd(r) > base);
+    const n = now.reduce((t, r) => t + q(r.cells[5]), 0), laterN = later.reduce((t, r) => t + q(r.cells[5]), 0);
+    const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : null, n, later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
+    const used = line && line.used_on ? String(line.used_on instanceof Date ? line.used_on.toISOString() : line.used_on).slice(0, 10) : null, lsd = sd(line);
+    if (used && (!lsd || lsd <= used)) b.state = 'sent';
+    else if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';
+    else if (b.m == null) b.state = 'unknown';
+    else if (b.pre) b.state = 'pre';
+    else if (n + laterN === b.m && laterN > 0) b.state = 'split';
+    else if (n === b.m) { b.state = 'ok'; if (ch !== 'cafe24') { const want = new Map(), have = new Map(); od.forEach(o => add(want, itemKeyOf(o.option_text), q(o.qty))); now.forEach(r => add(have, itemKeyOf(r.cells[4]), q(r.cells[5]))); b.item_diff = want.size !== have.size || [...want].some(([k, v]) => have.get(k) !== v); } }
+    else b.state = n + laterN < b.m ? 'short' : 'over';
+    return b;
+}
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
 
 // AI 가 돌려준 현금 손님 → 13칸
@@ -468,6 +497,16 @@ function mount(app, deps) {
         res.json({ ok: true });
     }));
 
+    // #936 즉시 조회(대표 「더 좋은 길」) = 입력삭제 줄을 저장했거나 번호 찾기에서 주문이 없을 때, 그 번호 발송 전 주문이 표에 없으면 문자의 즉시 조회(sms refreshPreorders · days 2 · 번호당 10분 · 시간당 20 · 다른 조회 중이면 생략)를 한 번 → 다음 목록부터 배지 숫자
+    //   응답을 기다리지 않음(화면은 저장 뒤 6초쯤 한 번 더 목록을 받음) · deps.refreshPreorders 없는 서버(검증·옛 장착) = 아무 일 없음
+    const refreshIfMiss = async keys => {
+        if (typeof deps.refreshPreorders !== 'function') return;
+        for (const d of [...new Set((keys || []).map(dg).filter(k => /^0\d{8,11}$/.test(k)))]) {
+            let have = 0; try { have = (await pool.query('SELECT 1 FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 LIMIT 1', [d])).rowCount; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+            if (have) continue;
+            try { const how = await deps.refreshPreorders(d); console.log('[발주 메모함] 즉시 주문 조회 ' + d.slice(-4) + ' → ' + how); } catch (e) { console.error('[발주 메모함] 즉시 주문 조회 실패(무시):', e.message); }
+        }
+    };
     app.post('/api/order-memo', authMiddleware, wrap(async (req, res) => {
         const raw = s(req.body && req.body.raw, MAX_RAW).trim();
         const src = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
@@ -479,6 +518,7 @@ function mount(app, deps) {
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
             ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null,
             service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true) })))).map(r => Object.assign(checkRow(r, ctx), { checked: r._checked, service: r.service }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
+        { const ks = rows.filter(r => isIndivLine(r)).map(r => dg(r.key)); if (ks.length) res.on('finish', () => { if (res.statusCode < 300) refreshIfMiss(ks).catch(() => {}); }); }   // #936
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -503,12 +543,21 @@ function mount(app, deps) {
         const ids = [...new Set(rows.map(r => r.entry_id))];
         const ents = ids.length ? (await pool.query(`SELECT id, created_at, created_by, source, tags, raw FROM order_memo_entries WHERE id = ANY($1::int[]) ORDER BY id DESC${state === 'open' ? '' : ' LIMIT ' + LIST_MAX}`, [ids])).rows : [];   // #900-2A 열린 줄 묶음 = 전부
         const by = new Map(ents.map(e => [e.id, Object.assign(e, { rows: [] })]));
-        rows.forEach(r => { const e = by.get(r.entry_id); if (e) e.rows.push(rowOut(r)); });
-        const open = state === 'open' ? rows : (await pool.query(`SELECT kind, sure, to_char(ship_date, 'YYYY-MM-DD') AS ship_date FROM order_memo_rows WHERE state = 'open'`)).rows;
-        const nCleared = state === 'cleared' ? rows.length : Number((await pool.query(`SELECT COUNT(*)::int AS n FROM order_memo_rows WHERE state = 'cleared' AND cleared_at > NOW() - ($1::int * INTERVAL '1 day')`, [c.keep_days])).rows[0].n);
         // ship_date = 다음 최종발주 기준 발송일(최종발주 suggested 와 같은 계산 · 달력 실패면 null) · next = 그날 for-ship 에 들어갈 줄 수(「지금 챙길 일」 한 줄)
         let next = null; try { const cal = await shipCal(); next = cal && isDay(cal.suggested) ? cal.suggested : null; } catch (_) { /* 달력 없이 */ }
         const base = next || today;
+        const badges = new Map();   // #936 입력삭제 줄 배지(열린 목록만 · 실패하면 표시만 빠짐)
+        if (state === 'open') { try {
+            const lines = rows.filter(r => r.kind === 'line' && isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key).length >= 8), keys = [...new Set(lines.map(r => dg(r.line_key)))];
+            if (keys.length) {
+                let od = []; try { od = (await pool.query('SELECT channel, buyer_digits, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = ANY($1::text[])', [keys])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+                const cat = await catalogSet(today).catch(() => null);
+                lines.forEach(r => badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === dg(r.line_key)), base, { catalog: cat })));
+            }
+        } catch (e) { console.error('[발주 메모함] 배지 계산 실패(표시만 빠짐):', e.message); } }
+        rows.forEach(r => { const e = by.get(r.entry_id); if (e) { const o = rowOut(r); const bg = badges.get(r.id); if (bg) o.badge = bg; e.rows.push(o); } });
+        const open = state === 'open' ? rows : (await pool.query(`SELECT kind, sure, to_char(ship_date, 'YYYY-MM-DD') AS ship_date FROM order_memo_rows WHERE state = 'open'`)).rows;
+        const nCleared = state === 'cleared' ? rows.length : Number((await pool.query(`SELECT COUNT(*)::int AS n FROM order_memo_rows WHERE state = 'cleared' AND cleared_at > NOW() - ($1::int * INTERVAL '1 day')`, [c.keep_days])).rows[0].n);
         const nNext = pickForShip(state === 'open' ? rows : (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open'`)).rows, base).ids.length;
         res.json({ ok: true, keep_days: c.keep_days, ship_date: next, entries: [...by.values()],
             counts: { open: open.length, unsure: open.filter(r => !r.sure).length, stale: state === 'open' ? rows.map(rowOut).filter(r => r.stale).length : 0, wait: open.filter(r => r.sure && r.ship_date && r.ship_date > base).length, next: nNext, cleared: nCleared } });
@@ -719,6 +768,7 @@ function mount(app, deps) {
                 cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM sms_preorders")).rows[0];
             } catch (e) { if (!/sms_preorders/.test(String(e.message))) throw e; }   // 표가 없는 서버(문자 기능 꺼짐) = 못 찾음
         }
+        if (phone && !matches.length) refreshIfMiss([d]).catch(() => {});   // #936 [넣기]·카드 번호 찾기에서 주문 없음 = 즉시 조회(응답은 종전 그대로 · 다음 조회·목록부터)
         const days = 7;
         res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches,
             message: matches.length ? '' : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
@@ -842,4 +892,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, pairHint, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

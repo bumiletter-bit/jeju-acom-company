@@ -19529,6 +19529,7 @@ require('./tax-invoices.js').mount(app, { pool, authMiddleware, adminOnly, write
 // #850 발주 메모함(표 order_memo_entries·rows · API /api/order-memo/* · 계약 docs/850-api.md) — shipCal = memo-parse 와 같은 달력(정오 전이면 오늘) · 영구 삭제 타이머는 렌더에서만
 //   AI = 창구 경유(대표 「고」 · 최종발주 메모 읽기와 같은 길 · 요청한 계정 = created_by_id 로 대표 요금제/콘솔 가름) · deskAlive = 대기 프로그램 2분 안 소식 + 켜짐(desk-status 와 같은 기준)
 require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminActor, handleErr: handleAdminErr, cfgGet: naverCfgGet, kstToday: () => kstTodayStr(), noTimers: !process.env.RENDER,
+    refreshPreorders: d => (smsDesk && typeof smsDesk.refreshPreorders === 'function' ? smsDesk.refreshPreorders(d) : 'off'),   // #936 입력삭제 줄 저장·번호 찾기 miss 때 문자의 즉시 주문 조회 재사용
     deskAlive: async () => { const r = (await pool.query(`SELECT value, EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`)).rows[0];
         return !!(r && r.ago !== null && r.ago < 120 && r.value && r.value.on); },
     anthropic: process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null,

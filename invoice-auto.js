@@ -139,6 +139,12 @@ function matchShipments({ ships, orders, pricingNames, indivKeys }) {
             give(o, [pick], store ? 'indiv_store_addr' : 'indiv_any');
         }
     }
+    // #937(대표 11/1) 입력삭제(IND) 주문인데 운송장 0 = 조용히 넘기지 않고 할 일 카드(종전 = 「운송장 없는 주문」 숫자에만 → 배송준비로 남아 다음 발주에 또 잡힐 수 있음)
+    //   새 자동 짝 없음 · 후보 = 그 구매자의 남은 운송장 중 품목 맞는 줄(상한 20) · 없으면 빈 목록(화면 = 고르기 없이 「채널에서 직접」 · 등록을 막지 않음)
+    orders.filter(o => IND.has(o.channel + ':' + o.order_key) && !assign.has(o.channel + ':' + o.order_key) && !todoKeys.has(o.channel + ':' + o.order_key)).forEach(o => {
+        const options = validTel(o.kBuyer) ? leftover.filter(s => !used.has(s.tracking) && s.senderTel === o.kBuyer && prodHit(o, s)).slice(0, 20) : [];
+        todos.push({ o, rule: 'todo_indiv_none', options, suggest: null, suggest_why: null, why: '입력삭제 주문인데 운송장을 못 찾았어요 · 거래처 파일을 다 올렸는지·그날 주소 줄이 나갔는지 확인' }); todoKeys.add(o.channel + ':' + o.order_key);
+    });
     const assignedBuyers = new Set([...assign.values()].map(a => a.o.kBuyer).filter(validTel));
     const todoTr = new Set(); todos.forEach(t => t.options.forEach(s => todoTr.add(s.tracking)));
     const extra = [], unmatched = [];
@@ -177,7 +183,7 @@ function buildCard(m, orders) {
     for (const t of m.todos) {
         const o = t.o;
         rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), ...who(o.name, o.tel), option: o.option, qty: o.qty,
-            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt), suggest: t.suggest || null, suggest_why: t.suggest ? (t.suggest_why || '확인 필요') : null });
+            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt), suggest: t.suggest || null, suggest_why: t.suggest ? (t.suggest_why || '확인 필요') : null, ...(t.why ? { why: t.why } : {}) });
         by[o.channel].todo++;
     }
     const assignedKeys = new Set(m.assign.map(a => a.o.channel + ':' + a.o.order_key).concat(m.todos.map(t => t.o.channel + ':' + t.o.order_key)));
@@ -254,7 +260,7 @@ module.exports = function mountInvoiceAuto(app, d) {
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;
             for (const p of parsed) { try { indexUp += await lois.upsert(p.wb, p.rows, shipDate, p.partner === '?' ? '' : p.partner); } catch (e) { indexErr = String(e.message || e).slice(0, 120); } }
-            const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
+            const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, todo_indiv_none: card.rows.filter(r => r.rule === 'todo_indiv_none').length, orders_without_tracking: card.orders_without_tracking, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
             const filesOut = parsed.map(p => ({ name: p.name, partner: p.partner, rows: p.rows.length }));
             await pool.query(`DELETE FROM invoice_auto_runs WHERE created_at < now() - interval '90 days'`);
             await pool.query(`DELETE FROM invoice_auto_items WHERE created_at < now() - interval '90 days'`);   // #838-4 E
@@ -350,7 +356,7 @@ module.exports = function mountInvoiceAuto(app, d) {
                 if (skip.has(row.id)) { skipped++; items.push({ ...base, tracking: null, idem: null, state: 'skipped' }); continue; }
                 let tr = row.status === 'auto' ? row.tracking : null;
                 if (row.status === 'todo') { const p = picks[row.id]; const ok = p && p !== 'manual' && (row.pick_options || []).some(x => x.tracking === dg(p)); tr = ok ? dg(p) : null; }
-                if (!tr) { manual++; items.push({ ...base, tracking: null, idem: null, state: 'manual' }); continue; }
+                if (!tr) { manual++; items.push({ ...base, tracking: null, idem: null, state: 'manual', ...(row.why ? { error: row.why } : {}) }); continue; }   // #937 카드 사유 = 수기 파일 사유 칸
                 chosen.push({ row, tr });
             }
             // #841 손질(워커3 점검): 같은 운송장이 서로 다른 주문 두 줄에 쓰이면 둘 다 보내지 않고 수기(쿠팡 같은 상자 · 카페24 같은 주문번호 = 한 상자라 제외)
