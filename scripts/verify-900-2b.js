@@ -28,7 +28,7 @@ function pxList() {
     const today = new Date().toISOString(), yest = new Date(Date.now() - 86400e3).toISOString();
     const cash = (id, A, B, nm, opt, qty, recv, K, addr, more) => Object.assign({ id, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null, indiv: false, service: false, cells: [A, B, '제주시 연삼로 1066-31', nm, opt, String(qty), recv, '', addr, '', K, '', ''] }, more || {});
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries: [
-        { id: 129, created_at: today, source: 'manual', rows: [cash(191, '강명희 드림!', PXK, '이하정', CAT[1], 1, '010-2111-9887', '010-2111-9887', '충남 천안시 동남구 일봉로 7'), cash(192, '강명희 드림!', PXK, '이승비', CAT[1], 1, '010-2027-9787', '010-2027-9787', '충남 아산시 배방읍 동천로 2'), cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')] },
+        { id: 129, created_at: today, source: 'manual', rows: (S.pxHide ? [] : [cash(191, '강명희 드림!', PXK, '이하정', CAT[1], 1, '010-2111-9887', '010-2111-9887', '충남 천안시 동남구 일봉로 7'), cash(192, '강명희 드림!', PXK, '이승비', CAT[1], 1, '010-2027-9787', '010-2027-9787', '충남 아산시 배방읍 동천로 2'), cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')]).concat(S.pxHide ? [cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')] : []) },
         { id: 140, created_at: today, source: 'manual', rows: [cash(201, '홍길동 드림', PXL, '주소줄손님', CAT[0], 1, '010-3300-0001', PXL, '서울 송파구 올림픽로 1', { indiv: true }), cash(202, '서비스!', '', '서비스손님', CAT[0], 1, '010-3300-0002', '010-3300-0002', '서울 마포구 월드컵로 2', { service: true }), cash(203, '박민수 드림!', '010-8800-1234', '최수아', CAT[0], 2, '010-8800-1234', '010-8800-1234', '서울 강남구 테헤란로 1')] },
         { id: 128, created_at: yest, source: 'manual', raw: PXL + ' 입력o삭제x 네이버', rows: [{ id: 190, kind: 'line', state: 'open', sure: true, check_why: [], key: PXL, note: '입력o삭제x', plat: '네이버', line: ['', PXL, '입력o삭제x', '네이버'].join('\t') }] },
     ].concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []) };
@@ -44,7 +44,7 @@ function listBody(n, ent) {
     }
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries };
 }
-const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
+const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, pxHide: false, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
@@ -299,8 +299,8 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             await openPx(p, 'new');
             let st = await p.evaluate(() => { const ps = [...document.querySelectorAll('#om-card .om-pair')]; return { n: ps.length, b: (ps[0].querySelector('b') || {}).textContent, btns: [...ps[0].querySelectorAll('.om-acts button')].map(b => b.dataset.cact + ':' + b.textContent.trim()) }; });
             ok(st.n === 1 && st.b === '메모함에 이 번호(010-3292-0535) 현금 줄 2개가 있어요 · 입력삭제 주소 줄로 바꿀까요?' && st.btns.join() === 'p2yes:바꾸기,p2no:현금 그대로,pxopen:추가 매칭', '② 실사례 = 같은 번호 현금 줄 2개 묻기 + 세 번째 단추 [추가 매칭]', st);
-            const newHtml = await p.evaluate(pairsHtml), stripped = newHtml.replace(/<button type="button" class="om-btn sm" data-cact="pxopen"[^>]*>추가 매칭<\/button>/g, '');
-            ok(stripped === oldHtml && stripped !== newHtml, '② 카드 = [추가 매칭] 단추만 빼면 종전(HEAD) HTML 바이트 동일([바꾸기]/[현금 그대로] 글자·자리 그대로)', (() => { let i = 0; while (i < oldHtml.length && oldHtml[i] === stripped[i]) i++; return [oldHtml.slice(i - 40, i + 80), stripped.slice(i - 40, i + 80)]; })());
+            const strip934 = h => h.replace(/<button type="button" class="om-btn sm" data-cact="pxopen"[^>]*>추가 매칭<\/button>/g, '').replace(/<p class="om-pair-s">체크한 줄은 저장하면[^<]*<\/p>/g, ''); const newHtml = await p.evaluate(pairsHtml), stripped = strip934(newHtml); oldHtml = strip934(oldHtml);   // HEAD 에도 #934 단추가 있을 수 있어 양쪽 다 뺌
+            ok(stripped === oldHtml && stripped !== newHtml, '② 카드 = [추가 매칭] 단추·안내 한 줄만 빼면 종전(HEAD) HTML 바이트 동일([바꾸기]/[현금 그대로] 글자·자리 그대로)', (() => { let i = 0; while (i < oldHtml.length && oldHtml[i] === stripped[i]) i++; return [oldHtml.slice(i - 40, i + 80), stripped.slice(i - 40, i + 80)]; })());
             await p.click('[data-cact="pxopen"]');
             st = await p.evaluate(() => { const x = document.querySelector('#om-card .om-pairx'); return { has: !!x, items: x ? [...x.querySelectorAll('.om-pair-l li span')].map(s => s.textContent) : [], go: x && x.querySelector('[data-cact="pxgo"]').disabled, foc: document.activeElement && document.activeElement.id, head: x && x.querySelector('.om-pair-n').textContent }; });
             ok(st.has && st.items.length === 2 && /김보은.*구매자 …4217/.test(st.items[0]) && /최수아.*2박스.*구매자 …1234/.test(st.items[1]) && st.go && st.foc === 'om-px-q-' + PXD && st.head === '2줄 중 0줄 · 0박스', '[추가 매칭] = 번호 다른 짝 없는 현금 줄 2개(같은 번호 2줄·주소 줄·서비스 줄 제외) · 기본 체크 0 · 단추 잠김 · 초점 = 찾기 칸', st);
@@ -321,6 +321,26 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             ok(S.saves.length === 1 && S.saves[0].rows.length === 1 && S.saves[0].rows[0].kind === 'line', '저장 = POST /api/order-memo 1회(입력삭제 줄 1)', S.saves[0] && S.saves[0].rows);
             ok(S.pairs.length === 2 && JSON.stringify(S.pairs[0]) === JSON.stringify({ key: PXK, ids: [191, 192] }) && JSON.stringify(S.pairs[1]) === JSON.stringify({ key: PXK, ids: [193], pick: true }), '저장 뒤 POST pair 2회 = ② {key, ids 191·192}(종전 꼴 · pick 없음) → 추가 매칭 {key, ids 193, pick:true}(번호 다른 줄)', S.pairs);
             ok(st.card && st.undo && st.t === '현금 줄 3개를 입력삭제 주소 줄로 바꿨어요', '되돌리기 띠 「현금 줄 3개를 …」(2+1) · 카드 닫힘', st);
+            // #934-b(총괄 결정) ② 체크 그대로 [저장] = 바꾸기 · [현금 그대로] = 0 · 추가 매칭 체크만(단추 안 누름) = pick POST
+            await openPx(p, 'new'); await p.click('#om-card-save'); await until(() => S.pairs.length); await p.waitForTimeout(250);
+            st = await p.evaluate(() => ({ undo: !document.getElementById('om-undo').hidden, t: document.getElementById('om-undo-t').textContent }));
+            ok(S.pairs.length === 1 && JSON.stringify(S.pairs[0]) === JSON.stringify({ key: PXK, ids: [191, 192] }) && st.undo && st.t === '현금 줄 2개를 입력삭제 주소 줄로 바꿨어요', '② 체크 그대로 [바꾸기] 없이 [저장] = POST pair ids 191·192 + 되돌리기 띠(12:00 실사례 구멍 막음)', { pairs: S.pairs, st });
+            await openPx(p, 'new'); await p.click('[data-cact="p2no"]'); await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(400);
+            ok(S.saves.length === 1 && S.pairs.length === 0, '② [현금 그대로] 뒤 [저장] = POST pair 0(종전)', { pairs: S.pairs });
+            await openPx(p, 'new'); await p.click('[data-cact="pxopen"]'); await p.check('#om-card .om-pairx input[data-v="193"]'); await p.click('#om-card-save'); await until(() => S.pairs.length >= 2); await p.waitForTimeout(250);
+            ok(S.pairs.length === 2 && JSON.stringify(S.pairs[1]) === JSON.stringify({ key: PXK, ids: [193], pick: true }), '추가 매칭 판에서 체크만 하고(단추 안 누름) [저장] = ② 2줄 뒤 POST pair {ids 193, pick}', S.pairs);
+            // 워커2 점검 4 = [안 바꿀래요] 뒤 저장 0 · 안 그린 번호 건너뜀 · [더 고르기] 판 열림 · (④ 닫기 뒤 저장 = 아래 ④ 절)
+            await openPx(p, 'new'); await p.click('[data-cact="p2yes"]'); await p.click('[data-cact="p2undo"]');
+            st = await p.evaluate(() => ({ on: document.querySelectorAll('#om-card .om-pair input[data-cact="chk"]:checked').length, n: document.querySelectorAll('#om-card .om-pair input[data-cact="chk"]').length, yes: !!document.querySelector('#om-card [data-cact="p2yes"]') }));
+            await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(400);
+            ok(st.n === 2 && st.on === 0 && st.yes && S.pairs.length === 0, '[바꾸기] → [안 바꿀래요] = 체크 다 풀림(다시 고를 수 있음) → [저장] = POST pair 0', { st, pairs: S.pairs });
+            S.pxHide = true; await openPx(p, 'new'); S.pxHide = false;   // 카드 그릴 때는 같은 번호 줄 0(② 안 그림) → 저장 직전 목록에 191·192 생김
+            st = await p.evaluate(() => ({ p2: !!document.querySelector('#om-card [data-cact="p2yes"]') }));
+            await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(400);
+            ok(!st.p2 && S.saves.length === 1 && S.pairs.length === 0, '② 체크 목록을 안 그린 번호(저장 전 목록 바뀜) = 「전부」로 안 보냄 · POST pair 0', { st, pairs: S.pairs });
+            await openPx(p, 'new'); await p.click('[data-cact="pxopen"]'); await p.check('#om-card .om-pairx input[data-v="193"]'); await p.click('[data-cact="pxgo"]'); await p.waitForSelector('#om-card .om-pair.ok [data-cact="pxopen"]'); await p.click('#om-card .om-pair.ok [data-cact="pxopen"]');
+            st = await p.evaluate(() => { const x = document.querySelector('#om-card .om-pairx'); return { open: !!x, on: x ? [...x.querySelectorAll('input[data-cact="pxchk"]:checked')].map(i => i.dataset.v) : [] }; });
+            ok(st.open && st.on.join() === '193', '[더 고르기] = 판 다시 열림 · 고른 193 체크 그대로', st);
             // ④ 메모함 입력삭제 줄 [추가 매칭] — 실사례 뒤 상태(입력삭제 줄 195 저장됨 · 같은 번호 현금 191·192 + 번호 다른 193 아직 현금 · 대표가 [바꾸기] 없이 저장)
             S.px2 = true; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 2));
             st = await p.evaluate(() => ({ n: document.querySelectorAll('#om-list .om-ml-px').length, li: document.querySelectorAll('#om-list .om-ml').length, t: (document.querySelector('#om-list .om-ml-px') || {}).textContent }));
@@ -339,6 +359,21 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             st = await p.evaluate(() => ({ undo: !document.getElementById('om-undo').hidden, t: document.getElementById('om-undo-t').textContent, px: !!document.querySelector('#om-card .om-pairx'), btn: !!document.querySelector('#om-card [data-cact="pxopen"]'), card: document.getElementById('om-card').hidden }));
             ok(JSON.stringify(S.pairs[0]) === JSON.stringify({ key: PXL, ids: [203], pick: true }) && st.undo && st.t === '현금 줄 1개를 입력삭제 010-5738-4123 주소 줄로 바꿨어요' && !st.px && st.btn && !st.card, '④ [이 줄도 주소 줄로] = 저장 없이 바로 POST pair {key 5738, ids 203, pick} · 되돌리기 띠 · 판 닫히고 단추 남음', { pairs: S.pairs, st });
             await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100);
+            // #934-b ④ 판에서 체크한 뒤 [고친 대로 저장] = PUT 1 + POST pair(체크 줄) · 체크 0 = PUT 만(대표 12:48 실사례)
+            S.pairs = []; S.puts = []; await p.locator('#om-list .om-ml', { hasText: PXK }).locator('.om-ml-px').click(); await p.waitForSelector('#om-card:not([hidden]) .om-pairx');
+            await until(() => p.evaluate(() => !/번호 확인 중/.test(document.getElementById('om-card-save').textContent))); st = await p.evaluate(() => document.getElementById('om-card-save').textContent.replace(/\s+/g, ' ').trim());
+            ok(st === '고친 대로 저장 + 2줄 짝짓기', '#934-b ④ 같은 번호 2줄 미리 체크 = 저장 단추 「고친 대로 저장 + 2줄 짝짓기」', st);
+            await p.click('#om-card-save'); await until(() => S.pairs.length && S.puts.length); await p.waitForTimeout(250);
+            st = await p.evaluate(() => ({ card: document.getElementById('om-card').hidden, undo: !document.getElementById('om-undo').hidden, t: document.getElementById('om-undo-t').textContent }));
+            ok(S.puts.length === 1 && S.pairs.length === 1 && JSON.stringify(S.pairs[0]) === JSON.stringify({ key: PXK, ids: [191, 192], pick: true }) && st.card && st.undo && st.t === '현금 줄 2개를 입력삭제 010-3292-0535 주소 줄로 바꿨어요', '#934-b [고친 대로 저장] = PUT 1 → POST pair {key 3292, ids 191·192, pick} · 카드 닫힘 · 되돌리기 띠', { puts: S.puts.length, pairs: S.pairs, st });
+            S.pairs = []; S.puts = []; await p.locator('#om-list .om-ml', { hasText: PXK }).locator('.om-ml-px').click(); await p.waitForSelector('#om-card:not([hidden]) .om-pairx'); await p.click('[data-cact="pxclose"]'); await p.waitForTimeout(100);
+            await until(() => p.evaluate(() => !/번호 확인 중/.test(document.getElementById('om-card-save').textContent))); const lab2 = await p.evaluate(() => document.getElementById('om-card-save').textContent.replace(/\s+/g, ' ').trim());
+            await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForTimeout(250);
+            ok(lab2 === '고친 대로 저장' && S.puts.length === 1 && S.pairs.length === 0, '④ 미리 체크 2 → 판 [닫기] → 단추 「고친 대로 저장」 · PUT 만 · POST pair 0', { lab2, puts: S.puts.length, pairs: S.pairs });
+            S.pairs = []; S.puts = []; await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px').click(); await p.waitForSelector('#om-card:not([hidden]) .om-pairx');
+            await until(() => p.evaluate(() => !/번호 확인 중/.test(document.getElementById('om-card-save').textContent))); st = await p.evaluate(() => document.getElementById('om-card-save').textContent.replace(/\s+/g, ' ').trim());
+            await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForTimeout(250);
+            ok(st === '고친 대로 저장' && S.puts.length === 1 && S.pairs.length === 0, '#934-b 체크 0 = 단추 「고친 대로 저장」 · PUT 만 · POST pair 0(종전)', { st, puts: S.puts.length, pairs: S.pairs });
             // ⑤ 현금 줄 고치기 카드 → [입력삭제 주문에 붙이기]
             S.pairs = []; await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
             st = await p.evaluate(() => { const b = document.querySelector('#om-card [data-cact="pyopen"]'); return { has: !!b, t: b && b.textContent.trim(), b: b && b.closest('.om-pair').querySelector('b').textContent }; });
@@ -355,7 +390,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             // 2) 고친 글이 있으면 [이 주문에 붙이기] 안 보냄
             S.pairs = []; await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) [data-cact="pyopen"]'); await p.fill('#om-f-0-c9', '문 앞'); await p.click('[data-cact="pyopen"]'); await p.check('#om-card .om-pairy input[data-cact="pypick"][data-k="' + PXL.replace(/\D/g, '') + '"]'); await p.click('[data-cact="pygo"]'); await p.waitForTimeout(300);
             st = await p.evaluate(() => ({ toast: (window.__toasts || []).slice(-1)[0], card: document.getElementById('om-card').hidden, go: (document.querySelector('#om-card [data-cact="pygo"]') || {}).disabled }));
-            ok(S.pairs.length === 0 && /먼저 저장/.test(st.toast || '') && !st.card && st.go === false, '⑤ 카드 칸을 고친 뒤 [이 주문에 붙이기] = 「먼저 저장」 토스트 · POST 0 · 카드 그대로', { pairs: S.pairs, st });
+            ok(S.pairs.length === 0 && /같이 붙여요/.test(st.toast || '') && !st.card && st.go === false, '⑤ 카드 칸을 고친 뒤 [이 주문에 붙이기] = 「[고친 대로 저장]을 누르면 같이 붙여요」 토스트 · POST 0 · 카드 그대로', { pairs: S.pairs, st });
             await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100); if (await p.evaluate(() => !document.getElementById('om-card').hidden)) { await p.click('#om-card [data-cact="discard"]'); await p.waitForTimeout(100); }
             // 1) 서버 pairCash pick 길(순수 · order-memo.js 그대로 · DB 0)
             { const OMS = require(path.join(ROOT, 'order-memo.js')), ctx = { today: '2026-11-01', catalog: new Set(CAT), origin: '제주시 연삼로 1066-31' }, LINE = { line_key: PXK, ship_date: null };
