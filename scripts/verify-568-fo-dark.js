@@ -46,6 +46,7 @@ async function newCtx(br, fx, o) {
     await ctx.route('**/api/agent-office/cafe24/invoice-orders*', reply({ ok: true, count: fx.cafe24.length, rows: fx.cafe24 }));
     await ctx.route('**/api/agent-office/coupang/invoice-orders*', reply({ ok: true, count: fx.coupang.length, rows: fx.coupang }));
     await ctx.route('**/api/agent-office/coupang/canceled-since*', reply({ ok: true, canceled: fx.canceledCoupang }));
+    await ctx.route('**/api/agent-office/final-order/marks', r => r.fulfill({ json: { ok: true } }));   // #939 실DB 표식 덮기 막기
     await ctx.route('**/api/agent-office/final-order/log', reply({ ok: true, id: 7001 }));
     await ctx.route('**/api/agent-office/juso*', reply({ results: { common: { errorCode: '0', errorMessage: '정상', totalCount: '0' }, juso: [] } }));
     // AI 읽기(자동)는 「못 올림」 · 대화는 가짜 창구가 글만 돌려준다(고치는 일 없음)

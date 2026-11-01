@@ -31,7 +31,7 @@ function pxList() {
         { id: 129, created_at: today, source: 'manual', rows: (S.pxHide ? [] : [cash(191, '강명희 드림!', PXK, '이하정', CAT[1], 1, '010-2111-9887', '010-2111-9887', '충남 천안시 동남구 일봉로 7'), cash(192, '강명희 드림!', PXK, '이승비', CAT[1], 1, '010-2027-9787', '010-2027-9787', '충남 아산시 배방읍 동천로 2'), cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')]).concat(S.pxHide ? [cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')] : []) },
         { id: 140, created_at: today, source: 'manual', rows: [cash(201, '홍길동 드림', PXL, '주소줄손님', CAT[0], 1, '010-3300-0001', PXL, '서울 송파구 올림픽로 1', { indiv: true }), cash(202, '서비스!', '', '서비스손님', CAT[0], 1, '010-3300-0002', '010-3300-0002', '서울 마포구 월드컵로 2', { service: true }), cash(203, '박민수 드림!', '010-8800-1234', '최수아', CAT[0], 2, '010-8800-1234', '010-8800-1234', '서울 강남구 테헤란로 1')] },
         { id: 128, created_at: yest, source: 'manual', raw: PXL + ' 입력o삭제x 네이버', rows: [Object.assign({ id: 190, kind: 'line', state: 'open', sure: true, check_why: [], key: PXL, note: '입력o삭제x', plat: '네이버', line: ['', PXL, '입력o삭제x', '네이버'].join('\t') }, S.badges[190] ? { badge: S.badges[190] } : {})] },
-    ].concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []);
+    ].concat(S.lines938 ? [{ id: 141, created_at: today, source: 'manual', raw: '', rows: [Object.assign({ badge: S.badges[310] || undefined }, { id: 310, kind: 'line', state: 'open', sure: true, check_why: [], key: '9000000001', note: '입력o삭제x', plat: '네이버', line: ['', '9000000001', '입력o삭제x', '네이버'].join('\t'), checked: { plat: '네이버', as: 'order', at: '2026-11-01T03:00:00.000Z', buyer: PXL } }), { id: 311, kind: 'line', state: 'open', sure: true, check_why: [], key: '9000000002', note: '입력o삭제x', plat: S.linesPlat311 || '네이버', line: ['', '9000000002', '입력o삭제x', S.linesPlat311 || '네이버'].join('\t'), checked: { plat: '네이버', as: 'order', at: '2026-11-01T03:00:00.000Z', buyer: PXL } }] }] : []).concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []);
     if (S.px3) ents[0].rows = ents[0].rows.map(r => r.id === 193 ? cash(193, '이형주 드림', PXO, '김보은', CAT[1], 1, '010-4787-4217', PXK, '충남 보령시 동대동 8', Object.assign({ indiv: true }, S.px3Later ? { ship_date: '2026-12-31' } : {})) : r);   // #935 193 = 「풀림」(「!」 없음 · K 3292 · 그 번호 입력삭제 줄 없음 = 11/1 12:26 실사례 꼴)
     ents.forEach(e => { e.rows = e.rows.filter(r => !S.deleted.has(r.id)); });   // #935 가짜 DELETE 반영
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries: ents };
@@ -47,7 +47,7 @@ function listBody(n, ent) {
     }
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries };
 }
-const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, badges: {}, services: [], preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
+const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, badges: {}, services: [], lookup: null, lines938: false, linesPlat311: null, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
@@ -69,6 +69,7 @@ function serve(port) {
         if (u.pathname === '/api/invoice/catalog') return send(200, { byPartner: { a: CAT } });
         if (u.pathname === '/api/agent-office/juso') { S.juso++; const kw = u.searchParams.get('keyword') || ''; const one = n => ({ roadAddrPart1: '제주특별자치도 제주시 연동로 ' + n, zipNo: '63' + String(n).padStart(3, '0'), bdNm: '' }); return send(200, { results: { common: { errorCode: '0' }, juso: /다중/.test(kw) ? [one(kw.length), one(kw.length + 500)] : [one(kw.length)] } }); }
         if (u.pathname === '/api/order-memo/preview' && req.method === 'POST') return send(200, S.preview || { ok: true, rows: [] });   // #934 붙여 넣은 글 정리 = 가짜 답
+        if (u.pathname === '/api/order-memo/lookup' && req.method === 'GET' && S.lookup) { const k = String(u.searchParams.get('key') || '').replace(/\D/g, ''); const m = S.lookup[k]; return send(200, { ok: true, src: 'memo', days: 7, matches: m ? JSON.parse(JSON.stringify(m)) : [] }); }   // #938 주문 찾기(가짜)
         if (u.pathname === '/api/order-memo/service' && req.method === 'POST') { let b = ''; req.on('data', d => b += d); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (e) { } S.services.push(j); send(200, { ok: true, n: (j.ids || []).length, rows: [], skipped: [] }); }); return; }   // #936 서비스 켜고 끄기(가짜)
         if (u.pathname === '/api/order-memo/pair' && req.method === 'POST') { let b = ''; req.on('data', d => b += d); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (e) { } S.pairs.push(j); const ids = Array.isArray(j.ids) ? j.ids : []; send(200, j.undo === true ? { ok: true, n: (j.rows || []).length } : { ok: true, n: ids.length, skipped: 0, rows: [], undo: ids.map(id => ({ id, entry_id: 1, cells: ['x!'], ship_date: null })) }); }); return; }
         if (u.pathname === '/api/order-memo' && req.method === 'POST') { let b = ''; req.on('data', d => b += d); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (e) { } S.saves.push(j); send(200, { ok: true, rows: (j.rows || []).map((r, i) => Object.assign({}, r, { id: 900 + i, state: 'open', sure: true, check_why: [] })) }); }); return; }
@@ -591,6 +592,84 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
                 ok(OMS.indivBadge(Object.assign({}, LINE, { used_on: '2026-11-01' }), cases[0][1], cases[0][2], BASE, { catalog: cat }).state === 'sent' && OMS.indivBadge(Object.assign({}, LINE, { plat: '자사몰' }), [cells('가', '개인결제 1건', 1)], [order(1, '개인결제 1건', { channel: 'cafe24' })], BASE, { catalog: cat }).state === 'personal' && OMS.indivBadge(Object.assign({}, LINE, { plat: '쿠팡' }), cases[0][1], cases[0][2], BASE, { catalog: cat }).state === 'unknown', '배지 state = 발송됨(used_on) · 자사몰 수량 1 단가표 밖 = 개인결제창 · 줄 판매처(쿠팡)와 다른 채널 주문은 셈 밖(unknown)', null);
             }
             S.px = false; }
+        // ── ⑧ #938 같은 구매자 주문 2건 = 주문별 발송일(나눠 저장·합치기·배지) ──
+        console.log('⑧ #938 주문별 발송일 = 주문번호 줄 나눠 저장 · 합치기 · 배지');
+        { S.px = true; S.px2 = false; S.px3 = false; S.deleted = new Set(); S.badges = {}; S.lines938 = false;
+            const OA = '2026110146930531', OB = '2026110146930532', OPTA = '고당도 타이벡감귤 / 상품 및 과수: 선물용 - 3kg(로얄과 2S~M)', OPTB = '고당도 타이벡감귤 / 상품 및 과수: 가정용 - 5kg(로얄과 2S~M)';
+            const mk = (no, qty, opt, more) => Object.assign({ plat: '네이버', as: 'buyer', buyer_name: '강명희', recv_name: '이하정', recv_initial: '이', addr: '충남 천안시', option: opt, qty, order_no: no, pno: no, paid_at: '2026-11-01 11:35', buyer_phone: null }, more || {});
+            S.lookup = { [PXK.replace(/\D/g, '')]: [mk(OA, 4, OPTA), mk(OB, 8, OPTB)], [PXL.replace(/\D/g, '')]: [mk('9000000001', 4, OPTA), mk('9000000002', 8, OPTB)], 9000000001: [mk('9000000001', 4, OPTA, { as: 'order' })], 9000000002: [mk('9000000002', 8, OPTB, { as: 'order' })] };
+            S.preview = { ok: true, rows: [{ kind: 'line', key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t'), sure: true, check_why: [] }] };
+            const openPx = async (p, v) => { await openMemo(p, v, 4, 1); S.pairs = []; S.saves = []; S.puts = []; await p.evaluate(t => window.AkmOrderMemo.fromText(t), PXK + ' 입력o삭제x 네이버'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150); };
+            const panel = () => p.evaluate(() => { const b = document.querySelector('#om-ord-0 .om-ordbox'); return { has: !!b, items: b ? [...b.querySelectorAll('.om-ordl li')].map(li => ({ o: li.querySelector('input[data-cact="ordchk"]').dataset.o, on: li.querySelector('input[data-cact="ordchk"]').checked, d: li.querySelector('input[data-cact="orddate"]').value, dis: li.querySelector('input[data-cact="orddate"]').disabled })) : [], note: b ? b.querySelector('.om-ordn').textContent : '' }; });
+            const c = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const p = await c.newPage(); const pe = []; p.on('pageerror', e => pe.push(String(e)));
+            // 1 판 = 주문 2건 · 전부 체크 · 날짜 빈 칸 · 안내
+            await openPx(p, 'new'); await until(() => p.evaluate(() => !!document.querySelector('#om-ord-0 .om-ordbox')));
+            let st = await panel();
+            ok(st.has && st.items.length === 2 && st.items.every(x => x.on && x.d === '' && !x.dis) && st.items[0].o === OA && /주문별 발송일이 다르면 주문번호 줄로 나뉘어 저장돼요/.test(st.note) && /전화번호 줄 하나로 저장돼요/.test(st.note), '전화번호 줄 + 주문 2건(A 4박스·B 8박스) = 「이 주문」 체크 2(기본 전부) + 발송일 칸 + 안내 「…주문번호 줄로 나뉘어 저장돼요」', st);
+            // 2 B 만 11/4 → 저장 = 주문번호 줄 2(A 날짜 없음 · B 11/4 · note·plat 그대로 · checked.buyer = 전화번호 · 전화번호 줄 0)
+            await p.fill(`#om-ord-0 input[data-cact="orddate"][data-o="${OB}"]`, '11/4'); await p.keyboard.press('Tab'); await p.waitForTimeout(100);
+            st = await panel();
+            ok(st.items[1].d === '11/4' && /주문번호 줄 2개로 나뉘어 저장돼요/.test(st.note) && /11\/4 주문\(8박스\)의 주소 줄 8개에는 발송일 칸에 11\/4를 직접 넣어 주세요/.test(st.note), 'B 발송일 11/4 = 안내 「주문번호 줄 2개로 나뉘어… · 11/4 주문(8박스)의 주소 줄 8개에는 발송일 칸에 11/4를 직접 넣어 주세요」', st);
+            await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(250);
+            let rows = S.saves[0] && S.saves[0].rows;
+            ok(rows && rows.length === 2 && rows[0].kind === 'line' && rows[0].key === OA && rows[0].ship_date === null && rows[1].key === OB && rows[1].ship_date === '2026-11-04' && rows.every(r => r.note === '입력o삭제x' && r.plat === '네이버' && r.checked && r.checked.buyer === PXK && r.checked.as === 'order') && rows[1].line === ['11/4', OB, '입력o삭제x', '네이버'].join('\t') && !rows.some(r => r.key === PXK), '저장 = 주문번호 줄 2개(A 날짜 없음 · B 2026-11-04 · note·plat 그대로 · checked.buyer = 010-3292-0535 · line 「11/4⇥주문번호⇥입력o삭제x⇥네이버」) · 전화번호 줄 0', rows);
+            // 3 전부 같음 = 전화번호 줄 1(옛 js 저장 본문과 바이트 동일)
+            let oldBody; { const c0 = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const p0 = await c0.newPage(); await openMemo(p0, 'mix', 4, 1); S.saves = []; await p0.evaluate(t => window.AkmOrderMemo.fromText(t), PXK + ' 입력o삭제x 네이버'); await p0.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p0.waitForTimeout(400); await p0.click('#om-card-save'); await until(() => S.saves.length); oldBody = JSON.stringify(S.saves[0]); await c0.close(); }
+            await openPx(p, 'new'); await until(() => p.evaluate(() => !!document.querySelector('#om-ord-0 .om-ordbox'))); await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(250);
+            const noAt = s => s.replace(/"at":"[^"]*"/g, '"at":"T"'); ok(S.saves[0].rows.length === 1 && S.saves[0].rows[0].key === PXK && noAt(JSON.stringify(S.saves[0])) === noAt(oldBody), '주문별 발송일이 전부 같으면 = 전화번호 줄 1개 · 저장 본문 종전(HEAD) js 와 바이트 동일', { now: JSON.stringify(S.saves[0]).slice(0, 200), old: oldBody.slice(0, 200) });
+            // 4 일부만 체크(A 끔) = B 주문번호 줄 1
+            await openPx(p, 'new'); await until(() => p.evaluate(() => !!document.querySelector('#om-ord-0 .om-ordbox'))); await p.uncheck(`#om-ord-0 input[data-cact="ordchk"][data-o="${OA}"]`); st = await panel();
+            ok(st.items[0].on === false && st.items[0].dis === true && /주문번호 줄 1개로 나뉘어/.test(st.note), 'A 체크 끔 = A 발송일 칸 잠김 · 안내 「주문번호 줄 1개로…」', st);
+            await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(250); rows = S.saves[0].rows;
+            ok(rows.length === 1 && rows[0].key === OB && rows[0].ship_date === null && rows[0].checked.buyer === PXK, '일부 체크(B 만) 저장 = B 주문번호 줄 1(날짜 없음 = 줄 발송일) · 전화번호 줄 0', rows);
+            // 5 고치기 카드(저장된 전화번호 줄 190 · 주문 2건) = 같은 판 · 나누면 PUT(첫 주문) + POST(나머지)
+            await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1)); S.puts = []; S.saves = [];
+            await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-t').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await until(() => p.evaluate(() => !!document.querySelector('#om-ord-0 .om-ordbox')));
+            await p.fill('#om-ord-0 input[data-cact="orddate"][data-o="9000000002"]', '11/4'); await p.keyboard.press('Tab'); await p.waitForTimeout(100);
+            await until(() => p.evaluate(() => !/번호 확인 중/.test(document.getElementById('om-card-save').textContent))); await p.click('#om-card-save'); await until(() => S.puts.length && S.saves.length); await p.waitForTimeout(250);
+            ok(S.puts.length === 1 && S.puts[0].key === '9000000001' && S.puts[0].ship_date === null && S.puts[0].checked && S.puts[0].checked.buyer === PXL && S.saves.length === 1 && S.saves[0].rows.length === 1 && S.saves[0].rows[0].key === '9000000002' && S.saves[0].rows[0].ship_date === '2026-11-04' && S.saves[0].rows[0].checked.buyer === PXL, '고치기 카드(전화번호 줄)에서 B 11/4 = 이 줄 PUT(키 → 주문 A · checked.buyer 전화번호) + 나머지 주문 B 새 줄 POST(11/4)', { puts: S.puts, saves: S.saves });
+            // 6 저장된 주문번호 줄 2개(같은 구매자 · 날짜 같음) = 짝 번호는 구매자 · 고치기 카드 [전화번호 줄 하나로 합치기] = PUT 키 → 전화번호 + 형제 줄 DELETE · 목록 배지·추가 매칭 = 구매자 번호로
+            S.lines938 = true; S.badges = { 310: { m: 4, n: 4, unsure: 0, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'ok' } }; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 3));
+            st = await p.evaluate(() => { const li = [...document.querySelectorAll('#om-list .om-ml')].find(x => /9000000001/.test(x.textContent)); return { badge: li && li.querySelector('.om-badge') && li.querySelector('.om-badge').textContent, isBtn: !!(li && li.querySelector('button.om-badge')), aria: li && li.querySelector('.om-badge') && li.querySelector('.om-badge').getAttribute('aria-label') }; });
+            ok(st.badge === '4/4 매칭완료' && st.isBtn && /010-5738-4123 입력삭제 매칭/.test(st.aria || ''), '주문번호 줄(checked.buyer 있음) = 배지 단추 「4/4 매칭완료」 · 짝 번호 = 구매자 010-5738-4123', st);
+            S.puts = []; S.deleted = new Set(); await p.locator('#om-list .om-ml', { hasText: '9000000001' }).locator('.om-ml-t').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+            st = await p.evaluate(() => { const b = document.querySelector('#om-ord-0 .om-ordbox'); return { t: b && b.querySelector('b').textContent, go: b && b.querySelector('[data-cact="ordmerge"]') && b.querySelector('[data-cact="ordmerge"]').disabled }; });
+            ok(/주문번호 줄 · 구매자 010-5738-4123 · 같은 구매자 주문번호 줄 1개 더\(다음 발주 9000000002\)/.test(st.t || '') && st.go === false, '주문번호 줄 고치기 카드 = 「구매자 … · 같은 구매자 주문번호 줄 1개 더(다음 발주 9000000002)」 · [전화번호 줄 하나로 합치기] 풀림(날짜 같음)', st);
+            await p.click('[data-cact="ordmerge"]'); await until(() => S.puts.length && S.deleted.size); await p.waitForTimeout(250);
+            ok(S.puts[0].key === PXL && S.puts[0].note === '입력o삭제x' && S.puts[0].checked && S.puts[0].checked.as === 'buyer' && !S.puts[0].checked.buyer && S.deleted.has(311) && (await p.evaluate(() => document.getElementById('om-card').hidden)), '[합치기] = 이 줄 PUT 키 → 010-5738-4123(checked buyer 없음) · 형제 주문번호 줄 311 DELETE · 카드 닫힘', { puts: S.puts, del: [...S.deleted] });
+            // ③ 형제 줄 판매처가 다르면(쿠팡) 합치기 대상 아님 · ④ 주문번호 줄 키를 전화번호로 고쳐 저장 = checked.buyer 지움
+            S.lines938 = true; S.linesPlat311 = '쿠팡'; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 3));
+            await p.locator('#om-list .om-ml', { hasText: '9000000001' }).locator('.om-ml-t').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+            st = await p.evaluate(() => { const b = document.querySelector('#om-ord-0 .om-ordbox'); return { t: b && b.querySelector('b').textContent, go: b && b.querySelector('[data-cact="ordmerge"]').disabled }; });
+            ok(st.t === '주문번호 줄 · 구매자 010-5738-4123' && st.go === false, '③ 판매처 다른(쿠팡) 주문번호 줄은 형제로 안 셈 = 「같은 구매자 주문번호 줄 … 더」 없음(합치기 = 이 줄만)', st);
+            S.puts = []; await p.fill('#om-f-0-key', PXL); await p.keyboard.press('Tab'); await until(() => p.evaluate(() => !/번호 확인 중/.test(document.getElementById('om-card-save').textContent))); await p.waitForTimeout(800); await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForTimeout(200);
+            ok(S.puts[0].key === PXL && S.puts[0].checked && !S.puts[0].checked.buyer, '④ 주문번호 줄 키를 전화번호로 고쳐 저장 = PUT checked 에 옛 buyer 없음', S.puts[0]);
+            S.linesPlat311 = null; S.lines938 = false;
+            // 7 옛 서버(lookup 404) = 판 없음 · 종전 저장 1줄
+            S.lookup = null; S.lines938 = false; await openPx(p, 'new'); await p.waitForTimeout(300);
+            st = await panel(); await p.click('#om-card-save'); await until(() => S.saves.length);
+            ok(!st.has && S.saves[0].rows.length === 1 && S.saves[0].rows[0].key === PXK, '옛 서버(주문 찾기 404) = 판 없음 · 종전대로 전화번호 줄 1 저장', st);
+            ok(pe.length === 0, '#938 1280 스크립트 오류 0', pe);
+            await c.close();
+            // 8 폰 390 = 판 넘침 0 · 44px
+            S.lookup = { [PXK.replace(/\D/g, '')]: [mk(OA, 4, OPTA), mk(OB, 8, OPTB)] };
+            { const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 }); const p2 = await c2.newPage(); const pe2 = []; p2.on('pageerror', e => pe2.push(String(e)));
+                await openMemo(p2, 'new', 4, 1); S.saves = []; await p2.evaluate(t => window.AkmOrderMemo.fromText(t), PXK + ' 입력o삭제x 네이버'); await p2.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await until(() => p2.evaluate(() => !!document.querySelector('#om-ord-0 .om-ordbox')));
+                const m = await p2.evaluate(() => { const card = document.getElementById('om-card'), cr = card.getBoundingClientRect(), b = document.querySelector('#om-ord-0 .om-ordbox'); return { sw: document.documentElement.scrollWidth, over: [...b.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > cr.right + 0.5).length, hs: [...b.querySelectorAll('input')].map(i => Math.round(i.closest('label').getBoundingClientRect().height)) }; });
+                ok(m.sw <= 390 && m.over === 0 && m.hs.every(h => h >= 44), '390폭 주문별 발송일 판 = 넘침 0 · 체크·날짜 칸 44px↑', m);
+                ok(pe2.length === 0, '390폭 #938 스크립트 오류 0', pe2); await c2.close(); }
+            // 9 배지 순수 = 주문번호 줄(orderNo) · 같은 구매자 A(날짜 없음 4) · B(11/4 8) · 주소 줄 4 + 8(11/4)
+            { const OMS = require(path.join(ROOT, 'order-memo.js')), K0 = PXK, D0 = K0.replace(/\D/g, ''), cat = new Set(CAT);
+                const cells = (nm, opt, qty, more) => Object.assign({ kind: 'cash', state: 'open', sure: true, service: false, ship_date: null, cells: ['강명희 드림', K0, '제주시', nm, opt, String(qty), '010-2111-9887', '', '충남 ' + nm, '', K0, '', ''] }, more || {});
+                const rows = Array.from({ length: 4 }, (_, i) => cells('a' + i, OPTA, 1)).concat(Array.from({ length: 8 }, (_, i) => cells('b' + i, OPTB, 1, { ship_date: '2026-11-04' })));
+                const od = [{ channel: 'naver', buyer_digits: D0, product_order_no: OA, okey: OA, option_text: OPTA, qty: 4 }, { channel: 'naver', buyer_digits: D0, product_order_no: OB, okey: OB, option_text: OPTB, qty: 8 }];
+                const A = OMS.indivBadge({ line_key: OA, plat: '네이버', ship_date: null, checked: { buyer: K0 } }, rows, od.filter(o => o.product_order_no === OA), '2026-11-03', { catalog: cat, orderNo: OA, buyer: D0 });
+                const B = OMS.indivBadge({ line_key: OB, plat: '네이버', ship_date: '2026-11-04', checked: { buyer: K0 } }, rows, od.filter(o => o.product_order_no === OB), '2026-11-03', { catalog: cat, orderNo: OB, buyer: D0 });
+                const B2 = OMS.indivBadge({ line_key: OB, plat: '네이버', ship_date: '2026-11-04', checked: { buyer: K0 } }, rows.slice(0, 10), od.filter(o => o.product_order_no === OB), '2026-11-03', { catalog: cat, orderNo: OB, buyer: D0 });
+                ok(A.state === 'ok' && A.m === 4 && A.n === 4 && A.later === 0 && B.state === 'ok' && B.m === 8 && B.n === 8 && B2.state === 'short' && B2.n === 6, '배지 주문번호 줄 = A(날짜 없음) 4/4 · B(11/4) 8/8 — 날짜로 나눠 셈(뒤 날짜 later 아님) · B 주소 줄 6 = 6/8 모자람', { A, B, B2 });
+                const P = OMS.indivBadge({ line_key: K0, plat: '네이버', ship_date: null }, rows, od, '2026-11-03', { catalog: cat });
+                ok(P.state === 'split' && P.m === 12 && P.n === 4 && P.later === 8, '같은 자료를 전화번호 줄로 보면 = 4/12 오늘 · 8박스 11/4 대기(split · 종전 규칙 그대로)', P); }
+            S.lookup = null; S.lines938 = false; S.badges = {}; S.px = false; S.preview = null; }
     } catch (e) { failN++; console.log('  ❌ 실행 오류', e && e.stack || e); }
     await browser.close(); srv.close();
     console.log(`\n결과 ${pass}/${pass + failN}${failN ? ' · 실패 ' + failN : ''}`);

@@ -129,6 +129,32 @@ function mkPool(db) {
         ok(JSON.stringify((await forShip()).cash_aoa) === JSON.stringify(fsBefore.cash_aoa), '되돌리기 뒤 현금파일 = 짝 전과 바이트 동일');
         const un2 = await call('POST', '/api/order-memo/pair', { undo: true, rows: pr.j.undo });
         ok(un2.s === 200 && un2.j.n === 0, '되돌리기 두 번 = 0(이미 현금 줄)');
+        {   // #938 주문번호 줄(checked.buyer) 둘 + 현금 「!」 줄 2 → /pair { key: 구매자 번호 } = 줄 찾음 · K = 구매자 번호 · 날짜 안 넘김(B 11/… 가 A 주소 줄에 번지지 않게)
+            const BUY9 = '010-2600-9999', chk = { plat: '네이버', as: 'order', at: new Date().toISOString(), buyer: BUY9 };   // 앞 시험의 전화번호 줄(BUY)이 열려 있어 다른 구매자 번호로
+            const o1 = await call('POST', '/api/order-memo', { raw: '주문번호 줄 둘', rows: [{ kind: 'line', key: '9000000011', note: '입력o삭제x', plat: '네이버', line: '\t9000000011\t입력o삭제x\t네이버', checked: chk }, { kind: 'line', key: '9000000012', note: '입력o삭제x', plat: '네이버', line: SHIP.slice(5).replace('-', '/') + '\t9000000012\t입력o삭제x\t네이버', ship_date: SHIP, checked: chk }] });
+            const c2 = await call('POST', '/api/order-memo', { raw: '현금 2', rows: [{ kind: 'cash', cells: cashCells(RECV[0]).map((v, k) => k === 10 ? BUY9 : v), src: 'edit' }, { kind: 'cash', cells: cashCells(RECV[1]).map((v, k) => k === 10 ? BUY9 : v), src: 'edit' }] });
+            ok(o1.s === 200 && o1.j.rows.length === 2 && o1.j.rows.every(r => r.checked && r.checked.buyer === BUY9) && c2.s === 200 && c2.j.rows.every(r => r.indiv === false), '#938 주문번호 줄 2(checked.buyer 보존) + 현금 「!」 2 저장', { o1: o1.j.rows.map(r => r.checked), c2: c2.j.rows.map(r => r.indiv) });
+            const pr9 = await call('POST', '/api/order-memo/pair', { key: BUY9, ids: c2.j.rows.map(r => r.id), pick: true });
+            ok(pr9.s === 200 && pr9.j.n === 2 && pr9.j.rows.every(r => r.indiv && r.cells[10] === BUY9 && r.ship_date === null && r.entry_id === o1.j.rows[0].entry_id), '#938 /pair 구매자 번호 = 주문번호 줄 묶음으로 · K = 구매자 전화번호(주문번호 아님) · 같은 구매자 줄 둘이라 날짜 안 넘김(null)', pr9.j);
+            for (const r of o1.j.rows.concat(pr9.j.rows)) await call('DELETE', '/api/order-memo/rows/' + r.id);
+            // 워커2 점검 ① = 전화번호 입력삭제 줄 + 같은 묶음 주소 줄 → 줄을 주문번호 키로 PUT(checked.buyer = 옛 번호) = 주소 줄 K 그대로(rekeyed 0)
+            const BUY8 = '010-2600-8888', e8 = await call('POST', '/api/order-memo', { raw: '나누기 전', rows: [{ kind: 'line', key: BUY8, note: '입력o삭제x', plat: '네이버', line: '\t' + BUY8 + '\t입력o삭제x\t네이버' }, { kind: 'cash', cells: cashCells(RECV[2]).map((v, k) => k === 10 ? BUY8 : v), src: 'edit' }] });
+            const l8 = e8.j.rows.find(r => r.kind === 'line'), a8 = e8.j.rows.find(r => r.kind === 'cash');
+            const pu8 = await call('PUT', '/api/order-memo/rows/' + l8.id, { key: '9000000021', note: '입력o삭제x', plat: '네이버', ship_date: null, checked: { plat: '네이버', as: 'order', at: new Date().toISOString(), buyer: BUY8 } });
+            const a8b = (await allRows()).find(r => r.id === a8.id);
+            ok(e8.s === 200 && a8.indiv === true && pu8.s === 200 && pu8.j.rekeyed === 0 && pu8.j.row.key === '9000000021' && pu8.j.row.checked && pu8.j.row.checked.buyer === BUY8 && a8b.cells[10] === BUY8 && !/!/.test(a8b.cells[0]), '#938 ① 전화번호 줄 → 주문번호 키 PUT(checked.buyer = 옛 번호) = 주소 줄 K 전화번호 그대로(rekeyed 0 · 주문번호 안 들어감)', { pu8: pu8.j, k: a8b.cells[10] });
+            // 워커2 점검 ② = 구매자 번호 없는 주문번호 줄 + /pair { key: 주문번호 } = 409(K 에 주문번호 안 들어감)
+            const e9 = await call('POST', '/api/order-memo', { raw: '옛 주문번호 줄', rows: [{ kind: 'line', key: '9000000032', note: '입력o삭제x', plat: '네이버', line: '\t9000000032\t입력o삭제x\t네이버' }, { kind: 'cash', cells: OTHER_CASH.slice(), src: 'edit' }] });
+            const c9 = e9.j.rows.find(r => r.kind === 'cash'), bad9 = await call('POST', '/api/order-memo/pair', { key: '9000000032', ids: [c9.id], pick: true });
+            const c9b = (await allRows()).find(r => r.id === c9.id);
+            ok(bad9.s === 409 && /구매자 번호가 없어요/.test(bad9.j.error || '') && JSON.stringify(c9b.cells) === JSON.stringify(c9.cells), '#938 ② 구매자 번호 없는 주문번호 줄에 /pair(key = 주문번호) = 409 · 현금 줄 바이트 동일(K 에 주문번호 X)', bad9.j);
+            // 워커2 점검 ⑤ = 자사몰 주문번호 줄 배지 = order_key 「20261101-0001234|…」 하이픈 꼴도 숫자로 대조 · 품목 2줄 = 합
+            await pool.query("INSERT INTO order_memo_preorders (channel, order_key, product_order_no, buyer_digits, option_text, qty, paid_at, seen_at, miss) VALUES ('cafe24', '20261101-0001234|a', NULL, '01026009999', '" + OPT + "', 1, now(), now(), 0), ('cafe24', '20261101-0001234|b', NULL, '01026009999', '" + OTHER + "', 2, now(), now(), 0)");
+            const e10 = await call('POST', '/api/order-memo', { raw: '자사몰 주문번호 줄', rows: [{ kind: 'line', key: '202611010001234', note: '입력o삭제x', plat: '자사몰', line: '\t202611010001234\t입력o삭제x\t자사몰', checked: { plat: '자사몰', as: 'order', at: new Date().toISOString(), buyer: '010-2600-9999' } }] });
+            const g10 = await call('GET', '/api/order-memo'), l10 = g10.j.entries.flatMap(e => e.rows).find(r => r.id === e10.j.rows[0].id);
+            ok(g10.s === 200 && l10 && l10.badge && l10.badge.m === 3 && l10.badge.n === 0 && l10.badge.state === 'short', '#938 ⑤ 자사몰 주문번호 줄 배지 = order_key 하이픈 꼴 숫자 대조 · 품목 2줄 합 m 3 · 0/3 모자람', l10 && l10.badge);
+            for (const r of e8.j.rows.concat(e9.j.rows, e10.j.rows)) await call('DELETE', '/api/order-memo/rows/' + r.id);
+        }
         // #868 날짜 짝 = 같은 묶음 기준 → 옮긴 뒤엔 입력삭제 줄 날짜를 따라감
         await call('POST', '/api/order-memo/pair', { key: BUY, ids: ids6 });
         const pu = await call('PUT', '/api/order-memo/rows/' + e2.j.rows[0].id, { ship_date: '2026-10-28' });

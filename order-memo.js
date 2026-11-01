@@ -152,10 +152,14 @@ function checkCash(r, today, catalog, origin) {
 // 같은 묶음 안 「입력o삭제x」 메모 줄의 번호(숫자) — extra = 앞서 규칙으로 읽은 줄의 번호(창구 답을 받을 때)
 //   값 = { key, date } · date = 그 입력삭제 줄의 지정 발송일(#850-a · 짝지은 주소 줄이 같은 날 나가게) · extra = 글자(옛 꼴) 또는 { key, date }
 const isIndivLine = r => !!r && r.kind === 'line' && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8;
+// #938 주문번호 줄(주문별 발송일)의 구매자 번호 = checked.buyer(저장 전 _checked) · 전화번호 줄 = key
+const lineBuyer = r => { const c = r && (r._checked || r.checked); const b = c && c.buyer ? String(c.buyer) : ''; return /^0\d{8,11}$/.test(dg(b)) ? b : ''; };
+const lineDigits = r => { const b = lineBuyer(r); return b ? dg(b) : dg(r && (r.key != null ? r.key : r.line_key)); };
 function indivKeysOf(rows, extra) {
-    const m = new Map();
+    const m = new Map(), seenB = new Set();
     (extra || []).forEach(k => { const o = k && typeof k === 'object' ? k : { key: k, date: null }; if (dg(o.key).length >= 8) m.set(dg(o.key), { key: String(o.key), date: isDay(o.date) ? o.date : null }); });
-    (rows || []).forEach(r => { if (isIndivLine(r)) m.set(dg(r.key), { key: String(r.key), date: isDay(r.ship_date) ? r.ship_date : null }); });
+    (rows || []).forEach(r => { if (!isIndivLine(r)) return; m.set(dg(r.key), { key: String(r.key), date: isDay(r.ship_date) ? r.ship_date : null }); const b = lineBuyer(r); if (!b) return; const bd = dg(b);   // #938 주문번호 줄 = 구매자 번호로도 짝(K = 전화번호) · 같은 구매자 주문번호 줄이 둘이면 주소 줄 날짜 자동 배정 없음(사람이 줄마다 넣음 · 워커1 대조 2)
+        if (seenB.has(bd)) { const v = m.get(bd); if (v) v.date = null; } else { seenB.add(bd); if (!m.has(bd)) m.set(bd, { key: b, date: isDay(r.ship_date) ? r.ship_date : null }); } });
     return m;
 }
 // 현금 줄의 구매자 번호(K칸 · 없으면 보내는사람연락처)가 입력삭제 줄 번호와 같으면 = 그 주문의 주소 줄(「!」 안 붙임)
@@ -208,17 +212,19 @@ const BADGE_CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe
 //   워커1 점검(11/1) = ① sent 는 used_on 있고 (줄 날짜 없음 또는 줄 날짜 ≤ used_on) 일 때만(뒤 날짜 줄도 pickForShip ids 에 들어 used_on 이 찍힘) ② n + later == m 이면 split(「오늘 · 대기」 중립) · 모자람 = m − n − later
 //   ③ 자사몰 = item_diff 안 봄 · personal 은 price-check optionKey(최종발주·송장변환과 같은 품목 변환)로 단가표에 못 맞출 때만 ④ n 은 K 만(최종발주 cashCheck 와 같게 · 서비스 수는 K/B) ⑤ 지난 날짜 줄(sd < base)은 n 에서 뺌(pickForShip held 와 같게)
 let _pcB; const pcMatch = (text, cat) => { if (_pcB === undefined) { try { _pcB = require('./price-check.js'); } catch (e) { _pcB = null; } } if (!_pcB || typeof _pcB.optionKey !== 'function' || !String(text || '').trim()) return null; try { const r = _pcB.optionKey([String(text)], cat ? [...cat] : []); return !!(r && r.by === 'match'); } catch (e) { return null; } };
+//   #938 opt.orderNo = 주문번호 줄: od = 그 주문(호출자가 product_order_no/order_key 로 골라 줌 · 채널 거름 없음) · d = opt.buyer(구매자 번호) · 주소 줄 = K==d 이고 발송일이 줄과 같은 것(둘 다 없음 또는 같은 날) · later/held 없음(날짜가 곧 나눔 근거)
 function indivBadge(line, rows, orders, base, opt) {
-    const d = dg(line && line.line_key), ch = BADGE_CH[String((line && line.plat) || '').trim()] || 'naver', cat = opt && opt.catalog instanceof Set ? opt.catalog : null;
-    const od = (orders || []).filter(o => o && (o.channel || 'naver') === ch && (o.buyer_digits == null || dg(o.buyer_digits) === d));
+    const ordNo = opt && opt.orderNo ? String(opt.orderNo) : '', d = ordNo ? dg(opt.buyer) : dg(line && line.line_key), ch = BADGE_CH[String((line && line.plat) || '').trim()] || 'naver', cat = opt && opt.catalog instanceof Set ? opt.catalog : null;
+    const od = ordNo ? (orders || []).filter(Boolean) : (orders || []).filter(o => o && (o.channel || 'naver') === ch && (o.buyer_digits == null || dg(o.buyer_digits) === d));
     const q = v => Math.max(0, parseInt(v, 10) || 0), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
     const sd = r => r && r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null;
     const mine = (rows || []).filter(r => r && r.kind === 'cash' && r.state === 'open' && Array.isArray(r.cells) && [r.cells[10], r.cells[1]].map(dg).includes(d));
     const addr = mine.filter(r => dg(r.cells[10]) === d && !r.service && !/[!！]/.test(String(r.cells[0] || '')));   // #936-b(대표 11/1) 「확인」 줄(sure false)도 박스는 셈 → unsure 칸 + 호박색 「· 확인 필요 k」(for-ship 은 종전대로 확인 줄 제외 = 의도된 차이)
-    const now = addr.filter(r => !sd(r) || !base || sd(r) === base), later = addr.filter(r => sd(r) && base && sd(r) > base);
+    const lsd0 = sd(line);
+    const now = ordNo ? addr.filter(r => (sd(r) || null) === (lsd0 || null)) : addr.filter(r => !sd(r) || !base || sd(r) === base), later = ordNo ? [] : addr.filter(r => sd(r) && base && sd(r) > base);   // #938 주문번호 줄 = 같은 발송일 주소 줄만
     const n = now.reduce((t, r) => t + q(r.cells[5]), 0), laterN = later.reduce((t, r) => t + q(r.cells[5]), 0);
     const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : null, n, unsure: addr.filter(r => r.sure === false).reduce((t, r) => t + q(r.cells[5]), 0), later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
-    const used = line && line.used_on ? String(line.used_on instanceof Date ? line.used_on.toISOString() : line.used_on).slice(0, 10) : null, lsd = sd(line);
+    const used = line && line.used_on ? String(line.used_on instanceof Date ? line.used_on.toISOString() : line.used_on).slice(0, 10) : null, lsd = lsd0;
     if (used && (!lsd || lsd <= used)) b.state = 'sent';
     else if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';
     else if (b.m == null) b.state = 'unknown';
@@ -271,7 +277,7 @@ function cleanChecked(v) {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     if (!['네이버', '쿠팡', '자사몰'].includes(v.plat) || !['buyer', 'recv', 'order'].includes(v.as)) return null;
     const t = Date.parse(String(v.at || '')); const at = Number.isFinite(t) && t > Date.parse('2026-01-01') && t < Date.now() + 86400e3 ? new Date(t).toISOString() : new Date().toISOString();
-    return { plat: v.plat, as: v.as, at };
+    const bd = dg(v.buyer); return Object.assign({ plat: v.plat, as: v.as, at }, /^0\d{8,11}$/.test(bd) ? { buyer: String(v.buyer).trim().slice(0, 20) } : {});   // #938 buyer = 주문번호 줄(주문별 발송일로 나눠 저장)의 구매자 번호 → 주소 줄 짝·배지·추가 매칭은 이 번호로(K 는 늘 전화번호)
 }
 // ── 최종발주용 고르기(순수 · 검증이 그대로 부름) ──
 function pickForShip(rows, date) {
@@ -550,9 +556,12 @@ function mount(app, deps) {
         if (state === 'open') { try {
             const lines = rows.filter(r => r.kind === 'line' && isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key).length >= 8), keys = [...new Set(lines.map(r => dg(r.line_key)))];
             if (keys.length) {
-                let od = []; try { od = (await pool.query('SELECT channel, buyer_digits, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = ANY($1::text[])', [keys])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+                const ords = [...new Set(lines.map(r => dg(r.line_key)).filter(k => !/^0/.test(k) && k.length >= 10))];   // #938 주문번호 줄(0 으로 안 시작 · 10자리↑)
+                let od = []; try { od = (await pool.query("SELECT channel, buyer_digits, product_order_no, split_part(order_key, '|', 1) AS okey, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND (buyer_digits = ANY($1::text[]) OR regexp_replace(COALESCE(product_order_no, ''), '\\D', '', 'g') = ANY($2::text[]) OR regexp_replace(split_part(order_key, '|', 1), '\\D', '', 'g') = ANY($2::text[]))", [keys, ords])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
                 const cat = await catalogSet(today).catch(() => null);
-                lines.forEach(r => badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === dg(r.line_key)), base, { catalog: cat })));
+                lines.forEach(r => { const k = dg(r.line_key), isOrd = ords.includes(k); if (!isOrd) return badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === k), base, { catalog: cat }));
+                    const mine = od.filter(o => dg(o.product_order_no) === k || dg(o.okey) === k), buyer = lineDigits(r) !== k ? lineDigits(r) : (mine[0] ? mine[0].buyer_digits : '');   // #938 자사몰 「20261101-0001234」 꼴도 숫자로 · 한 주문 품목 여러 줄 = 합
+                    badges.set(r.id, indivBadge(r, rows, mine, base, { catalog: cat, orderNo: k, buyer })); });
             }
         } catch (e) { console.error('[발주 메모함] 배지 계산 실패(표시만 빠짐):', e.message); } }
         rows.forEach(r => { const e = by.get(r.entry_id); if (e) { const o = rowOut(r); const bg = badges.get(r.id); if (bg) o.badge = bg; e.rows.push(o); } });
@@ -582,7 +591,7 @@ function mount(app, deps) {
         let paired = 0, rekeyed = 0;
         // #867 입력삭제 줄 번호를 고치기로 바꿈(예: 받는 분 번호 → 구매자 번호) = 같은 묶음(entry) 열린 짝 주소 줄(「!」 없음 · K = 옛 번호)의 K 를 새 번호로
         //   B 는 K 와 같은 옛 번호일 때만(K 를 따라 채운 값) · 사람이 따로 넣은 B(보내는이 변경 번호) = 그대로 · 아래 #850-a 날짜 짝이 새 번호로 찾도록 먼저
-        if (r.kind === 'line' && isIndivLine(r) && INDIV.test(String(cur.note || '') + ' ' + String(cur.line || '')) && dg(cur.line_key).length >= 8 && dg(r.key) !== dg(cur.line_key)) {
+        if (r.kind === 'line' && isIndivLine(r) && INDIV.test(String(cur.note || '') + ' ' + String(cur.line || '')) && dg(cur.line_key).length >= 8 && dg(r.key) !== dg(cur.line_key) && !(checked && checked.buyer && dg(checked.buyer) === dg(cur.line_key))) {   // #938 전화번호 줄 → 주문번호 줄(checked.buyer = 옛 번호) = K 는 전화번호 그대로(워커2 점검 ①)
             const oldK = dg(cur.line_key), newK = String(r.key).trim();
             const sibs = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'cash' AND entry_id = $1`, [cur.entry_id])).rows;
             for (const c0 of sibs) {
@@ -695,7 +704,9 @@ function mount(app, deps) {
         if (d.length < 8) throw err(400, '입력삭제 번호가 없어요');
         const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 60);
         if (!ids.length) throw err(400, '바꿀 줄이 없어요');
-        const line = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'line' ORDER BY id DESC`)).rows.find(r => isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key) === d);
+        const lines = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'line' ORDER BY id DESC`)).rows.filter(r => isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }));
+        let line = lines.find(r => dg(r.line_key) === d) || lines.find(r => lineDigits(r) === d);   // #938 주문번호 줄(주문별 발송일로 나눈 줄) = checked.buyer 가 그 번호면 그 줄 묶음으로
+        if (line && !/^0\d{8,11}$/.test(dg(line.line_key))) { const b = lineBuyer(line); if (!b) throw err(409, '이 주문번호 줄에 구매자 번호가 없어요 — 전화번호 줄로 다시 넣어 주세요'); line = Object.assign({}, line, { line_key: b }); if (lines.filter(x => lineDigits(x) === dg(b)).length > 1) line.ship_date = null; }   // #938 K 는 늘 전화번호(주문번호 키로 불러도 · 워커2 점검 ②)   // #938 pairCash 의 K = 구매자 전화번호(주문번호가 K 에 들어가면 최종발주·자동 송장이 못 찾음) · 같은 구매자 주문번호 줄이 둘↑ = 날짜 안 넘김(가장 최근 줄 날짜가 다른 주문 주소 줄에 번지지 않게 · markIndiv seenB 와 같게 · 워커1 왕복)
         if (!line) throw err(409, '이 번호 입력삭제 줄이 메모함에 없어요 — 입력삭제 줄을 먼저 저장해 주세요');
         const cands = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = ANY($1::int[]) AND state = 'open' AND kind = 'cash' ORDER BY id`, [ids])).rows;
         const out = [], undo = []; let other = 0;   // #934 other = 번호(K·B)가 그 번호와 다른데 사람이 고른 줄(pick · 추가 매칭 · ⑤ 붙이기) 수 → audit 표식만
@@ -750,7 +761,7 @@ function mount(app, deps) {
                     + ' FROM order_memo_preorders WHERE channel = ANY($1::text[]) AND miss = 0 AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
                 matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
                     buyer_name: r.buyer_name || null, recv_name: r.recv_name || null, recv_initial: (String(r.recv_name || '').match(/[가-힣A-Za-z]/) || [''])[0], addr: r.addr || null,
-                    option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], paid_at: r.paid,
+                    option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], pno: r.product_order_no || null, paid_at: r.paid,   // #938 pno = 상품주문번호(쿠팡은 이게 없으면 주문번호 줄로 못 나눔 · order_key 앞 토막 = 상자 번호)
                     buyer_phone: phone && r.buyer_digits && r.buyer_digits !== d ? r.buyer_digits : null }));   // #867 받는 분 번호로 찾았을 때만 = 그 주문의 구매자 번호(입력삭제 줄을 구매자 번호로 바꾸기)
                 cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM order_memo_preorders")).rows[0];
             }

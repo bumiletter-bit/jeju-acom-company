@@ -2079,7 +2079,10 @@
         if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(store), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
         try {   // #894 F2 입력삭제 주문 열쇠(invoice-auto normOrders 와 같은 꼴 · 주문번호뿐 · 손님 정보 0)
             const ik = e => { const r = rawOf(e); return e.ch === 'naver' ? String(r._pid || '') : e.ch === 'coupang' ? String(r._shipmentBoxId || r._orderId || '') + '|' + String(r._vendorItemId || '') : String(r._orderId || '') + '|' + String(r._itemCode || ''); };
-            localStorage.setItem('akm_fo_indiv', JSON.stringify({ date: S().shipDate, at: Date.now(), keys: S().merged.filter(e => e.individual && !e.excluded).map(e => e.ch + ':' + ik(e)).filter(k => !/:\|?$/.test(k)).slice(0, 500) }));
+            const mkKeys = f => S().merged.filter(f).map(e => e.ch + ':' + ik(e)).filter(k => !/:\|?$/.test(k)), mkI = mkKeys(e => e.individual && !e.excluded), mkH = mkKeys(e => e.excluded);
+            localStorage.setItem('akm_fo_indiv', JSON.stringify({ date: S().shipDate, at: Date.now(), keys: mkI.slice(0, 500), hold: mkH.slice(0, 500) }));   // #938 hold = 오늘 안 나감 전부(입력삭제인데 짝 없음 카드에서 「제외」 고른 주문 포함 · 자동 송장에서 안 붙임)
+            // #939 서버에도(자동 송장을 다른 PC 에서 해도 읽게 · 그날 것 통째 교체) · 실패·옛 서버 = 이 브라우저 값으로 종전대로 · 브라우저 저장 뒤(api 없는 화면에서 저장까지 건너뛰지 않게)
+            if (typeof window.api === 'function') window.api('/api/agent-office/final-order/marks', 'POST', { date: S().shipDate, indiv: mkI, hold: mkH }).catch(() => {});
         } catch (e) { /* 저장 못 하면 = 종전대로(서버가 남은 박스 수로 가름) */ }
         st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result';
         renderResult(D().getElementById('msg-coupang').textContent || '');
@@ -3041,7 +3044,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         say('파일을 읽는 중');
         try {
             const files = []; for (const f of ia.files) files.push({ name: f.name, data: await readB64(f) });
-            let indiv = null; try { const v = JSON.parse(localStorage.getItem('akm_fo_indiv') || 'null'); if (v && Array.isArray(v.keys) && Date.now() - Number(v.at || 0) < 3 * 86400e3) indiv = { date: v.date, keys: v.keys }; } catch (e) { indiv = null; }   // #894 F2
+            let indiv = null; try { const v = JSON.parse(localStorage.getItem('akm_fo_indiv') || 'null'); if (v && Array.isArray(v.keys) && Date.now() - Number(v.at || 0) < 3 * 86400e3) indiv = Object.assign({ date: v.date, at: v.at, keys: v.keys }, Array.isArray(v.hold) ? { hold: v.hold } : {}); } catch (e) { indiv = null; }   // #894 F2
             const r = await call('match', Object.assign({ files }, indiv ? { indiv } : {}));
             if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
             ia.res = r; seedSuggest(); say(''); render();
@@ -3061,7 +3064,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const files = (r.files || []).map(f => `${esc(f.partner || '?')} ${Number(f.rows) || 0}줄`).join(' · ');
         const chRow = c => { const b = (r.by_channel || {})[c] || {}; return `<li><b>${CH_LABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
         out.innerHTML = `
-            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 운송장 없는 주문 ${Number(r.orders_without_tracking) || 0}건(지정발송일·아직 안 보낸 주문)</p>
+            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 운송장 없는 주문 ${Number(r.orders_without_tracking) || 0}건(지정발송일·아직 안 보낸 주문)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
             ${fetchErr.length ? `<p class="fo-hint err" role="alert">${fetchErr.map(c => `${CH_LABEL[c]} 주문을 못 불러왔어요(${esc(r.fetch[c].error || '오류')}) — 그 채널 운송장은 「주문 없음」으로 남아요`).join('<br>')}</p>` : ''}
             <div class="fo-sum fo-ia-sum">
                 <span>자동 <b>${s.auto || 0}</b></span><span class="${todo.length ? 'warn' : ''}">할 일 <b>${todo.length}</b></span><span>현금(송장만) <b>${s.cash || 0}</b></span><span>수량2 <b>${qty2}</b></span><span>다른 주소 박스 <b>${s.extra || 0}</b></span><span>주문 없음 <b>${s.unmatched || 0}</b></span>
@@ -3085,6 +3088,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         if (!list.length) return '';
         return `<details class="fo-ia-list"><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
     }
+    const marksWho = m => { const t = Date.parse(String(m.updated_at || '')), d = Number.isFinite(t) ? new Date(t + 9 * 3600e3).toISOString() : ''; return [d ? `${+d.slice(5, 7)}/${+d.slice(8, 10)} ${d.slice(11, 16)}` : '', m.updated_by ? esc(m.updated_by) : ''].filter(Boolean).map(x => ' · ' + x).join(''); };   // #939 표식 저장 시각·저장한 사람
     function cardHtml(x) {
         const v = ia.picks.get(x.id), noOpt = x.rule === 'todo_indiv_none' && !(x.pick_options || []).length, done = v != null && !noOpt, sg = done && ia.sugg.has(x.id);
         const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(who(o))} · ${esc(o.product || '')}</option>`).join('');

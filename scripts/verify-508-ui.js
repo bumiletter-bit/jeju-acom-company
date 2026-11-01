@@ -53,6 +53,7 @@ async function fakeApis(ctx, fx, hits, mode = {}) {
     });
     // #525: 정리 기록 라우트는 실DB에 줄을 만든다 → 늘 가로챈다(보낸 내용은 hits.logs 에)
     // #838 자동 송장 등록 묶음의 존재 확인(빈 파일로 match → 서버 400 = 계약)이 콘솔에 「400」 자원 오류를 남김 → 이 검증에선 200 으로 받아 무회귀 오류 0 항목과 섞이지 않게(묶음 자체 검증 = verify-838-ui)
+    await ctx.route('**/api/agent-office/final-order/marks', r => r.fulfill({ json: { ok: true } }));   // #939 실DB 표식 덮기 막기
     await ctx.route('**/api/agent-office/invoice-auto/match', r => r.fulfill({ json: { ok: true } }));
     await ctx.route('**/api/agent-office/final-order/log', r => { (hits.logs = hits.logs || []).push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, id: 7001 } }); });
     // #528: 주소 검색 프록시도 늘 가짜 응답(기본 0건) — 실제 도로명주소 검색을 부르지 않는다

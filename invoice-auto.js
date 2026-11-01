@@ -65,7 +65,9 @@ const prodHit = (o, s) => (o.canon && s.canonReal) ? o.canon === s.canon : (prod
 // 짝 맞추기(순수 함수 · 검증이 바로 부름) — 정본 2절 규칙표 · pricingNames = 그날 단가표 이름(#841 · 없으면 종전 글자 비교만 + 표준명)
 // #894 F2 indivKeys(있으면) = 그날 최종발주가 입력삭제로 뺀 주문 「채널:주문 열쇠」 — 그 주문은 받는 분 키 짝에서 빼고 입력삭제 길(구매자 번호)로만
 //   (같은 분이 집으로 받는 일반 주문 박스가 받는 분·번호·주소가 같은 입력삭제 주문에 붙지 않게 + 같은 품목 나눔에서 「남은 박스 수가 딱 맞는 주문 하나」 우선 · 둘 다 IND 있을 때만 · 없으면 종전 그대로)
-function matchShipments({ ships, orders, pricingNames, indivKeys }) {
+// #938(대표 11/1) holdKeys(있으면) = 그날 최종발주가 「오늘 안 나감」으로 뺀 주문(날짜 지정 등) — 오늘 운송장을 안 붙임(같은 구매자 다른 주문의 주소 줄·같은 집 운송장이 뒤 날짜 주문에 붙어 먼저 발송처리되던 틈) · 없으면 종전 그대로
+function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, holdKeys }) {
+    const HOLD = new Set(Array.isArray(holdKeys) ? holdKeys.map(String) : []), orders = HOLD.size ? ordersAll.filter(o => !HOLD.has(o.channel + ':' + o.order_key)) : ordersAll;
     const IND = indivKeys instanceof Set ? indivKeys : new Set(Array.isArray(indivKeys) ? indivKeys.map(String) : []);
     for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
     for (const s of ships) if (s.canon === undefined) { const c = canonOf(s.product, pricingNames); s.canonReal = !!c; s.canon = c || normProd(s.product); }
@@ -218,7 +220,27 @@ module.exports = function mountInvoiceAuto(app, d) {
             idem_key TEXT PRIMARY KEY, run_id INTEGER, channel TEXT, order_key TEXT, tracking TEXT, state TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
         await pool.query(`ALTER TABLE invoice_auto_items ADD COLUMN IF NOT EXISTS error_text TEXT`);       // #838-4 실패·모름 사유(채널 원문 · 손님 정보 0)
         await pool.query(`ALTER TABLE invoice_auto_items ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
+        // #939 그날 최종발주 표식(입력삭제 주문·오늘 안 나감 주문 열쇠 · 주문번호뿐 · 손님 정보 0) = 날짜당 한 줄(같은 날 다시 만들면 통째 교체 = 마지막이 정본) · 30일
+        await pool.query(`CREATE TABLE IF NOT EXISTS final_order_marks (ship_date DATE PRIMARY KEY, indiv JSONB NOT NULL DEFAULT '[]', hold JSONB NOT NULL DEFAULT '[]', updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_by TEXT)`);
     }
+
+    // #939(대표 11/1 · 간혹 노트북에서 최종발주 · 자동 송장은 발주컴퓨터) 최종발주 표식을 서버에 → 자동 송장이 PC·브라우저와 무관하게 읽음
+    const MARK_MAX = 5000, markList = v => (Array.isArray(v) ? v : []).map(k => String(k).slice(0, 120)).filter(k => /^(naver|coupang|cafe24):.*[^:|]$/.test(k));
+    app.post('/api/agent-office/final-order/marks', authMiddleware, staffOnly, async (req, res) => {
+        try {
+            const b = req.body || {}, date = String(b.date || '');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: '기준 발송일이 없어요' });
+            if (!Array.isArray(b.indiv) || !Array.isArray(b.hold)) return res.status(400).json({ ok: false, error: '표식 목록이 없어요' });
+            if (b.indiv.length > MARK_MAX || b.hold.length > MARK_MAX) return res.status(400).json({ ok: false, error: '표식이 너무 많아요(' + MARK_MAX + '개까지)' });
+            // 🔴 시험 번호 계정 · 로컬 기동(렌더 밖 = 검증이 띄운 진짜 server.js 가 실DB 를 봄) = 저장 안 함(시험 주문 열쇠로 그날 실DB 표식을 덮지 않게 · 10/25 메모함 used 사고 꼴) · 메모리 DB 검증만 MARKS_LOCAL_WRITE=1
+            if (Number(req.user && req.user.id) >= 990000 || (!process.env.RENDER && process.env.MARKS_LOCAL_WRITE !== '1')) return res.json({ ok: true, skipped: true });
+            const indiv = markList(b.indiv), hold = markList(b.hold), who = (adminActor(req) || {}).name || null;
+            await pool.query(`DELETE FROM final_order_marks WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 30`);
+            await pool.query(`INSERT INTO final_order_marks (ship_date, indiv, hold, updated_at, updated_by) VALUES ($1::date, $2::jsonb, $3::jsonb, now(), $4) ON CONFLICT (ship_date) DO UPDATE SET indiv = EXCLUDED.indiv, hold = EXCLUDED.hold, updated_at = now(), updated_by = EXCLUDED.updated_by`, [date, JSON.stringify(indiv), JSON.stringify(hold), who]);
+            await writeAudit({ action: 'final_order_marks', targetType: 'final_order_marks', targetId: null, changes: { date, indiv: indiv.length, hold: hold.length }, source: 'invoice-auto', actor: adminActor(req) });
+            res.json({ ok: true, date, indiv: indiv.length, hold: hold.length });
+        } catch (e) { log.error('[#939 최종발주 표식] 저장 실패:', e && e.message); res.status(500).json({ ok: false, error: '표식을 저장하지 못했어요' }); }
+    });
 
     app.post('/api/agent-office/invoice-auto/match', authMiddleware, async (req, res) => {
         // 빈 목록·개수 검사가 맨 먼저(화면이 열릴 때 {files:[]} 로 새 서버인지 봄 = 400 · 3채널 재조회·DB 쓰기 0 · 진행 중이어도 400)
@@ -254,13 +276,23 @@ module.exports = function mountInvoiceAuto(app, d) {
             const ships = []; parsed.forEach(p => ships.push(...normShips(p.rows.map(r => ({ ...r, partner: p.partner })), p.partner)));
             let pricingNames = [];   // #841 그날 단가표 이름(/api/invoice/catalog 와 같은 SQL · 읽기) · 실패하면 빈 목록(표준명·글자 비교로)
             try { const pr = await pool.query(`SELECT items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [shipDate]); const set = new Set(); pr.rows.forEach(row => (row.items || []).forEach(it => { if (it && it.name) set.add(it.name); })); pricingNames = [...set]; } catch (e) { pricingNames = []; }
-            const iv = req.body && req.body.indiv, indivKeys = iv && iv.date === shipDate && Array.isArray(iv.keys) ? iv.keys.slice(0, 500).map(k => String(k).slice(0, 120)) : [];   // #894 F2 최종발주가 남긴 입력삭제 주문(그 발송일만)
-            const m = matchShipments({ ships, orders, pricingNames, indivKeys });
+            const iv = req.body && req.body.indiv; let indivKeys = iv && iv.date === shipDate && Array.isArray(iv.keys) ? iv.keys.slice(0, 500).map(k => String(k).slice(0, 120)) : [], holdKeys = iv && iv.date === shipDate && Array.isArray(iv.hold) ? iv.hold.slice(0, 500).map(k => String(k).slice(0, 120)) : [];   // #894 F2 최종발주가 남긴 입력삭제 주문(그 발송일만) · #938 오늘 안 나감
+            // #939 서버 표식 우선 · 그날 표식이 없으면 브라우저 값(종전 길) · 브라우저 값이 1분 넘게 더 새것이면(서버 저장 실패 뒤 다시 만든 경우) 브라우저 값
+            let marks = { source: iv && iv.date === shipDate ? 'browser' : 'none', differs: false };
+            try {
+                const mr = (await pool.query(`SELECT indiv, hold, updated_at, updated_by FROM final_order_marks WHERE ship_date = $1::date`, [shipDate])).rows[0];
+                if (mr && !(iv && iv.date === shipDate && Number(iv.at) > new Date(mr.updated_at).getTime() + 60000)) {
+                    const si = markList(mr.indiv), sh = markList(mr.hold), same = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+                    marks = { source: 'server', local: iv && iv.date === shipDate ? 'has' : 'none', differs: !(iv && iv.date === shipDate) ? si.length + sh.length > 0 : !same(si, indivKeys) || !same(sh, holdKeys), updated_at: new Date(mr.updated_at).toISOString(), updated_by: mr.updated_by || '' };
+                    indivKeys = si; holdKeys = sh;
+                }
+            } catch (e) { log.error('[#939 최종발주 표식] 읽기 실패(브라우저 값으로):', e && e.message); }
+            const m = matchShipments({ ships, orders, pricingNames, indivKeys, holdKeys });
             const card = buildCard(m, orders);
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;
             for (const p of parsed) { try { indexUp += await lois.upsert(p.wb, p.rows, shipDate, p.partner === '?' ? '' : p.partner); } catch (e) { indexErr = String(e.message || e).slice(0, 120); } }
-            const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, todo_indiv_none: card.rows.filter(r => r.rule === 'todo_indiv_none').length, orders_without_tracking: card.orders_without_tracking, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
+            const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, todo_indiv_none: card.rows.filter(r => r.rule === 'todo_indiv_none').length, orders_without_tracking: card.orders_without_tracking, marks_source: marks.source, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
             const filesOut = parsed.map(p => ({ name: p.name, partner: p.partner, rows: p.rows.length }));
             await pool.query(`DELETE FROM invoice_auto_runs WHERE created_at < now() - interval '90 days'`);
             await pool.query(`DELETE FROM invoice_auto_items WHERE created_at < now() - interval '90 days'`);   // #838-4 E
@@ -268,7 +300,7 @@ module.exports = function mountInvoiceAuto(app, d) {
                 [(adminActor(req) || {}).name || null, shipDate, hash.digest('hex').slice(0, 16), JSON.stringify(filesOut), JSON.stringify(fetchInfo), JSON.stringify(summary), JSON.stringify(stripPII(card))]);
             const runId = ins.rows[0].id;
             await writeAudit({ action: 'invoice_auto_match', targetType: 'invoice_auto_run', targetId: runId, changes: { ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, by_channel: card.by_channel }, source: 'invoice-auto', actor: adminActor(req) });
-            res.json({ ok: true, run_id: runId, ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, ...card });
+            res.json({ ok: true, run_id: runId, ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, marks, ...card });
         } catch (e) { log.error('[#838 자동 송장] 짝 맞추기 실패:', e && e.message); res.status(500).json({ ok: false, error: '짝 맞추기에 실패했어요 — 잠시 뒤 다시 해 주세요' }); }
         finally { _busy = false; }
     });

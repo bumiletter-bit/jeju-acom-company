@@ -23,6 +23,7 @@ const pool = { query: async (sql, p) => {
     const s = String(sql).replace(/\s+/g, ' ').trim(); queries.push(s.slice(0, 60));
     if (/^CREATE TABLE IF NOT EXISTS invoice_auto_(runs|items)/.test(s)) return { rows: [] };
     if (/^ALTER TABLE invoice_auto_items ADD COLUMN IF NOT EXISTS (error_text TEXT|sent_at TIMESTAMPTZ)$/.test(s)) return { rows: [] };
+    if (/^CREATE TABLE IF NOT EXISTS final_order_marks/.test(s) || /^SELECT indiv, hold, updated_at, updated_by FROM final_order_marks/.test(s)) return { rows: [] };   // #939 표식 없음 = 브라우저 값(종전 길)
     if (/^DELETE FROM invoice_auto_items WHERE created_at < now\(\) - interval '90 days'/.test(s)) { for (const [k, x] of items) if (x.created_at && Date.now() - x.created_at >= 90 * 86400e3) items.delete(k); return { rowCount: 0 }; }
     if (/^UPDATE invoice_auto_items SET state = 'sending', updated_at = now\(\) WHERE idem_key = ANY\(\$1::text\[\]\) AND run_id = \$2 AND state = 'ready' RETURNING idem_key$/.test(s)) { const got = []; for (const k of p[0]) { const x = items.get(k); if (x && x.run_id === p[1] && x.state === 'ready') { x.state = 'sending'; got.push({ idem_key: k }); } } return { rows: got, rowCount: got.length }; }
     if (/^UPDATE invoice_auto_items SET state = \$2, error_text = \$3, sent_at = CASE WHEN \$2 = 'sent' THEN now\(\) ELSE sent_at END, updated_at = now\(\) WHERE idem_key = \$1 AND run_id = \$4$/.test(s)) { const x = items.get(p[0]); if (x && x.run_id === p[3]) { x.state = p[1]; x.error_text = p[2]; if (p[1] === 'sent') x.sent_at = Date.now(); } return { rowCount: x ? 1 : 0 }; }

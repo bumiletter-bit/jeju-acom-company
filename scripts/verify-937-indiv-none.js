@@ -34,7 +34,7 @@ const N = rows => ia.normOrders('naver', rows), rule = c => Object.fromEntries(c
     { const o = N([nv('A', TY, 3)]), { card } = run(ia, o, [], ['naver:A']), x = card.rows[0];
       ok(card.rows.length === 1 && x.status === 'todo' && x.rule === 'todo_indiv_none' && x.suggest === null && x.pick_options.length === 0 && /거래처 파일/.test(x.why) && card.by_channel.naver.todo === 1, '운송장 0 · 옵션 0 카드 + 사유 글', x);
       ok(card.orders_without_tracking === 0, '카드가 된 주문은 「운송장 없는 주문」 숫자에서 빠짐', card.orders_without_tracking);
-      const { card: o2 } = run(old, o, [], ['naver:A']); ok(o2.rows.length === 0 && o2.orders_without_tracking === 1, '(대조) 종전 = 카드 0 · 숫자에만', o2.orders_without_tracking); }
+      }
 
     console.log('③ 거래처 파일 하나만 → 그 거래처 빠진 IND 만 카드 · 일반 무운송장 주문은 카드 없음');
     { const o = N([nv('A', TY, 1), nv('B', HG, 1, BUY2), nv('C', HG, 1, '010-2600-0003', '대전 1')]);

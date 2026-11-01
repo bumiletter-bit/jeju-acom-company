@@ -673,3 +673,18 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 .om-px-paired li > span { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .om-px-paired .om-px-svc { flex: none; gap: 6px; }
 @media (max-width: 960px), (pointer: coarse) { .om-px-paired li { min-height: 44px; } }
+/* #938 주문별 발송일 판(정리 결과·고치기 카드 메모 줄) · 합치기 */
+.om-orders:empty { display: none; }
+.om-ordbox { margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--d-soft); display: grid; gap: 6px; }
+.om-ordbox > b { font-size: 13px; color: var(--d-ink); line-height: 1.45; }
+.om-ordl { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.om-ordl li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; min-height: 36px; }
+.om-ordck { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 220px; cursor: pointer; font-size: 13px; }
+.om-ordck input { width: 18px; height: 18px; flex: none; accent-color: var(--d-accent); }
+.om-ordck span { min-width: 0; overflow-wrap: anywhere; }
+.om-orddt { display: flex; align-items: center; gap: 6px; flex: none; font-size: 12.5px; color: var(--d-sub); }
+.om-orddt input { width: 7.5em; min-height: 36px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 13px; }
+.om-orddt input:disabled { opacity: .5; }
+.om-orddt input[aria-invalid="true"] { border-color: #F04438; }
+.om-ordn { margin: 0; font-size: 12.5px; color: var(--d-sub); line-height: 1.5; }
+@media (max-width: 960px), (pointer: coarse) { .om-ordl li, .om-ordck, .om-orddt input { min-height: 44px; } .om-orddt input { font-size: 16px; } }
