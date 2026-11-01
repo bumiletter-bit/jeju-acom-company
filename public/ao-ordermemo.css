@@ -693,3 +693,16 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 /* #947 찾은 줄 전체 선택 */
 .om-px-all { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 13px; font-weight: 700; cursor: pointer; }
 @media (max-width: 960px), (pointer: coarse) { .om-px-all { min-height: 44px; } }
+
+/* #955 메모 수정(줄 입력판 안 주문 카드) */
+.om-sm { margin-top: 10px; }
+.om-sm-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); }
+.om-sm-s { margin: 0; color: var(--d-sub); font-size: 12.5px; line-height: 1.45; }
+.om-sm-s b { color: var(--d-ink); }
+.om-sm-s.err { color: var(--d-err); font-weight: 700; }
+.om-sm-l { color: var(--d-ink); font-size: 13px; font-weight: 700; }
+.om-sm-t { width: 100%; min-height: 66px; box-sizing: border-box; padding: 10px 12px; border: 1.5px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 15px; resize: vertical; }
+.om-sm-t:focus { outline: none; border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }
+.om-sm-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.om-sm .om-ordck small { color: var(--d-sub); font-size: 12px; }
+@media (max-width: 960px), (pointer: coarse) { .om-sm-t { font-size: 16px; } .om-sm-acts .om-btn { min-height: 44px; } }

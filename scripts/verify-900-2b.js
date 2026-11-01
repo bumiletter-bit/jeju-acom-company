@@ -49,7 +49,7 @@ function listBody(n, ent) {
 }
 const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, badges: {}, services: [], lookup: null, lines938: false, linesPlat311: null, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
+<style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}.om-tag[data-tag="smemo"]{display:none!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
 <script>localStorage.setItem('jwt_token','x');window.showToast=function(m){(window.__toasts=window.__toasts||[]).push(m)};
 window.__ooTest={splitAddr:function(r){return [r,'']},searchBody:function(b){return b},exactMatches:function(){return []}};</script>

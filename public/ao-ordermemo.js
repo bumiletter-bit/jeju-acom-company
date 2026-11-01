@@ -66,7 +66,7 @@
     //   틀 꼴 = 서버 규칙 줄(order-memo.js · invoice-v2 parseLines · sizeLines)이 그대로 읽는 「번호 + 지시」 꼴
     const TEL_PH = '000-0000-0000';
     const TAGS = [['cash', '주문입력', '현금 손님'],   // #895 칩 이름 = 주문입력(누르면 빈 주문 입력 카드 · 틀 글은 안 씀)
- ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈·과수', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동']];
+ ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈·과수', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동'], ['smemo', '메모 수정', TEL_PH + ' 배송메모']];
     // 틀 자리를 안 고친 채 [입력하기] = 막고 그 자리를 골라 줌
     const TPL_HOLES = [[TEL_PH, '번호를 넣어 주세요 — 000-0000-0000 자리에 손님 번호를 써 주세요'], [/(^|[^0-9])00일/, '발송 날짜를 넣어 주세요 — 00일 자리에 날짜를 써 주세요'], ['보내는이 홍길동', '보내는 분 이름을 넣어 주세요 — 홍길동 자리를 바꿔 주세요']];
     const PLATS = ['네이버', '쿠팡', '자사몰'];
@@ -183,6 +183,7 @@
                       <div class="om-tp-k" id="om-tp-k"></div>
                       <button type="button" class="om-btn primary om-tp-go" id="om-tp-go">넣기</button>
                     </div>
+                    <div class="om-sm" id="om-sm" hidden></div>
                     <p class="om-tp-note" id="om-tp-note" role="status"></p>
                   </div>
                   <div class="om-in-acts">
@@ -263,7 +264,9 @@
         $('om-tp-x').addEventListener('click', () => tpClose(true));
         $('om-tp-go').addEventListener('click', tpGo);
         const tp = $('om-tp');
-        tp.addEventListener('input', e => { if (e.target.id === 'om-tp-tel' && !e.isComposing) telLive(e.target); if (e.target.closest('.om-tp-row')) tpNote(''); });
+        tp.addEventListener('input', e => { const sm = OM.tp && OM.tp.k === 'smemo'; if (e.target.id === 'om-tp-tel' && !e.isComposing && !sm) telLive(e.target); if (e.target.closest('.om-tp-row')) tpNote(''); if (sm && e.target.id === 'om-tp-tel') smReset(); if (e.target.id === 'om-sm-t' && OM.sm) OM.sm.text = e.target.value; });   // #955 메모 수정 번호 칸 = 치는 중 안 바꿈(#857 · [주문 찾기] 때 한 번)
+        $('om-sm').addEventListener('click', e => { const b = e.target.closest('[data-smact]'); if (!b) return; if (b.dataset.smact === 'save') smSave(); else if (b.dataset.smact === 'close') tpClose(true); });
+        $('om-sm').addEventListener('change', e => { if (e.target.name !== 'om-sm-o' || !OM.sm) return; OM.sm.pick = Number(e.target.value); const ex = smExisting(OM.sm.matches[OM.sm.pick]); if (!String(OM.sm.text || '').trim()) OM.sm.text = ex ? ex.checked.ship_memo : ''; tpNote(''); smDraw(); });
         tp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'om-tp-tel' || e.target.id === 'om-tp-name' || e.target.id === 'om-tp-gw')) { e.preventDefault(); tpGo(); } });
         tp.addEventListener('change', e => { if (e.target.id === 'om-tp-date') { tpNote(''); if (!$('om-tp-tel').value.trim()) $('om-tp-tel').focus({ preventScroll: true }); else $('om-tp-go').focus({ preventScroll: true }); } });
         tp.addEventListener('click', e => { const b = e.target.closest('[data-tpsz]'); if (!b || !OM.tp) return; OM.tp.sz = b.dataset.tpsz; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); const g = $('om-tp-gw'); if (g) g.value = ''; tpNote(''); });   // #882 사이즈 고르면 과수 칸 비움(둘 중 하나)
@@ -347,7 +350,7 @@
     // #862 줄 입력판 — 꼬리표를 누르면 입력 칸에 틀을 넣지 않고 [번호 칸 + 꼬리표 칸 + 넣기] · [넣기]·Enter = 입력 칸 끝에 서버 규칙 줄 꼴 한 줄
     //   입력삭제 「010-1234-5678 입력o삭제x」 · 사이즈 「… S사이즈로」 · 날짜 「… 10/27 발송」(해 넘김 = 「1/3/27 … 발송」) · 보내는이 「… 보내는이 홍길동」 (ruleLine · invoice-v2 parseLines · sizeLines 가 읽는 꼴)
     //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
-    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'] };
+    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'], smemo: ['메모 수정', '우리 택배 양식의 배송메시지만 바꿔요 · 판매처 주문 원본은 그대로'] };
     const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
@@ -362,7 +365,7 @@
         $('om-tp-k').innerHTML = k === 'size' ? `<div class="om-seg om-tp-sz" role="radiogroup" aria-label="사이즈">${['2S', 'S', 'M'].map(z => `<button type="button" role="radio" class="om-seg-b" data-tpsz="${z}" aria-checked="false">${z}</button>`).join('')}</div><label class="om-tp-gw"><input id="om-tp-gw" inputmode="numeric" autocomplete="off" maxlength="3" placeholder="과수" aria-label="과수(만감류 선물용 · 숫자만 · 예 13)"><span aria-hidden="true">과</span></label>`
             : k === 'date' ? '<input id="om-tp-date" class="akm-date om-tp-date" readonly autocomplete="off" placeholder="발송 날짜 고르기" aria-label="발송 날짜">'
             : k === 'sender' ? '<input id="om-tp-name" class="om-tp-name" autocomplete="off" maxlength="20" placeholder="보내는 분 이름" aria-label="보내는 분 이름">' : '';
-        tp.dataset.k = k; tpNote('');
+        tp.dataset.k = k; tpNote(''); smReset(); $('om-tp-go').textContent = k === 'smemo' ? '주문 찾기' : '넣기';
         if (!was) { tp.hidden = false; tel.value = tpLastTel(); }
         else if (!tel.value.trim()) tel.value = tpLastTel();
         tel.focus({ preventScroll: true }); try { tel.select(); } catch (e) { /* 그대로 */ }
@@ -370,7 +373,7 @@
     }
     function tpClose(focusRaw) {
         const tp = $('om-tp'); if (!OM.tp || !tp) { OM.tp = null; return; }
-        OM.tp = null; tp.hidden = true; $('om-tp-k').innerHTML = ''; tpNote('');
+        OM.tp = null; tp.hidden = true; $('om-tp-k').innerHTML = ''; tpNote(''); smReset();
         if (focusRaw) { const t = OM.el.querySelector(`.om-tag[data-tag="${tp.dataset.k}"]`) || $('om-raw'); if (t) t.focus({ preventScroll: true }); }
     }
     // 날짜 → 「10/27」(늘 M/D) · 해가 다르면 「1/3/27」
@@ -388,8 +391,54 @@
         return null;
     }
     const gwLine = (tel, n) => tel + ' ' + n + '과로';   // #882 만감류 선물용 과수 줄 꼴(최종발주 #883 gwaLines 가 먹는 꼴 = 사이즈 줄과 같게 판매처는 카드에서)
+    // #955 메모 수정 — 번호 → 발송 전 주문 찾기(lookup) → 주문 카드 → 저장(메모함 줄 · checked.ship_memo) → 다음 최종발주 양식 배송메시지 · 판매처 주문 원본은 안 바뀜
+    function smReset() { clearTimeout(OM.smT); OM.sm = null; const p = $('om-sm'); if (p) { p.hidden = true; p.innerHTML = ''; } }
+    const smPhone = () => { const v = String($('om-tp-tel').value || '').trim(), d = digits(v); return isPhoneish(v) && d.length >= 9 ? d : ''; };
+    const smExisting = m => { if (!m) return null; const ks = [digits(m.pno || m.order_no), OM.sm && OM.sm.phone].filter(Boolean); return (OM.list || []).find(x => x.kind === 'line' && x.state === 'open' && x.checked && x.checked.ship_memo && ks.includes(digits(x.key))) || null; };
+    function smDraw() {
+        const p = $('om-sm'), x = OM.sm; if (!p) return; if (!x) { p.hidden = true; p.innerHTML = ''; return; }
+        p.hidden = false;
+        if (x.state === 'busy') { p.innerHTML = '<p class="om-sm-s" role="status">주문 찾는 중…</p>'; return; }
+        if (x.state === 'err') { p.innerHTML = `<p class="om-sm-s err" role="alert">${esc(x.msg)} · [주문 찾기]를 다시 눌러 주세요</p>`; return; }
+        if (x.state === 'none') { p.innerHTML = `<p class="om-sm-s" role="status">이 번호의 발송 전 주문을 못 찾았어요${x.retried ? ' · 방금 결제했으면 잠시 뒤 [주문 찾기]를 다시 눌러 주세요' : ' · 한 번 더 찾는 중…'}</p>`; return; }
+        const m = x.matches, one = m.length === 1, ex = x.pick != null ? smExisting(m[x.pick]) : null;
+        const short = o => String(o.option || '').split('/').pop().replace(/^[^:]*:\s*/, '').trim();
+        p.innerHTML = `<div class="om-sm-card">${one ? '' : '<p class="om-sm-s"><b>주문이 ' + m.length + '건이에요</b> · 메모를 고칠 주문을 골라 주세요</p>'}<ul class="om-ordl">${m.map((o, i) => `<li><label class="om-ordck"><input type="radio" name="om-sm-o" value="${i}"${x.pick === i ? ' checked' : ''}><span>${esc(o.plat)} · ${esc(o.buyer_name || '')}${o.recv_name && o.recv_name !== o.buyer_name ? ' → ' + esc(o.recv_name) : ''} · ${esc(short(o))} · ${esc(o.qty || 1)}박스${o.addr ? '<br><small>' + esc(o.addr) + '</small>' : ''}</span></label></li>`).join('')}</ul>`
+            + `<p class="om-sm-s">${x.pick == null ? '주문을 고르면 넣어 둔 메모를 보여 드려요' : ex ? '지금 넣어 둔 배송메모: <b>' + esc(ex.checked.ship_memo) + '</b>' : '메모함에 넣어 둔 배송메모 없음 · 손님이 쓴 원래 메모는 최종발주 참고에 같이 나와요'}</p>`
+            + `<label class="om-sm-l" for="om-sm-t">배송 메모</label><textarea id="om-sm-t" class="om-sm-t" rows="2" maxlength="200" placeholder="예) 1층 문 열립니다. 2층에 꼭 올려주세요">${esc(x.text || '')}</textarea>`
+            + `<p class="om-sm-s">다음 최종발주의 <b>우리 택배 양식 배송메시지</b>로 나가요. 네이버·쿠팡·자사몰 주문 원본은 바뀌지 않아요.</p>`
+            + `<div class="om-sm-acts"><button type="button" class="om-btn" data-smact="close">닫기</button><button type="button" class="om-btn primary" data-smact="save"${x.saving ? ' disabled' : ''}>${x.saving ? '저장 중…' : ex ? '메모 고쳐 저장' : '메모 저장'}</button></div></div>`;
+    }
+    async function smFind(retried) {
+        const te = $('om-tp-tel'), v = String(te.value || '').trim(), phone = smPhone(), order = !phone && (/^\d{10,20}$/.test(v) || /^\d{8}-\d{7}$/.test(v));
+        if (!phone && !order) { smReset(); tpNote('손님 번호나 주문번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
+        if (phone && !retried) te.value = fmtTel(te.value);
+        clearTimeout(OM.smT); const seq = (OM.smSeq = (OM.smSeq || 0) + 1); OM.sm = { state: 'busy', seq, phone, text: '', pick: null, matches: [], retried: !!retried }; tpNote(''); smDraw();
+        const res = await API.lookup(phone || v, '');
+        if (!OM.sm || OM.sm.seq !== seq) return;
+        if (!res.ok) { OM.sm.state = 'err'; OM.sm.msg = errText(res, '주문을 못 찾았어요'); smDraw(); return; }
+        const m = res.body && Array.isArray(res.body.matches) ? res.body.matches : [];
+        if (!m.length) { OM.sm.state = 'none'; smDraw(); if (!retried) OM.smT = setTimeout(() => { if (OM.sm && OM.sm.seq === seq) smFind(true); }, 6000); return; }   // lookup 이 즉시 조회를 걸어 둠(#936) → 6초 뒤 한 번 더
+        OM.sm.state = 'done'; OM.sm.matches = m; if (m.length === 1) { OM.sm.pick = 0; const ex = smExisting(m[0]); OM.sm.text = ex ? ex.checked.ship_memo : ''; }
+        smDraw(); const t = $('om-sm-t'); if (t && OM.sm.pick != null) t.focus({ preventScroll: true });
+    }
+    async function smSave() {
+        const x = OM.sm; if (!x || x.state !== 'done' || x.saving) return;
+        const box = $('om-sm-t'), t = String(box ? box.value : x.text || '').replace(/\s*\n+\s*/g, ' ').trim();
+        if (x.pick == null) { tpNote('메모를 고칠 주문을 골라 주세요', 'err'); return; }
+        if (!t) { tpNote('배송 메모를 넣어 주세요', 'err'); if (box) box.focus({ preventScroll: true }); return; }
+        const o = x.matches[x.pick], key = String(o.pno || o.order_no || x.phone), buyer = o.as === 'buyer' ? x.phone : (o.buyer_phone || '');
+        const checked = Object.assign({ plat: o.plat, as: o.as, at: new Date().toISOString(), ship_memo: t }, buyer ? { buyer } : {}), note = '배송메모 ' + t, ex = smExisting(o);
+        x.text = t; x.saving = true; tpNote(''); smDraw();
+        const res = ex ? await API.update(ex.id, { key, note, plat: o.plat, ship_date: ex.ship_date || null, checked }) : await API.save({ raw: '', tags: [], source: 'manual', rows: [{ kind: 'line', key, note, plat: o.plat, ship_date: null, src: 'edit', checked }] });
+        if (OM.sm !== x) return;
+        x.saving = false;
+        if (!res.ok) { tpNote(errText(res, '저장하지 못했어요'), 'err'); smDraw(); return; }
+        smReset(); tpNote('저장했어요 · 다음 최종발주 양식의 배송메시지로 나가요(판매처 주문 원본은 그대로)', 'ok'); inNote('배송 메모를 저장했어요', 'ok'); await load();
+    }
     function tpGo() {
         const x = OM.tp; if (!x) return;
+        if (x.k === 'smemo') { smFind(); return; }
         const te = $('om-tp-tel'), d = digits(te.value);
         if (!(isPhoneish(te.value) && d.length >= 9)) { tpNote('손님 번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
         te.value = fmtTel(te.value); const tel = lineTel(te.value);

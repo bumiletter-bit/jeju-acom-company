@@ -270,7 +270,7 @@
     //   짝 = 메모 칸 그 줄 글자가 메모함이 넣은 줄과 같을 때만(사람이 고쳤으면 종전대로 「주문 없음」)
     function omChecked(i) { if (OMF.removed || !OMF.lines.length) return null; const ta = document.getElementById('fo-memo'), t = ta ? String(ta.value.replace(/\r/g, '').split('\n')[i] || '').trim() : ''; if (!t) return null; const x = OMF.lines.find(y => y.checked && y.text.trim() === t); return x ? x.checked : null; }
     const omCheckedTip = ck => `메모함에 넣을 때 ${ck.plat} 주문을 ${ck.as === 'recv' ? '받는 분 번호로 ' : ''}찾았던 번호인데 지금 배송준비에 없어요 — 취소·이미 발송인지 확인해 주세요`;
-    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
+    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [] };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
     const omBand = html => { const b = $('fo-om-band'); if (!b) return; b.hidden = !html; b.innerHTML = html || ''; };
     const omWarn = n => { const b = $('fo-om-band'); if (!b) return; b.querySelectorAll('.fo-om-warn').forEach(x => x.remove()); const d = document.createElement('div'); d.className = 'fo-om-warn'; d.textContent = `⚠ 메모함 ${n}줄은 「오늘 씀」 표시를 못 했어요 · 비우기 전에 메모함 확인`; b.appendChild(d); b.hidden = false; };   // #900-2A 이중 발송 막기 = 표시 못 한 줄 수(성공이면 띠 그대로)
     const omPost = async (ids, undo) => { const date = OMF.date; let miss = 0; for (let i = 0; i < ids.length; i += 500) { const send = () => window.api('/api/order-memo/used', 'POST', Object.assign({ date, ids: ids.slice(i, i + 500) }, undo ? { undo: true } : {})); try { await send(); } catch (_) { await new Promise(r => setTimeout(r, 800)); try { await send(); } catch (_) { miss += Math.min(500, ids.length - i); } } } if (miss && !undo) omWarn(miss); return miss; };   // #900-2A 500줄씩 나눠 보냄(501줄째부터 「오늘 씀」이 안 찍히던 것) · 묶음 실패 = 1회 재시도 → 그래도 실패면 띠 한 줄
@@ -307,6 +307,7 @@
         OMF.lines.slice().reverse().forEach(x => { const n = have.get(x.text) || 0; if (n > 0) { have.set(x.text, n - 1); if (x.id != null) out.push(x.id); } });
         const cashIds = new Set((st.cash && st.cash.ok ? st.cash.rows : []).filter(r => r.om && r.omId != null).map(r => String(r.omId)));
         OMF.cash.forEach(r => { if (r.omId != null && cashIds.has(String(r.omId))) out.push(r.omId); });
+        shipAppliedIds().forEach(id => out.push(id));   // #955 배송메모 줄 = 파일에 실제로 들어간 줄만
         return out;
     }
     async function omSyncUsed() {   // 넣었다가 빠진 줄은 used 를 되돌림(비우기 전)
@@ -324,13 +325,13 @@
     }
     function omReset() {   // 최종발주 [초기화] — 넣은 표시를 되돌리고 처음 상태로(다시 불러오면 다시 들어감)
         if (OMF.date && OMF.ids.length && !OMF.removed) omPost(OMF.ids.slice(), true);
-        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false }); omBand('');
+        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [] }); omBand('');
     }
     async function omInsert(force) {
         const date = ($('fo-ship') || {}).value;
         if (!date || OMF.busy || st.busy || (st.ai && st.ai.running) || (!force && (OMF.date === date || OMF.removed))) return;
         let r = OMF.pend && OMF.pend.date === date ? OMF.pend.r : null; OMF.pend = null;
-        if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?date=' + encodeURIComponent(date)); } catch (e) { r = null; } OMF.busy = false; }   // 404·오류 = 지금처럼
+        if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?sm=1&date=' + encodeURIComponent(date)); } catch (e) { r = null; } OMF.busy = false; }   // 404·오류 = 지금처럼
         if (r && r.ok && (st.busy || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
         if (!r || !r.ok || ($('fo-ship') || {}).value !== date) { if (!r) OMF.date = date; return; }
         if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
@@ -340,17 +341,18 @@
         const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
         const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
         OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
-        OMF.ids = Array.isArray(r.ids) ? r.ids.slice() : [];
+        OMF.shipMemos = Array.isArray(r.ship_memos) ? r.ship_memos : [];   // #955
+        { const smIds = new Set(OMF.shipMemos.map(m => String(m.id))); OMF.ids = Array.isArray(r.ids) ? r.ids.filter(id => !smIds.has(String(id))) : []; }   // 배송메모 줄 「오늘 씀」 = 파일 만들 때 들어간 줄만(omMarkShip)
         const pastN = Array.isArray(r.held) ? r.held.filter(h => (h.why || []).includes('지난 날짜예요')).length : 0;   // #905 날짜 지정 현금 줄이 발주일보다 지남 = 「확인 안 된」과 따로(넣지 않음 = 종전)
         const held = (Array.isArray(r.held) ? r.held.length : 0) - pastN, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
         OMF.keepDays = Number.isInteger(r.keep_days) ? r.keep_days : null;
         const pastTxt = pastN ? `지난 날짜 ${pastN}줄 = 메모함에서 날짜 고치면 들어가요` : '';
-        if (!OMF.lines.length && !OMF.cash.length) { OMF.ids = []; omBand(held || pastN ? `발주 메모함: ${[held ? `확인 안 된 ${held}줄은 안 넣었어요` : '', pastTxt].filter(Boolean).join(' · ')} <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
+        if (!OMF.lines.length && !OMF.cash.length && !OMF.shipMemos.length) { OMF.ids = []; omBand(held || pastN ? `발주 메모함: ${[held ? `확인 안 된 ${held}줄은 안 넣었어요` : '', pastTxt].filter(Boolean).join(' · ')} <button type="button" class="fo-om-link" data-om="open">메모함에서 보기</button>` : ''); return; }
         const ta = $('fo-memo');
         if (ta && OMF.lines.length) { const cur = ta.value.replace(/\s+$/, ''); ta.value = (cur ? cur + '\n' : '') + OMF.lines.map(x => x.text).join('\n'); }
         omApplyCash();
         omPost(OMF.ids.slice(), false);
-        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${pastN ? ` · ${pastTxt}` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
+        omBand(`<b>발주 메모함에서 메모 ${OMF.lines.length}줄 · 현금 ${OMF.cash.length}줄을 넣었어요</b>${held ? ` · 확인 안 된 ${held}줄은 안 넣음` : ''}${pastN ? ` · ${pastTxt}` : ''}${wait ? ` · 날짜 대기 현금 ${wait}줄은 그날` : ''}${OMF.shipMemos.length ? ` · 배송메모 ${OMF.shipMemos.length}건은 양식 배송메시지로` : ''} <button type="button" class="fo-om-link" data-om="take">빼기</button><button type="button" class="fo-om-link" data-om="clear">메모함 비우기</button>`);   // #859 발주(파일 만들기) 전에도 비울 수 있게
         markStale(); syncInput();
     }
     // #861 [메모함 적용하기] = 메모함 오늘 몫(for-ship)을 지금 바로 넣고 판정까지 · 이미 넣었으면 뺀 뒤 새로(바꿔 넣기) · 길은 자동 넣기(omInsert)와 같음
@@ -361,11 +363,11 @@
         if (OMF.cleared) { toast('메모함을 비운 뒤라 다시 넣을 줄이 없어요 · 메모 칸 그대로 둬요', 3000); return; }
         const b = $('fo-om-apply'); if (b) b.disabled = true;
         try {
-            if (!OMF.removed && (OMF.lines.length || OMF.cash.length)) { omTake(); if (OMF.ids.length) await omPost(OMF.ids.slice(), true); }   // 되돌리기가 끝난 뒤 새로 넣기(순서가 뒤집히면 used_on 이 NULL 로 남음)
-            Object.assign(OMF, { ids: [], lines: [], cash: [], removed: false, pend: null, date: '' });
+            if (!OMF.removed && (OMF.lines.length || OMF.cash.length || OMF.shipMemos.length)) { omTake(); if (OMF.ids.length) await omPost(OMF.ids.slice(), true); }   // 되돌리기가 끝난 뒤 새로 넣기(순서가 뒤집히면 used_on 이 NULL 로 남음)
+            Object.assign(OMF, { ids: [], lines: [], cash: [], removed: false, pend: null, date: '', shipMemos: [] });
             await omInsert(true);
         } finally { if (b) b.disabled = false; }
-        if (!OMF.lines.length && !OMF.cash.length) { if (!$('fo-om-band').innerHTML) omBand('발주 메모함: 이번 발송일에 넣을 줄이 없어요'); markStale(); syncInput(); return; }
+        if (!OMF.lines.length && !OMF.cash.length && !OMF.shipMemos.length) { if (!$('fo-om-band').innerHTML) omBand('발주 메모함: 이번 발송일에 넣을 줄이 없어요'); markStale(); syncInput(); return; }
         await run(judge);
     }
     function omResultNote(el) {
@@ -918,6 +920,61 @@
         sp.textContent = ` · 판정: 메모함 ${c.n}줄 · 확인완료 ${c.ok}` + (c.warn ? ` · 확인 필요 ${c.warn}` : '') + (c.none ? ` · 주문 없음 ${c.none}` : '') + ' ';
         const btn = b.querySelector('[data-om="take"]'); b.insertBefore(sp, btn || null);
     }
+    // #955 메모함 배송메모 줄(for-ship ship_memos) → 주문별 후보 · 주문번호 키 = 그 주문 · 전화번호 키 2건↑ = 카드로 묻기 · 같은 주문에 글 둘 = 카드로 고르기 · 값 없으면 이 함수는 아무것도 안 함
+    function shipMemoPlan(cards, info) {
+        st.smPlan = new Map(); const s = S(), list = OMF.removed ? [] : OMF.shipMemos; if (!list.length) return;
+        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, who = e => `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
+        list.forEach(m => {
+            const key = String(m.key || '').trim(), d = digitsOf(key), phone = /^0\d{8,11}$/.test(d) && !/^\d{8}-\d{7}$/.test(key), ch = CH[m.plat] || null;
+            const hit = s.merged.filter(e => (!ch || e.ch === ch) && (phone ? buyerTel(e) === d : idsOf(e).includes(key)));
+            if (!hit.length) { info.push({ t: `메모함 배송메모 ✕ 주문 없음: ${m.line} — 취소·이미 발송인지 확인해 주세요` }); return; }
+            let gate = null;
+            if (phone && hit.length > 1) { gate = 'shipm:' + m.id; cards.push({ id: gate, keys: hit.map(keyOf), type: 'line', tag: '메모 줄', title: m.line, lines: [['이유', `이 번호 주문이 ${hit.length}건이에요 — 어느 주문의 배송메시지인지 정해 주세요`], ...hit.slice(0, 6).map((e, i) => [`주문 ${i + 1}`, who(e)]), ['처리', '한 주문만이면 메모함에서 [메모 수정]으로 주문을 골라 저장한 뒤 다시 판정해 주세요']], choices: [['all', `${hit.length}건 모두 이 글로`], ['skip', '안 넣음']] }); }
+            hit.forEach(e => { const k = keyOf(e); if (!st.smPlan.has(k)) st.smPlan.set(k, { e, opts: [], dup: null }); st.smPlan.get(k).opts.push({ id: m.id, text: m.text, gate }); });
+        });
+        st.smPlan.forEach((p, k) => {
+            const texts = [...new Set(p.opts.map(o => o.text))];
+            if (texts.length > 1) { p.dup = 'shipd:' + k; cards.push({ id: p.dup, keys: [k], type: 'line', tag: '메모 줄', title: '같은 주문에 배송메모가 둘이에요', lines: [['주문', who(p.e)], ...texts.map((t, i) => [`배송메모 ${i + 1}`, t])], choices: [...texts.map((t, i) => [String(i), `${i + 1}번 글로`]), ['skip', '안 넣음']] }); p.texts = texts; }
+        });
+        cards.forEach(cd => { if (/^ship[md]:/.test(String(cd.id))) return; const hit = (cd.keys || []).map(k => st.smPlan.get(k)).find(Boolean); if (hit) cd.lines = (cd.lines || []).concat([['메모함 배송메모', `「${[...new Set(hit.opts.map(o => o.text))].join(' / ')}」 — 이 카드에서 배송메세지를 고치면 고친 글이 나가요`]]); });
+    }
+    // #955 그 주문 양식 배송메시지의 최종 값 — make() 와 참고 줄이 이 함수 하나만 봄(둘이 어긋나지 않게) · 사람이 글을 실제로 고친 카드만 우선 · 미리 채운 글·AI 글 그대로면 배송메모 · 배송메모 없으면 null
+    function shipOutcome(k) {
+        const smv = shipMemoFor(k); if (smv == null) return null;
+        const nz = v => String(v == null ? '' : v).replace(/\r/g, '').trim(), cardOf = id => st.cards.find(c => c.id === id), aiT = nz(st.ai && st.ai.byKey && st.ai.byKey.get(k) ? st.ai.byKey.get(k).memoText : '');
+        const edited = (v, pre) => { const t = nz(v); return t !== nz(pre) && !(aiT && t === aiT); }, tagged = id => !!(st.ai && st.ai.tag && st.ai.tag.has(id));
+        const p = st.patch && st.patch.get(k); if (p && p.memo != null) return { text: nz(p.memo), by: 'card', sm: smv };
+        const oid = st.ordCard && st.ordCard.get(k); if (oid && st.ordMemo && st.ordMemo.has(oid) && st.dec.get(oid) === 'send' && !tagged(oid) && edited(st.ordMemo.get(oid), (cardOf(oid) || {}).memoPre)) return { text: nz(st.ordMemo.get(oid)), by: 'card', sm: smv };
+        const mid = st.missCard && st.missCard.get(k); if (mid && st.dec.get(mid) === 'def') return { text: '', by: 'card', sm: smv };
+        const sid = st.sambCard && st.sambCard.get(k), d0 = sid ? st.dec.get(sid) : undefined; if (d0 && d0.use && typeof d0.memo === 'string' && !tagged(sid) && edited(d0.memo, ((cardOf(sid) || {}).sender || {}).memo)) return { text: nz(d0.memo), by: 'card', sm: smv };
+        const eid = st.memoCard && st.memoCard.get(k), m0 = eid ? st.dec.get(eid) : undefined; if (m0 && m0.use && typeof m0.memo === 'string' && !tagged(eid) && edited(m0.memo, ((cardOf(eid) || {}).memo || {}).rest)) return { text: nz(m0.memo), by: 'card', sm: smv };
+        return { text: smv, by: 'memo', sm: smv };
+    }
+    function shipAppliedIds() {   // 파일에 배송메모 글이 실제로 들어가는 줄 id(오늘 안 나감·안 넣음·못 고른 글·카드 글이 이긴 줄 = 뺌)
+        const out = new Set(); if (OMF.removed || !st.smPlan) return [];
+        st.smPlan.forEach((p, k) => { if (!goingOut(p.e)) return; const o = shipOutcome(k); if (!o || o.by !== 'memo') return; p.opts.forEach(x => { if (x.text === o.text && (!x.gate || st.dec.get(x.gate) === 'all')) out.add(x.id); }); });
+        return [...out];
+    }
+    function shipMemoInfo() {   // 참고 줄(파일 값과 같은 함수) · 값 없으면 빈 배열
+        const out = []; if (!st.smPlan || !st.smPlan.size) return out;
+        st.smPlan.forEach((p, k) => {
+            const e = p.e, who = `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`, orig = String(e.conv['배송메세지'] || '').trim(), o = shipOutcome(k), texts = [...new Set(p.opts.map(x => x.text))].join(' / ');
+            if (!goingOut(e)) out.push({ t: `메모함 배송메모 ⚠ 오늘 안 나감(양식에 안 들어가요): ${who} → 「${texts}」`, keys: [k] });
+            else if (!o) out.push({ t: `메모함 배송메모 — 안 넣음: ${who} → 「${texts}」`, keys: [k] });
+            else if (o.by === 'card') out.push({ t: `메모함 배송메모 ⚠ 카드에서 고친 글이 나가요: ${who} → 「${o.text || '기본 문구'}」 · 배송메모 「${o.sm}」 안 씀`, keys: [k] });
+            else out.push({ t: `메모함 배송메모 ✓: ${who} → 「${o.text}」${orig ? ` · 손님 메모 「${orig}」 대신` : ''} · 판매처 주문 원본은 그대로`, keys: [k] });
+        });
+        return out;
+    }
+    function omMarkShip() {   // 파일을 만든 뒤 들어간 배송메모 줄만 「오늘 씀」(새로 들어간 줄만 · 빠진 줄은 비우기 전 omSyncUsed 가 되돌림)
+        const have = new Set(OMF.ids.map(String)), fresh = shipAppliedIds().filter(id => !have.has(String(id))); if (!fresh.length) return;
+        OMF.ids = OMF.ids.concat(fresh); omPost(fresh, false);
+    }
+    function shipMemoFor(k) {   // 파일 만들 때 그 주문의 배송메모(사람이 카드에서 정한 뒤 값) · 없으면 null
+        const p = st.smPlan && st.smPlan.get(k); if (!p) return null;
+        if (p.dup) { const dv = st.dec.get(p.dup); const t = dv != null && dv !== 'skip' ? p.texts[Number(dv)] : null; return t == null ? null : t; }
+        const o = p.opts.find(x => !x.gate || st.dec.get(x.gate) === 'all'); return o ? o.text : null;
+    }
     function buildCards() {
         const c = core(), s = S(), cards = [], info = [];
         const orderLine = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
@@ -1092,7 +1149,8 @@
         (st.prep.senders || []).forEach(sd => {
             if (sd.ambiguous) cards.push({ id: 'samb-line:' + sd.srcLine + ':' + sd.raw, type: 'sender-edit', tag: '보내는이 메모', title: sd.raw, lines: [['이유', sd.why || '이름, 번호, 주소가 어디까지인지 분명하지 않아요.']], sender: sd });
         });
-        sm.nohit.forEach(sd => cards.push({ id: 'snohit:' + sd.srcLine + ':' + sd.raw, type: 'line', tag: '보내는이 메모', title: sd.raw, lines: [['이유', '이 번호의 주문이 배송준비에 없어요. 보내는이를 넣을 주문이 없어요.']], choices: [['ok', '확인함', 1]] }));
+        sm.nohit.forEach(sd => { const rv = recvMatches({ digits: digitsOf(sd.key) });   // #956 받는 분 번호로 적은 보내는이 줄 = 안내만(자동 적용·새 단추 없음 · id·건수 그대로)
+            cards.push({ id: 'snohit:' + sd.srcLine + ':' + sd.raw, type: 'line', tag: '보내는이 메모', title: sd.raw, lines: rv.length ? [['이유', '이 번호는 구매자가 아니라 받는 분 번호예요. 보내는이는 구매자 번호(또는 주문번호)로 찾아서 지금은 어느 주문에도 안 붙었어요.'], ...rv.slice(0, 6).map((e, i) => [rv.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e) + (e.individual ? ' · 입력삭제 주문(택배사 양식은 현금파일 줄로 나가요)' : '')]), ...rv.slice(0, 6).map((e, i) => [rv.length > 1 ? `구매자 번호 ${i + 1}` : '구매자 번호', buyerTel(e) ? fmtTel(buyerTel(e)) : '없음']), ...(rv.length > 6 ? [['', `그 밖에 ${rv.length - 6}건`]] : [])] : [['이유', '이 번호의 주문이 배송준비에 없어요. 보내는이를 넣을 주문이 없어요.']], choices: [['ok', '확인함', 1]] }); });
         // #866(대표 10/26 「메모 줄로 바꾼 보내는이가 안 보여」): 메모 줄 보내는이도 사이즈 줄처럼 참고 줄로(확인할 것에 안 셈) — 줄마다 그 줄이 잡은 주문(입력삭제 = 현금파일 줄이 나가므로 뺌)
         //   카드에서 확정한 애매한 메모 줄(samb-line)도 메모 줄이라 같이 보인다 · 손님 메모 카드(samb:)에서 적은 보내는이는 메모 줄이 아니라 뺀다 · 직접 고친 주문은 그 값이 나가므로 따로 센다
         { const ords = s.merged.filter(e => !e.individual).map(e => ({ key: keyOf(e), digits: buyerTel(e), ids: idsOf(e), recipient: String(e.conv['수취인명'] || '').trim() }));
@@ -1200,6 +1258,7 @@
             const msg = [b.kind === 'size' ? '사이즈' : '박스별 사이즈', BOX_BAD_TIP(b)], cd = cards.find(c => new RegExp('^l[a-z]+:' + b.srcLine + ':').test(c.id));
             if (cd) cd.lines = [msg].concat(cd.lines || []); else cards.push({ id: 'lpbad:' + b.srcLine + ':' + b.raw, type: 'line', tag: '메모 재확인', recheck: true, title: b.raw, lines: [msg], choices: [['ok', '확인함', 1]] });
         });
+                shipMemoPlan(cards, info);   // #955
                 st.cards = cards; st.info = info; st.infoBase = info;   // #869: 메모 줄 참고 줄은 그릴 때마다 infoBase 뒤에 붙인다(앞 자리 번호는 그대로)
         // 사라진 주문 카드의 옛 결정은 지운다(같은 카드가 나중에 다시 뜨면 새로 묻는다)
         const live = new Set(cards.map(cd => cd.id));
@@ -1811,7 +1870,7 @@
         $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span><span id="fo-jeju">제주도 배송 <b>${esc(jejuText())}</b></span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
         {   // #603(대표 10/9 「여기서 보내야 할 것을 안 보내는 경우가 많다」): 기본으로 펼쳐 두고(접으면 이 화면 동안 기억) · 「오늘 안 나감」 → 배송메세지 → 사이즈 → 그 밖 순(같은 종류 안은 종전 순) · data-info 는 st.info 의 원래 자리 그대로
           const cur = $('fo-info').querySelector('details'); if (cur) st.infoClosed = !cur.open;
-          if (st.infoBase) st.info = st.infoBase.concat(memoInfo());   // #869
+          if (st.infoBase) st.info = st.infoBase.concat(memoInfo(), shipMemoInfo());   // #869
           const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감|^오늘 발송 제외\(사람\)/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
           const order = st.info.map((it, i) => [rank(it), i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
           $('fo-info').innerHTML = st.info.length ? `<details${st.infoClosed ? '' : ' open'}><summary>참고 ${st.info.length}건 (확인만 하면 돼요 · 줄을 누르면 그 주문·메모 줄로 가요 · 여기를 누르면 접혀요)</summary><ul>${order.map(([, i]) => infoHtml(st.info[i], i)).join('')}</ul></details>` : ''; }
@@ -2028,6 +2087,7 @@
         list.forEach((e, i) => {
             const k = keyOf(e), orig = String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim();
             const put = text => { if (text !== orig) program[i].cells[9] = { v: text, t: 's', s: program[i].cells[3].s }; };
+            { const so = shipOutcome(k); if (so) { if (String(program[i].cells[9].v == null ? '' : program[i].cells[9].v) !== so.text) program[i].cells[9] = { v: so.text, t: 's', s: program[i].cells[3].s }; return; } }   // #955 메모함 배송메모(지금 칸 값과 비교 · 오늘 줄이 비운 칸도 채움)
             const oid = st.ordCard && st.ordCard.get(k);   // #548 주문 확인 카드에서 고쳐 넣은 배송메세지([오늘 발송]으로 정한 것만)
             if (oid && st.ordMemo && st.ordMemo.has(oid) && st.dec.get(oid) === 'send') { put(st.ordMemo.get(oid)); return; }
             { const mid = st.missCard && st.missCard.get(k); if (mid && st.dec.get(mid) === 'def') { put(''); return; } }   // #583-f 「메모 확인」 카드에서 [기본 문구로]
@@ -2084,7 +2144,7 @@
             // #939 서버에도(자동 송장을 다른 PC 에서 해도 읽게 · 그날 것 통째 교체) · 실패·옛 서버 = 이 브라우저 값으로 종전대로 · 브라우저 저장 뒤(api 없는 화면에서 저장까지 건너뛰지 않게)
             if (typeof window.api === 'function') window.api('/api/agent-office/final-order/marks', 'POST', { date: S().shipDate, indiv: mkI, hold: mkH }).catch(() => {});
         } catch (e) { /* 저장 못 하면 = 종전대로(서버가 남은 박스 수로 가름) */ }
-        st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result';
+        st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result'; omMarkShip();
         renderResult(D().getElementById('msg-coupang').textContent || '');
         sendLog();   // #525: 전체 지시에 남길 정리 기록 1건(다시 만들면 같은 기록을 고쳐 씀) — 실패해도 파일 만들기는 성공
     }
