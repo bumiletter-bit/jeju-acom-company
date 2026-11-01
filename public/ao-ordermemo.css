@@ -647,3 +647,10 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 @supports (field-sizing: content) {   /* 배송지 = 1줄(44)부터 · 글이 길면 저절로 늘어남(지원 안 하는 브라우저 = 종전 2줄 70) */
     .om-card .om-f textarea { field-sizing: content; min-height: 44px; max-height: 9.5em; }
 }
+/* #934 추가 매칭(번호 다른 현금 줄 고르기) · ⑤ 입력삭제 주문에 붙이기 — 색은 .om-pair 토큰 그대로(새 색 0 · 야간 규칙 상속) */
+.om-pairx-q { margin: 0; }
+.om-pairx-b { display: grid; gap: 4px; min-width: 0; }
+.om-pairx .om-pair-l, .om-pairy .om-pair-l { max-height: 42vh; overflow: auto; padding-right: 2px; }
+.om-pairx .om-pair-l li span, .om-pairy .om-pair-l li span { min-width: 0; overflow-wrap: anywhere; }
+.om-ml-px { flex: none; align-self: center; margin: 0 4px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
+@media (max-width: 960px), (pointer: coarse) { .om-ml-px { min-height: 44px; } }

@@ -177,7 +177,8 @@ function pairCash(r, line, ctx, opt) {
     const c = Array.isArray(r && r.cells) ? r.cells.slice() : [];
     const key = String((line && line.line_key) || '').trim(), d = dg(key), any = !!(opt && opt.anyNumber);   // #894 F4 any = 후보 묶음에서 사람이 고른 줄(번호가 받는 분 번호여도)
     if (!r || r.kind !== 'cash' || r.service || d.length < 8 || !/[!！]/.test(String(c[0] || '')) || (!any && ![c[10], c[1]].map(dg).includes(d))) return null;   // #900 서비스 줄 = 짝 아님
-    if (!dg(c[1]) || dg(c[1]) === dg(c[10])) c[1] = key;
+    const b1 = dg(c[1]), k0 = dg(c[10]);
+    if (!b1 || (b1 === k0 && !(any && b1 !== dg(c[6])))) c[1] = key;   // #934 pick 길(추가 매칭·붙이기) = B=K 인데 받는 분 번호가 아니면 사람이 넣은 보내는 분 번호 → B 유지(K 만 그 번호) · B=K=받는 분(AI 꼴)·종전 길은 그대로
     c[10] = key;
     const own = r.ship_date ? String(r.ship_date).slice(0, 10) : null, ld = line.ship_date ? String(line.ship_date).slice(0, 10) : null;
     return checkRow({ kind: 'cash', cells: c, ship_date: isDay(own) ? own : (isDay(ld) ? ld : null), src: r.src || 'edit', indiv: true, indivKey: key }, ctx);
@@ -648,15 +649,16 @@ function mount(app, deps) {
         const line = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' AND kind = 'line' ORDER BY id DESC`)).rows.find(r => isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key) === d);
         if (!line) throw err(409, '이 번호 입력삭제 줄이 메모함에 없어요 — 입력삭제 줄을 먼저 저장해 주세요');
         const cands = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE id = ANY($1::int[]) AND state = 'open' AND kind = 'cash' ORDER BY id`, [ids])).rows;
-        const out = [], undo = [];
+        const out = [], undo = []; let other = 0;   // #934 other = 번호(K·B)가 그 번호와 다른데 사람이 고른 줄(pick · 추가 매칭 · ⑤ 붙이기) 수 → audit 표식만
         for (const r0 of cands) {
             const p = pairCash(r0, line, ctx, { anyNumber: b.pick === true }); if (!p) continue;   // #894 F4 pick = 후보 묶음(pair-hint groups)에서 고른 줄
+            if (![(r0.cells || [])[10], (r0.cells || [])[1]].map(dg).includes(d)) other++;
             const row = (await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
                 [r0.id, line.entry_id, JSON.stringify(p.cells), p.ship_date, p.sure, JSON.stringify(p.check_why), actorName(req)])).rows[0];
             if (!row) continue;
             out.push(rowOut(row)); undo.push({ id: r0.id, entry_id: r0.entry_id, cells: r0.cells, ship_date: r0.ship_date || null });
         }
-        await audit(req, 'pair', line.id, { n: out.length, asked: ids.length, entry: line.entry_id });
+        await audit(req, 'pair', line.id, Object.assign({ n: out.length, asked: ids.length, entry: line.entry_id }, b.pick === true ? { pick: true, picked_other_phone: other } : {}));   // #934 pick 길만 표식(종전 길 기록 바이트 동일)
         res.json({ ok: true, n: out.length, skipped: ids.length - out.length, rows: out, undo });
     }));
 

@@ -404,7 +404,7 @@
         try { raw.scrollTop = raw.scrollHeight; } catch (e) { /* 그대로 */ }
         OM.tpLast = te.value;
         const nSaved = x.k === 'indiv' ? savedCashOf(digits(tel)).length : 0;   // #874 이 번호 현금 줄이 이미 메모함에 있으면 알림만(바꾸기는 [입력하기] 뒤 카드에서)
-        inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote(nSaved ? `넣었어요 · 메모함에 이 번호 현금 줄 ${nSaved}개가 있어요 — [입력하기] 뒤 카드에서 입력삭제 주소 줄로 바꿀 수 있어요` : '넣었어요 · 같은 손님은 꼬리표만 바꿔 이어서, 다른 손님은 번호를 바꿔 넣으세요', 'ok');
+        inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote(nSaved ? `넣었어요 · 메모함에 이 번호 현금 줄 ${nSaved}개가 있어요 — [입력하기] 뒤 카드에서 [바꾸기]를 누르고 저장해야 주소 줄로 바뀌어요(저장 뒤엔 메모함 입력삭제 줄의 [추가 매칭])` : '넣었어요 · 같은 손님은 꼬리표만 바꿔 이어서, 다른 손님은 번호를 바꿔 넣으세요', 'ok');
         x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(b => b.setAttribute('aria-checked', 'false')); if (gw) gw.value = ''; if (name) name.value = ''; if (date) date.value = '';
         te.focus({ preventScroll: true }); try { te.select(); } catch (e) { /* 그대로 */ }
     }
@@ -631,6 +631,7 @@
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>
             <button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + ' 열어 고치기')}"><span class="om-ml-l">${esc(lineView(r.line) || '(빈 줄)')}</span>${b ? `<span class="om-pill k-${b.k}">${esc(b.t)}</span>` : ''}${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button>
+            ${INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || '')) && digits(r.key).length >= 8 ? `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(telShow(r.key) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>` : ''}
             <button type="button" class="om-x" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></li>`;
     }
     function rowHtml(r, isOpen, sel) {
@@ -676,6 +677,7 @@
         const li = b.closest('.om-item'); const r = li && rowById(li.dataset.id); if (!r) return;
         if (act === 'edit') { editOpen(r); return; }
         if (act === 'del') { askDel([r], b); return; }
+        if (act === 'pairx') { const d = digits(r.key); editOpen(r, { pxOnly: { d, show: telShow(r.key) } }); if (OM.card && OM.card.pxOnly) pxOpen(OM.card, d, telShow(r.key)); return; }   // #934 ④ 메모함 입력삭제 줄 → 번호 다른 현금 줄 붙이기(바로 POST)
         if (act === 'restore') {
             b.disabled = true; const res = await API.restore(r.id);
             if (!res.ok) { b.disabled = false; toast(errText(res, '되살리지 못했어요')); return; }
@@ -1042,6 +1044,7 @@
     // 입력 중엔 다시 그리지 않는다(초점·자판 유지) — 빨강 풀기 · ↺ 보이기 · 머리 숫자 · 저장 단추만
     function onCardInput(e) {
         const t = e.target, ri = t.dataset ? Number(t.dataset.ri) : NaN;
+        if (t && t.dataset && t.dataset.cact === 'pxq' && OM.card) { pxState(OM.card, t.dataset.k).q = t.value; pxRefresh(OM.card, t.dataset.k); return; }   // #934 추가 매칭 찾기 = 목록만 다시(입력 칸 그대로)
         if (t && t.id === 'om-ind-key' && OM.card && OM.card.ind) { OM.card.ind.draft = t.value; return; }   // #895 주문자 번호 = 치는 동안은 그대로 두고 떠날 때·Enter 때 줄에 넣음(#857)
         if (!OM.card || isNaN(ri)) return;
         const r = OM.card.rows[ri]; if (!r) return;
@@ -1123,8 +1126,97 @@
     }
     const chkGot = (c, grp, k) => { const o = c.chk && c.chk[grp + ':' + k]; return o ? o.sel : null; };
     const p2Rows = (c, d) => { const sel = chkGot(c, 'p2', d), all = savedCashOf(d); return sel ? all.filter(r => sel.has(String(r.id))) : all; };   // ② 체크한 줄(체크 목록을 안 그렸으면 = 전부 · 종전)
+    // ── #934(대표 11/1 「바꾸기 · 현금 그대로 · 그리고 추가매칭 버튼」) 번호가 다른 현금(「!」) 줄도 사람이 골라 입력삭제 주소 줄로
+    //   실사례 = 입력삭제 3박스인데 1박스는 손님이 「따로 보내 달라」며 구매자 연락처가 다른 번호 → ②는 같은 번호 2줄만 보이고 셋째 줄은 짝지을 길이 없었음
+    //   [추가 매칭] = ①·②·③ 묻기 카드 끝(그리고 번호 맞는 줄·후보 묶음이 하나도 없을 때도) → 메모함 열린 현금 줄 가운데 아직 짝 없는 줄(번호 무관 · ②에 보이는 같은 번호 줄은 뺌 · 서비스 줄 뺌) 목록 + 찾기(이름·끝 4자리·주소·품목)
+    //   기본 체크 없음(번호가 다른 줄 = 사람이 집음 · 오매칭 > 미매칭) · 50줄까지 보임(넘으면 찾기로) · [이 줄도 주소 줄로] = 새 카드면 저장 뒤 POST pair { key, ids, pick: true }(③과 같은 길 · 서버 pairCash anyNumber) · 고치기 카드(④ 메모함 입력삭제 줄의 [추가 매칭])면 바로 POST · 되돌리기 6초 종전 꼴
+    //   ⑤(대표 「현금줄 눌렀을 때도 매칭될 수 있는 구도로」) 현금 줄 고치기 카드 = [입력삭제 주문에 붙이기] → 열린 입력삭제 줄 전부(날짜·번호 무관 · #875 오늘만은 자동 묻기 규칙이라 그대로) → 하나 고르면 POST pair { key: 그 번호, ids: [이 줄], pick: true }
+    const PX_MAX = 50;
+    const pxState = (c, d, show) => { const X = c.pairX || (c.pairX = {}); return X[d] || (X[d] = { key: show || telShow(d), open: false, q: '', sel: new Set(), picked: null }); };
+    const pxSame = (r, d) => [r.cells[10], r.cells[1]].map(digits).includes(d);
+    const pxCands = (c, d) => { const all = (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && !r.service && r.id != null); return c && c.pxOnly ? all.filter(r => pxSame(r, d)).concat(all.filter(r => !pxSame(r, d))) : all.filter(r => !pxSame(r, d)); };   // ④ 저장된 입력삭제 줄에서 열면 같은 번호 줄도(앞에 · 미리 체크) — 저장 뒤엔 ②가 없어 여기가 유일한 길
+    const pxHay = r => [r.cells[3], r.cells[8], r.cells[4]].join(' ').toLowerCase().replace(/\s+/g, '');
+    const pxTels = r => [r.cells[6], r.cells[10], r.cells[1]].map(digits).filter(Boolean);
+    const pxFilter = (rows, q) => { q = String(q || '').trim().toLowerCase().replace(/\s+/g, ''); const qd = digits(q); if (!q) return rows; return rows.filter(r => pxHay(r).includes(q) || (qd.length >= 2 && qd === q.replace(/-/g, '') && pxTels(r).some(t => t.includes(qd)))); };   // 현금 표 찾기(cashShown)와 같은 규칙
+    const pxWho = (r, d) => [pairWhoQ(r) || '현금 줄', pxSame(r, d) ? '같은 번호' : last4(r.cells[10]) ? '구매자 …' + last4(r.cells[10]) : ''].filter(Boolean).join(' · ');
+    const pxSelIds = (c, d) => { const x = c.pairX && c.pairX[d]; if (!x) return []; const ok = new Set(pxCands(c, d).map(r => String(r.id))); return [...x.sel].filter(v => ok.has(v)); };
+    const pxBtn = (d, show) => `<button type="button" class="om-btn sm" data-cact="pxopen" data-k="${esc(d)}" data-show="${esc(show || '')}">추가 매칭</button>`;
+    const pxGoLabel = n => `이 줄도 주소 줄로${n ? ' <small>' + n + '줄</small>' : ''}`;
+    function pxListHtml(c, d) {
+        const x = pxState(c, d), all = pxCands(c, d), hit = pxFilter(all, x.q), shown = hit.slice(0, PX_MAX), on = pxSelIds(c, d), onRows = all.filter(r => on.includes(String(r.id)));
+        if (!all.length) return `<p class="om-pair-n">아직 짝 없는 현금 줄이 메모함에 없어요</p>`;
+        const head = `<p class="om-pair-n">${all.length}줄 중 <b>${on.length}줄</b> · ${onRows.reduce((t, r) => t + qtyOf(r), 0)}박스${x.q ? ` · 찾은 ${hit.length}줄` : ''}${hit.length > PX_MAX ? ` · ${PX_MAX}줄까지만 보여요 · 찾기로 좁혀 주세요` : ''}</p>`;
+        if (!shown.length) return head + `<p class="om-pair-s">찾는 줄이 없어요 · 이름·번호 끝자리·주소·품목으로 찾아요</p>`;
+        return head + `<ul class="om-pair-l">${shown.map(r => `<li><label><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${esc(String(r.id))}"${x.sel.has(String(r.id)) ? ' checked' : ''}> <span>${esc(pxWho(r, d))}</span></label></li>`).join('')}</ul>`;
+    }
+    function pxHtml(c, d, show) {
+        const x = c.pairX && c.pairX[d]; if (!x) return '';
+        if (x.picked && x.picked.length) return `<div class="om-pair ok" role="status"><b>저장하면 번호가 다른 현금 줄 ${x.picked.length}개도 입력삭제 ${esc(x.key)} 주소 줄로 바꿔요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="pxundo" data-k="${esc(d)}">안 바꿀래요</button><button type="button" class="om-btn sm" data-cact="pxopen" data-k="${esc(d)}" data-show="${esc(x.key)}">더 고르기</button></div></div>`;
+        if (!x.open) return '';
+        const n = pxSelIds(c, d).length;
+        return `<div class="om-pair om-pairx" role="group" data-px="${esc(d)}" aria-labelledby="om-px-t-${esc(d)}"><b id="om-px-t-${esc(d)}">${c.pxOnly ? `입력삭제 ${esc(x.key)} 주소 줄로 바꿀 현금 줄을 고르세요` : `번호가 다른 현금 줄 가운데 입력삭제 ${esc(x.key)} 주소 줄을 고르세요`}</b>
+                <p class="om-pair-s">${c.pxOnly ? '같은 번호 줄은 미리 체크했어요 · 손님이 「따로 보내 달라」며 다른 번호로 들어온 줄도 체크하면 같이' : '손님이 「따로 보내 달라」며 다른 번호로 들어온 줄 등'} · 고른 줄만 주소 줄이 돼요 · 체크 안 한 줄은 현금 그대로 · 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
+                <div class="om-cash-q om-pairx-q"><label class="om-sr" for="om-px-q-${esc(d)}">현금 줄 찾기</label><input type="search" id="om-px-q-${esc(d)}" data-cact="pxq" data-k="${esc(d)}" value="${esc(x.q)}" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
+                <div class="om-pairx-b">${pxListHtml(c, d)}</div>
+                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pxgo" data-k="${esc(d)}"${n ? '' : ' disabled'}>${pxGoLabel(n)}</button><button type="button" class="om-btn sm" data-cact="pxclose" data-k="${esc(d)}">닫기</button></div></div>`;
+    }
+    const pxEmptyHtml = (c, k) => pxCands(c, k.d).length ? `<div class="om-pair ok" role="group"><b>메모함에 이 번호(${esc(k.show)}) 현금 줄이 없어요 · 다른 번호로 들어온 줄이면 [추가 매칭]으로 고를 수 있어요</b><div class="om-acts">${pxBtn(k.d, k.show)}</div></div>` : '';
+    const pxAllHtml = c => { const X = c.pairX || {}; return Object.keys(X).map(d => pxHtml(c, d, X[d].key)).join(''); };
+    const pxJobs = c => { const ok = new Set(pair1Keys(c).map(k => k.d)); return Object.keys(c.pairX || {}).filter(d => ok.has(d)).map(d => { const x = c.pairX[d]; return x && x.picked && x.picked.length ? { key: x.key, ids: x.picked.slice(), pick: true } : null; }).filter(Boolean); };   // 지금 카드에 남은 입력삭제 번호만(번호를 바꾸거나 줄을 뺀 뒤 옛 번호로 안 보냄 · hintPicks 와 같게)
+    function pxRefresh(c, d) {   // 찾기 글자를 치는 중 = 목록·단추만 다시(입력 칸은 그대로 · #857)
+        const box = $('om-card').querySelector(`.om-pairx[data-px="${d}"]`); if (!box) return;
+        box.querySelector('.om-pairx-b').innerHTML = pxListHtml(c, d);
+        const n = pxSelIds(c, d).length, go = box.querySelector('[data-cact="pxgo"]'); if (go) { go.disabled = !n; go.innerHTML = pxGoLabel(n); }
+    }
+    function pxOpen(c, d, show) { const x = pxState(c, d, show); x.open = true; if (c.pxOnly && !x.seeded) { x.seeded = true; pxCands(c, d).filter(r => pxSame(r, d)).forEach(r => x.sel.add(String(r.id))); } renderCard(); const q = $('om-card').querySelector(`#om-px-q-${d}`); if (q) q.focus({ preventScroll: true }); }
+    async function pxRunNow(c, d) {   // ④ 고치기 카드(메모함 입력삭제 줄) = 저장할 것 없이 바로
+        const x = c.pairX[d], ids = pxSelIds(c, d).slice(0, PAIR_CHUNK).map(Number); if (!ids.length) return;
+        if (c.dirty) { toast('고친 글이 있어요 · 먼저 저장한 뒤 다시 눌러 주세요'); return; }
+        const go = $('om-card').querySelector(`.om-pairx[data-px="${d}"] [data-cact="pxgo"]`); if (go) { go.disabled = true; go.textContent = '바꾸는 중…'; }
+        const res = await API.pair({ key: x.key, ids, pick: true });
+        if (OM.card !== c) return;
+        if (!res.ok) { toast(errText(res, '현금 줄을 주소 줄로 못 바꿨어요') + ' · 현금 줄 그대로예요'); renderCard(); return; }
+        const n = Number(res.body && res.body.n) || 0, undo = res.body && Array.isArray(res.body.undo) ? res.body.undo : [];
+        x.open = false; x.sel.clear();
+        if (n) undoShow(`현금 줄 ${n}개를 입력삭제 ${x.key} 주소 줄로 바꿨어요`, async () => { const y = await API.pair({ undo: true, rows: undo }); toast(y.ok ? '현금 줄로 되돌렸어요' : errText(y, '되돌리지 못했어요')); load(); });
+        else toast('바꾼 줄이 없어요 · 이미 주소 줄이거나 비운 줄이에요');
+        await load(); if (OM.card === c) renderCard();
+    }
+    // ⑤ 현금 줄 고치기 카드 → 열린 입력삭제 줄 목록(전부 · 번호 무관) → 하나 골라 그 주문의 주소 줄로
+    const pyLines = () => { const L = OM.list || [], m = new Map(); L.forEach(x => { const d = digits(x.key); if (x.kind !== 'line' || x.state !== 'open' || d.length < 8 || m.has(d) || !INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''))) return; const rows = L.filter(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d)); m.set(d, { d, show: telShow(x.key), note: String(x.note || '').trim(), when: hintWhen(x.entry && x.entry.created_at), at: Date.parse(String((x.entry && x.entry.created_at) || '')) || 0, date: x.ship_date || null, n: rows.length, boxes: rows.reduce((t, r) => t + qtyOf(r), 0) }); }); return [...m.values()].sort((a, b) => b.at - a.at); };
+    const pyRowOk = (c, r) => !!(c && c.mode === 'edit' && c.rows.length === 1 && r && r.kind === 'cash' && !r.indiv && !r.service && r.id != null);
+    const pyWho = l => [l.show, l.note, l.when, l.date ? md(l.date) + ' 발송' : '', l.n ? `주소 줄 ${l.n}줄(${l.boxes}박스)` : '주소 줄 없음'].filter(Boolean).join(' · ');
+    function pyHtml(c) {
+        const r = c.rows[0]; if (!pyRowOk(c, r)) return '';
+        const lines = pyLines(); if (!lines.length) return '';
+        const y = c.pairY || (c.pairY = { open: false, pick: null });
+        if (!y.open) return `<div class="om-pair ok" role="group"><b>이 현금 줄이 입력삭제 주문의 주소 줄이면 그 주문에 붙일 수 있어요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="pyopen">입력삭제 주문에 붙이기</button></div></div>`;
+        if (y.pick && !lines.some(l => l.d === y.pick)) y.pick = null;
+        return `<div class="om-pair om-pairy" role="group" aria-labelledby="om-py-t"><b id="om-py-t">어느 입력삭제 주문의 주소 줄인가요?</b>
+                <p class="om-pair-s">열린 입력삭제 줄 전부 · 번호가 달라도 돼요 · 붙이면 그 주문 묶음으로 옮기고 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
+                <ul class="om-pair-l">${lines.map(l => `<li><label><input type="radio" name="om-py" data-cact="pypick" data-k="${esc(l.d)}"${y.pick === l.d ? ' checked' : ''}> <span>${esc(pyWho(l))}</span></label></li>`).join('')}</ul>
+                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pygo"${y.pick ? '' : ' disabled'}>이 주문에 붙이기</button><button type="button" class="om-btn sm" data-cact="pyclose">닫기</button></div></div>`;
+    }
+    async function pyRun(c) {
+        const r = c.rows[0], y = c.pairY, l = y && y.pick && pyLines().find(x => x.d === y.pick); if (!pyRowOk(c, r) || !l) return;
+        if (c.dirty) { toast('고친 글이 있어요 · 먼저 저장한 뒤 붙여 주세요'); return; }   // 워커2 점검 = 고친 칸이 조용히 버려지지 않게
+        const go = $('om-card').querySelector('[data-cact="pygo"]'); if (go) { go.disabled = true; go.textContent = '붙이는 중…'; }
+        const res = await API.pair({ key: l.show, ids: [Number(r.id)], pick: true });
+        if (OM.card !== c) return;
+        if (!res.ok) { toast(errText(res, '입력삭제 주문에 못 붙였어요') + ' · 현금 줄 그대로예요'); renderCard(); return; }
+        const n = Number(res.body && res.body.n) || 0, undo = res.body && Array.isArray(res.body.undo) ? res.body.undo : [];
+        if (!n) { toast('못 붙였어요 · 이미 주소 줄이거나 비운 줄이에요'); y.open = false; renderCard(); return; }
+        cardClose(true);
+        undoShow(`이 현금 줄을 입력삭제 ${l.show} 주소 줄로 바꿨어요`, async () => { const z = await API.pair({ undo: true, rows: undo }); toast(z.ok ? '현금 줄로 되돌렸어요' : errText(z, '되돌리지 못했어요')); load(); });
+        load();
+    }
+    const editPairHtml = c => {   // 고치기 카드 = 종전처럼 묻기 0 · ④ 메모함 입력삭제 줄의 [추가 매칭]으로 열었을 때(pxOnly)와 ⑤ 현금 줄만 예외
+        if (!c || c.mode !== 'edit' || c.rows.length !== 1) return '';
+        if (c.pxOnly) { const d = c.pxOnly.d, show = c.pxOnly.show; return pxHtml(c, d, show) || `<div class="om-pair ok" role="group"><b>입력삭제 ${esc(show)} 줄에 번호가 다른 현금 줄을 주소 줄로 더 붙일 수 있어요</b><div class="om-acts">${pxBtn(d, show)}</div></div>`; }
+        return pyHtml(c);
+    };
     function pairHtml(c) {
-        const keys = pair1Keys(c); if (!keys.length) return '';
+        const keys = pair1Keys(c); if (!keys.length) return editPairHtml(c);   // #934 고치기 카드 ④·⑤
         let h = '';
         const p1 = c.pair1 || (c.pair1 = { sel: new Set(), key: keys.length === 1 ? keys[0].d : null, hide: false });
         if (p1.key && !keys.some(k => k.d === p1.key)) p1.key = null;
@@ -1138,19 +1230,20 @@
                 <p class="om-pair-s">맞는 줄만 체크하세요 · 체크 안 한 줄은 현금 그대로예요</p>
                 ${keys.length > 1 ? `<div class="om-seg" role="radiogroup" aria-label="입력삭제 번호">${keys.map(k => `<button type="button" role="radio" class="om-seg-b" data-cact="p1key" data-k="${esc(k.d)}" aria-checked="${p1.key === k.d ? 'true' : 'false'}">${esc(k.show)}${k.saved ? ' <small>메모함</small>' : ''}</button>`).join('')}</div>` : ''}
                 ${chkHtml('p1', 'card', rows1.map(x => ({ v: String(x.ri), r: x.r })), new Set(rows1.filter(x => p1.sel.has(x.r)).map(x => String(x.ri))))}
-                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="p1go"${on1 && p1.key ? '' : ' disabled'}>주소 줄로 짝짓기${on1 ? ' <small>' + on1 + '줄</small>' : ''}</button><button type="button" class="om-btn sm" data-cact="p1no">현금 그대로</button></div></div>`;
+                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="p1go"${on1 && p1.key ? '' : ' disabled'}>주소 줄로 짝짓기${on1 ? ' <small>' + on1 + '줄</small>' : ''}</button><button type="button" class="om-btn sm" data-cact="p1no">현금 그대로</button>${p1.key ? pxBtn(p1.key, (keys.find(k => k.d === p1.key) || {}).show) : ''}</div></div>`;
         }
         const p2 = c.pair2 || (c.pair2 = {});
         pairKeys(c).forEach(k => {   // ② = 이 카드의 입력삭제 줄 번호만
-            const saved = savedCashOf(k.d); if (!saved.length) { h += hintSlot(c, k); return; } if (p2[k.d] === 'no') return;   // #895 ④ 번호로 짝 줄이 없으면 = 후보 묶음 고르기
+            const saved = savedCashOf(k.d); if (!saved.length) { h += hintSlot(c, k) || pxEmptyHtml(c, k); return; }   // #895 ④ 번호로 짝 줄이 없으면 = 후보 묶음 고르기 · #934 그것도 없으면 [추가 매칭]
+            if (p2[k.d] === 'no') return;
             const sel2 = chkSel(c, 'p2', k.d, saved.map(r => String(r.id))), on2 = saved.filter(r => sel2.has(String(r.id))).length;   // #900 1-H
             h += p2[k.d] === 'yes'
-                ? `<div class="om-pair ok" role="status"><b>저장하면 메모함 현금 줄 ${on2}개${on2 < saved.length ? `(${saved.length}개 중)` : ''}를 입력삭제 ${esc(k.show)} 주소 줄로 바꿔요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="p2undo" data-k="${esc(k.d)}">안 바꿀래요</button></div></div>`
+                ? `<div class="om-pair ok" role="status"><b>저장하면 메모함 현금 줄 ${on2}개${on2 < saved.length ? `(${saved.length}개 중)` : ''}를 입력삭제 ${esc(k.show)} 주소 줄로 바꿔요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="p2undo" data-k="${esc(k.d)}">안 바꿀래요</button>${pxBtn(k.d, k.show)}</div></div>`
                 : `<div class="om-pair" role="group"><b>메모함에 이 번호(${esc(k.show)}) 현금 줄 ${saved.length}개가 있어요 · 입력삭제 주소 줄로 바꿀까요?</b>
                     ${chkHtml('p2', k.d, saved.map(r => ({ v: String(r.id), r })), sel2)}
-                    <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="p2yes" data-k="${esc(k.d)}"${on2 ? '' : ' disabled'}>바꾸기</button><button type="button" class="om-btn sm" data-cact="p2no" data-k="${esc(k.d)}">현금 그대로</button></div></div>`;
+                    <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="p2yes" data-k="${esc(k.d)}"${on2 ? '' : ' disabled'}>바꾸기</button><button type="button" class="om-btn sm" data-cact="p2no" data-k="${esc(k.d)}">현금 그대로</button>${pxBtn(k.d, k.show)}</div></div>`;
         });
-        return h;
+        return h + pxAllHtml(c);   // #934 열린 「추가 매칭」 판·고른 결과(번호마다 하나)
     }
     function pair1Go(c) {
         const p1 = c.pair1, k = p1 && pair1Keys(c).find(x => x.d === p1.key); if (!p1 || !c.rows.some(r => p1.sel.has(r))) return;
@@ -1172,7 +1265,7 @@
         const jobs = new Map();   // 번호 → { key, ids }
         Object.keys(c.pair2 || {}).filter(d => c.pair2[d] === 'yes').forEach(d => { const ids = p2Rows(c, d).map(r => r.id), k = pairKeys(c).find(x => x.d === d); if (ids.length) jobs.set(d, { key: k ? k.show : d, ids }); });
         (sent || []).forEach((r, i) => { const sv = saved && saved[i]; if (!r._pairSaved || r.service || !sv || sv.id == null || sv.kind !== 'cash') return; const d = digits(r._pairSaved), j = jobs.get(d) || { key: r._pairSaved, ids: [] }; j.ids.push(sv.id); jobs.set(d, j); });   // ③ 방금 저장한 줄(보낸 순서 = 받은 순서)
-        const picks = hintPicks(c);   // #895 ④ 사람이 고른 후보 묶음 = pick(번호 대조 없이)
+        const picks = hintPicks(c).concat(pxJobs(c));   // #895 ④ 사람이 고른 후보 묶음 = pick(번호 대조 없이) · #934 추가 매칭으로 고른 줄
         if (!jobs.size && !picks.length) return;
         let n = 0, sentN = 0; const undo = [];   // n = 서버가 바꾼 줄 · sentN = 보내서 처리 끝난 줄(실패 안내의 「나머지」 = 아직 안 보낸 줄 · aa 점검 #899)
         // #899 서버 /pair 는 한 번에 60줄까지(order-memo.js ids.slice(0, 60)) → 60줄씩 차례로 · 실패하면 거기서 멈춤(같은 줄 두 번 안 감 · 된 줄은 되돌리기에 남음)
@@ -1212,13 +1305,13 @@
         const g0 = sel && x.groups.find(g => String(g.entry_id) === sel);
         if (g0) {   // #900 1-H 고른 묶음 = 줄마다 체크(기본 전부 · 메모함 목록에 다 있을 때만 줄 글 · 아니면 개수만)
             const rs = g0.ids.map(id => (OM.list || []).find(r => String(r.id) === String(id))).filter(Boolean), sel3 = chkSel(c, 'p3', k.d, g0.ids.map(String)), on3 = g0.ids.filter(id => sel3.has(String(id))).length;
-            return `<div class="om-pair ok" role="group"><b>저장하면 메모함 현금 줄 ${on3}개${on3 < g0.ids.length ? `(${g0.ids.length}개 중)` : ''}(${esc(hintWhen(g0.created_at))})를 입력삭제 ${esc(k.show)} 주소 줄로 바꿔요</b>${rs.length === g0.ids.length ? chkHtml('p3', k.d, rs.map(r => ({ v: String(r.id), r })), sel3) : ''}<div class="om-acts"><button type="button" class="om-btn sm" data-cact="h3undo" data-k="${esc(k.d)}">안 바꿀래요</button></div></div>`;
+            return `<div class="om-pair ok" role="group"><b>저장하면 메모함 현금 줄 ${on3}개${on3 < g0.ids.length ? `(${g0.ids.length}개 중)` : ''}(${esc(hintWhen(g0.created_at))})를 입력삭제 ${esc(k.show)} 주소 줄로 바꿔요</b>${rs.length === g0.ids.length ? chkHtml('p3', k.d, rs.map(r => ({ v: String(r.id), r })), sel3) : ''}<div class="om-acts"><button type="button" class="om-btn sm" data-cact="h3undo" data-k="${esc(k.d)}">안 바꿀래요</button>${pxBtn(k.d, k.show)}</div></div>`;
         }
         const pk = (c.pick3 || {})[k.d];
         return `<div class="om-pair" role="group"><b>입력삭제 ${esc(k.show)} 주문과 박스 수가 같은 현금 줄 묶음이 있어요 · 이 주문의 주소 줄인가요?</b>
                 ${x.need.length ? `<p class="om-pair-s">남은 주문 = ${esc(hintItems(x.need))}</p>` : ''}
                 <ul class="om-pair-l">${x.groups.map(g => `<li><label><input type="radio" name="om-h3-${esc(k.d)}" data-cact="h3pick" data-k="${esc(k.d)}" data-g="${esc(String(g.entry_id))}"${String(pk) === String(g.entry_id) ? ' checked' : ''}> <span>${esc(hintWhen(g.created_at))} · ${Number(g.boxes) || g.ids.length}박스 · ${esc(hintItems(g.items))}</span></label></li>`).join('')}</ul>
-                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="h3yes" data-k="${esc(k.d)}"${pk ? '' : ' disabled'}>이 묶음으로 바꾸기</button><button type="button" class="om-btn sm" data-cact="h3no" data-k="${esc(k.d)}">현금 그대로</button></div></div>`;
+                <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="h3yes" data-k="${esc(k.d)}"${pk ? '' : ' disabled'}>이 묶음으로 바꾸기</button><button type="button" class="om-btn sm" data-cact="h3no" data-k="${esc(k.d)}">현금 그대로</button>${pxBtn(k.d, k.show)}</div></div>`;
     }
     const hintPicks = c => Object.keys(c.pair3 || {}).map(d => { const v = c.pair3[d]; if (!v || v === 'no') return null; const x = c.hint && c.hint[d], g = x && x.groups && x.groups.find(y => String(y.entry_id) === v), k = pairKeys(c).find(y => y.d === d); const sel = chkGot(c, 'p3', d), ids = sel ? g.ids.filter(id => sel.has(String(id))) : g.ids.slice(); return g && k && ids.length ? { key: k.show, ids, pick: true } : null; }).filter(Boolean);   // #900 1-H 체크한 줄만
     function indivSync() { const c = OM.card; if (!c) return; const w = indivWarn(c); $('om-card').querySelectorAll('.om-indiv').forEach(p => { p.textContent = indivNote(c); p.classList.toggle('warn', w); }); }
@@ -1438,6 +1531,15 @@
         if (a === 'h3yes') { const g = (c.pick3 || {})[b.dataset.k]; if (!g) return; (c.pair3 = c.pair3 || {})[b.dataset.k] = g; renderCard(); return; }
         if (a === 'h3no') { (c.pair3 = c.pair3 || {})[b.dataset.k] = 'no'; renderCard(); return; }
         if (a === 'h3undo') { if (c.pair3) delete c.pair3[b.dataset.k]; renderCard(); return; }
+        if (a === 'pxopen') { pxOpen(c, b.dataset.k, b.dataset.show); return; }   // #934 추가 매칭
+        if (a === 'pxclose') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) x.open = false; renderCard(); return; }
+        if (a === 'pxchk') { const x = pxState(c, b.dataset.k); if (b.checked) x.sel.add(b.dataset.v); else x.sel.delete(b.dataset.v); pxRefresh(c, b.dataset.k); const back = $('om-card').querySelector(`.om-pairx input[data-cact="pxchk"][data-v="${b.dataset.v}"]`); if (back) back.focus({ preventScroll: true }); return; }
+        if (a === 'pxgo') { const d = b.dataset.k, x = pxState(c, d), ids = pxSelIds(c, d); if (!ids.length) return; if (c.mode === 'edit') { pxRunNow(c, d); return; } x.picked = ids.map(Number); x.open = false; renderCard(); toast(`${ids.length}줄을 더 골랐어요 · 저장하면 입력삭제 ${x.key} 주소 줄로 바꿔요`); return; }
+        if (a === 'pxundo') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) { x.picked = null; x.sel.clear(); } renderCard(); return; }
+        if (a === 'pyopen') { (c.pairY = c.pairY || { open: false, pick: null }).open = true; renderCard(); const f = $('om-card').querySelector('input[data-cact="pypick"]'); if (f) f.focus({ preventScroll: true }); return; }   // #934 ⑤
+        if (a === 'pyclose') { if (c.pairY) c.pairY.open = false; renderCard(); return; }
+        if (a === 'pypick') { (c.pairY = c.pairY || { open: true, pick: null }).pick = b.dataset.k; const go = $('om-card').querySelector('[data-cact="pygo"]'); if (go) go.disabled = false; return; }
+        if (a === 'pygo') { pyRun(c); return; }
         if (a === 'file') { const fi = $('om-file'); if (fi) fi.click(); return; }
         if (a === 'chk' || a === 'chkall') {   // #900 1-H 체크 목록(① p1 = 카드 줄 번호 · ② p2·④ p3 = 메모함 줄 id)
             const g = b.dataset.g, k = b.dataset.k, box = b.closest('.om-pair'), vals = [...box.querySelectorAll('input[data-cact="chk"]')].map(x => x.dataset.v);
@@ -1560,7 +1662,7 @@
                 if (d && d.diff.length) { c.dupAsk = { diff: d.diff, same: [...d.same], rows }; btn.disabled = false; btn.innerHTML = keep; renderDup(); return; }
                 if (d && d.same.size) { skipped = d.same.size; dupPairMark(rows, d.same); rows = rows.filter((r, i) => !d.same.has(i)); }
             } else { skipped = c.dupOk.same.length; dupPairMark(c.dupOk.rows, new Set(c.dupOk.same)); rows = c.dupOk.rows.filter((r, i) => !c.dupOk.same.includes(i)); drop = c.dupOk.drop; }
-            if (!rows.length) { cardClose(true); inNote(`이미 같은 줄이 있어요 · 저장하지 않았어요`, 'warn'); if (c.pair2 || c.pair3) { await pair2Run(c); load(); } return; }   // #874 입력삭제 줄이 이미 있어도 고른 ②는 함
+            if (!rows.length) { cardClose(true); inNote(`이미 같은 줄이 있어요 · 저장하지 않았어요`, 'warn'); if (c.pair2 || c.pair3 || c.pairX) { await pair2Run(c); load(); } return; }   // #874 입력삭제 줄이 이미 있어도 고른 ②는 함(#934 추가 매칭도)
         }
         let res;
         if (c.mode === 'edit') res = await API.update(rows[0].id, putBody(rows[0]));
