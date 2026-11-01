@@ -266,3 +266,23 @@ html[data-ao-theme="dark"] .xp-sale-line { background: rgba(255, 146, 43, .10); 
 .xp-sale-box .xp-sale-acts { align-self: flex-end; margin-left: 0; }
 @media (max-width: 960px), (pointer: coarse) { .xp-panel-h .xp-salebtn { min-height: 44px; } }
 @media (max-width: 720px) { .xp-sale-line { padding: 8px 10px; } .xp-sale-line small { flex-basis: 100%; } }
+
+/* #940 날마다 특이사항 메모 · 달력 표식 · 이달 띠(토큰만 = 야간 저절로) */
+.xp-note-box { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-soft); }
+.xp-note-box.dirty { border-color: var(--x-acc); }
+.xp-note-box label { font-size: 13px; font-weight: 700; color: var(--x-ink); }
+.xp-note-box textarea { display: block; width: 100%; min-height: 44px; max-height: 40vh; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 14px; line-height: 1.5; resize: none; overflow-y: auto; overflow-wrap: anywhere; }
+.xp-note-box textarea:focus-visible { outline: 2px solid var(--x-acc); outline-offset: 1px; }
+.xp-note-f { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.xp-note-f small { flex: 1 1 auto; min-width: 0; color: var(--x-sub); font-size: 12px; overflow-wrap: anywhere; }
+.xp-note-box.dirty .xp-note-f small { color: var(--x-acc); font-weight: 700; }
+.xp-note-f .xp-btn { flex: none; min-height: 40px; }
+.xp-note-tag { display: inline-flex; align-items: center; align-self: flex-start; gap: 3px; max-width: 100%; padding: 1px 6px; border-radius: 999px; background: var(--x-acc-soft); color: var(--x-acc); font-size: 11.5px; font-weight: 700; line-height: 1.4; }
+.xp-note-tag i { display: none; font-style: normal; }
+.xp-note-tag em { font-style: normal; }
+.xp-notes-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 10px 0 0; padding: 8px 14px; border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-card); color: var(--x-ink); font-size: 13px; }
+.xp-notes-sum b { color: var(--x-acc); }
+.xp-notes-sum span { font-weight: 700; font-variant-numeric: tabular-nums; }
+.xp-notes-sum em { font-style: normal; color: var(--x-sub); font-size: 12px; }
+@media (max-width: 960px), (pointer: coarse) { .xp-note-f .xp-btn { min-height: 44px; } }
+@media (max-width: 960px) { .xp-note-tag { padding: 0; background: transparent; align-self: center; font-size: 11px; } .xp-note-tag i { display: inline; } .xp-note-tag em { display: none; } }

@@ -8,6 +8,7 @@
 //     PATCH /api/agent-office/experience/:id     { visit_date?, visit_time?, exp_count?, entry_count?, infant_count?, memo?, status? }  (직원이 날짜를 고치면 date_fixed · 수집이 다시 덮지 않음)
 //     POST  /api/agent-office/experience/:id/visit  { on }  방문 체크
 //     GET   /api/agent-office/experience/export.xlsx?from&to   엑셀(#822 시트 ① 체험 예약 디자인 · 시트 ② 현장 판매(귤))
+//     PUT   /api/agent-office/experience/notes/:day {note}   #940 날마다 특이사항 메모(알바 휴무 등 · 세무사 X · 2,000자 · 빈 글 = 지움) · 목록 GET 응답의 notes:[{day,note,updated_by,updated_at}]
 //     PUT   /api/agent-office/experience/sales/:day {amount, memo}   #822 현장 판매(귤) 적기(전 직원 · 0·빈 메모 = 줄 지움) · 목록 GET 응답의 sales:[{day,amount,memo,updated_by,updated_at}]
 //     GET   /api/agent-office/experience/:id/sms-preview      접수·전날 문자 미리보기(보내지 않음)
 //     GET/PUT /api/agent-office/experience/settings            문구·켜기·하루 상한(PUT = 관리자)
@@ -51,7 +52,7 @@ const dowOf = ymd => DOW[new Date(ymd + 'T00:00:00Z').getUTCDay()];
 //   · 취소·반품 줄 = 연빨강 바탕 + 회색 글 + 이름 취소선 · 방문 = 연초록 · 날짜 확인 필요 칸 = 호박 · 맨 아래 합계(취소·반품 뺀 것) · 접수 안내 = 알림톡/문자) · 시트 ② 현장 판매(귤)(날짜·요일·금액·메모·적은 사람 + 합계)
 const XL = { head: 'FF4F46E5', line: 'FFD0D5DD', off: 'FFFEF3F2', offInk: 'FF98A2B3', vis: 'FFECFDF3', warn: 'FFFFFAEB', sum: 'FFF2F4F7', sale: 'FFFFF4E6' };
 const fmtTelXl = p => { const s = String(p || ''), d = s.replace(/\D/g, ''); return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? (d.startsWith('02') ? `${d.slice(0, 2)}-${d.slice(2, 6)}-${d.slice(6)}` : `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`) : s; };   // 10·11자리만 하이픈(02 = 2-4-4) · 그 밖은 원래 값 그대로
-function buildXlsx(rows, sales, from, to) {
+function buildXlsx(rows, sales, from, to, notes) {
     const ExcelJS = require('exceljs'); const wb = new ExcelJS.Workbook();
     wb.creator = '제주아꼼이네 회사프로그램';
     const thin = { style: 'thin', color: { argb: XL.line } }, border = { top: thin, left: thin, bottom: thin, right: thin };
@@ -90,6 +91,12 @@ function buildXlsx(rows, sales, from, to) {
     const t2 = w2.addRow({ d: '합계', w: '', a: sum, m: `${(sales || []).length}일 · ${from} ~ ${to}`, by: '', at: '' });
     body(t2, 6, (c, i) => { c.fill = fill(XL.sum); c.font = { bold: true }; c.border = Object.assign({}, border, { top: { style: 'double', color: { argb: XL.line } } }); if (i === 1) c.alignment = { vertical: 'middle', horizontal: 'center' }; if (i === 3) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; } });
     head(ws, N, lastWs); head(w2, 6, lastW2);
+    if (notes && notes.length) {   // #940 ③ 특이사항 메모(그 기간에 있을 때만 · 없으면 시트 없음 = 종전 파일 그대로)
+        const w3 = wb.addWorksheet('특이사항', { properties: { defaultRowHeight: 20 } });
+        w3.columns = [{ header: '날짜', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '특이사항', key: 'n', width: 70 }, { header: '적은 사람', key: 'by', width: 11 }, { header: '적은 때', key: 'at', width: 17 }];
+        for (const x of notes) { const row = w3.addRow({ d: x.day, w: dowOf(x.day), n: x.note || '', by: x.updated_by || '', at: x.updated_at || '' }); body(row, 5, (c, i) => { c.alignment = i === 3 ? { vertical: 'top', wrapText: true } : { vertical: 'middle', horizontal: 'center' }; }); row.height = Math.min(409, Math.max(20, 16 * String(x.note || '').split('\n').reduce((a, l) => a + Math.max(1, Math.ceil(l.length / 40)), 0) + 4)); }
+        head(w3, 5, w3.rowCount);
+    }
     return wb;
 }
 const digits = s => String(s || '').replace(/\D/g, '');
@@ -254,6 +261,8 @@ module.exports = function mountExperience(app, deps) {
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_mail_seen (message_id VARCHAR(200) PRIMARY KEY, uid BIGINT, booking_id INTEGER, state VARCHAR(16), seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
         // #822(대표 10/22) 현장 판매(귤) = 그날 체험장에서 직접 판 귤 매출 — 날짜당 한 줄(합계 + 자유 메모) · 체험 예약 결제(네이버·플레이스)와 섞지 않음 · 이 창과 엑셀 둘째 시트에만 보임(정산·통계 무관)
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_daily_sales (day DATE PRIMARY KEY, amount INTEGER NOT NULL DEFAULT 0, memo VARCHAR(200), updated_by VARCHAR(60), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+        // #940(대표 11/1) 날마다 특이사항 메모(알바 휴무 등) = 날짜당 한 줄 · 손님·알림톡·문자 흐름과 무관
+        await pool.query(`CREATE TABLE IF NOT EXISTS experience_daily_notes (day DATE PRIMARY KEY, note TEXT NOT NULL, updated_by VARCHAR(60), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     })().catch(e => console.error('[#775] 표 준비 실패:', e.message)));
 
     // ── 스토어 수집 ─────────────────────────────────────────────────────
@@ -627,13 +636,15 @@ module.exports = function mountExperience(app, deps) {
     // #822 현장 판매(귤) 줄 — 기간 안 날짜별(없는 날은 줄 없음) · 표가 아직 없으면 빈 목록(옛 가짜 pool·기동 직후)
     const SALES_COLS = `to_char(day,'YYYY-MM-DD') AS day, amount, memo, updated_by, to_char(updated_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS updated_at`;
     const listSales = async (from, to) => (await pool.query(`SELECT ${SALES_COLS} FROM experience_daily_sales WHERE day BETWEEN $1::date AND $2::date ORDER BY day`, [from, to]).catch(() => ({ rows: [] }))).rows;
+    const NOTE_COLS = `to_char(day,'YYYY-MM-DD') AS day, note, updated_by, to_char(updated_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS updated_at`, NOTE_MAX = 2000;
+    const listNotes = async (from, to) => (await pool.query(`SELECT ${NOTE_COLS} FROM experience_daily_notes WHERE day BETWEEN $1::date AND $2::date ORDER BY day`, [from, to]).catch(() => ({ rows: [] }))).rows;   // #940 표가 아직 없으면 빈 목록
     app.get('/api/agent-office/experience', authMiddleware, async (req, res) => {
         try {
             await ready;
             const today = kstDay();
             const from = ymdOk(req.query.from) ? req.query.from : today, to = ymdOk(req.query.to) ? req.query.to : addDays(from, 13);
-            const [items, sum, c, sales] = await Promise.all([listRows(from, to), summary(), notifyCfg(), listSales(from, to)]);
-            res.json({ from, to, items, sales, summary: sum, settings_view: { sms_enabled: c.enabled, daily_cap: c.daily_cap, alimtalk: !!(c.alimtalk && c.alimtalk.enabled) } });   // #804 alimtalk = 화면 발송 표시 글(✓ 알림톡 / ✓ 문자)
+            const [items, sum, c, sales, notes] = await Promise.all([listRows(from, to), summary(), notifyCfg(), listSales(from, to), listNotes(from, to)]);
+            res.json({ from, to, items, sales, notes, summary: sum, settings_view: { sms_enabled: c.enabled, daily_cap: c.daily_cap, alimtalk: !!(c.alimtalk && c.alimtalk.enabled) } });   // #804 alimtalk = 화면 발송 표시 글(✓ 알림톡 / ✓ 문자)
         } catch (e) { console.error('[#775] 목록:', e.message); res.status(500).json({ error: '체험 예약을 읽지 못했어요' }); }
     });
     // #822 현장 판매(귤) 적기 = 날짜당 한 줄 덮어쓰기(전 직원) · 금액 0 이고 메모도 비면 그 줄 지움 · audit experience_sales(before/after · 날짜는 changes 에)
@@ -661,12 +672,34 @@ module.exports = function mountExperience(app, deps) {
             res.json({ ok: true, day, item: after });
         } catch (e) { console.error('[#822] 현장 판매:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
     });
+    // #940 특이사항 메모 = 날짜당 한 줄 덮어쓰기(전 직원 · 세무사 X) · 빈 글 = 지움 · 줄바꿈 유지 · audit experience_note
+    app.put('/api/agent-office/experience/notes/:day', authMiddleware, async (req, res) => {
+        try {
+            await ready;
+            if (req.user && req.user.role === 'accountant') return res.status(403).json({ error: '세무사 계정은 적을 수 없어요' });
+            const day = String(req.params.day || '');
+            if (!ymdOk(day) || !validYmd(+day.slice(0, 4), +day.slice(5, 7), +day.slice(8, 10))) return res.status(400).json({ error: '날짜가 이상해요' });
+            const note = String((req.body && req.body.note) == null ? '' : req.body.note).replace(/\r\n?/g, '\n').trim();
+            if (note.length > NOTE_MAX) return res.status(400).json({ error: `메모는 ${NOTE_MAX.toLocaleString('ko-KR')}자까지 적을 수 있어요` });
+            const who = String(actor(req).name || '').slice(0, 60) || null;
+            const before = (await pool.query(`SELECT ${NOTE_COLS} FROM experience_daily_notes WHERE day=$1::date`, [day])).rows[0] || null;
+            let after = null;
+            if (!note) { if (before) await pool.query(`DELETE FROM experience_daily_notes WHERE day=$1::date`, [day]); }
+            else if (before && before.note === note) after = before;   // 같은 글 = 적은 사람·때 그대로
+            else {
+                await pool.query(`INSERT INTO experience_daily_notes (day, note, updated_by, updated_at) VALUES ($1::date, $2, $3, NOW()) ON CONFLICT (day) DO UPDATE SET note=EXCLUDED.note, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, [day, note, who]);
+                after = (await pool.query(`SELECT ${NOTE_COLS} FROM experience_daily_notes WHERE day=$1::date`, [day])).rows[0] || null;
+            }
+            if ((before && before.note) !== (after && after.note)) await audit('experience_note', null, { day, before: before && before.note, after: after && after.note }, actor(req));
+            res.json({ ok: true, day, item: after });
+        } catch (e) { console.error('[#940] 특이사항 메모:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
+    });
     app.get('/api/agent-office/experience/export.xlsx', authMiddleware, async (req, res) => {
         try {
             await ready;
             const today = kstDay(); const from = ymdOk(req.query.from) ? req.query.from : today, to = ymdOk(req.query.to) ? req.query.to : addDays(from, 13);
-            const [rows, sales] = await Promise.all([listRows(from, to), listSales(from, to)]);
-            const wb = buildXlsx(rows, sales, from, to);
+            const [rows, sales, notes] = await Promise.all([listRows(from, to), listSales(from, to), listNotes(from, to)]);
+            const wb = buildXlsx(rows, sales, from, to, notes);
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('체험예약_' + from + '_' + to + '.xlsx')}`);
             await wb.xlsx.write(res); res.end();

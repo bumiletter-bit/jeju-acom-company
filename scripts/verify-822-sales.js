@@ -178,8 +178,8 @@ window.fetch = async (url, o) => {
                 const line = pg.locator('#xp-sale-line');
                 ok(await line.isVisible() && /현장 판매\(귤\)/.test(await line.textContent()) && /120,000원/.test(await line.textContent()) && /5kg 12박스/.test(await line.textContent()) && /직원 · 2026-10-22 10:00/.test(await line.textContent()), `[${tag}] 값 있는 날 = 한 줄 요약(금액·메모·적은 사람)`, await line.textContent());
                 ok((await pg.locator('#xp-sale-box').count()) === 0 && (await pg.locator('.xp-panel-h .xp-salebtn').count()) === 0 && (await line.locator('[data-act="sale-edit"]').count()) === 1 && (await line.locator('[data-act="sale-del"]').count()) === 1, `[${tag}] 입력 칸 안 펼쳐짐 · 머리 단추 없음 · [수정]·[삭제]`);
-                const lb = await line.boundingBox(), ph = await pg.locator('.xp-panel-h').first().boundingBox();
-                ok(lb && ph && lb.y >= ph.y + ph.height - 1 && lb.y < ph.y + ph.height + 40, `[${tag}] 요약 줄이 판 머리 바로 아래`, { lb, ph });
+                const lb = await line.boundingBox(), ph = (await pg.locator('#xp-note-box').count()) ? await pg.locator('#xp-note-box').boundingBox() : await pg.locator('.xp-panel-h').first().boundingBox();   // #940 머리 아래 = 특이사항 메모 칸 → 그 아래 현장 판매
+                ok(lb && ph && lb.y >= ph.y + ph.height - 1 && lb.y < ph.y + ph.height + 40, `[${tag}] 요약 줄이 메모 칸(판 머리) 바로 아래`, { lb, ph });
                 const db = await line.locator('[data-act="sale-del"]').boundingBox();
                 ok(db.height >= (mob ? 44 : 36) && await line.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `[${tag}] 삭제 단추 ${Math.round(db.height)}px · 줄 가로 넘침 0`);
                 // [수정] → 입력 칸(값 채워짐) · Esc = 입력 칸만 닫힘
