@@ -214,10 +214,10 @@ function indivBadge(line, rows, orders, base, opt) {
     const q = v => Math.max(0, parseInt(v, 10) || 0), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
     const sd = r => r && r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null;
     const mine = (rows || []).filter(r => r && r.kind === 'cash' && r.state === 'open' && Array.isArray(r.cells) && [r.cells[10], r.cells[1]].map(dg).includes(d));
-    const addr = mine.filter(r => dg(r.cells[10]) === d && r.sure !== false && !r.service && !/[!！]/.test(String(r.cells[0] || '')));
+    const addr = mine.filter(r => dg(r.cells[10]) === d && !r.service && !/[!！]/.test(String(r.cells[0] || '')));   // #936-b(대표 11/1) 「확인」 줄(sure false)도 박스는 셈 → unsure 칸 + 호박색 「· 확인 필요 k」(for-ship 은 종전대로 확인 줄 제외 = 의도된 차이)
     const now = addr.filter(r => !sd(r) || !base || sd(r) === base), later = addr.filter(r => sd(r) && base && sd(r) > base);
     const n = now.reduce((t, r) => t + q(r.cells[5]), 0), laterN = later.reduce((t, r) => t + q(r.cells[5]), 0);
-    const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : null, n, later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
+    const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : null, n, unsure: addr.filter(r => r.sure === false).reduce((t, r) => t + q(r.cells[5]), 0), later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
     const used = line && line.used_on ? String(line.used_on instanceof Date ? line.used_on.toISOString() : line.used_on).slice(0, 10) : null, lsd = sd(line);
     if (used && (!lsd || lsd <= used)) b.state = 'sent';
     else if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';

@@ -634,11 +634,12 @@
     function badgeText(b) {
         if (!b) return '';
         const lt = Number(b.later) || 0, wait = lt ? ` 오늘 · ${lt}박스 ${b.later_date ? md(b.later_date) + ' ' : ''}대기` : '';   // 날짜 나눔(#870) = 「14/15 오늘 · 1박스 11/4 대기」
-        const main = b.state === 'sent' ? '발송됨' : b.state === 'personal' ? `개인결제창 · 주소 줄 ${b.n}` : b.state === 'unknown' ? `${b.n}/? 주문 확인 중${wait}` : b.state === 'pre' ? `${b.n}/${b.m} 발주확인 전${wait}` : b.state === 'ok' ? `${b.n}/${b.m} 매칭완료` : b.state === 'split' ? `${b.n}/${b.m}${wait}` : b.state === 'short' ? `${b.n}/${b.m}${wait} · ${b.m - b.n - lt}박스 모자람` : `${b.n}/${b.m}${wait} · ${b.n + lt - b.m}박스 초과`;
-        const tail = [b.service ? `· 서비스 ${b.service}` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');
+        const main = b.state === 'sent' ? '발송됨' : b.state === 'personal' ? `개인결제창 · 주소 줄 ${b.n}` : b.state === 'unknown' ? `${b.n}/? 주문 확인 중${wait}` : b.state === 'pre' ? `${b.n}/${b.m} 발주확인 전${wait}` : b.state === 'ok' ? (b.unsure ? `${b.n}/${b.m}` : `${b.n}/${b.m} 매칭완료`) : b.state === 'split' ? `${b.n}/${b.m}${wait}` : b.state === 'short' ? `${b.n}/${b.m}${wait} · ${b.m - b.n - lt}박스 모자람` : `${b.n}/${b.m}${wait} · ${b.n + lt - b.m}박스 초과`;
+        const tail = [b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');   // #936-b 확인 줄 = 박스는 세되 완료 아님
         return tail ? main + ' ' + tail : main;
     }
-    const badgeHtml = r => r.badge ? `<button type="button" class="om-pill om-badge k-${BADGE_K[r.badge.state] || 'unk'}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(telShow(r.key) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
+    const badgeK = b => (b.unsure > 0 && !['over', 'personal', 'unknown'].includes(b.state)) ? 'short' : (BADGE_K[b.state] || 'unk');   // #936-b 확인 줄 있으면 호박(완료 아님 · 발송됨도 = 실제 안 나간 줄) · 초과는 빨강 그대로
+    const badgeHtml = r => r.badge ? `<button type="button" class="om-pill om-badge k-${badgeK(r.badge)}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(telShow(r.key) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
     function memoLineHtml(r) {
         const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r);
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
