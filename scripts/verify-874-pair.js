@@ -153,7 +153,16 @@ function mkPool(db) {
             const e10 = await call('POST', '/api/order-memo', { raw: '자사몰 주문번호 줄', rows: [{ kind: 'line', key: '202611010001234', note: '입력o삭제x', plat: '자사몰', line: '\t202611010001234\t입력o삭제x\t자사몰', checked: { plat: '자사몰', as: 'order', at: new Date().toISOString(), buyer: '010-2600-9999' } }] });
             const g10 = await call('GET', '/api/order-memo'), l10 = g10.j.entries.flatMap(e => e.rows).find(r => r.id === e10.j.rows[0].id);
             ok(g10.s === 200 && l10 && l10.badge && l10.badge.m === 3 && l10.badge.n === 0 && l10.badge.state === 'short', '#938 ⑤ 자사몰 주문번호 줄 배지 = order_key 하이픈 꼴 숫자 대조 · 품목 2줄 합 m 3 · 0/3 모자람', l10 && l10.badge);
-            for (const r of e8.j.rows.concat(e9.j.rows, e10.j.rows)) await call('DELETE', '/api/order-memo/rows/' + r.id);
+            // #944 = 붙은 주소 줄 PUT to_cash(A 「!」 · K·B(옛 K 꼴) 받는 분) → 되돌리기 PUT to_indiv(옛 칸 · A 「!」 없음 · indiv true · K 입력삭제 번호) · to_indiv 없이 옛 칸 PUT 은 DB 「!」 따라 현금 그대로(종전 결함 재현)
+            const e11 = await call('POST', '/api/order-memo', { raw: '#944', rows: [{ kind: 'line', key: '010-2600-7777', note: '입력o삭제x', plat: '네이버', line: '\t010-2600-7777\t입력o삭제x\t네이버' }, { kind: 'cash', cells: cashCells(RECV[3]).map((v, k) => k === 10 || k === 1 ? '010-2600-7777' : v), src: 'edit' }] });
+            const a11 = e11.j.rows.find(r => r.kind === 'cash'), oldCells = a11.cells.slice();
+            const tc = await call('PUT', '/api/order-memo/rows/' + a11.id, { cells: a11.cells.map((v, k) => k === 0 ? v + '!' : v), ship_date: null, to_cash: true });
+            const r0 = await call('PUT', '/api/order-memo/rows/' + a11.id, { cells: oldCells, ship_date: null });
+            const r1 = await call('PUT', '/api/order-memo/rows/' + a11.id, { cells: oldCells, ship_date: null, to_indiv: true });
+            ok(a11.indiv === true && tc.s === 200 && tc.j.row.indiv === false && /!$/.test(tc.j.row.cells[0]) && tc.j.row.cells[10] === RECV[3][1] && tc.j.row.cells[1] === RECV[3][1], '#944 to_cash = 현금(「!」) · K·B(옛 K 꼴) = 받는 분 번호', tc.j.row && tc.j.row.cells);
+            ok(r0.s === 200 && r0.j.row.indiv === false && /!$/.test(r0.j.row.cells[0]), '#944 옛 칸 PUT(to_indiv 없음) = DB 「!」 따라 현금 그대로(종전 결함 재현)', r0.j.row && r0.j.row.cells[0]);
+            ok(r1.s === 200 && r1.j.row.indiv === true && !/!/.test(r1.j.row.cells[0]) && r1.j.row.cells[10] === '010-2600-7777', '#944 되돌리기 to_indiv = 주소 줄(「!」 없음 · indiv true · K = 입력삭제 번호)', r1.j.row && r1.j.row.cells);
+            for (const r of e8.j.rows.concat(e9.j.rows, e10.j.rows, e11.j.rows)) await call('DELETE', '/api/order-memo/rows/' + r.id);
         }
         // #868 날짜 짝 = 같은 묶음 기준 → 옮긴 뒤엔 입력삭제 줄 날짜를 따라감
         await call('POST', '/api/order-memo/pair', { key: BUY, ids: ids6 });

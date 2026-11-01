@@ -207,7 +207,7 @@ function pairHint(orders, rows, key) {
 //   line = 입력삭제 줄(line_key·plat·used_on) · rows = 열린 현금 줄 전부(표 행 꼴) · orders = order_memo_preorders 그 구매자 번호 줄 [{channel, buyer_digits, option_text, qty, pre?}] · base = 기준 발송일 · opt.catalog = 단가표 이름 Set
 //   m = 주문 박스 합(줄의 판매처 채널만 · 글 없으면 네이버 · 같은 번호 여러 주문 합 · 번호 빈 주문(선물하기)은 표 조회에 안 걸려 자연히 뺌 · remainQuantity 는 수집 때 qty 에 이미 반영)
 //   n = 주소 줄 박스 합(pickForShip 과 같은 규칙 = 열림·sure·「!」 없음·서비스 X·K/B==번호·날짜 없음 또는 ≤base) · later = 뒤 날짜 박스·첫 날짜 · service = 서비스 줄 수 · item_diff = 합 같은데 품목 열쇠(itemKeyOf)별 수량 다름
-//   state = sent(used_on) | personal(자사몰 수량 1 주문 + 단가표 밖 품목 = 개인결제창) | unknown(주문 0 · m null) | pre(전부 발주확인 전 · 표에 상태 칸이 없어 orders[].pre 가 올 때만) | ok | short | over
+//   state(#948 대표 11/1 = sent 뺌 · 발송 뒤 메모는 우리가 정리·삭제 · used_on 있어도 n/m 그대로) = personal(자사몰 수량 1 주문 + 단가표 밖 품목 = 개인결제창) | unknown(주문 0 · m null) | pre(전부 발주확인 전 · 표에 상태 칸이 없어 orders[].pre 가 올 때만) | ok | short | over
 const BADGE_CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' };
 //   워커1 점검(11/1) = ① sent 는 used_on 있고 (줄 날짜 없음 또는 줄 날짜 ≤ used_on) 일 때만(뒤 날짜 줄도 pickForShip ids 에 들어 used_on 이 찍힘) ② n + later == m 이면 split(「오늘 · 대기」 중립) · 모자람 = m − n − later
 //   ③ 자사몰 = item_diff 안 봄 · personal 은 price-check optionKey(최종발주·송장변환과 같은 품목 변환)로 단가표에 못 맞출 때만 ④ n 은 K 만(최종발주 cashCheck 와 같게 · 서비스 수는 K/B) ⑤ 지난 날짜 줄(sd < base)은 n 에서 뺌(pickForShip held 와 같게)
@@ -224,15 +224,26 @@ function indivBadge(line, rows, orders, base, opt) {
     const now = ordNo ? addr.filter(r => (sd(r) || null) === (lsd0 || null)) : addr.filter(r => !sd(r) || !base || sd(r) === base), later = ordNo ? [] : addr.filter(r => sd(r) && base && sd(r) > base);   // #938 주문번호 줄 = 같은 발송일 주소 줄만
     const n = now.reduce((t, r) => t + q(r.cells[5]), 0), laterN = later.reduce((t, r) => t + q(r.cells[5]), 0);
     const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : null, n, unsure: addr.filter(r => r.sure === false).reduce((t, r) => t + q(r.cells[5]), 0), later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
-    const used = line && line.used_on ? String(line.used_on instanceof Date ? line.used_on.toISOString() : line.used_on).slice(0, 10) : null, lsd = lsd0;
-    if (used && (!lsd || lsd <= used)) b.state = 'sent';
-    else if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';
+    if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';
     else if (b.m == null) b.state = 'unknown';
     else if (b.pre) b.state = 'pre';
     else if (n + laterN === b.m && laterN > 0) b.state = 'split';
     else if (n === b.m) { b.state = 'ok'; if (ch !== 'cafe24') { const want = new Map(), have = new Map(); od.forEach(o => add(want, itemKeyOf(o.option_text), q(o.qty))); now.forEach(r => add(have, itemKeyOf(r.cells[4]), q(r.cells[5]))); b.item_diff = want.size !== have.size || [...want].some(([k, v]) => have.get(k) !== v); } }
     else b.state = n + laterN < b.m ? 'short' : 'over';
     return b;
+}
+// #944(대표 11/1) 주소 줄 → 현금 손님 줄로 떼기 = A칸 「!」 다시 + 구매자 연락처 K = 받는 분 번호(cells[6]) · B(보내는 분 연락처)는 사람이 넣은 값 그대로(순수 · PUT to_cash 길 · #935 [현금으로]도 같은 규칙)
+function toCashCells(cells, oldK) {
+    const c = (Array.isArray(cells) ? cells : []).slice(), ok = dg(oldK);
+    const nm = String(c[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; c[0] = nm + '!';
+    if (String(c[6] || '').trim()) { if (ok && dg(c[1]) === ok) c[1] = String(c[6]).trim(); c[10] = String(c[6]).trim(); }   // B 가 옛 K(입력삭제 번호)면 B 도 받는 분 번호(안 그러면 ②·④ 판이 B 로 잡아 다시 붙음 · 총괄 결정) · 사람이 넣은 다른 B 는 그대로
+    return c;
+}
+// #944 되돌리기(현금 줄 → 다시 주소 줄) = 「!」 떼고 K 는 보낸 값(옛 칸 = 입력삭제 번호) 그대로 · PUT to_indiv:true(to_cash 반대 · DB A칸 「!」로 판정하면 보낸 「!」 없는 칸에 다시 「!」가 붙어 되돌리기가 헛돎 · 워커2 재현)
+function toIndivCells(cells) {
+    const c = (Array.isArray(cells) ? cells : []).slice();
+    c[0] = String(c[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네';
+    return c;
 }
 function checkRow(r, ctx) { return r && r.kind === 'cash' ? checkCash(r, ctx.today, ctx.catalog, ctx.origin) : checkLine(r || {}, ctx.today, !!r && (r.src === 'rule' || r.src === 'ai')); }
 
@@ -579,7 +590,7 @@ function mount(app, deps) {
         const svc = cur.kind === 'cash' && typeof b.service === 'boolean' ? b.service : (cur.kind === 'cash' ? !!cur.service : false);   // #900 서비스 켜고 끄기(없으면 그대로)
         if (cur.kind === 'cash' && svc && !cur.service && /[!！]/.test(String((cur.cells || [])[0] || ''))) throw err(400, '현금 손님 줄은 서비스 표시가 필요 없어요');
         const next = cur.kind === 'cash'
-            ? { kind: 'cash', cells: Array.isArray(b.cells) ? b.cells : cur.cells, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
+            ? { kind: 'cash', cells: b.to_cash === true ? toCashCells(Array.isArray(b.cells) ? b.cells : cur.cells, (cur.cells || [])[10]) : b.to_indiv === true ? toIndivCells(Array.isArray(b.cells) ? b.cells : cur.cells) : (Array.isArray(b.cells) ? b.cells : cur.cells), ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : b.to_indiv === true ? true : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
             : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [] };
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
@@ -903,4 +914,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toIndivCells, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

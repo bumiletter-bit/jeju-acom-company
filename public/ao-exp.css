@@ -277,12 +277,23 @@ html[data-ao-theme="dark"] .xp-sale-line { background: rgba(255, 146, 43, .10); 
 .xp-note-f small { flex: 1 1 auto; min-width: 0; color: var(--x-sub); font-size: 12px; overflow-wrap: anywhere; }
 .xp-note-box.dirty .xp-note-f small { color: var(--x-acc); font-weight: 700; }
 .xp-note-f .xp-btn { flex: none; min-height: 40px; }
-.xp-note-tag { display: inline-flex; align-items: center; align-self: flex-start; gap: 3px; max-width: 100%; padding: 1px 6px; border-radius: 999px; background: var(--x-acc-soft); color: var(--x-acc); font-size: 11.5px; font-weight: 700; line-height: 1.4; }
-.xp-note-tag i { display: none; font-style: normal; }
-.xp-note-tag em { font-style: normal; }
 .xp-notes-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 10px 0 0; padding: 8px 14px; border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-card); color: var(--x-ink); font-size: 13px; }
 .xp-notes-sum b { color: var(--x-acc); }
 .xp-notes-sum span { font-weight: 700; font-variant-numeric: tabular-nums; }
 .xp-notes-sum em { font-style: normal; color: var(--x-sub); font-size: 12px; }
 @media (max-width: 960px), (pointer: coarse) { .xp-note-f .xp-btn { min-height: 44px; } }
-@media (max-width: 960px) { .xp-note-tag { padding: 0; background: transparent; align-self: center; font-size: 11px; } .xp-note-tag i { display: inline; } .xp-note-tag em { display: none; } }
+
+/* #946(대표 11/1) 달력 칸 = 메모 첫 줄 글(PC 2줄 11px · 900 1줄 11px · 폰 1줄 10px · 잘림 = 줄임표) · 칸 높이 종전 그대로: 메모 칸은 줄 높이를 키우지 않음(PC = contain:size · 명단은 남는 자리만큼 줄 단위로 · 넘친 줄은 옆 열로 밀려 안 보임 / 폰 = 점 빼고 ₩ 를 모서리로 · 여백 줄여 그 자리에) · 전문 = title·날짜 판 */
+.xp-cell.has-note { position: relative; overflow: hidden; }
+@media (min-width: 961px) { .xp-cell.has-note { contain: size; min-height: 120px; } }   /* 104 면 메모+현장+팀 칸만 있는 주에 글 아래가 잘림 */
+.xp-cell.has-note .xp-nms { flex: 1 1 0; min-height: 0; flex-wrap: wrap; overflow: hidden; }
+.xp-cell.has-note .xp-nms > * { width: 100%; }
+.xp-cell.has-note .xp-nms::before { content: ''; width: 100%; height: 0; }   /* 첫 이름도 자리 없으면 옆 열로(한 줄 조각 안 보이게) */
+.xp-note-txt { flex: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; max-width: 100%; overflow: hidden; color: var(--x-sub); font-size: 11px; font-weight: 600; line-height: 14px; overflow-wrap: anywhere; word-break: break-all; }
+@media (max-width: 960px) {
+    .xp-cell.has-note { padding-bottom: 1px; gap: 1px; }
+    .xp-cell.has-note .xp-dots { display: none; }
+    .xp-cell.has-note .xp-sale { position: absolute; top: 4px; right: 3px; margin: 0; }
+    .xp-note-txt { display: block; width: 100%; white-space: nowrap; text-overflow: ellipsis; word-break: normal; }
+}
+@media (max-width: 720px) { .xp-note-txt { font-size: 10px; line-height: 13px; } }

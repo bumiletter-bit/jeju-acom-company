@@ -17,8 +17,8 @@
     <link rel="stylesheet" href="theme.css?v=15">
     <link rel="stylesheet" href="ao-desk.css?v=75">
     <link rel="stylesheet" href="ao-inbox.css?v=4">
-    <link rel="stylesheet" href="ao-ordermemo.css?v=24">
-    <link rel="stylesheet" href="ao-exp.css?v=11">
+    <link rel="stylesheet" href="ao-ordermemo.css?v=25">
+    <link rel="stylesheet" href="ao-exp.css?v=12">
     <link rel="stylesheet" href="final-order.css?v=34">
     <link rel="stylesheet" href="order-organizer.css?v=2">
     <link rel="stylesheet" href="noti-history.css?v=3">
@@ -927,10 +927,10 @@
                         <div class="form-group">
                             <label>일수</label>
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <input type="number" id="adj-days" class="form-input" step="0.5" min="0.5" value="1" style="width:120px;">
+                                <input type="number" id="adj-days" class="form-input" step="0.125" min="0.125" value="1" inputmode="decimal" style="width:120px;">
                                 <span>일</span>
                             </div>
-                            <small style="color:var(--text-light);">예: 1, 0.5 등</small>
+                            <small style="color:var(--text-light);">1일 8시간 기준 · 3시간 = 0.375 · 예: 1, 0.5</small>
                         </div>
                         <div class="form-group">
                             <label>사유</label>
@@ -2262,6 +2262,17 @@
                     </div>
                 </div>
 
+                <!-- #945 연차 칸 = 잔여연차 + 최근 조정 내역(본인 것만) -->
+                <style>#myinfo-leave-adj{list-style:none;margin:6px 0 0;padding:0}#myinfo-leave-adj li{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--border,#E4E7EC);font-size:14px}#myinfo-leave-adj .d{color:var(--text-light);font-size:13px}#myinfo-leave-adj .p{color:#2563eb}#myinfo-leave-adj .m{color:#dc2626}#myinfo-leave-adj .r{flex:1 1 160px;min-width:0;overflow-wrap:anywhere}#myinfo-leave-adj .e{color:var(--text-light);border-top:0}</style>
+                <div class="card" id="myinfo-leave">
+                    <h2>연차</h2>
+                    <div style="max-width:520px;">
+                        <div style="display:flex;gap:10px;align-items:baseline;font-size:15px;"><span>잔여연차</span><strong id="myinfo-leave-left">-</strong></div>
+                        <div style="margin-top:12px;font-size:13px;font-weight:700;">최근 조정 내역</div>
+                        <ul id="myinfo-leave-adj"><li class="e">불러오는 중</li></ul>
+                    </div>
+                </div>
+
                 <div class="card">
                     <h2>결재 도장/사인</h2>
                     <div style="max-width:400px;">
@@ -2401,11 +2412,11 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=432"></script>
+    <script src="app.js?v=433"></script>
     <script src="ao-desk.js?v=101"></script>
     <script src="ao-inbox.js?v=4"></script>
-    <script src="ao-ordermemo.js?v=38"></script>
-    <script src="ao-exp.js?v=15"></script>
+    <script src="ao-ordermemo.js?v=39"></script>
+    <script src="ao-exp.js?v=16"></script>
     <script src="payslip.js?v=2"></script>
     <script src="rules.js?v=1"></script>
     <script src="event-admin.js?v=6"></script>

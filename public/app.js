@@ -1221,6 +1221,7 @@ function notiGo(link) {
     if (navItem) navItem.click();
     if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
     if (page === 'myinfo' && prm.get('pay')) setTimeout(() => { if (window.AkmPayslip) window.AkmPayslip.open(); }, 200);   // #674 급여명세서 알림 → 내 정보 > 급여명세서
+    if (page === 'myinfo' && prm.get('leave')) setTimeout(() => { if (window.AkmPayslip && window.AkmPayslip.setTab) window.AkmPayslip.setTab('info'); const c = document.getElementById('myinfo-leave'); if (c) c.scrollIntoView({ block: 'nearest' }); }, 200);   // #945 연차 조정 알림 → 내 정보 > 연차 칸
     if (page === 'myinfo' && prm.get('rules')) setTimeout(() => { if (window.AkmRules) window.AkmRules.open(); }, 200);   // #687 회사 규정 알림 → 내 정보 > 회사 규정
     if (page === 'event' && prm.get('step')) setTimeout(() => { if (window.AkmEvent) window.AkmEvent.open(prm.get('step')); }, 200);   // #708-B 「아꼼이 그림 왔어요」 알림 → 이벤트 관리 그 단계 카드
     const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
@@ -4704,6 +4705,7 @@ window.saveLeaveAdj = async function() {
 
     if (!userId) { akmAlert('대상 직원을 선택해주세요.'); return; }
     if (!days || days <= 0) { akmAlert('일수를 입력해주세요.'); return; }
+    if (!Number.isInteger(days * 8)) { akmAlert('일수는 0.125일(1시간) 단위로 넣어 주세요. 예: 3시간 = 0.375'); return; }   // #945
     if (!reason) { akmAlert('사유를 입력해주세요.'); return; }
 
     const adjustment = isAdd ? days : -days;
@@ -7580,12 +7582,23 @@ window.deleteWorkLog = deleteWorkLog;
 // =============================================
 // 내 정보 페이지
 // =============================================
+// #945 내 정보 > 연차 칸 = 잔여연차 + 최근 조정 내역 3줄(본인 것만) · 옛 서버·실패 = 칸 글만 안내
+async function renderMyLeave() {
+    const left = document.getElementById('myinfo-leave-left'), ul = document.getElementById('myinfo-leave-adj'); if (!left || !ul) return;
+    try {
+        const d = await api('/api/leave-adjustments/mine');
+        if (d.annualLeave != null) left.textContent = formatLeave(d.annualLeave);
+        const items = Array.isArray(d.items) ? d.items : [];
+        ul.innerHTML = items.length ? items.map(x => `<li><span class="d">${aoEsc(akmDate(x.at))}</span><b class="${x.adjustment > 0 ? 'p' : 'm'}">${x.adjustment > 0 ? '+' : ''}${x.adjustment}일</b><span class="r">${aoEsc(x.reason)}</span></li>`).join('') : '<li class="e">최근 조정 내역이 없어요</li>';
+    } catch (e) { ul.innerHTML = '<li class="e">조정 내역을 불러오지 못했어요</li>'; }
+}
 async function renderMyInfoPage() {
     if (!currentUser) return;
     document.getElementById('myinfo-username').textContent = currentUser.username;
     document.getElementById('myinfo-name').textContent = currentUser.name;
     document.getElementById('myinfo-position').textContent = currentUser.position || '-';
     document.getElementById('myinfo-color').style.backgroundColor = currentUser.color || '#3b82f6';
+    renderMyLeave();   // #945
     // 도장 미리보기 로드
     try {
         const sig = await api(`/api/users/${currentUser.id}/signature`);

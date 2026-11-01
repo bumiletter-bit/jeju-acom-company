@@ -217,7 +217,7 @@
         if (X.jumpFrom) html += `<div class="xp-jump">${+X.jumpFrom.slice(5)}월엔 남은 예약이 없어 ${+X.ym.slice(5)}월을 보여 드려요 · <button type="button" class="xp-link" data-nav="0">‹ 이번 달</button></div>`;
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
         if (offNoDate.length) html += `<button type="button" class="xp-needbar off" data-day="offnodate"><b>날짜 없는 취소·반품 ${offNoDate.length}건</b><span>${esc(offNoDate.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${offNoDate.length > 3 ? ' 외' : ''} — 눌러서 보기</span></button>`;
-        { const nd = ((X.data && X.data.notes) || []).filter(n => n.day.startsWith(X.ym + '-')).length; if (nd) html += `<div class="xp-notes-sum" id="xp-notes-sum"><b>이달 특이사항 메모</b><span>${nd}일</span><em>· 달력의 「메모」 날짜를 눌러 봐요</em></div>`; }   // #940
+        { const nd = ((X.data && X.data.notes) || []).filter(n => n.day.startsWith(X.ym + '-')).length; if (nd) html += `<div class="xp-notes-sum" id="xp-notes-sum"><b>이달 특이사항 메모</b><span>${nd}일</span><em>· 메모 있는 날짜를 눌러 봐요</em></div>`; }   // #940
         const sm = saleMonth(X.ym);   // #822 이달 현장 판매 합계(0이면 안 보임)
         if (sm.sum) html += `<div class="xp-sales-sum" id="xp-sales-sum"><b>이달 현장 판매(귤)</b><span>${won(sm.sum)}원</span><em>· ${sm.days}일 · 날짜 칸을 눌러 적어요</em></div>`;
         html += '<div class="xp-cal" role="grid" aria-label="체험 예약 달력"><div class="xp-cal-h" role="row">' + [...DOW].map((w, i) => `<span role="columnheader" class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + '</div><div class="xp-cal-g">';
@@ -227,11 +227,11 @@
             const ds = `${X.ym}-${String(day).padStart(2, '0')}`, dow = (lead + day - 1) % 7;
             const list = byDay.get(ds) || [], live = list.filter(b => !OFF.includes(b.status));
             const ppl = live.reduce((a, b) => a + headCount(b), 0);
-            const cls = ['xp-cell', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', ds === t ? 'today' : '', ds < t ? 'past' : '', list.length ? 'has' : ''].filter(Boolean).join(' ');
+            const cls = ['xp-cell', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', ds === t ? 'today' : '', ds < t ? 'past' : '', list.length ? 'has' : '', noteOf(ds) ? 'has-note' : ''].filter(Boolean).join(' ');
             const names = list.slice(0, 3).map(b => `<span class="xp-nm${srcCls(b)}${OFF.includes(b.status) ? ' off' : ''}">${esc(timeOf(b))} ${esc(b.name || '(이름 없음)')}</span>`).join('');
             const more = list.length > 3 ? `<span class="xp-more">+${list.length - 3} 더보기</span>` : '';
             const sl = saleOf(ds), sale = sl && Number(sl.amount) > 0 ? `<span class="xp-sale" title="현장 판매(귤) ${won(sl.amount)}원"><i>₩</i><em>현장 ${won(sl.amount)}</em></span>` : '';   // #822
-            const nt = noteOf(ds), noteTag = nt ? `<span class="xp-note-tag" title="${esc(String(nt.note).slice(0, 200))}"><i aria-hidden="true">📝</i><em>메모</em></span>` : '';   // #940
+            const nt = noteOf(ds), noteTag = nt ? `<span class="xp-note-txt" title="${esc(nt.note)}">${esc(String(nt.note).split('\n')[0])}</span>` : '';   // #940 · #946 표식 대신 메모 첫 줄 글(전문 = title·날짜 판)
             const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}${sale ? ` · 현장 판매 ${won(sl.amount)}원` : ''}${nt ? ' · 특이사항 메모 있음' : ''}`;
             html += `<button type="button" class="${cls}" data-day="${ds}" aria-label="${esc(aria)}"><span class="xp-dn">${ds === t ? '오늘' : day}</span>${live.length ? `<span class="xp-cnt"><b>${live.length}팀</b><em> · ${ppl}명</em></span>` : (list.length ? '<span class="xp-cnt off">취소만</span>' : '')}<span class="xp-nms">${names}${more}</span>${live.length ? `<span class="xp-dots" aria-hidden="true">${live.slice(0, 5).map(b => `<i class="xp-dot${srcCls(b)}"></i>`).join('')}</span>` : ''}${sale}${noteTag}</button>`;
         }

@@ -354,6 +354,8 @@ async function initDB() {
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // #945 소수 셋째 자리(0.125일 = 1시간 · 0.375 = 3시간) — DECIMAL(5,2) 면 이력만 0.38 로 반올림돼 잔여연차(NUMERIC)와 어긋나고 취소 때 0.005일이 남는다
+    await pool.query(`ALTER TABLE leave_adjustments ALTER COLUMN adjustment TYPE DECIMAL(6,3)`);
 
     // 잘못 생성된 ceo 계정 정리
     await pool.query("DELETE FROM users WHERE username = 'ceo' AND (SELECT COUNT(*) FROM users WHERE username = 'admin') > 0");
@@ -4954,6 +4956,21 @@ app.delete('/api/work-logs/:id', authMiddleware, async (req, res) => {
 
 // === 연차 조정 API ===
 
+// #945 내 연차 조정 내역(직원 본인 것만 · 최근 3줄) — 관리자 목록과 같은 두 곳(조정 표 + 수기 이력의 추가일수) · 잔여연차 = users.annual_leave
+app.get('/api/leave-adjustments/mine', authMiddleware, async (req, res) => {
+    try {
+        const uid = req.user.id;
+        const me = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [uid]);
+        const r = await pool.query(`SELECT at, adjustment, reason FROM (
+                SELECT created_at AS at, adjustment::numeric AS adjustment, reason FROM leave_adjustments WHERE user_id = $1
+                UNION ALL
+                SELECT start_date::timestamp AS at, -deducted_leave AS adjustment, COALESCE(CASE WHEN sub_type IS NOT NULL AND sub_type <> '' THEN '[' || sub_type || '] ' ELSE '' END, '') || COALESCE(reason, '') AS reason
+                FROM documents WHERE applicant_id = $1 AND type = 'vacation' AND status = 'approved' AND deducted_leave < 0
+            ) x ORDER BY at DESC NULLS LAST LIMIT 3`, [uid]);
+        res.json({ annualLeave: me.rows[0] ? Number(me.rows[0].annual_leave) : null, items: r.rows.map(x => ({ at: x.at, adjustment: Number(x.adjustment), reason: x.reason || '' })) });
+    } catch (err) { console.error('GET /api/leave-adjustments/mine error:', err); res.status(500).json({ error: '연차 내역을 읽지 못했어요' }); }
+});
+
 // 연차 조정 등록 (관리자 가능)
 app.post('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -4961,10 +4978,11 @@ app.post('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) =
         if (!user_id || adjustment === undefined || !reason) {
             return res.status(400).json({ error: '대상 직원, 조정값, 사유를 입력해주세요' });
         }
-        const adj = Number(adjustment);
+        const adj = Math.round(Number(adjustment) * 1000) / 1000;   // #945 표 칸(소수 셋째)과 잔여연차가 어긋나지 않게
         if (isNaN(adj) || adj === 0) {
             return res.status(400).json({ error: '유효한 조정값을 입력해주세요' });
         }
+        if (!Number.isInteger(adj * 8)) return res.status(400).json({ error: '0.125 단위로 넣어 주세요' });   // #945 화면과 같은 규칙(API 직접 호출도)
 
         // 이력 저장
         const result = await pool.query(
@@ -4973,7 +4991,13 @@ app.post('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) =
         );
 
         // users.annual_leave 업데이트
-        await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [adj, user_id]);
+        const upd = await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2 RETURNING annual_leave', [adj, user_id]);
+
+        // #945 대상자에게 알림(종 + 푸시 = push.js 배달부 · 조정한 사람 본인은 안 받음)
+        if (Number(user_id) !== Number(req.user.id)) {
+            const left = upd.rows[0] ? `남은 연차 ${Number(upd.rows[0].annual_leave)}일` : '';
+            await createNotification(user_id, 'leave_adj', adj > 0 ? '연차가 추가됐어요' : '연차가 차감됐어요', [`연차 ${Math.abs(adj)}일이 ${adj > 0 ? '추가' : '차감'}됐어요`, `사유: ${reason}`, left].filter(Boolean).join(' · '), 'myinfo?leave=1');
+        }
 
         res.json({ success: true, id: result.rows[0].id });
     } catch (err) {
@@ -5086,10 +5110,13 @@ app.delete('/api/leave-adjustments/:id', authMiddleware, adminOnly, async (req, 
         const record = existing.rows[0];
 
         // annual_leave 원복 (반대 값 적용)
-        await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [Number(record.adjustment), record.user_id]);
+        const upd = await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2 RETURNING annual_leave', [Number(record.adjustment), record.user_id]);
 
         // 이력 삭제
         await pool.query('DELETE FROM leave_adjustments WHERE id = $1', [id]);
+
+        // #945 조정 취소도 대상자에게 알림(「추가됐어요」를 받은 뒤 조용히 줄어들지 않게 · 취소한 사람 본인은 안 받음)
+        if (Number(record.user_id) !== Number(req.user.id)) await createNotification(record.user_id, 'leave_adj', '연차 조정이 취소됐어요', [`연차 조정 ${Math.abs(Number(record.adjustment))}일이 취소됐어요`, `사유: ${record.reason}`, upd.rows[0] ? `남은 연차 ${Number(upd.rows[0].annual_leave)}일` : ''].filter(Boolean).join(' · '), 'myinfo?leave=1');
 
         res.json({ success: true });
     } catch (err) {

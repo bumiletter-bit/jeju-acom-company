@@ -663,7 +663,7 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 .om-pill.k-ok { background: #D1FADF; color: #05603A; }
 .om-pill.k-short { background: #FEF0C7; color: #93370D; }
 .om-pill.k-over { background: #FEECEB; color: #B42318; }
-.om-pill.k-unk, .om-pill.k-sent { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
+.om-pill.k-unk { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
 .om-pill.k-pers { background: var(--d-ch-inquiry-bg); color: var(--d-ch-inquiry-fg); }
 html[data-ao-theme="dark"] .om-pill.k-ok { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
 html[data-ao-theme="dark"] .om-pill.k-short { background: #4A3A12; color: #FBBF4A; }
@@ -688,3 +688,8 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 .om-orddt input[aria-invalid="true"] { border-color: #F04438; }
 .om-ordn { margin: 0; font-size: 12.5px; color: var(--d-sub); line-height: 1.5; }
 @media (max-width: 960px), (pointer: coarse) { .om-ordl li, .om-ordck, .om-orddt input { min-height: 44px; } .om-orddt input { font-size: 16px; } }
+/* #944 붙은 주소 줄 [현금으로 변경] */
+.om-px-r { display: flex; align-items: center; gap: 8px; flex: none; }
+/* #947 찾은 줄 전체 선택 */
+.om-px-all { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 13px; font-weight: 700; cursor: pointer; }
+@media (max-width: 960px), (pointer: coarse) { .om-px-all { min-height: 44px; } }
