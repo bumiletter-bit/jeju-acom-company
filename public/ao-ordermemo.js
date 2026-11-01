@@ -111,11 +111,11 @@
             sure: r.sure === true, check_why: Array.isArray(r.check_why) ? r.check_why.map(String) : (r.check_why ? [String(r.check_why)] : []), src: r.src || '',
             stale: r.stale === true, indiv: r.indiv === true, state: r.state || 'open', used_on: r.used_on ? String(r.used_on).slice(0, 10) : null, cleared_at: r.cleared_at || '', entry: entry || {},
             addr_ok: r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : ('addr_ok' in r ? null : undefined) };   // #880-b 주소 「이대로 둘게요」 서버 기록 · undefined = 옛 서버(화면 기억 AKEPT 로)
-        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; }   // #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
+        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; o.pair_orig = r.pair_orig && typeof r.pair_orig === 'object' ? r.pair_orig : null; }   // #949 붙기 전 번호 · #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
         else { o.badge = r.badge && typeof r.badge === 'object' ? r.badge : null; o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
         return o;
     }
-    const outRow = r => Object.assign(r.kind === 'cash' ? Object.assign({ kind: 'cash', ship_date: r.ship_date || null, cells: r.cells.slice(), indiv: !!r.indiv }, r.service ? { service: true } : {}, !r.service && (r._indOff || r._noIndiv) ? { no_indiv: true } : {}) : { kind: 'line', ship_date: r.ship_date || null, key: r.key, note: r.note, plat: r.plat, line: r.line, checked: r.checked || null }, r.src ? { src: r.src } : {});   // 미리보기에서 받은 src·line 을 그대로(출처 보존 · 고쳤으면 서버가 다시 만듦 · 계약 §6)
+    const outRow = r => Object.assign(r.kind === 'cash' ? Object.assign({ kind: 'cash', ship_date: r.ship_date || null, cells: r.cells.slice(), indiv: !!r.indiv }, r.pair_orig ? { pair_orig: r.pair_orig } : (r._ik != null && digits(r._ik0) ? { pair_orig: { a: r.cells[0] || '', b: r._ib0 || '', k: r._ik0, d: r.ship_date || null } } : {}), r.service ? { service: true } : {}, !r.service && (r._indOff || r._noIndiv) ? { no_indiv: true } : {}) : { kind: 'line', ship_date: r.ship_date || null, key: r.key, note: r.note, plat: r.plat, line: r.line, checked: r.checked || null }, r.src ? { src: r.src } : {});   // 미리보기에서 받은 src·line 을 그대로(출처 보존 · 고쳤으면 서버가 다시 만듦 · 계약 §6)
     const putBody = r => r.kind === 'cash' ? Object.assign({ cells: r.cells.slice(), ship_date: r.ship_date || null }, r._svcTouched ? { service: !!r.service } : {}) : Object.assign({ key: r.key, note: r.note, plat: r.plat, ship_date: r.ship_date || null }, r._lk && r._lk.state === 'done' ? { checked: r.checked || null } : {});   // 찾기가 끝난 줄만 확인 표시를 보냄(못 찾았으면 null = 지움 · 아직이면 안 보냄 = 서버가 번호·판매처 바뀌면 비움)
 
     // ── 줄 판정(화면 표시) ────────────────────────────────
@@ -1057,7 +1057,7 @@
                 ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
                 <div class="om-grid${r.kind === 'cash' ? ' cash' : ''}">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
                 ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}
-                ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c, r))}</p>${c.mode === 'edit' && !r.service && r.id != null ? (lostOf(r) ? `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}">현금으로 변경하기</button><span>이 카드에서 고친 칸이 있으면 그 값도 같이 저장돼요 · 구매자 연락처는 받는 분 번호로</span></div>` : `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}">현금으로 변경하기</button><span>이 줄을 현금 손님 줄로 되돌려요 · 「!」 다시 붙고 구매자 연락처는 받는 분 번호로 · 고친 칸이 있으면 같이 저장</span></div>`) : ''}` : ''}
+                ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c, r))}</p>${c.mode === 'edit' && !r.service && r.id != null ? (lostOf(r) ? `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}">현금으로 변경하기</button><span>이 카드에서 고친 칸이 있으면 그 값도 같이 저장돼요 · 구매자·보내는 분 번호는 붙이기 전으로 돌아가요</span></div>` : `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}">현금으로 변경하기</button><span>이 줄을 현금 손님 줄로 되돌려요 · 「!」 다시 붙고 구매자·보내는 분 번호는 붙이기 전으로 돌아가요 · 고친 칸이 있으면 같이 저장</span></div>`) : ''}` : ''}
                 ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] || senderTelOwn(r) ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
@@ -1203,6 +1203,15 @@
                 <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pxgo" data-k="${esc(d)}"${n ? '' : ' disabled'}>${pxGoLabel(n)}</button><button type="button" class="om-btn sm" data-cact="pxclose" data-k="${esc(d)}">닫기</button></div></div>`;
     }
     // #936 ④ 판 아래 「붙은 주소 줄」 = 이미 그 번호에 붙은 줄(「!」 없음) + 서비스 줄 · 줄마다 서비스 체크(POST /service · 「!」 없는 줄만 켜짐 = 서버 규칙 그대로) · 바뀌면 목록 다시(배지 갱신)
+    // #949 [현금으로 변경] = 서버 toCashCells·toCashDate 와 같은 규칙(묶기 전 A·B·K·발송일 복원 · 묶은 뒤 사람이 고친 값은 그대로 · 옛 줄은 B 가 입력삭제 번호가 아니면 K = B · 아니면 받는 분 + guess = 구매자 번호 확인 안내)
+    function toCashView(r) {
+        const c = r.cells.slice(), o = r.pair_orig, nm = String(c[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; c[0] = nm + '!';
+        if (o && digits(o.k)) { const bare = x => String(x || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim(); if (o.a && bare(o.a) === nm) c[0] = /[!！]/.test(o.a) ? o.a : o.a + '!'; if (!digits(c[1]) || !digits(o.ab) || digits(c[1]) === digits(o.ab)) c[1] = o.b || ''; c[10] = o.k; return { cells: c, guess: false, ship_date: 'ad' in o && (r.ship_date || null) === (o.ad || null) ? (o.d || null) : r.ship_date }; }
+        const ok = digits(r.cells[10]); if (digits(c[1]) && digits(c[1]) !== ok) { c[10] = c[1]; return { cells: c, guess: false, ship_date: r.ship_date }; }
+        if (String(c[6] || '').trim()) { c[1] = String(c[6]).trim(); c[10] = String(c[6]).trim(); }
+        return { cells: c, guess: true, ship_date: r.ship_date };
+    }
+    const toCashNote = g => `현금으로 변경했어요 · 「!」${g ? ' · 구매자 번호를 확인해 주세요' : ''}`;
     const pxPaired = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && r.id != null && (r.indiv || r.service) && [r.cells[10], r.cells[1]].map(digits).includes(d));
     function pxPairedHtml(c, d) {
         const L = pxPaired(d); if (!L.length) return '';
@@ -1217,17 +1226,17 @@
         toast(on ? '서비스 줄로 바꿨어요 · 대조·운송장에서 빠져요' : '서비스를 끄고 주소 줄로 돌렸어요');
         await load(); if (OM.card === c) renderCard();   // 목록(배지)·판 다시
     }
-    // #944 ④ 판 「붙은 주소 줄」 [떼기] = 그 줄을 현금 손님 줄로(PUT to_cash · K = 받는 분) · 되돌리기 = 같은 입력삭제 번호로 다시 pair
+    // #944 ④ 판 「붙은 주소 줄」 [떼기] = 그 줄을 현금 손님 줄로(PUT to_cash · #949 붙기 전 B·K) · 되돌리기 = 같은 입력삭제 번호로 다시 pair
     async function pxDetach(c, b) {
         const id = Number(b.dataset.v), r = (OM.list || []).find(x => String(x.id) === String(id)); if (!r || !r.indiv || r.service) return;
         if (c.dirty) { toast('고친 글이 있어요 · 먼저 [고친 대로 저장]을 눌러 주세요'); return; }   // 성공하면 카드를 닫음 = 고친 글이 조용히 버려지지 않게
-        b.disabled = true; const cells = r.cells.slice(), nm = String(cells[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; cells[0] = nm + '!'; if (String(cells[6] || '').trim()) { if (digits(cells[1]) && digits(cells[1]) === digits(cells[10])) cells[1] = String(cells[6]).trim(); cells[10] = String(cells[6]).trim(); }
+        b.disabled = true; const tv = toCashView(r), cells = tv.cells;
         const key = c.pxOnly ? c.pxOnly.show : telShow(digits(r.cells[10]) || digits(r.cells[1]));
-        const res = await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells })), { to_cash: true }));
+        const res = await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells, ship_date: tv.ship_date })), { to_cash: true }));
         if (OM.card !== c) return;
         if (!res.ok) { b.disabled = false; toast(errText(res, '현금 줄로 못 뗐어요')); return; }
         cardClose(true);   // 되돌리기 띠가 카드 뒤에 깔리지 않게(총괄 결정)
-        undoShow(`${nameOf(r) || '이 줄'} = 현금으로 변경했어요 · 「!」`, async () => { const y = await API.pair({ key, ids: [id], pick: true }); toast(y.ok && y.body && y.body.n ? `입력삭제 ${key} 주소 줄로 다시 붙였어요` : errText(y, '되돌리지 못했어요')); load(); });
+        undoShow(`${nameOf(r) || '이 줄'} = ${toCashNote(tv.guess)}`, async () => { const y = await API.pair({ key, ids: [id], pick: true }); toast(y.ok && y.body && y.body.n ? `입력삭제 ${key} 주소 줄로 다시 붙였어요` : errText(y, '되돌리지 못했어요')); load(); });
         load();
     }
     const pxEmptyHtml = (c, k) => isPhoneKey(k.d) && pxCands(c, k.d).length ? `<div class="om-pair ok" role="group"><b>메모함에 이 번호(${esc(k.show)}) 현금 줄이 없어요 · 다른 번호로 들어온 줄이면 [추가 매칭]으로 고를 수 있어요</b><div class="om-acts">${pxBtn(k.d, k.show)}</div></div>` : '';
@@ -1354,7 +1363,7 @@
         const p1 = c.pair1, k = p1 && pair1Keys(c).find(x => x.d === p1.key); if (!p1 || !c.rows.some(r => p1.sel.has(r))) return;
         if (!k) { p1.key = null; toast('입력삭제 번호가 바뀌었어요 · 번호를 다시 확인하고 골라 주세요'); renderCard(); return; }   // #875 카드에서 번호를 고친 뒤 누름 = 조용히 안 됨 막기
         let n = 0;
-        c.rows.forEach(r => { if (!p1.sel.has(r) || r.kind !== 'cash' || r.indiv) return; const oldK = digits(r.cells[10]); if (!digits(r.cells[1]) || digits(r.cells[1]) === oldK) r.cells[1] = k.show; r.cells[10] = k.show; r.cells[0] = String(r.cells[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim(); r.indiv = true; if (k.saved) r._pairSaved = k.show; n++; });   // ③ 메모함 입력삭제 줄 = 저장 뒤 POST pair(같은 묶음이 아니라 서버 markIndiv 가 못 짝지음)
+        c.rows.forEach(r => { if (!p1.sel.has(r) || r.kind !== 'cash' || r.indiv) return; if (!r.pair_orig && digits(r.cells[10])) r.pair_orig = { a: r.cells[0] || '', b: r.cells[1] || '', k: r.cells[10], d: r.ship_date || null }; const oldK = digits(r.cells[10]); if (!digits(r.cells[1]) || digits(r.cells[1]) === oldK) r.cells[1] = k.show; r.cells[10] = k.show; r.cells[0] = String(r.cells[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim(); r.indiv = true; if (k.saved) r._pairSaved = k.show; n++; });   // ③ 메모함 입력삭제 줄 = 저장 뒤 POST pair(같은 묶음이 아니라 서버 markIndiv 가 못 짝지음)
         p1.sel.clear(); c.dirty = true; renderCard();
         toast(`${n}줄을 입력삭제 ${k.show} 주소 줄로 짝지었어요 · 저장해야 들어가요`);
     }
@@ -1369,7 +1378,7 @@
     async function pair2Run(c, sent, saved) {
         const jobs = new Map();   // 번호 → { key, ids }
         pairKeys(c).forEach(k => { const ans = (c.pair2 || {})[k.d]; if (ans === 'no' || (ans !== 'yes' && !chkGot(c, 'p2', k.d))) return; const ids = p2Rows(c, k.d).map(r => r.id); if (ids.length) jobs.set(k.d, { key: k.show, ids }); });   // 워커2 점검 = 체크 목록을 안 그린 번호(저장 전 목록이 바뀜·번호 고친 직후)는 안 보냄   // #934-b(총괄 결정) ② = [바꾸기]를 안 눌러도 체크된 줄은 저장 때 짝(입력 먼저 · 체크 = 뜻) · [현금 그대로] 번호만 제외 · 12:00·12:45 실사례 = 체크 그대로 [저장] → /pair 0
-        (sent || []).forEach((r, i) => { const sv = saved && saved[i]; if (!r._pairSaved || r.service || !sv || sv.id == null || sv.kind !== 'cash') return; const d = digits(r._pairSaved), j = jobs.get(d) || { key: r._pairSaved, ids: [] }; j.ids.push(sv.id); jobs.set(d, j); });   // ③ 방금 저장한 줄(보낸 순서 = 받은 순서)
+        (sent || []).forEach((r, i) => { const sv = saved && saved[i]; if (!r._pairSaved || r.service || !sv || sv.id == null || sv.kind !== 'cash') return; const d = digits(r._pairSaved), j = jobs.get(d) || { key: r._pairSaved, ids: [] }; j.ids.push(sv.id); const po = r.pair_orig || (r._ik != null && digits(r._ik0) ? { a: r.cells[0] || '', b: r._ib0 || '', k: r._ik0, d: r.ship_date || null } : null); if (po) (j.origs = j.origs || {})[sv.id] = po; jobs.set(d, j); });   // #949 화면이 저장 전에 번호를 바꾼 줄 = 묶기 전 값을 같이   // ③ 방금 저장한 줄(보낸 순서 = 받은 순서)
         const picks = hintPicks(c).concat(pxJobs(c));   // #895 ④ 사람이 고른 후보 묶음 = pick(번호 대조 없이) · #934 추가 매칭으로 고른 줄
         if (!jobs.size && !picks.length) return;
         let n = 0, sentN = 0; const undo = [];   // n = 서버가 바꾼 줄 · sentN = 보내서 처리 끝난 줄(실패 안내의 「나머지」 = 아직 안 보낸 줄 · aa 점검 #899)
@@ -1377,7 +1386,7 @@
         const all = [...jobs.values()].concat(picks), total = all.reduce((t, j) => t + j.ids.length, 0);
         outer: for (const j of all) {
             for (let i = 0; i < j.ids.length; i += PAIR_CHUNK) {
-                const ids = j.ids.slice(i, i + PAIR_CHUNK), res = await API.pair(j.pick ? { key: j.key, ids, pick: true } : { key: j.key, ids });
+                const ids = j.ids.slice(i, i + PAIR_CHUNK), res = await API.pair(Object.assign(j.pick ? { key: j.key, ids, pick: true } : { key: j.key, ids }, j.origs ? { origs: j.origs } : {}));
                 if (!res.ok) { toast(errText(res, '현금 줄을 주소 줄로 못 바꿨어요') + (sentN ? ` · ${n}줄까지 바꿨고 나머지 ${total - sentN}줄은 현금 그대로예요` : ' · 현금 줄 그대로예요')); break outer; }
                 n += Number(res.body && res.body.n) || 0; sentN += ids.length; (res.body && Array.isArray(res.body.undo) ? res.body.undo : []).forEach(u => undo.push(u));
             }
@@ -1706,13 +1715,13 @@
         if (a === 'pyclose') { if (c.pairY) c.pairY.open = false; renderCard(); return; }
         if (a === 'pypick') { (c.pairY = c.pairY || { open: true, pick: null }).pick = b.dataset.k; const go = $('om-card').querySelector('[data-cact="pygo"]'); if (go) go.disabled = false; const sv = $('om-card-save'); if (sv && !c.wait) sv.innerHTML = saveLabel(blankN()); return; }   // #934-b 저장 단추 글
         if (a === 'pygo') { pyRun(c); return; }
-        if (a === 'tocash' && r && c.mode === 'edit' && r.id != null && r.indiv && !r.service) {   // #935 풀린 주소 줄 · #944 붙은 주소 줄 → 현금 줄(A칸 「!」 · K = 받는 분 번호 · 기존 PUT 편집 길 to_cash · 서버 toCashCells 가 같은 규칙으로 다시)
-            b.disabled = true; const nm = String(r.cells[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; const cells = r.cells.slice(); cells[0] = nm + '!'; if (String(cells[6] || '').trim()) { if (digits(cells[1]) && digits(cells[1]) === digits(cells[10])) cells[1] = String(cells[6]).trim(); cells[10] = String(cells[6]).trim(); }   // B 가 옛 K 면 B 도 받는 분(서버 toCashCells 와 같게)
+        if (a === 'tocash' && r && c.mode === 'edit' && r.id != null && r.indiv && !r.service) {   // #935 풀린 주소 줄 · #944 붙은 주소 줄 → 현금 줄(A칸 「!」 · #949 붙기 전 B·K · 기존 PUT 편집 길 to_cash · 서버 toCashCells 가 같은 규칙으로 다시)
+            b.disabled = true; const tv = toCashView(r), cells = tv.cells;   // B 가 옛 K 면 B 도 받는 분(서버 toCashCells 와 같게)
             const K0 = indivLineKeys(), lineD0 = [r.cells[10], r.cells[1]].map(digits).find(d => d && K0.has(d)), wasLost = !lineD0, lineKey = lineD0 ? telShow(lineD0) : null;   // 열린 입력삭제 줄이 있으면 되돌리기 = 그 번호로 pair · 없으면(풀림·날짜 대기) 옛 칸 PUT   // 붙어 있던 입력삭제 번호(되돌리기 = 그 번호로 다시 pair)
-            const res = await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells })), { to_cash: true }));   // to_cash = 서버가 보낸 「!」를 살려 현금 줄로(없으면 지금 DB 「!」 유무로 판정해 지움 · 워커2 점검)
+            const res = await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells, ship_date: tv.ship_date })), { to_cash: true }));   // to_cash = 서버가 보낸 「!」를 살려 현금 줄로(없으면 지금 DB 「!」 유무로 판정해 지움 · 워커2 점검)
             if (!res.ok) { b.disabled = false; toast(errText(res, '현금 줄로 못 바꿨어요')); return; }
             const back = r.cells.slice(); cardClose(true); load();
-            undoShow(`${nameOf(r) || '이 줄'} = 현금으로 변경했어요 · 「!」`, async () => { const y = wasLost ? await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells: back })), { to_indiv: true })) : await API.pair({ key: lineKey, ids: [Number(r.id)], pick: true }); toast(y.ok && (wasLost || (y.body && y.body.n)) ? (wasLost ? '주소 줄(풀림)로 되돌렸어요' : `입력삭제 ${lineKey} 주소 줄로 다시 붙였어요`) : errText(y, '되돌리지 못했어요')); load(); });   // 되돌리기 = 풀린 줄은 옛 칸 PUT(종전) · 붙은 줄은 그 입력삭제 번호로 다시 pair(#944)
+            undoShow(`${nameOf(r) || '이 줄'} = ${toCashNote(tv.guess)}`, async () => { const y = wasLost ? await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells: back })), { to_indiv: true })) : await API.pair({ key: lineKey, ids: [Number(r.id)], pick: true }); toast(y.ok && (wasLost || (y.body && y.body.n)) ? (wasLost ? '주소 줄(풀림)로 되돌렸어요' : `입력삭제 ${lineKey} 주소 줄로 다시 붙였어요`) : errText(y, '되돌리지 못했어요')); load(); });   // 되돌리기 = 풀린 줄은 옛 칸 PUT(종전) · 붙은 줄은 그 입력삭제 번호로 다시 pair(#944)
             return;
         }
         if (a === 'file') { const fi = $('om-file'); if (fi) fi.click(); return; }

@@ -170,6 +170,7 @@ function markIndiv(rows, extra) {
         if (r.service || r.no_indiv) { r.indiv = false; r.indivKey = null; return; }   // #900 서비스 줄 · 1-H 체크 안 한 줄 = 현금(「!」) 그대로
         const c = r.cells || []; const hit = [c[10], c[1]].map(dg).find(d => d && keys.has(d)); const v = hit ? keys.get(hit) : null;
         r.indiv = !!hit; r.indivKey = v ? v.key : null;
+        if (hit && !r.pair_orig) r.pair_orig = cleanOrig({ a: c[0], b: c[1], k: c[10], d: r.ship_date });   // #949 붙기 전 A·B·K·발송일
         if (v && v.date && !isDay(r.ship_date)) r.ship_date = v.date;   // #850-a 날짜 지정 입력삭제 줄 = 주소 줄도 그날(그 전엔 for-ship waiting · 비우기에도 안 빠짐)
     });
     return rows;
@@ -232,14 +233,26 @@ function indivBadge(line, rows, orders, base, opt) {
     else b.state = n + laterN < b.m ? 'short' : 'over';
     return b;
 }
-// #944(대표 11/1) 주소 줄 → 현금 손님 줄로 떼기 = A칸 「!」 다시 + 구매자 연락처 K = 받는 분 번호(cells[6]) · B(보내는 분 연락처)는 사람이 넣은 값 그대로(순수 · PUT to_cash 길 · #935 [현금으로]도 같은 규칙)
-function toCashCells(cells, oldK) {
+// #944(대표 11/1) 주소 줄 → 현금 손님 줄로 떼기 = A칸 「!」 다시 + B·K 복원은 아래 #949(순수 · PUT to_cash 길 · #935 [현금으로]도 같은 규칙)
+// #949 보관값 꼴 = 글자만 · K 없으면 없는 것(새로 적은 줄은 돌아갈 번호가 없음)
+function cleanOrig(v) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const t = x => String(x == null ? '' : x).trim().slice(0, 40), k = t(v.k);
+    return dg(k) ? Object.assign({ a: t(v.a), b: t(v.b), k, d: isDay(v.d) ? v.d : null }, dg(v.ab) ? { ab: t(v.ab) } : {}, 'ad' in v ? { ad: isDay(v.ad) ? v.ad : null } : {}) : null;
+}
+const checkMarked = (r, ctx) => { const x = checkRow(r, ctx); if (x && x.kind === 'cash' && r.pair_orig && x.indiv) x.pair_orig = Object.assign({}, r.pair_orig, { ab: x.cells[1], ad: x.ship_date || null }); return x; };   // #949 저장·미리보기 = 번호를 바꾼 뒤 B 까지 적어 둠
+// #949(대표 11/1) 묶기 전 값 orig = { a, b, k, d(발송일), ab·ad(묶은 뒤 B·발송일) } = 묶을 때 바뀌는 칸만(A·B·K·발송일) 되돌림(종전 K = 받는 분은 틀린 규칙 · 실사례 줄 200) · 그 밖 칸(받는 분·주소·품목·수량·메모)은 지금 값 · 묶은 뒤 사람이 고친 A 이름·B·발송일도 지금 값 · 보관값 없는 옛 줄 = B 가 입력삭제 번호가 아니면 K = B · 아니면 받는 분 번호(추측 = 화면이 「구매자 번호를 확인」 안내)
+function toCashCells(cells, oldK, orig) {
     const c = (Array.isArray(cells) ? cells : []).slice(), ok = dg(oldK);
     const nm = String(c[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; c[0] = nm + '!';
-    if (String(c[6] || '').trim()) { if (ok && dg(c[1]) === ok) c[1] = String(c[6]).trim(); c[10] = String(c[6]).trim(); }   // B 가 옛 K(입력삭제 번호)면 B 도 받는 분 번호(안 그러면 ②·④ 판이 B 로 잡아 다시 붙음 · 총괄 결정) · 사람이 넣은 다른 B 는 그대로
+    const o = cleanOrig(orig);
+    if (o) { const bare = x => String(x || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim(); if (o.a && bare(o.a) === nm) c[0] = /[!！]/.test(o.a) ? o.a : o.a + '!'; if (!dg(c[1]) || !o.ab || dg(c[1]) === dg(o.ab)) c[1] = o.b; c[10] = o.k; return c; }   // B 빈칸 = 고치기 카드가 B=K 줄을 빈 칸으로 보여 준 것(#927) = 안 고친 것
+    if (dg(c[1]) && dg(c[1]) !== ok) { c[10] = c[1]; return c; }
+    if (String(c[6] || '').trim()) { c[1] = String(c[6]).trim(); c[10] = String(c[6]).trim(); }   // B 가 옛 K(입력삭제 번호)면 B 도 받는 분 번호(안 그러면 ②·④ 판이 B 로 잡아 다시 붙음 · 총괄 결정) · 사람이 넣은 다른 B 는 그대로
     return c;
 }
 // #944 되돌리기(현금 줄 → 다시 주소 줄) = 「!」 떼고 K 는 보낸 값(옛 칸 = 입력삭제 번호) 그대로 · PUT to_indiv:true(to_cash 반대 · DB A칸 「!」로 판정하면 보낸 「!」 없는 칸에 다시 「!」가 붙어 되돌리기가 헛돎 · 워커2 재현)
+const toCashDate = (sent, orig) => { const o = cleanOrig(orig), s0 = isDay(sent) ? sent : null; return o && 'ad' in o && s0 === o.ad ? o.d : sent; };   // #949 발송일 = 묶을 때 바뀐 값 그대로일 때만 묶기 전으로
 function toIndivCells(cells) {
     const c = (Array.isArray(cells) ? cells : []).slice();
     c[0] = String(c[0] || '').replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네';
@@ -353,7 +366,9 @@ function mount(app, deps) {
         await pool.query(`CREATE INDEX IF NOT EXISTS order_memo_rows_state ON order_memo_rows (state, entry_id)`);
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS checked JSONB`);   // #850-d 판매처 확인 표시 {plat, as, at}(개인정보 없음)
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS addr_ok JSONB`);
-        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS service BOOLEAN NOT NULL DEFAULT false`);   // #900 서비스(주문과 별개인 현금건 · A칸 「!」 꼴)   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS service BOOLEAN NOT NULL DEFAULT false`);
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS pair_orig JSONB`);   // #949 입력삭제에 붙기 전 B·K(현금으로 변경 때 복원 · 양식·for-ship 무관)
+        //   // #900 서비스(주문과 별개인 현금건 · A칸 「!」 꼴)   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
     })().catch(e => { ready = null; throw e; }));
     ensure().catch(e => console.error('[발주 메모함] 표 만들기 실패(다음 요청 때 다시):', e.message));
 
@@ -401,7 +416,7 @@ function mount(app, deps) {
         (Array.isArray(d && d.lines) ? d.lines : []).slice(0, MAX_ROWS).filter(x => x && (String(x.note || '').trim() || isDay(x.date))).forEach(x => raw.push(   // #850-g 할 일 없는(비고·날짜 없는) 메모 줄은 안 만듦
             { kind: 'line', key: x && x.key, note: x && x.note, plat: x && x.plat, ship_date: x && isDay(x.date) ? x.date : null, src: 'ai' }));
         (Array.isArray(d && d.cash) ? d.cash : []).slice(0, MAX_ROWS).forEach(x => raw.push(cashFromAi(x || {}, opt)));
-        const rows = markIndiv(raw, extraKeys).map(r => checkRow(r, ctx));
+        const rows = markIndiv(raw, extraKeys).map(r => checkMarked(r, ctx));
         const un = (Array.isArray(d && d.unsure) ? d.unsure : []).filter(x => x && x.text);
         let sms = s(d && d.sms_draft, 400).trim();
         if (!sms && rows.some(r => r.kind === 'cash' && r.missing.length)) sms = '안녕하세요 제주아꼼이네입니다. 보내 드릴 받는 분 성함·주소·연락처를 알려 주시면 바로 준비해 드릴게요.';
@@ -432,7 +447,7 @@ function mount(app, deps) {
         // #850-g(대표 폰 실사고) 받는 분·주소·입금 단서가 있는 줄 = 현금 손님 글 → 메모 줄 규칙이 집지 않고 AI(창구)로(엑셀 13칸 붙여넣기는 규칙) ·
         //   🔴 「번호 입력o삭제x」 같은 주문 지시 줄은 그대로 규칙(같은 묶음의 개별 주소를 주소 줄로 짝짓는 #850 워커3 시험 ① 이 그 줄에 기댐)
         for (const ln of raw.split('\n')) { const r = CASH_CUE.test(ln) && ln.split('\t').length < 9 ? null : ruleLine(ln, ctx.today); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }
-        const ruleRows = markIndiv(applySms(rows, smsPhone)).map(r => checkRow(r, ctx));
+        const ruleRows = markIndiv(applySms(rows, smsPhone)).map(r => checkMarked(r, ctx));
         const ruleKeys = [...indivKeysOf(ruleRows).values()];   // 규칙으로 읽은 입력삭제 줄 번호 → AI 현금 줄이 그 주문의 주소 줄인지 가를 때
         const base = { rows: ruleRows, leftover: '', rule_count: ruleRows.length, ai_count: 0, ai: { used: false, why: '남은 글 없음' }, sms_draft: '', desk: null };
         if (!rest.length) return base;
@@ -471,9 +486,10 @@ function mount(app, deps) {
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
         addr_ok: r.kind === 'cash' ? (r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : null) : undefined,   // #880-b 현금 줄만(파일·for-ship 엔 안 나감)
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,
+        pair_orig: r.kind === 'cash' ? (r.pair_orig || null) : undefined,   // #949
         service: r.kind === 'cash' ? !!r.service : undefined,   // #900 서비스 줄(indiv = false · 화면 알약 「서비스」)   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
-    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, service, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
+    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, service, pair_orig, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
     const saveVals = (r) => [r.kind, r.ship_date, r.kind === 'line' ? r.key : null, r.kind === 'line' ? r.note : null, r.kind === 'line' ? r.plat : null, r.kind === 'line' ? r.line : null,
         r.kind === 'cash' ? JSON.stringify(r.cells) : null, r.sure, JSON.stringify(r.check_why), r.src];
     async function getRow(id) {
@@ -534,7 +550,7 @@ function mount(app, deps) {
         const ctx = await ctxOf();
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
             ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null,
-            service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true) })))).map(r => Object.assign(checkRow(r, ctx), { checked: r._checked, service: r.service }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
+            service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true), pair_orig: r && r.kind === 'cash' ? cleanOrig(r.pair_orig) : null })))).map(r => Object.assign(checkMarked(r, ctx), { checked: r._checked, service: r.service }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
         { const ks = rows.filter(r => isIndivLine(r)).map(r => dg(r.key)); if (ks.length) res.on('finish', () => { if (res.statusCode < 300) refreshIfMiss(ks).catch(() => {}); }); }   // #936
         const client = await pool.connect();
         try {
@@ -543,8 +559,8 @@ function mount(app, deps) {
                 [actorName(req), req.user.id || null, raw || '(줄만 저장)', tags, source])).rows[0];
             const saved = [];
             for (const r of rows) {
-                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked, service)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null, !!r.service])).rows[0]);
+                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked, service, pair_orig)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null, !!r.service, r.pair_orig ? JSON.stringify(r.pair_orig) : null])).rows[0]);
             }
             await client.query('COMMIT');
             await audit(req, 'create', e.id, { rows: rows.length, line: rows.filter(r => r.kind === 'line').length, cash: rows.filter(r => r.kind === 'cash').length, unsure: rows.filter(r => !r.sure).length, source: source.replace(/:\d+$/, '') });
@@ -590,14 +606,14 @@ function mount(app, deps) {
         const svc = cur.kind === 'cash' && typeof b.service === 'boolean' ? b.service : (cur.kind === 'cash' ? !!cur.service : false);   // #900 서비스 켜고 끄기(없으면 그대로)
         if (cur.kind === 'cash' && svc && !cur.service && /[!！]/.test(String((cur.cells || [])[0] || ''))) throw err(400, '현금 손님 줄은 서비스 표시가 필요 없어요');
         const next = cur.kind === 'cash'
-            ? { kind: 'cash', cells: b.to_cash === true ? toCashCells(Array.isArray(b.cells) ? b.cells : cur.cells, (cur.cells || [])[10]) : b.to_indiv === true ? toIndivCells(Array.isArray(b.cells) ? b.cells : cur.cells) : (Array.isArray(b.cells) ? b.cells : cur.cells), ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : b.to_indiv === true ? true : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
+            ? { kind: 'cash', cells: b.to_cash === true ? toCashCells(Array.isArray(b.cells) ? b.cells : cur.cells, (cur.cells || [])[10], cur.pair_orig) : b.to_indiv === true ? toIndivCells(Array.isArray(b.cells) ? b.cells : cur.cells) : (Array.isArray(b.cells) ? b.cells : cur.cells), ship_date: b.to_cash === true ? toCashDate('ship_date' in b ? b.ship_date : cur.ship_date, cur.pair_orig) : ('ship_date' in b ? b.ship_date : cur.ship_date), src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : b.to_indiv === true ? true : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
             : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [] };
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
         let checked = null;   // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
         if (cur.kind === 'line') { const moved = dg(r.key) !== dg(cur.line_key) || String(r.plat || '') !== String(cur.plat || ''); checked = 'checked' in b ? cleanChecked(b.checked) : (moved ? null : (cur.checked || null)); }
-        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14
-            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc])).rows[0];
+        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14, pair_orig=$15
+            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc, (() => { if (cur.kind !== 'cash' || b.to_cash === true) return null; const o = b.to_indiv === true ? cleanOrig({ a: (cur.cells || [])[0], b: (cur.cells || [])[1], k: (cur.cells || [])[10], d: cur.ship_date, ab: r.cells[1], ad: r.ship_date || null }) : cur.pair_orig; return o ? JSON.stringify(o) : null; })()])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
         let paired = 0, rekeyed = 0;
         // #867 입력삭제 줄 번호를 고치기로 바꿈(예: 받는 분 번호 → 구매자 번호) = 같은 묶음(entry) 열린 짝 주소 줄(「!」 없음 · K = 옛 번호)의 K 를 새 번호로
@@ -611,8 +627,9 @@ function mount(app, deps) {
                 if (dg(c[1]) === oldK) c[1] = newK;
                 c[10] = newK;
                 const rc = checkRow({ kind: 'cash', cells: c, ship_date: c0.ship_date || null, src: c0.src, indiv: true, indivKey: newK }, ctx);
-                const u = await pool.query(`UPDATE order_memo_rows SET sure=$2, check_why=$3, cells=$4, updated_at=NOW(), updated_by=$5 WHERE id=$1 AND state='open'`,
-                    [c0.id, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req)]);
+                const po1 = cleanOrig(c0.pair_orig), po1n = po1 ? Object.assign({}, po1, dg(po1.ab) === oldK ? { ab: rc.cells[1] } : {}) : null;   // #949 번호를 고쳐 B 가 따라감 = 사람이 고친 B 아님
+                const u = await pool.query(`UPDATE order_memo_rows SET sure=$2, check_why=$3, cells=$4, updated_at=NOW(), updated_by=$5, pair_orig=$6 WHERE id=$1 AND state='open'`,
+                    [c0.id, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req), po1n ? JSON.stringify(po1n) : null]);
                 rekeyed += u.rowCount;
             }
         }
@@ -623,8 +640,9 @@ function mount(app, deps) {
                 const c = c0.cells || [], sd = c0.ship_date ? String(c0.ship_date).slice(0, 10) : null;
                 if (/[!！]/.test(String(c[0] || '')) || ![c[10], c[1]].map(dg).includes(dg(r.key)) || (sd && sd !== oldD)) continue;
                 const rc = checkRow({ kind: 'cash', cells: c, ship_date: newD, src: c0.src, indiv: true, indivKey: r.key }, ctx);
-                const u = await pool.query(`UPDATE order_memo_rows SET ship_date=$2, sure=$3, check_why=$4, cells=$5, updated_at=NOW(), updated_by=$6 WHERE id=$1 AND state='open'`,
-                    [c0.id, rc.ship_date, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req)]);
+                const po2 = cleanOrig(c0.pair_orig), po2n = po2 ? Object.assign({}, po2, { ad: rc.ship_date || null }) : null;   // #949 줄 날짜를 따라간 날짜 = 사람이 고친 날짜 아님
+                const u = await pool.query(`UPDATE order_memo_rows SET ship_date=$2, sure=$3, check_why=$4, cells=$5, updated_at=NOW(), updated_by=$6, pair_orig=$7 WHERE id=$1 AND state='open'`,
+                    [c0.id, rc.ship_date, rc.sure, JSON.stringify(rc.check_why), JSON.stringify(rc.cells), actorName(req), po2n ? JSON.stringify(po2n) : null]);
                 paired += u.rowCount;
             }
         }
@@ -704,8 +722,9 @@ function mount(app, deps) {
                 if (!cur || cur.state !== 'open' || cur.kind !== 'cash' || /[!！]/.test(String((cur.cells || [])[0] || ''))) continue;
                 const ent = (await pool.query(`SELECT id FROM order_memo_entries WHERE id = $1`, [eid])).rows[0];
                 const rc = checkRow({ kind: 'cash', cells: u.cells, ship_date: isDay(u.ship_date) ? u.ship_date : null, src: cur.src, indiv: false }, ctx);
-                const x = await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open'`,
-                    [id, ent ? eid : cur.entry_id, JSON.stringify(rc.cells), rc.ship_date, rc.sure, JSON.stringify(rc.check_why), actorName(req)]);
+                const uo = cleanOrig(u.pair_orig);   // #949 되돌리기 = 붙기 전 상태(보관값도)
+                const x = await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7, pair_orig=$8 WHERE id=$1 AND state='open'`,
+                    [id, ent ? eid : cur.entry_id, JSON.stringify(rc.cells), rc.ship_date, rc.sure, JSON.stringify(rc.check_why), actorName(req), uo ? JSON.stringify(uo) : null]);
                 n += x.rowCount;
             }
             await audit(req, 'pair_undo', null, { n });
@@ -724,10 +743,11 @@ function mount(app, deps) {
         for (const r0 of cands) {
             const p = pairCash(r0, line, ctx, { anyNumber: b.pick === true }); if (!p) continue;   // #894 F4 pick = 후보 묶음(pair-hint groups)에서 고른 줄
             if (![(r0.cells || [])[10], (r0.cells || [])[1]].map(dg).includes(d)) other++;
-            const row = (await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
-                [r0.id, line.entry_id, JSON.stringify(p.cells), p.ship_date, p.sure, JSON.stringify(p.check_why), actorName(req)])).rows[0];
+            const orig0 = cleanOrig(b.origs && typeof b.origs === 'object' ? b.origs[String(r0.id)] : null) || cleanOrig({ a: (r0.cells || [])[0], b: (r0.cells || [])[1], k: (r0.cells || [])[10], d: r0.ship_date }),   /* pairCash 는 「!」 줄만 받음 = 있는 보관값은 낡은 값 · origs = ① 카드 짝처럼 화면이 저장 전에 번호를 바꾼 줄의 묶기 전 값 */ orig = orig0 ? Object.assign({}, orig0, { ab: p.cells[1], ad: p.ship_date || null }) : null;   // #949 이미 보관돼 있으면 안 덮음
+            const row = (await pool.query(`UPDATE order_memo_rows SET entry_id=$2, cells=$3, ship_date=$4, sure=$5, check_why=$6, updated_at=NOW(), updated_by=$7, pair_orig=$8 WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`,
+                [r0.id, line.entry_id, JSON.stringify(p.cells), p.ship_date, p.sure, JSON.stringify(p.check_why), actorName(req), orig ? JSON.stringify(orig) : null])).rows[0];
             if (!row) continue;
-            out.push(rowOut(row)); undo.push({ id: r0.id, entry_id: r0.entry_id, cells: r0.cells, ship_date: r0.ship_date || null });
+            out.push(rowOut(row)); undo.push(Object.assign({ id: r0.id, entry_id: r0.entry_id, cells: r0.cells, ship_date: r0.ship_date || null }, r0.pair_orig ? { pair_orig: r0.pair_orig } : {}));
         }
         await audit(req, 'pair', line.id, Object.assign({ n: out.length, asked: ids.length, entry: line.entry_id }, b.pick === true ? { pick: true, picked_other_phone: other } : {}));   // #934 pick 길만 표식(종전 길 기록 바이트 동일)
         res.json({ ok: true, n: out.length, skipped: ids.length - out.length, rows: out, undo });
@@ -914,4 +934,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toIndivCells, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
