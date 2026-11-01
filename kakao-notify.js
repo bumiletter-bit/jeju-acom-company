@@ -400,6 +400,7 @@ async function registerTemplates({ audit, set, only } = {}) {
         : set === 'md' ? (TEMPLATES_JSON.templates_md || [])
         : set === 'welcome2' ? (TEMPLATES_JSON.templates_welcome2 || [])
         : set === 'roulette' ? (TEMPLATES_JSON.templates_roulette || [])   /* #467: 룰렛 쿠폰 발급/만료 안내 2장 */
+        : set === 'exp2' ? (TEMPLATES_JSON.templates_exp2 || [])   /* #942: 체험 예약확인·방문안내 교환권 문장 바꾼 판 2장(시즌 중 · 10~20시) */
         : set === 'guide4' ? (TEMPLATES_JSON.templates_guide4 || [])   /* #587: 발송안내4 — 「#{발송일} 출발했습니다!」 1장 */
         : TEMPLATES_JSON.templates;
     // #467-e: only=['coupon_expire'] → 세트 안 일부만(반려 1장 재신청 때 승인된 다른 장이 중복 등록되지 않게)
