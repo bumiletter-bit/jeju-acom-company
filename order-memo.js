@@ -521,7 +521,7 @@ function mount(app, deps) {
         const svc = cur.kind === 'cash' && typeof b.service === 'boolean' ? b.service : (cur.kind === 'cash' ? !!cur.service : false);   // #900 서비스 켜고 끄기(없으면 그대로)
         if (cur.kind === 'cash' && svc && !cur.service && /[!！]/.test(String((cur.cells || [])[0] || ''))) throw err(400, '현금 손님 줄은 서비스 표시가 필요 없어요');
         const next = cur.kind === 'cash'
-            ? { kind: 'cash', cells: Array.isArray(b.cells) ? b.cells : cur.cells, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄   // 고치기 = 주소 줄/현금 손님 구분 그대로
+            ? { kind: 'cash', cells: Array.isArray(b.cells) ? b.cells : cur.cells, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
             : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [] };
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);

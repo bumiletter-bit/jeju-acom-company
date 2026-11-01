@@ -27,11 +27,14 @@ const PXK = '010-3292-0535', PXO = '010-9511-0535', PXL = '010-5738-4123';
 function pxList() {
     const today = new Date().toISOString(), yest = new Date(Date.now() - 86400e3).toISOString();
     const cash = (id, A, B, nm, opt, qty, recv, K, addr, more) => Object.assign({ id, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null, indiv: false, service: false, cells: [A, B, '제주시 연삼로 1066-31', nm, opt, String(qty), recv, '', addr, '', K, '', ''] }, more || {});
-    return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries: [
+    const ents = [
         { id: 129, created_at: today, source: 'manual', rows: (S.pxHide ? [] : [cash(191, '강명희 드림!', PXK, '이하정', CAT[1], 1, '010-2111-9887', '010-2111-9887', '충남 천안시 동남구 일봉로 7'), cash(192, '강명희 드림!', PXK, '이승비', CAT[1], 1, '010-2027-9787', '010-2027-9787', '충남 아산시 배방읍 동천로 2'), cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')]).concat(S.pxHide ? [cash(193, '이형주 드림!', PXO, '김보은', CAT[1], 1, '010-4787-4217', '010-4787-4217', '충남 보령시 동대동 8')] : []) },
         { id: 140, created_at: today, source: 'manual', rows: [cash(201, '홍길동 드림', PXL, '주소줄손님', CAT[0], 1, '010-3300-0001', PXL, '서울 송파구 올림픽로 1', { indiv: true }), cash(202, '서비스!', '', '서비스손님', CAT[0], 1, '010-3300-0002', '010-3300-0002', '서울 마포구 월드컵로 2', { service: true }), cash(203, '박민수 드림!', '010-8800-1234', '최수아', CAT[0], 2, '010-8800-1234', '010-8800-1234', '서울 강남구 테헤란로 1')] },
         { id: 128, created_at: yest, source: 'manual', raw: PXL + ' 입력o삭제x 네이버', rows: [{ id: 190, kind: 'line', state: 'open', sure: true, check_why: [], key: PXL, note: '입력o삭제x', plat: '네이버', line: ['', PXL, '입력o삭제x', '네이버'].join('\t') }] },
-    ].concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []) };
+    ].concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []);
+    if (S.px3) ents[0].rows = ents[0].rows.map(r => r.id === 193 ? cash(193, '이형주 드림', PXO, '김보은', CAT[1], 1, '010-4787-4217', PXK, '충남 보령시 동대동 8', Object.assign({ indiv: true }, S.px3Later ? { ship_date: '2026-12-31' } : {})) : r);   // #935 193 = 「풀림」(「!」 없음 · K 3292 · 그 번호 입력삭제 줄 없음 = 11/1 12:26 실사례 꼴)
+    ents.forEach(e => { e.rows = e.rows.filter(r => !S.deleted.has(r.id)); });   // #935 가짜 DELETE 반영
+    return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries: ents };
 }
 function listBody(n, ent) {
     if (S.px) return pxList();
@@ -44,7 +47,7 @@ function listBody(n, ent) {
     }
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries };
 }
-const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, pxHide: false, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
+const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
@@ -61,13 +64,14 @@ function serve(port) {
         if (u.pathname === '/om.css') return send(200, SRC[v].css, 'text/css; charset=utf-8');
         if (u.pathname === '/xlsx.js') return send(200, XLSX_JS, 'text/javascript; charset=utf-8');
         S.calls.push(req.method + ' ' + u.pathname);
-        if (u.pathname === '/api/order-memo' && req.method === 'GET') return send(200, u.searchParams.get('state') === 'cleared' ? { ok: true, entries: [] } : listBody(S.n, S.ent));
+        if (u.pathname === '/api/order-memo' && req.method === 'GET') { const body = u.searchParams.get('state') === 'cleared' ? { ok: true, entries: [] } : listBody(S.n, S.ent); if (S.listDelay) { setTimeout(() => send(200, body), S.listDelay); return; } return send(200, body); }   // #935 listDelay = 느린 목록(저장 중 재조회 시험)
         if (u.pathname === '/api/order-memo/for-ship') return send(200, { ok: true, cash_ids: [], lines: [] });
         if (u.pathname === '/api/invoice/catalog') return send(200, { byPartner: { a: CAT } });
         if (u.pathname === '/api/agent-office/juso') { S.juso++; const kw = u.searchParams.get('keyword') || ''; const one = n => ({ roadAddrPart1: '제주특별자치도 제주시 연동로 ' + n, zipNo: '63' + String(n).padStart(3, '0'), bdNm: '' }); return send(200, { results: { common: { errorCode: '0' }, juso: /다중/.test(kw) ? [one(kw.length), one(kw.length + 500)] : [one(kw.length)] } }); }
         if (u.pathname === '/api/order-memo/preview' && req.method === 'POST') return send(200, S.preview || { ok: true, rows: [] });   // #934 붙여 넣은 글 정리 = 가짜 답
         if (u.pathname === '/api/order-memo/pair' && req.method === 'POST') { let b = ''; req.on('data', d => b += d); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (e) { } S.pairs.push(j); const ids = Array.isArray(j.ids) ? j.ids : []; send(200, j.undo === true ? { ok: true, n: (j.rows || []).length } : { ok: true, n: ids.length, skipped: 0, rows: [], undo: ids.map(id => ({ id, entry_id: 1, cells: ['x!'], ship_date: null })) }); }); return; }
         if (u.pathname === '/api/order-memo' && req.method === 'POST') { let b = ''; req.on('data', d => b += d); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (e) { } S.saves.push(j); send(200, { ok: true, rows: (j.rows || []).map((r, i) => Object.assign({}, r, { id: 900 + i, state: 'open', sure: true, check_why: [] })) }); }); return; }
+        if (req.method === 'DELETE' && /^\/api\/order-memo\/rows\/\d+$/.test(u.pathname)) { S.deleted.add(Number(u.pathname.split('/').pop())); return send(200, { ok: true }); }   // #935 지운 줄 기억(가짜 안에서만)
         if (req.method === 'PUT') { let b = ''; req.on('data', d => b += d); req.on('end', () => { try { S.puts.push(JSON.parse(b)); } catch (e) { } send(200, { ok: true }); }); return; }   // #927 고친 줄 본문 기록(가짜 서버 안에서만)
         if (req.method !== 'GET') return send(200, { ok: true });   // 쓰기 꼴 요청 = 이 가짜 서버 안에서만(아무 데도 안 감)
         return send(404, { ok: false });
@@ -301,7 +305,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             ok(st.n === 1 && st.b === '메모함에 이 번호(010-3292-0535) 현금 줄 2개가 있어요 · 입력삭제 주소 줄로 바꿀까요?' && st.btns.join() === 'p2yes:바꾸기,p2no:현금 그대로,pxopen:추가 매칭', '② 실사례 = 같은 번호 현금 줄 2개 묻기 + 세 번째 단추 [추가 매칭]', st);
             const strip934 = h => h.replace(/<button type="button" class="om-btn sm" data-cact="pxopen"[^>]*>추가 매칭<\/button>/g, '').replace(/<p class="om-pair-s">체크한 줄은 저장하면[^<]*<\/p>/g, ''); const newHtml = await p.evaluate(pairsHtml), stripped = strip934(newHtml); oldHtml = strip934(oldHtml);   // HEAD 에도 #934 단추가 있을 수 있어 양쪽 다 뺌
             ok(stripped === oldHtml && stripped !== newHtml, '② 카드 = [추가 매칭] 단추·안내 한 줄만 빼면 종전(HEAD) HTML 바이트 동일([바꾸기]/[현금 그대로] 글자·자리 그대로)', (() => { let i = 0; while (i < oldHtml.length && oldHtml[i] === stripped[i]) i++; return [oldHtml.slice(i - 40, i + 80), stripped.slice(i - 40, i + 80)]; })());
-            await p.click('[data-cact="pxopen"]');
+            await p.click('[data-cact="pxopen"]'); await p.waitForSelector('#om-card .om-pairx');
             st = await p.evaluate(() => { const x = document.querySelector('#om-card .om-pairx'); return { has: !!x, items: x ? [...x.querySelectorAll('.om-pair-l li span')].map(s => s.textContent) : [], go: x && x.querySelector('[data-cact="pxgo"]').disabled, foc: document.activeElement && document.activeElement.id, head: x && x.querySelector('.om-pair-n').textContent }; });
             ok(st.has && st.items.length === 2 && /김보은.*구매자 …4217/.test(st.items[0]) && /최수아.*2박스.*구매자 …1234/.test(st.items[1]) && st.go && st.foc === 'om-px-q-' + PXD && st.head === '2줄 중 0줄 · 0박스', '[추가 매칭] = 번호 다른 짝 없는 현금 줄 2개(같은 번호 2줄·주소 줄·서비스 줄 제외) · 기본 체크 0 · 단추 잠김 · 초점 = 찾기 칸', st);
             await p.type('#om-px-q-' + PXD, '4217');
@@ -338,7 +342,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             st = await p.evaluate(() => ({ p2: !!document.querySelector('#om-card [data-cact="p2yes"]') }));
             await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(400);
             ok(!st.p2 && S.saves.length === 1 && S.pairs.length === 0, '② 체크 목록을 안 그린 번호(저장 전 목록 바뀜) = 「전부」로 안 보냄 · POST pair 0', { st, pairs: S.pairs });
-            await openPx(p, 'new'); await p.click('[data-cact="pxopen"]'); await p.check('#om-card .om-pairx input[data-v="193"]'); await p.click('[data-cact="pxgo"]'); await p.waitForSelector('#om-card .om-pair.ok [data-cact="pxopen"]'); await p.click('#om-card .om-pair.ok [data-cact="pxopen"]');
+            await openPx(p, 'new'); await p.click('[data-cact="pxopen"]'); await p.check('#om-card .om-pairx input[data-v="193"]'); await p.click('[data-cact="pxgo"]'); await p.waitForSelector('#om-card .om-pair.ok [data-cact="pxopen"]'); await p.click('#om-card .om-pair.ok [data-cact="pxopen"]'); await p.waitForSelector('#om-card .om-pairx');
             st = await p.evaluate(() => { const x = document.querySelector('#om-card .om-pairx'); return { open: !!x, on: x ? [...x.querySelectorAll('input[data-cact="pxchk"]:checked')].map(i => i.dataset.v) : [] }; });
             ok(st.open && st.on.join() === '193', '[더 고르기] = 판 다시 열림 · 고른 193 체크 그대로', st);
             // ④ 메모함 입력삭제 줄 [추가 매칭] — 실사례 뒤 상태(입력삭제 줄 195 저장됨 · 같은 번호 현금 191·192 + 번호 다른 193 아직 현금 · 대표가 [바꾸기] 없이 저장)
@@ -378,7 +382,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             S.pairs = []; await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
             st = await p.evaluate(() => { const b = document.querySelector('#om-card [data-cact="pyopen"]'); return { has: !!b, t: b && b.textContent.trim(), b: b && b.closest('.om-pair').querySelector('b').textContent }; });
             ok(st.has && st.t === '입력삭제 주문에 붙이기' && st.b === '이 현금 줄이 입력삭제 주문의 주소 줄이면 그 주문에 붙일 수 있어요', '⑤ 현금 줄 고치기 카드 = [입력삭제 주문에 붙이기] 단추', st);
-            await p.click('[data-cact="pyopen"]');
+            await p.click('[data-cact="pyopen"]'); await p.waitForSelector('#om-card .om-pairy');
             st = await p.evaluate(() => { const y = document.querySelector('#om-card .om-pairy'); return { has: !!y, items: y ? [...y.querySelectorAll('.om-pair-l li span')].map(s => s.textContent) : [], go: y && y.querySelector('[data-cact="pygo"]').disabled, foc: document.activeElement && document.activeElement.dataset.cact }; });
             ok(st.has && st.items.length === 2 && /^010-3292-0535 · 입력o삭제x · \d+\/\d+ \d\d:\d\d 저장 · 주소 줄 없음$/.test(st.items[0]) && /^010-5738-4123 · 입력o삭제x · \d+\/\d+ \d\d:\d\d 저장 · 주소 줄 1줄\(1박스\)$/.test(st.items[1]) && st.go && st.foc === 'pypick', '⑤ 열린 입력삭제 줄 목록 = 2(오늘 3292 「주소 줄 없음」 먼저 · 어제 5738 「주소 줄 1줄(1박스)」 · 날짜·번호 무관) · 고르기 전 단추 잠김', st);
             await p.check('#om-card .om-pairy input[data-cact="pypick"][data-k="' + PXL.replace(/\D/g, '') + '"]');
@@ -420,6 +424,98 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
                 await c2.close();
             }
             S.px = false; S.px2 = false; S.preview = null; }
+        // ── ⑥ #935 입력삭제 풀림 · 입력삭제 줄 삭제 확인 세 갈래 · 판·카드 열 때 재조회 ──
+        console.log('⑥ #935 입력삭제 풀림 · 삭제 확인 세 갈래 · 재조회');
+        { S.px = true; S.px2 = true; S.px3 = false; S.deleted = new Set();
+            S.preview = { ok: true, rows: [{ kind: 'line', key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t'), sure: true, check_why: [] }] };
+            const openPx = async (p, v) => { await openMemo(p, v, 4, 1); S.pairs = []; S.saves = []; S.puts = []; await p.evaluate(t => window.AkmOrderMemo.fromText(t), PXK + ' 입력o삭제x 네이버'); await p.waitForSelector('#om-card:not([hidden]) .om-pair'); await p.waitForTimeout(150); };
+            const gets = () => S.calls.filter(x => x === 'GET /api/order-memo').length;
+            const c = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const p = await c.newPage(); const pe = []; p.on('pageerror', e => pe.push(String(e)));
+            // 재조회
+            await openPx(p, 'new'); await p.waitForTimeout(300); const g1 = gets();
+            ok(g1 >= 1, '정리 결과 카드 열 때 목록 1회 재조회(GET /api/order-memo)', S.calls);
+            await p.click('[data-cact="pxopen"]'); await p.waitForSelector('#om-card .om-pairx'); const g2 = gets();
+            ok(g2 === g1 + 1, '[추가 매칭] 판 열 때 목록 재조회 1회', { g1, g2 });
+            await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100);
+            await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) [data-cact="pyopen"]'); const g3 = gets(); await p.click('[data-cact="pyopen"]'); await p.waitForSelector('#om-card .om-pairy'); const g4 = gets();
+            ok(g4 === g3 + 1, '[입력삭제 주문에 붙이기] 판 열 때 목록 재조회 1회', { g3, g4 });
+            await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100);
+            // ① 삭제 확인 세 갈래(입력삭제 줄 5738 ← 주소 줄 201 붙어 있음)
+            const ask = () => p.evaluate(() => ({ hidden: document.getElementById('om-ask').hidden, h: document.getElementById('om-ask-h').textContent, s: document.getElementById('om-ask-s').textContent, mid: !document.getElementById('om-ask-mid').hidden, yes: document.getElementById('om-ask-yes').textContent, three: document.getElementById('om-ask').classList.contains('three') }));
+            await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-x').click(); let st = await ask();
+            ok(!st.hidden && st.h === '입력삭제 줄을 지우면 주소 줄 1개가 짝을 잃어요' && /주소줄손님/.test(st.s) && /풀림/.test(st.s) && st.mid && st.yes === '주소 줄도 같이 지우기' && st.three, '입력삭제 줄 × = 확인 창 세 갈래 「주소 줄 1개가 짝을 잃어요」 · [줄만 지우기]/[주소 줄도 같이 지우기]/[취소]', st);
+            await p.click('#om-ask-no'); st = await ask();
+            ok(st.hidden && S.deleted.size === 0, '[취소] = 지운 줄 0', { st, del: [...S.deleted] });
+            await p.locator('#om-list .om-ml', { hasText: PXK }).locator('.om-x').click(); st = await ask();
+            ok(!st.hidden && /^1줄을 지우면 다음 발주에서 빠져요/.test(st.h) && !st.mid && st.yes === '삭제' && !st.three, '붙은 주소 줄 없는 입력삭제 줄 × = 종전 두 단추 창 그대로', st);
+            await p.click('#om-ask-no');
+            await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-x').click(); await p.click('#om-ask-mid'); await until(() => S.deleted.has(190)); await p.waitForTimeout(300);
+            st = await p.evaluate(() => ({ p201: [...document.querySelectorAll('#om-ctw tbody tr')].filter(tr => /주소줄손님/.test(tr.textContent)).map(tr => tr.querySelector('.om-ct-p .om-pill').textContent)[0], lines: document.querySelectorAll('#om-list .om-ml').length }));
+            ok(S.deleted.size === 1 && st.p201 === '입력삭제 풀림 …4123' && st.lines === 1, '[줄만 지우기] = 입력삭제 줄만 DELETE · 주소 줄 201 알약 「입력삭제 풀림 …4123」', { del: [...S.deleted], st });
+            S.deleted = new Set(); await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 2));
+            await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-x').click(); await p.click('#om-ask-yes'); await until(() => S.deleted.has(190) && S.deleted.has(201)); await p.waitForTimeout(200);
+            ok(S.deleted.size === 2, '[주소 줄도 같이 지우기] = 입력삭제 줄 190 + 주소 줄 201 DELETE', [...S.deleted]);
+            // ② 풀린 줄 = 글로만 · 알약 · 고치기 카드 안내 + [현금으로]
+            S.deleted = new Set(); S.px2 = false; S.px3 = true; await openPx(p, 'new'); await p.waitForTimeout(300);
+            st = await p.evaluate(() => { const b = document.querySelector('#om-card .om-pair'); return { chk: b.querySelectorAll('input[data-cact="chk"]').length, note: [...b.querySelectorAll('.om-pair-s')].map(x => x.textContent).join(' | ') }; });
+            ok(st.chk === 2 && /풀린 주소 줄 1개\(김보은\)는 저장하면 저절로 붙어요/.test(st.note), '② 카드 = 같은 번호 「!」 2줄만 체크 · 풀린 줄 193 은 「저장하면 저절로 붙어요(풀림)」 글로만', st);
+            await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100);
+            st = await p.evaluate(() => [...document.querySelectorAll('#om-ctw tbody tr')].filter(tr => /김보은/.test(tr.textContent)).map(tr => tr.querySelector('.om-ct-p .om-pill').textContent)[0]);
+            ok(st === '입력삭제 풀림 …0535', '오른쪽 표 193 알약 「입력삭제 풀림 …0535」(흰·회색)', st);
+            await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
+            st = await p.evaluate(() => ({ note: (document.querySelector('#om-card .om-indiv') || {}).textContent, btn: !!document.querySelector('#om-card [data-cact="tocash"]'), py: !!document.querySelector('#om-card [data-cact="pyopen"]') }));
+            ok(/입력삭제 줄이 없어요\(「풀림」\)/.test(st.note || '') && /다시 넣으면 저절로 붙어요/.test(st.note) && st.btn && !st.py, '풀린 줄 고치기 카드 = 안내 「입력삭제 줄이 없어요(풀림) · 다시 넣으면 저절로 붙어요 · 현금으로 두려면 [현금으로]」 + [현금으로] 단추', st);
+            S.puts = []; await p.click('#om-card [data-cact="tocash"]'); await until(() => S.puts.length); await p.waitForTimeout(200);
+            st = await p.evaluate(() => document.getElementById('om-card').hidden);
+            ok(S.puts.length === 1 && S.puts[0].cells[0] === '이형주 드림!' && S.puts[0].cells[10] === PXK && S.puts[0].to_cash === true && st, '[현금으로] = PUT 1(A칸 「이형주 드림!」 · to_cash:true · 다른 칸 그대로) · 카드 닫힘', S.puts[0]);
+            {   // 워커2 점검 ① = 서버 PUT 의 next 식 + checkRow 를 order-memo.js 그대로 떼어 실행 → 실제 저장될 A칸·indiv
+                const OMS = require(path.join(ROOT, 'order-memo.js')), src = fs.readFileSync(path.join(ROOT, 'order-memo.js'), 'utf8').replace(/\r\n/g, '\n');
+                const m = src.match(/\? (\{ kind: 'cash', cells: Array\.isArray\(b\.cells\)[^\n]*?\})   \/\/ #900 서비스 켬/); if (!m) throw new Error('PUT next 식을 못 찾음');
+                const nextOf = new Function('cur', 'b', 'svc', 'return ' + m[1]), ctx = { today: '2026-11-01', catalog: new Set(CAT), origin: '제주시 연삼로 1066-31' };
+                const cur = { kind: 'cash', service: false, ship_date: null, cells: ['이형주 드림', PXO, '제주시 연삼로 1066-31', '김보은', CAT[1], '1', '010-4787-4217', '', '충남 보령시 동대동 8', '', PXK, '', ''] };
+                const sent = cur.cells.slice(); sent[0] = '이형주 드림!';
+                const a = OMS.checkRow(nextOf(cur, { cells: sent, to_cash: true }, false), ctx), b = OMS.checkRow(nextOf(cur, { cells: sent }, false), ctx);
+                ok(a.cells[0] === '이형주 드림!' && a.indiv === false && b.cells[0] === '이형주 드림' && b.indiv === true, '서버 PUT 실제 저장값 = to_cash:true → A칸 「이형주 드림!」·현금(indiv false) · to_cash 없이는 종전대로 「!」 지워져 풀림 그대로(무동작 재현)', { a: [a.cells[0], a.indiv], b: [b.cells[0], b.indiv] });
+            }
+            st = await p.evaluate(() => ({ undo: !document.getElementById('om-undo').hidden, t: document.getElementById('om-undo-t').textContent }));
+            ok(st.undo && /현금 줄로 바꿨어요/.test(st.t), '[현금으로] 뒤 되돌리기 띠', st);
+            await p.locator('#om-ctw tbody tr', { hasText: '주소줄손님' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
+            st = await p.evaluate(() => ({ note: (document.querySelector('#om-card .om-indiv') || {}).textContent, btn: !!document.querySelector('#om-card [data-cact="tocash"]') }));
+            ok(st.note === '입력삭제 주문의 주소 줄이에요 · 입력삭제 줄을 지우면 이 줄은 「풀림」이 돼요' && !st.btn, '붙어 있는 주소 줄 고치기 카드 = 안내 한 줄 더 · [현금으로] 없음', st);
+            await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100);
+            // ③ 발송일이 뒤인 줄(날짜 대기 · #870) = 풀림 아님
+            S.px3Later = true; await openMemo(p, 'new', 4, 1); await jusoQuiet();
+            st = await p.evaluate(() => [...document.querySelectorAll('#om-ctw tbody tr')].filter(tr => /김보은/.test(tr.textContent)).map(tr => tr.querySelector('.om-ct-p .om-pill').textContent)[0]);
+            await p.locator('#om-ctw tbody tr', { hasText: '김보은' }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
+            const st3 = await p.evaluate(() => ({ note: (document.querySelector('#om-card .om-indiv') || {}).textContent, btn: !!document.querySelector('#om-card [data-cact="tocash"]') }));
+            ok(st === '입력삭제 …0535' && st3.note === '입력삭제 줄은 그날 나갔고 이 줄은 발송일(12/31)까지 기다려요' && !st3.btn, '발송일 뒤 주소 줄(입력삭제 줄 없음) = 풀림 아님 · 알약 종전 「입력삭제 …0535」 · 카드 안내 「발송일(12/31)까지 기다려요」 · [현금으로] 없음', { st, st3 });
+            await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(100); S.px3Later = false;
+            // ④ 여러 줄 골라 지우기(입력삭제 줄 섞임) = 제목에 개수·이름
+            S.px3 = false; S.px2 = true; S.deleted = new Set(); await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 2));
+            await p.check('#om-selall'); await p.click('#om-ldel'); st = await ask();
+            ok(!st.hidden && /^고른 2줄\(/.test(st.h) && /그중 입력삭제 줄 때문에 주소 줄 1개가 짝을 잃어요$/.test(st.h) && st.mid && st.three, '여러 줄 골라 지우기(입력삭제 줄 섞임) = 「고른 2줄(…) 삭제 · 그중 입력삭제 줄 때문에 주소 줄 1개가 짝을 잃어요」 세 갈래', st);
+            await p.click('#om-ask-no');
+            // ② 저장 중 재조회 끝나도 다시 안 그림(저장 단추 되살아남 0)
+            S.px2 = false; S.listDelay = 1500; await openPx(p, 'new'); S.listDelay = 3000;   // px2 끔 = 같은 입력삭제 줄이 목록에 있으면 「같은 줄」로 저장이 빠짐   // 카드 열 때 재조회 GET 가 1.5초 뒤 답 → 그 전에 [저장]
+            await p.click('#om-card-save'); await p.waitForTimeout(500);
+            const s1 = await p.evaluate(() => ({ dis: document.getElementById('om-card-save').disabled, t: document.getElementById('om-card-save').textContent.trim(), card: document.getElementById('om-card').hidden }));
+            await p.waitForTimeout(1500); S.listDelay = 0;   // 재조회(1.5초) 답이 온 뒤 · 저장의 dupCheck GET 은 3초라 아직 저장 중(저장은 dupCheck GET 도 1.5초 지연 → 아직 저장 중)
+            const s2 = await p.evaluate(() => ({ dis: document.getElementById('om-card-save').disabled, t: document.getElementById('om-card-save').textContent.trim(), card: document.getElementById('om-card').hidden }));
+            await until(() => S.saves.length); await p.waitForTimeout(300);
+            ok(s1.dis && !s1.card && s2.dis && !s2.card && s2.t === s1.t && S.saves.length === 1, '저장 중 재조회가 끝나도 카드 다시 안 그림(저장 단추 잠김 그대로 · 저장 1회)', { s1, s2, saves: S.saves.length });
+            ok(pe.length === 0, '#935 1280 스크립트 오류 0', pe);
+            await c.close();
+            // 폰 390 = 세 갈래 확인 창 넘침 0 · 44px
+            { S.px3 = false; S.px2 = true; S.deleted = new Set();
+                const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 }); const p2 = await c2.newPage(); const pe2 = []; p2.on('pageerror', e => pe2.push(String(e)));
+                await openMemo(p2, 'new', 4, 1); await until(() => p2.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 2));
+                await p2.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-x').click(); await p2.waitForSelector('#om-ask:not([hidden])');
+                const m = await p2.evaluate(() => { const a = document.getElementById('om-ask'), r = a.getBoundingClientRect(); return { sw: document.documentElement.scrollWidth, right: Math.round(r.right), hs: [...a.querySelectorAll('button')].filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().height)), n: [...a.querySelectorAll('button')].filter(b => !b.hidden).length }; });
+                ok(m.sw <= 390 && m.right <= 390 && m.n === 3 && m.hs.every(h => h >= 44), '390폭 세 갈래 확인 창 = 넘침 0 · 단추 3개 44px↑', m);
+                await p2.click('#om-ask-no');
+                ok(pe2.length === 0, '390폭 #935 스크립트 오류 0', pe2);
+                await c2.close(); }
+            S.px = false; S.px2 = false; S.px3 = false; S.deleted = new Set(); S.preview = null; }
     } catch (e) { failN++; console.log('  ❌ 실행 오류', e && e.stack || e); }
     await browser.close(); srv.close();
     console.log(`\n결과 ${pass}/${pass + failN}${failN ? ' · 실패 ' + failN : ''}`);

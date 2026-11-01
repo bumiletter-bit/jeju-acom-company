@@ -654,3 +654,6 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 .om-pairx .om-pair-l li span, .om-pairy .om-pair-l li span { min-width: 0; overflow-wrap: anywhere; }
 .om-ml-px { flex: none; align-self: center; margin: 0 4px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
 @media (max-width: 960px), (pointer: coarse) { .om-ml-px { min-height: 44px; } }
+/* #935 「입력삭제 풀림」 알약(흰·회색 톤 · 토큰만 = 야간 저절로) · 입력삭제 줄 삭제 확인 창 세 갈래 = 세로 쌓기 */
+.om-pill.k-lost { background: var(--d-card); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
+.om-ask.three .om-ask-acts { grid-template-columns: 1fr; }
