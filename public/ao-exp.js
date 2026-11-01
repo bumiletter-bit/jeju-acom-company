@@ -124,7 +124,7 @@
         const n = noteOf(day), d = noteDraft()[day], v = d != null ? d : (n ? n.note : ''), st = noteState(day), ro = noteReadOnly();
         if (ro && !v) return '';
         return `<div class="xp-note-box${st.dirty ? ' dirty' : ''}" id="xp-note-box" data-day="${day}"><label for="xp-note">특이사항 메모</label>
-            <textarea id="xp-note" rows="1" maxlength="2000" placeholder="알바 휴무·특이사항을 적어 두세요"${ro ? ' readonly' : ''} autocomplete="off">${esc(v)}</textarea>
+            <textarea id="xp-note" rows="1" maxlength="2000" placeholder="특이사항은 여기 메모해주세요"${ro ? ' readonly' : ''} autocomplete="off">${esc(v)}</textarea>
             <div class="xp-note-f"><small id="xp-note-who">${esc(st.line)}</small>${ro ? '' : `<button type="button" class="xp-btn pri" id="xp-note-save" data-act="note-save"${st.dirty ? '' : ' disabled'}>저장</button>`}</div></div>`;
     }
     function saleHtml(day) {
