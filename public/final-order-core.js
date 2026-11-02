@@ -332,6 +332,7 @@
     //   memoRest(memo, { sender, sameDay, buyerName }) → { rest, removed, sure }
     //     sender  = 이 주문은 보내는이를 바꾼다 → 보내는이 요청 부분을 뺀다        sameDay = 메모의 날짜가 전부 기준 발송일 → 당일 발송 요청 부분을 뺀다
     //     rest    = 요청 부분을 뺀 나머지 글('' = 남는 글 없음)                   removed = 뺀 글(카드에 보여 줄 용도)
+    //     clause  = #995 날짜 줄로 발송 확정된 주문 전용 — 「11/6 발송, 문 앞에」의 날짜뿐인 마디만 잘라 낸다(남는 글 문장부호 그대로) · 뺄 글이 없으면 원문 그대로 · 인사뿐인 메모는 남는 글 없음(다른 흐름은 안 넘김 = 종전 그대로)
     //     sure    = 뺀 부분이 「요청 글뿐인 문장(줄)」이라고 자신할 때만 true. 한 문장 안에 요청과 다른 글이 섞였거나, 뺄 부분을 못 찾았으면 false(화면은 카드로 보낸다).
     //   문장(줄) 단위로만 뺀다 — 문장 중간을 잘라 내는 일은 sure=false 일 때의 「미리 채움」뿐이다. 인사말을 요청 꼬리로 같이 지우지 않는다.
     const MR_KEY = /(?:배송|발송|발신)자\s*명|(?:배송자|발송자)(?=\s*[:：]|\s+[가-힣(㈜])(?!\s*(?:님|분|께|에게|한테|가\s|는\s|도\s))|보내는\s*자(?![가-힣])|송하인|보내는\s*(?:이|사람|분)|보낸\s*(?:이|사람|분)|발신(?:자|인)?|발송(?:인|자)/;
@@ -404,6 +405,18 @@
             .replace(/[월화수목금토일]\s*요일|\(\s*[월화수목금토일]\s*\)|[월화수목금토일]욜/g, ' ').replace(MR_QUOTE, ' ').replace(MR_DAY_WORDS, ' ');
         return { strict: !/[가-힣A-Za-z0-9]/.test(s) };
     }
+    // #995 쉼표로 이은 문장에서 날짜뿐인 마디만 뺀다 — 숫자 사이 쉼표(「#1,234」)는 안 끊고 · 남는 마디 사이 쉼표는 원문 그대로
+    function mrClauseCut(seg) {
+        const p = String(seg).split(/((?<!\d)[,，]\s*|[,，](?!\d)\s*)/), cut = []; let rest = '';
+        if (p.length < 3) return { rest: seg, cut };
+        for (let i = 0; i < p.length; i += 2) {
+            const t = p[i], d = t.trim() ? mrDaySeg(t) : null;
+            if (d && d.strict) { cut.push(t.trim()); continue; }
+            if (!t.trim()) continue;
+            rest += (rest ? p[i - 1] : '') + t;
+        }
+        return { rest: rest.trim(), cut };
+    }
     function memoRest(memoRaw, opt) {
         const memo = String(memoRaw == null ? '' : memoRaw).replace(/\r/g, ''); const o = opt || {}; const buyer = String(o.buyerName || '').replace(/\s/g, '');
         if (!memo.trim() || (!o.sender && !o.sameDay)) return { rest: memo.trim(), removed: '', sure: true };
@@ -412,7 +425,9 @@
         let sure = true, hitSender = false, hitKey = false, hitClose = false, hitDay = false, pend = false, closeUp = false; const removed = [];
         const out = lines.map(segs => {
             const keep = [];
-            segs.forEach(seg => {
+            segs.forEach(seg0 => {
+                let seg = seg0;
+                if (o.clause && o.sameDay) { const c = mrClauseCut(seg); if (c.cut.length) { hitDay = true; removed.push(...c.cut); if (!c.rest) return; seg = c.rest; } }
                 if (o.sender) {
                     // 앞 줄이 「보내는이」 낱말뿐이었다 → 이 줄이 이름(상호)이면 보내는이 부분(「보내는사람 변경부탁드립니다. ⏎ □□□ ⏎ 000 ⏎ 으로 바꿔주세요」)
                     if (pend && !MR_KEY.test(seg) && !findPhones(seg).length) {
@@ -449,6 +464,8 @@
         if (hitClose && !hitKey && !hitDay && join(out)) return { rest: memo.trim(), removed: '', sure: false };
         // 메모 전체가 「○○○ 올림」: 완성본이 그대로 둔 실물이 있다(설 2/11) → 지우지 않고 사람에게(「○○○ 드림」은 기본 문구가 맞았다)
         if (closeUp && !hitKey && !hitDay) return { rest: memo.trim(), removed: '', sure: false };
+        if (o.clause && !removed.length && MR_PUNCT_ONLY.test(memo.replace(MR_COURTESY, ' '))) return { rest: '', removed: '', sure: true };   // #995
+        if (o.clause && !removed.length) return { rest: memo.trim(), removed: '', sure };   // #995 뺄 글이 없으면 원문 글자 그대로
         if (!removed.length) return { rest: join(out), removed: '', sure };
         // 메모에 「받는이 ㅡ 주소 · 이름 · 번호」를 따로 적은 꼴(받는 곳이 주문과 다르다는 뜻 — 사람이 처리) → 주소 조각을 미리 채우지 않는다
         if (/받는\s*(?:이|분|사람)/.test(memo)) return { rest: '', removed: removed.join(' / '), sure: false };

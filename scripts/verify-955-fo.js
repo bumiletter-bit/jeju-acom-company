@@ -256,6 +256,60 @@ const allRows = r => JSON.stringify(Object.keys(r.files).sort().map(fn => [fn.re
           ok(after3 && after3.some(x => x.includes('사람이 되돌림')) && !after3.some(x => x.startsWith('메모 줄로 일반발송')) && rowJ(R6, A0['수취인명']) === null, '③ 되돌림 = 다시 불러와도 입력삭제 유지', after3);
         }
 
+        console.log('\nⅢ-g #995 날짜 줄 주문의 손님 메모');
+        await br.close(); br = await chromium.launch();   // 긴 실행 메모리(렌더러 crash 방지)
+        { const shipM = (+ship.slice(5, 7)) + '/' + (+ship.slice(8, 10)), kor = d => (+d.slice(5, 7)) + '월 ' + (+d.slice(8, 10)) + '일';
+          const fx4 = JSON.parse(JSON.stringify(fx)), solo = fx4.naver.filter(o => !String(o['배송메세지'] || '').trim() && Number(o['수량']) === 1 && o['구매자연락처'] && fx4.naver.filter(x => x['구매자연락처'] === o['구매자연락처']).length === 1);
+          const MEMO = { only: kor(ship) + '에 보내 주세요', door: kor(ship) + '에 보내 주세요. 부재 시 문 앞', diff: kor(later) + ' 발송 부탁드려요', diffD: kor(later) + ' 발송, 문 앞에 놔주세요', vague: kor(ship) + '까지 도착 부탁드립니다', plain: '경비실에 맡겨 주세요', thanks: '감사합니다', snd: '보내는이 홍길동 010-3333-4444 으로 변경 부탁드립니다', ship: kor(ship) + ' 발송. 부재 시 문 앞', pw: '공동현관 비번 #1,234', pwD: kor(ship) + ' 발송, 공동현관 #1,234, 문 앞', sl: kor(ship) + '에 보내 주세요', sls: '보내는이 김가족으로 해주세요. 부재 시 문 앞' };
+          const K = Object.keys(MEMO); if (ok(solo.length >= K.length, '가짜 자료 혼자 주문 ' + K.length + '건↑', solo.length)) {
+          const O = {}; K.forEach((k, i) => { O[k] = solo[i]; solo[i]['배송메세지'] = MEMO[k]; });
+          const gul = solo.slice(K.length).find(o => /귤/.test(o['옵션정보']) && !/선물/.test(o['옵션정보']) && !/사이즈/.test(o['옵션정보'])); O.size = gul; if (gul) gul['배송메세지'] = '2S로 보내주세요'; ok(!!gul, '사이즈 시험용 귤 주문 있음');
+          const LINE = o => shipM + ' ' + o['구매자연락처'] + ' 발송', typed = K.concat('size').map(k => LINE(O[k])).concat([O.sl['구매자연락처'] + ' 보내는이 김가족', O.sls['구매자연락처'] + ' 보내는이 김가족']).join('\n'), nm = k => O[k]['수취인명'];
+          const cardOf = (r, k) => r.before.cards.find(c => /^memo:/.test(String(c.id)) && JSON.stringify(c).includes(nm(k)));
+          const smv = '배송메모 글 G', fs = { forShip: { ship_memos: [sm(9951, O.ship._pid, smv)], ids: [9951] } };
+          const DEF = String(rowJ(r1, (fx.naver.find(o => !String(o['배송메세지'] || '').trim()) || {})['수취인명']) || '');
+          const R = await run(br, fx4, Object.assign({ memo: typed }, fs));
+          ok(R.errs.length === 0, '오류 0', R.errs);
+          ['only', 'diff', 'thanks'].forEach(k => { ok(!cardOf(R, k), k + ' = 카드 없음', cardOf(R, k)); ok(rowJ(R, nm(k)) === DEF, k + ' = 기본 문구', rowJ(R, nm(k))); });
+          const cd = cardOf(R, 'door'); ok(!!cd && cd.tag === '메모 재확인' && cd.type === 'memo-edit', '날짜 + 문 앞 = 메모 재확인 카드', cd);
+          ok(rowJ(R, nm('door')) === '부재 시 문 앞', '안 고치고 [이대로 넣기] = 남길 글이 J칸', rowJ(R, nm('door')));
+          ok(cd && cd.lines.some(l => l[0] === '메모 줄' && String(l[1]).startsWith(shipM + ' 발송 · ')) && cd.lines.some(l => l[0] === '손님 메모' && l[1] === MEMO.door), '카드 = 메모 칸 줄이면 「메모 줄」 · 손님 메모 표시', cd && cd.lines);
+          ok(rowJ(R, nm('diffD')) === '문 앞에 놔주세요', '다른 날짜·쉼표 = 날짜 글 빠지고 남길 글만', rowJ(R, nm('diffD')));
+          ok(!!cardOf(R, 'vague') && rowJ(R, nm('vague')) === DEF, '애매 = 카드 · 남길 글 빈칸 → 기본 문구', rowJ(R, nm('vague')));
+          ok(!!cardOf(R, 'plain') && rowJ(R, nm('plain')) === MEMO.plain, '날짜 없는 글 = 카드 · 그 글', rowJ(R, nm('plain')));
+          ok(rowJ(R, nm('ship')) === smv, '🔴 배송메모 있음 = 배송메모(#955 그대로)', rowJ(R, nm('ship')));
+          { const cp = cardOf(R, 'pw'); ok(!!cp && rowJ(R, nm('pw')) === MEMO.pw, '① 뺄 글 없음 = 비번 쉼표 그대로', rowJ(R, nm('pw')));
+            ok(rowJ(R, nm('pwD')) === '공동현관 #1,234, 문 앞', '① 날짜 마디만 빠지고 남는 글 문장부호 그대로', rowJ(R, nm('pwD')));
+            ok(!cardOf(R, 'sl') && rowJ(R, nm('sl')) === DEF, '② 보내는이 줄 + 날짜 글뿐 = 카드 없음 · 기본 문구', [cardOf(R, 'sl'), rowJ(R, nm('sl'))]);
+            ok(!!cardOf(R, 'sls') && rowJ(R, nm('sls')) === '부재 시 문 앞', '② 메모에 보내는이 글 있음 = 그 글 빠지고 남길 글', rowJ(R, nm('sls')));
+            ok(!cardOf(R, 'size') && rowJ(R, nm('size')) === DEF, '③ 사이즈 말뿐 + 날짜 줄 = 카드 없음 · 기본 문구', [cardOf(R, 'size'), rowJ(R, nm('size'))]);
+            const sr = Object.values(R.files).map(f => (f.Sheet1 || []).find(x => String(x[3]) === nm('size'))).find(Boolean); ok(sr && /사이즈로!/.test(String(sr[4])), '③ 옵션 꼬리 붙음', sr && sr[4]); }
+          const hasCard = (r, k) => r.before.cards.filter(c => JSON.stringify(c).includes(nm(k))).map(c => String(c.id).split(':')[0]).sort().join('|');
+          const Rh = await run(br, fx4, Object.assign({ head: true, memo: typed }, fs));
+          ok(hasCard(R, 'snd') === hasCard(Rh, 'snd') && rowJ(R, nm('snd')) === rowJ(Rh, nm('snd')), '보내는이 있음 = 전과 같음', [hasCard(R, 'snd'), hasCard(Rh, 'snd'), rowJ(R, nm('snd')), rowJ(Rh, nm('snd'))]);
+          ['only', 'diff', 'thanks', 'ship', 'sl', 'size'].forEach(k => ok(rowJ(Rh, nm(k)) === rowJ(R, nm(k)), k + ' = 전과 파일 값 같음', [rowJ(Rh, nm(k)), rowJ(R, nm(k))]));
+          ok(rowJ(Rh, nm('door')) === DEF, '(대조) 전에는 문 앞이 사라짐', rowJ(Rh, nm('door')));
+          const fxO = JSON.parse(JSON.stringify(fx4)); K.filter(k => !['only', 'diff', 'thanks'].includes(k)).forEach(k => { fxO.naver.find(o => o._pid === O[k]._pid)['배송메세지'] = ''; });
+          const onlyL = ['only', 'diff', 'thanks'].map(k => LINE(O[k])).join('\n'), A0 = await run(br, fxO, { memo: onlyL }), A1 = await run(br, fxO, { head: true, memo: onlyL });
+          ok(JSON.stringify(A0.before.cards) === JSON.stringify(A1.before.cards) && JSON.stringify(A0.after.info) === JSON.stringify(A1.after.info) && allRows(A0) === allRows(A1), '날짜 글뿐 = 카드·참고·파일 전 칸 바이트 같음');
+          const fixN = async (pg, k, fn) => { const c = pg.locator('#fo-cards [data-fo-card="memo-edit"]').filter({ hasText: nm(k) }).first(); await fn(c); await pg.waitForTimeout(120); };
+          const E1 = await run(br, fx4, { memo: typed, afterJudge: async pg => {
+              await fixN(pg, 'door', async c => { await c.locator('[data-f="memo"]').fill('사람이 고친 글'); await c.locator('[data-fo-act="use"]').click(); });
+              await fixN(pg, 'plain', async c => { await c.locator('[data-fo-act="keep"]').click(); });
+              await fixN(pg, 'diffD', async c => { await c.locator('[data-f="memo"]').fill(''); await c.locator('[data-fo-act="use"]').click(); }); } });
+          ok(rowJ(E1, nm('door')) === '사람이 고친 글', '사람이 고친 글 우선', rowJ(E1, nm('door')));
+          ok(rowJ(E1, nm('plain')) === MEMO.plain, '[원문 그대로] = 손님 메모 전체', rowJ(E1, nm('plain')));
+          ok(rowJ(E1, nm('diffD')) === DEF, '비우면 기본 문구', rowJ(E1, nm('diffD')));
+          let shown = null; const E2 = await run(br, fx4, { memo: typed, afterJudge: async pg => { await fixN(pg, 'door', async c => { await c.locator('[data-fo-act="use"]').click(); }); await pg.fill('#fo-find-q', nm('door')); await pg.waitForTimeout(250); await pg.locator('.fo-find-row').first().click(); await pg.waitForTimeout(300); shown = await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().inputValue(); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } });
+          ok(shown === '부재 시 문 앞' && rowJ(E2, nm('door')) === '부재 시 문 앞', '끝난 카드 직접 고치기 칸 = 나갈 글 · 그대로 [적용] 유지', [shown, rowJ(E2, nm('door'))]);
+          const lb = LINE(O.door), B1 = await run(br, fx4, { forShip: { memo_text: lb, lines: [{ id: 9952, line: lb, ship_date: ship, checked: null, state: 'today' }], ids: [9952] } }), cb = cardOf(B1, 'door');
+          ok(cb && cb.lines.some(l => l[0] === '메모함 줄' && String(l[1]).includes(shipM + ' 발송')), '메모함에서 온 줄 = 「메모함 줄」', cb && cb.lines);
+          const aiH = await run(br, fx4, { memo: typed, afterJudge: async pg => { const n = await pg.evaluate(ks => { const s = window.AkmFinalOrder.state; return s.cards.filter(c => /^memo:/.test(String(c.id)) && c.recheck).length; }); if (!n) throw new Error('recheck 카드 없음'); } });
+          ok(aiH.errs.length === 0, 'recheck 표시(AI 가 닫지 않음)');
+          const NM = await run(br, fx4, { memo: FX.usd(ship) + '\t' + O.door['구매자연락처'] + '\t메모무시\t네이버' }); ok(!cardOf(NM, 'door') && rowJ(NM, nm('door')) === DEF, '줄에 「메모무시」 직접 = 카드 없음 · 기본 문구', rowJ(NM, nm('door')));
+          let ex; const X = await run(br, fx4, { memo: typed + '\n' + kor(later) + ' ' + O.door['구매자연락처'], afterJudge: async pg => { ex = 1; } }); ok(X.errs.length === 0, '같은 번호 날짜 줄 둘 = 오류 0', X.errs);
+          } }
+
         console.log('\nⅣ 빼기 = 안 나감');
         const R4 = await run(br, fx, { forShip: { ship_memos: [sm(931, plain._pid, '뺄 글')], ids: [931] }, afterJudge: async (pg, rj) => { await pg.click('[data-om="take"]'); await pg.waitForTimeout(300); await rj(); } });
         ok(rowJ(R4, plain['수취인명']) !== '뺄 글', '[빼기] 뒤 양식에 안 들어감', rowJ(R4, plain['수취인명']));

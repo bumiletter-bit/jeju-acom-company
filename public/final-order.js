@@ -1008,7 +1008,7 @@
         const oid = st.ordCard && st.ordCard.get(k); if (oid && st.ordMemo && st.ordMemo.has(oid) && st.dec.get(oid) === 'send') return nz(st.ordMemo.get(oid));
         const mid = st.missCard && st.missCard.get(k); if (mid && st.dec.get(mid) === 'def') return '';
         const d = sambDec(e); if (d) return d.use && typeof d.memo === 'string' ? nz(d.memo) : base;
-        const md = st.memoCard && st.memoCard.get(k) ? st.dec.get(st.memoCard.get(k)) : undefined; if (md) return md.use && typeof md.memo === 'string' ? nz(md.memo) : base;
+        const md = st.memoCard && st.memoCard.get(k) ? st.dec.get(st.memoCard.get(k)) : undefined; if (md) return md.use && typeof md.memo === 'string' ? nz(md.memo) : nz(e.conv['배송메세지']);
         if (st.ai.memo && st.ai.memo.has(k)) return nz(st.ai.memo.get(k));
         if (st.memoAuto && st.memoAuto.get(k)) return '';
         return base;
@@ -1111,6 +1111,16 @@
             if (r.sure && r.rest === '' && !tail) { es.forEach(x => st.memoAuto.set(keyOf(x), true)); info.push({ t: `배송메세지를 기본 문구로: ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」 → 「기본 문구」`, keys: es.map(keyOf) }); return; }
             const id = 'memo:' + keyOf(e); es.forEach(x => st.memoCard.set(keyOf(x), id));
             cards.push({ id, keys: es.map(keyOf), fix: es.map(keyOf), fixF: ['name', 'phone', 'addr', 'opt'], type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [telLine(e), ['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) }, ...(tail ? { tail } : {}) });
+        });
+        // #995(대표 11/2 「고」): 날짜 줄로 그날 발송 확정(today · 보내는이 없음)된 주문 = 손님 메모를 v2 가 통째로 비운다 → 날짜 글뿐이면 종전 그대로(카드·참고 줄 없음 · 쓰기 없음) · 다른 글이 남거나 확실치 않으면 메모 재확인 카드(남길 글 미리 채움)
+        //   줄에 「메모무시」라고 직접 적으면 사람이 이미 정한 것 = 카드 없음(종전 그대로) · 사이즈 말뿐이고 옵션 꼬리가 이미 붙었으면 카드 없음(#623 · 종전 그대로)
+        //   AI 는 안 태움(aiCollect today 거름 그대로 · recheck 라 AI 가 닫지도 않음) · 위 memoTargets 와 따로 돌려 다른 주문의 묶음·카드 무변경
+        groupBy(s.merged.filter(e => e.reqKind === 'today' && !e.sender && !e.individual && !e.excluded && e.req && !!memoOf(e) && !st.sambCard.has(keyOf(e)) && !/메모\s*무시/.test(lineRaw(e.req)) && !(typeof c.sizeOnlyMemo === 'function' && /\s(?:2S|S|M)사이즈로!\s*$/.test(String(e.conv['옵션정보'] || '')) && c.sizeOnlyMemo(memoOf(e)))), e => { const k = sameBuyerMemo(e); return k ? k + '|' + e.req.srcLine : null; }).forEach(es => {
+            const e = es[0], r = (typeof c.memoRest === 'function' ? c.memoRest(memoOf(e), { sender: sm.line.has(keyOf(e)) && (SENDER_WORD.test(memoOf(e)) || /드림|올림/.test(memoOf(e))), sameDay: true, buyerName: buyerName(e), clause: true }) : null) || { rest: memoOf(e), sure: false };
+            if (r.sure && r.rest === '') return;
+            const rl = lineRaw(e.req), fromBox = !OMF.removed && OMF.lines.some(y => y.text.trim() === rl), id = 'memo:' + keyOf(e);
+            es.forEach(x => st.memoCard.set(keyOf(x), id));
+            cards.push({ id, keys: es.map(keyOf), fix: es.map(keyOf), fixF: ['name', 'phone', 'addr', 'opt'], type: 'memo-edit', tag: '메모 재확인', recheck: true, title: groupTitle(es), lines: [telLine(e), [fromBox ? '메모함 줄' : '메모 줄', `${md(e.req.date)} 발송 · ${rl}`], ['손님 메모', memoOf(e)], ['처리', '메모 줄대로 발송돼요. 손님 메모에서 택배사 양식에 남길 글을 확인해 주세요. 날짜 글은 빼 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) } });
         });
         // #623(대표 10/10): 손님 메모의 사이즈 요청이 이미 옵션 꼬리로 붙은 주문(v2 addSizeSuffix)인데 메모가 「사이즈 말 + 부탁 말씨」뿐이면 AI 에 보내지 않고 규칙으로 기본 문구.
         //   카드가 걸린 주문·보내는이·날짜 확인·AI 가 이미 물어본 메모는 건드리지 않는다(종전 길 그대로) · 기사님 말이 같이 있으면 sizeOnlyMemo 가 거짓 → 종전대로 AI.
@@ -1907,7 +1917,7 @@
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
     const INFO_KIND = [[/^메모 줄로 일반발송/, '일반발송', 'hand'], [/^메모 줄로 배송메시지 지정/, '배송메시지', 'hand'], [/^메모 줄 ✓/, '확인완료', 'hand'], [/^메모 줄 ⚠/, '확인 필요', 'warn'], [/^메모 줄 ✕/, '주문 없음', 'warn'], [/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
-    const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
+    const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄', '메모함 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
     const lineMark = (k, t) => (SRC_KEYS.has(k) && t && t !== '(없음)' ? `<mark class="fo-hl">${esc(t)}</mark>` : k === '클코가 고친 줄' ? `<b class="fo-em">${esc(t)}</b>` : k === '이유' ? `<span class="fo-why">${textMark(esc(t))}</span>` : textMark(esc(t)));   // #606(대표 10/9 「이유 줄도 빨강」): 카드를 띄운 이유 글은 빨강
     const doneMark = t => t.replace(/「([^」]*)」/g, '「<b class="fo-em">$1</b>」').replace(/((?:2S|2L|S|M|L)사이즈로!|\d+과로!|박스별 꼬리 [^·]+|보내는이 [^·]+?(?= ·|$)|오늘 발송|오늘 안 나감|제외)/g, x => (/fo-em/.test(x) ? x : '<b class="fo-em">' + x + '</b>'));
@@ -2163,7 +2173,9 @@
             const d = sambDec(e);
             if (d) { if (d.use && typeof d.memo === 'string') put(d.memo); return; }   // 보내는이 카드가 있는 주문은 그 카드의 결정만 따른다([안 바꿈]이면 원문 그대로)
             const md2 = st.memoCard && st.memoCard.get(k) ? st.dec.get(st.memoCard.get(k)) : undefined;
-            if (md2) { if (md2.use && typeof md2.memo === 'string') put(md2.memo); return; }
+            if (md2) { const mt = md2.use && typeof md2.memo === 'string' ? md2.memo : null;
+                if (e.reqKind === 'today' && !e.sender) { program[i].cells[9] = { v: mt == null ? orig : mt, t: 's', s: program[i].cells[3].s }; return; }   // #995 v2 가 비운 칸 — put 은 원문과 같으면 안 써서 빈칸(기본 문구)으로 나감
+                if (mt != null) put(mt); return; }
             if (st.ai.memo.has(k)) { put(st.ai.memo.get(k)); return; }                // #518: AI가 정리한 배송메세지(확실하다고 한 것만 · 카드 없는 주문)
             if (st.memoAuto && st.memoAuto.get(k)) put('');
         });
