@@ -257,9 +257,24 @@ function mkPool(db) {
     const helpers = cut(ui, '    const nameOf = r =>', ';\n') + cut(ui, '    const INDIV_RE = ', ';\n') + cut(ui, '    const SHIP_NOTE = ', ';\n');
     const pairSrc = ui.slice(ui.indexOf('    const pairKeys = c =>'), ui.indexOf('    function indivSync() {'));
     const toasts = [];
-    const U = new Function('window', 'OM', 'renderCard', 'toastFn', 'API', 'undoShow', 'load', 'errText', head.replace(/const toast = [^\n]*\n/, '') + '\nconst toast = toastFn;\n' + helpers + pairSrc + '\nreturn { pairKeys, pairHtml, pair1Go, savedCashOf, pair2Run };');
+    const U = new Function('window', 'OM', 'renderCard', 'toastFn', 'API', 'undoShow', 'load', 'errText', head.replace(/const toast = [^\n]*\n/, '') + '\nconst toast = toastFn;\n' + helpers + pairSrc + '\nreturn { pairKeys, pairHtml, pair1Go, savedCashOf, pair2Run, pxCands, pxWho, pyHtml };');
     const OMs = { list: [] };
     const u = U({}, OMs, () => {}, m => toasts.push(m), { pair: async () => ({ ok: true, body: { n: 0, undo: [] } }) }, () => {}, () => {}, () => '');
+    { // #966 후보 순서 = 구매자 번호(K) 같음 → 보내는 분 번호(B)만 같음 → 그 밖
+        const D = '01033330001', X = '01099990002', row = (id, nm, B, K) => ({ id, kind: 'cash', state: 'open', indiv: false, service: false, cells: ['가 드림!', B, '제주', nm, '품목', '1', '010-7777-' + id, '', '주소', '', K, '', ''] });
+        OMs.list = [row(1001, 'B만같음1', D, X), row(1002, '그밖1', X, X), row(1003, 'K같음1', X, D), row(1004, 'B만같음2', D, X), row(1005, 'K같음2', D, D), row(1006, '그밖2', X, X)];
+        const c4 = { pxOnly: { d: D, show: D } }, ids = u.pxCands(c4, D).map(r => r.id);
+        ok(ids.join() === '1003,1005,1001,1004,1002,1006', '#966 ④ 후보 순서 K → B만 → 그 밖 · 같은 순위 안 순서 그대로', ids);
+        ok(/구매자 번호 같음/.test(u.pxWho(OMs.list[2], D)) && /보내는 분 번호 같음/.test(u.pxWho(OMs.list[0], D)) && !/같음/.test(u.pxWho(OMs.list[1], D)), '#966 이유 표시', [u.pxWho(OMs.list[2], D), u.pxWho(OMs.list[0], D), u.pxWho(OMs.list[1], D)]);
+        ok(u.savedCashOf(D).map(r => r.id).join() === '1003,1005,1001,1004', '#966 ② 번호 맞는 줄 = K 먼저', u.savedCashOf(D).map(r => r.id));
+        ok(u.pxCands({}, D).map(r => r.id).join() === '1002,1006', '#966 ① 후보 = 번호 다른 줄만(종전)', u.pxCands({}, D).map(r => r.id));
+        const L = (id, k) => ({ id, kind: 'line', state: 'open', key: k, note: '입력o삭제x', line: k + ' 입력o삭제x', checked: null, entry: { created_at: new Date().toISOString() } });
+        OMs.list = [L(1, X), L(2, D), row(1007, '현금', X, D)];
+        const r0 = OMs.list[2], h = u.pyHtml({ mode: 'edit', rows: [r0], pairY: { open: true, pick: null } });
+        ok(h.indexOf('data-k="' + D + '"') > 0 && h.indexOf('data-k="' + D + '"') < h.indexOf('data-k="' + X + '"') && /구매자 번호 같음/.test(h) && !/type="radio"[^>]*checked/.test(h), '#966 ⑤ 이 줄 구매자 번호의 입력삭제 줄 먼저 · 표시 · 미리 선택 없음', h.slice(0, 400));
+        { const K966 = '010-2600-0167', c9 = (nm, k) => ({ kind: 'cash', indiv: false, state: 'open', id: null, cells: ['가 드림!', '', '제주', nm, '품목', '1', '010-7777-0001', '', '주소', '', k, '', ''] }); OMs.list = []; const hh = u.pairHtml({ mode: 'new', rows: [{ kind: 'line', key: K966, note: '입력o삭제x', plat: '네이버', line: K966 + ' 입력o삭제x 네이버' }, c9('빈칸', ''), c9('있는줄', '010-5555-0001')] }); ok(!/구매자 번호 같음/.test(hh), '#966 ① 카드 칸 = 빈 K 를 같음으로 안 봄', hh.slice(0, 300)); }
+        OMs.list = [];
+    }
     const lineR = { kind: 'line', key: BUY, note: '입력o삭제x', plat: '네이버', line: BUY + ' 입력o삭제x 네이버' };
     const cashR = (i, indiv) => ({ kind: 'cash', indiv: !!indiv, cells: cashCells(RECV[i]).map((v, k) => k === 10 ? RECV[i][1] : v), id: null, state: 'open' });
     let c = { mode: 'new', rows: [lineR] };

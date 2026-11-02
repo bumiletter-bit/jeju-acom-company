@@ -1199,7 +1199,8 @@
     const lostOf = (r, keys) => { if (!r || r.kind !== 'cash' || r.state !== 'open' || !r.indiv || r.service || r.id == null || r.sure === false || (r.ship_date && OM.shipDate && r.ship_date > OM.shipDate)) return false; return noLine(r, keys); };   // 워커2 점검 = 날짜 대기 줄·「확인」 남은 줄은 거짓 경보 → 종전 알약
     const lostCashOf = d => { const K = indivLineKeys(); return (OM.list || []).filter(r => lostOf(r, K) && [r.cells[10], r.cells[1]].map(digits).includes(d)); };
     const lostNote = d => { const L = lostCashOf(d); return L.length ? `<p class="om-pair-s">풀린 주소 줄 ${L.length}개(${esc(L.slice(0, 3).map(r => nameOf(r) || '…' + last4(r.cells[10])).join(', '))}${L.length > 3 ? ' 외' : ''})는 저장하면 저절로 붙어요(풀림)</p>` : ''; };
-    const savedCashOf = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && !r.service && r.id != null && [r.cells[10], r.cells[1]].map(digits).includes(d));
+    const kFirst = (rows, d) => rows.filter(r => digits(r.cells[10]) === d).concat(rows.filter(r => digits(r.cells[10]) !== d));   // #966 구매자 번호(K) 같은 줄 먼저 · 그 안 순서 그대로
+    const savedCashOf = d => kFirst((OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && !r.service && r.id != null && [r.cells[10], r.cells[1]].map(digits).includes(d)), d);
     //   ③(대표 10/27 · 순서 반대) 입력삭제 줄은 먼저 저장 · 주소 줄은 나중 다른 묶음 = 주소 글엔 구매자 번호가 없어(AI 가 K 에 받는 분 번호) 번호로 못 찾음
     //     → 메모함에 「아직 주소 줄이 없는 열린 입력삭제 줄」이 있으면 ①과 같은 묻기에 그 번호도 넣음(saved) · 고르면 저장 뒤 POST pair 로 그 줄 묶음에 짝
     //     #875(대표 10/27) 오늘(KST) 저장한 입력삭제 줄만 — 어제 이전 줄은 안 물음(묶음 created_at = UTC ISO → +9시간 날짜 · todayStr 와 같은 KST)
@@ -1214,7 +1215,7 @@
     function chkHtml(grp, k, items, sel) {
         const on = items.filter(x => sel.has(x.v)), all = on.length === items.length;
         return `<p class="om-pair-n">${items.length}줄 중 <b>${on.length}줄</b> · ${on.reduce((t, x) => t + qtyOf(x.r), 0)}박스</p>
-                <ul class="om-pair-l"><li class="om-pair-all"><label><input type="checkbox" data-cact="chkall" data-g="${grp}" data-k="${esc(k)}"${all ? ' checked' : ''}> <span>전부</span></label></li>${items.map(x => `<li><label><input type="checkbox" data-cact="chk" data-g="${grp}" data-k="${esc(k)}" data-v="${esc(x.v)}"${sel.has(x.v) ? ' checked' : ''}> <span>${esc(pairWhoQ(x.r) || '현금 줄')}</span></label></li>`).join('')}</ul>`;
+                <ul class="om-pair-l"><li class="om-pair-all"><label><input type="checkbox" data-cact="chkall" data-g="${grp}" data-k="${esc(k)}"${all ? ' checked' : ''}> <span>전부</span></label></li>${items.map(x => `<li><label><input type="checkbox" data-cact="chk" data-g="${grp}" data-k="${esc(k)}" data-v="${esc(x.v)}"${sel.has(x.v) ? ' checked' : ''}> <span>${esc(pairWhoQ(x.r) || '현금 줄')}${digits(k) && x.r && x.r.cells && digits(x.r.cells[10]) === digits(k) ? ' <small class="om-px-k">구매자 번호 같음</small>' : ''}</span></label></li>`).join('')}</ul>`;
     }
     // 고른 값 Set — 새로 보이는 줄은 처음 한 번 체크해 둠(기본 전부) · seen = 이미 본 줄(사람이 끈 줄은 다시 안 켬)
     function chkSel(c, grp, k, vals) {
@@ -1232,11 +1233,11 @@
     const PX_MAX = 50;
     const pxState = (c, d, show) => { const X = c.pairX || (c.pairX = {}); return X[d] || (X[d] = { key: show || telShow(d), open: false, q: '', sel: new Set(), picked: null }); };
     const pxSame = (r, d) => [r.cells[10], r.cells[1]].map(digits).includes(d);
-    const pxCands = (c, d) => { const all = (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && !r.service && r.id != null); return c && c.pxOnly ? all.filter(r => pxSame(r, d)).concat(all.filter(r => !pxSame(r, d))) : all.filter(r => !pxSame(r, d)); };   // ④ 저장된 입력삭제 줄에서 열면 같은 번호 줄도(앞에 · 미리 체크) — 저장 뒤엔 ②가 없어 여기가 유일한 길
+    const pxCands = (c, d) => { const all = (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && !r.indiv && !r.service && r.id != null); return c && c.pxOnly ? kFirst(all.filter(r => pxSame(r, d)), d).concat(all.filter(r => !pxSame(r, d))) : all.filter(r => !pxSame(r, d)); };   // ④ 저장된 입력삭제 줄에서 열면 같은 번호 줄도(앞에 · 미리 체크) — 저장 뒤엔 ②가 없어 여기가 유일한 길
     const pxHay = r => [r.cells[0], r.cells[3], r.cells[8], r.cells[4]].join(' ').toLowerCase().replace(/\s+/g, '');
     const pxTels = r => [r.cells[6], r.cells[10], r.cells[1]].map(digits).filter(Boolean);
     const pxFilter = (rows, q) => { q = String(q || '').trim().toLowerCase().replace(/\s+/g, ''); const qd = digits(q); if (!q) return rows; return rows.filter(r => pxHay(r).includes(q) || (qd.length >= 2 && qd === q.replace(/-/g, '') && pxTels(r).some(t => t.includes(qd)))); };   // 현금 표 찾기(cashShown)와 같은 규칙
-    const pxWho = (r, d) => [pairWhoQ(r) || '현금 줄', pxSame(r, d) ? '같은 번호' : last4(r.cells[10]) ? '구매자 …' + last4(r.cells[10]) : ''].filter(Boolean).join(' · ');
+    const pxWho = (r, d) => [pairWhoQ(r) || '현금 줄', digits(r.cells[10]) === d ? '구매자 번호 같음' : pxSame(r, d) ? '보내는 분 번호 같음' : last4(r.cells[10]) ? '구매자 …' + last4(r.cells[10]) : ''].filter(Boolean).join(' · ');
     const pxSelIds = (c, d) => { const x = c.pairX && c.pairX[d]; if (!x) return []; const ok = new Set(pxCands(c, d).map(r => String(r.id))); return [...x.sel].filter(v => ok.has(v)); };
     const pxBtn = (d, show) => `<button type="button" class="om-btn sm" data-cact="pxopen" data-k="${esc(d)}" data-show="${esc(show || '')}">추가 매칭</button>`;
     const pxGoLabel = n => `이 줄도 주소 줄로${n ? ' <small>' + n + '줄</small>' : ''}`;
@@ -1343,13 +1344,14 @@
     const pyWho = l => [l.show, l.note, l.when, l.date ? md(l.date) + ' 발송' : '', l.n ? `주소 줄 ${l.n}줄(${l.boxes}박스)` : '주소 줄 없음'].filter(Boolean).join(' · ');
     function pyHtml(c) {
         const r = c.rows[0]; if (!pyRowOk(c, r)) return '';
-        const lines = pyLines(); if (!lines.length) return '';
+        const rk = digits(r.cells[10]), lines0 = pyLines(); if (!lines0.length) return '';
+        const lines = lines0.filter(l => l.d === rk).concat(lines0.filter(l => l.d !== rk));   // #966 이 줄 구매자 번호와 같은 입력삭제 줄 먼저
         const y = c.pairY || (c.pairY = { open: false, pick: null });
         if (!y.open) return `<div class="om-pair ok" role="group"><b>이 현금 줄이 입력삭제 주문의 주소 줄이면 그 주문에 붙일 수 있어요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="pyopen">입력삭제 주문에 붙이기</button></div></div>`;
         if (y.pick && !lines.some(l => l.d === y.pick)) y.pick = null;
         return `<div class="om-pair om-pairy" role="group" aria-labelledby="om-py-t"><b id="om-py-t">어느 입력삭제 주문의 주소 줄인가요?</b>
                 <p class="om-pair-s">열린 입력삭제 줄 전부 · 번호가 달라도 돼요 · 붙이면 그 주문 묶음으로 옮기고 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
-                <ul class="om-pair-l">${lines.map(l => `<li><label><input type="radio" name="om-py" data-cact="pypick" data-k="${esc(l.d)}"${y.pick === l.d ? ' checked' : ''}> <span>${esc(pyWho(l))}</span></label></li>`).join('')}</ul>
+                <ul class="om-pair-l">${lines.map(l => `<li><label><input type="radio" name="om-py" data-cact="pypick" data-k="${esc(l.d)}"${y.pick === l.d ? ' checked' : ''}> <span>${esc(pyWho(l))}${l.d === rk ? ' <small class="om-px-k">구매자 번호 같음</small>' : ''}</span></label></li>`).join('')}</ul>
                 <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pygo"${y.pick ? '' : ' disabled'}>이 주문에 붙이기</button><button type="button" class="om-btn sm" data-cact="pyclose">닫기</button></div></div>`;
     }
     async function pyRun(c) {

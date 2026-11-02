@@ -706,3 +706,6 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 .om-sm-acts { display: flex; justify-content: flex-end; gap: 8px; }
 .om-sm .om-ordck small { color: var(--d-sub); font-size: 12px; }
 @media (max-width: 960px), (pointer: coarse) { .om-sm-t { font-size: 16px; } .om-sm-acts .om-btn { min-height: 44px; } }
+
+/* #966 후보 이유 표시 */
+.om-px-k { color: var(--d-accent); font-size: 11.5px; font-weight: 700; }

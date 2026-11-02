@@ -19,8 +19,10 @@ const cjTrack = require(path.join(ROOT, 'cj-track.js'));
 // ── 가짜 pool ──
 let runs = [], items = new Map(), shipIdx = new Map(), unknownSql = [], queries = [];
 let PRICING_ROWS = [];   // #841 가짜 단가표(기본 빈 = 종전 판정 그대로)
+let memoFake = [];   // #965 그날 메모함 주소 줄
 const pool = { query: async (sql, p) => {
     const s = String(sql).replace(/\s+/g, ' ').trim(); queries.push(s.slice(0, 60));
+    if (/^SELECT cells, service FROM order_memo_rows/.test(s)) return { rows: memoFake };
     if (/^CREATE TABLE IF NOT EXISTS invoice_auto_(runs|items)/.test(s)) return { rows: [] };
     if (/^ALTER TABLE invoice_auto_items ADD COLUMN IF NOT EXISTS (error_text TEXT|sent_at TIMESTAMPTZ)$/.test(s)) return { rows: [] };
     if (/^CREATE TABLE IF NOT EXISTS final_order_marks/.test(s) || /^SELECT indiv, hold, updated_at, updated_by FROM final_order_marks/.test(s)) return { rows: [] };   // #939 표식 없음 = 브라우저 값(종전 길)
@@ -213,6 +215,11 @@ async function xlsxOf(lines, withSheet1) {
     ok(audits.some(a => a.action === 'invoice_auto_match' && a.source === 'invoice-auto'), 'audit invoice_auto_match');
 
     console.log('③ 오류·채널 실패·동시');
+    { memoFake = [{ cells: ['가족 드림', T(9998), '제주', '타L', '품목', '1', T(7777), '', '주소', '', T(16), '', ''], service: false }]; const iv = { date: '2026-10-24', keys: ['naver:1016'], hold: [], at: Date.now() };
+      const r965 = await call('/api/agent-office/invoice-auto/match', { files: [{ name: '제주아꼼이네송장(효돈)10.24.xlsx', data: b64 }], ship_date: '2026-10-24', indiv: iv }); const y = r965.body.rows.find(x => String(x.order_key) === '1016');
+      ok(r965.status === 200 && y && /^indiv_/.test(y.rule) && !r965.body.unmatched.some(x => /끝 7777/.test(x.recipient_masked)) && queries.some(q => /order_memo_rows/.test(q)), '#965 라우트: 입력삭제 표식 + 메모함 주소 줄 K → 번호 다른 운송장이 그 주문에 붙음', JSON.stringify(y));
+      { const n0 = queries.filter(q => /order_memo_rows/.test(q)).length; fetchFail = { cafe24: true }; const r2 = await call('/api/agent-office/invoice-auto/match', { files: [{ name: '제주아꼼이네송장(효돈)10.24.xlsx', data: b64 }], ship_date: '2026-10-24', indiv: iv }); fetchFail = {}; ok(r2.status === 200 && queries.filter(q => /order_memo_rows/.test(q)).length === n0 && r2.body.unmatched.some(u => /끝 7777/.test(u.recipient_masked)), '#965 채널 조회 실패 날 = 메모함 안 읽음 · 안 묶음', JSON.stringify(r2.body.unmatched)); }
+      memoFake = []; }
     { const fc = fetchCalls.length, rc = runs.length; r = await call('/api/agent-office/invoice-auto/match', { files: [] }); ok(r.status === 400 && r.body.ok === false && fetchCalls.length === fc && runs.length === rc, '파일 없음 400 · 3채널 재조회 0 · 실행 행 0(화면 새 서버 확인용)'); }
     r = await call('/api/agent-office/invoice-auto/match', { files: [1, 2, 3, 4, 5].map(i => ({ name: 'a' + i + '.xlsx', data: 'x' })) }); ok(r.status === 400, '5개 400');
     r = await call('/api/agent-office/invoice-auto/match', { files: [{ name: 'big.xlsx', data: Buffer.alloc(5 * 1024 * 1024 + 10).toString('base64') }] }); ok(r.status === 400 && /5MB/.test(r.body.error), '5MB 초과 400', r.status);

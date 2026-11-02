@@ -66,7 +66,13 @@ const prodHit = (o, s) => (o.canon && s.canonReal) ? o.canon === s.canon : (prod
 // #894 F2 indivKeys(있으면) = 그날 최종발주가 입력삭제로 뺀 주문 「채널:주문 열쇠」 — 그 주문은 받는 분 키 짝에서 빼고 입력삭제 길(구매자 번호)로만
 //   (같은 분이 집으로 받는 일반 주문 박스가 받는 분·번호·주소가 같은 입력삭제 주문에 붙지 않게 + 같은 품목 나눔에서 「남은 박스 수가 딱 맞는 주문 하나」 우선 · 둘 다 IND 있을 때만 · 없으면 종전 그대로)
 // #938(대표 11/1) holdKeys(있으면) = 그날 최종발주가 「오늘 안 나감」으로 뺀 주문(날짜 지정 등) — 오늘 운송장을 안 붙임(같은 구매자 다른 주문의 주소 줄·같은 집 운송장이 뒤 날짜 주문에 붙어 먼저 발송처리되던 틈) · 없으면 종전 그대로
-function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, holdKeys }) {
+// #965(대표 11/2 「구매자 기준」) memoAddr = 그날 메모함 주소 줄 [{ name, tel, k, block }] — 운송장에 구매자 번호(K)가 없어 보내는 분 번호(B)가 K 와 다르면 입력삭제 주문을 못 찾던 것
+//   남은 운송장의 받는 분 이름+번호로 주소 줄을 찾아 K 가 정확히 하나일 때만 그 K = 이 운송장의 구매자(입력삭제 주문 구매자일 때만) · 현금·서비스 줄(block)과 같은 받는 분이거나 K 가 둘이면 안 묶음 · IND 없는 날·memoAddr 없음 = 종전 그대로
+function memoBuyerMap(memoAddr) {
+    const m = new Map(); for (const r of (Array.isArray(memoAddr) ? memoAddr : [])) { const key = normName(r.name) + '|' + dg(r.tel); if (key.startsWith('|') || key.endsWith('|')) continue; const v = m.get(key) || { ks: new Set(), block: false }; if (r.block) v.block = true; else if (validTel(dg(r.k))) v.ks.add(dg(r.k)); m.set(key, v); }
+    return m;
+}
+function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, holdKeys, memoAddr }) {
     const HOLD = new Set(Array.isArray(holdKeys) ? holdKeys.map(String) : []), orders = HOLD.size ? ordersAll.filter(o => !HOLD.has(o.channel + ':' + o.order_key)) : ordersAll;
     const IND = indivKeys instanceof Set ? indivKeys : new Set(Array.isArray(indivKeys) ? indivKeys.map(String) : []);
     for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
@@ -112,20 +118,29 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
     const trackless = orders.filter(o => !assign.has(o.channel + ':' + o.order_key) && !todoKeys.has(o.channel + ':' + o.order_key) && validTel(o.kBuyer));
     const tlByBuyer = new Map(); for (const o of trackless) { if (!tlByBuyer.has(o.kBuyer)) tlByBuyer.set(o.kBuyer, []); tlByBuyer.get(o.kBuyer).push(o); }
     const used = new Set();
+    // #965 남은 운송장의 구매자(메모함 주소 줄 K) — 입력삭제 주문 구매자일 때만
+    if (IND.size && Array.isArray(memoAddr) && memoAddr.length) {
+        const mm = memoBuyerMap(memoAddr), indB = new Set(orders.filter(o => IND.has(o.channel + ':' + o.order_key)).map(o => o.kBuyer).filter(validTel)), allB = new Set(ordersAll.map(o => o.kBuyer).filter(validTel));   // allB = 보류 포함 그날 주문 전체 구매자
+        for (const s of leftover) { const v = mm.get(normName(s.name) + '|' + dg(s.tel)); if (!v) continue; if (v.block || v.ks.size > 1) { if (indB.has(s.senderTel) === false) s._kbWhy = v.block ? '같은 받는 분 현금·서비스 줄이 메모함에 있어 구매자로 안 묶었어요' : '같은 받는 분 줄이 메모함에 구매자 여럿이라 안 묶었어요'; continue; } const k = [...v.ks][0]; if (k && indB.has(k)) { if (s.senderTel === k || !allB.has(s.senderTel)) s._kb = k; else s._kbWhy = '보내는 분 번호가 그날 다른 주문의 구매자라 메모함 구매자로 안 묶었어요'; } }   // 🔴 다른 사람 주문의 운송장을 뺏지 않음(워커3 재현 · 안 묶인 줄은 extra·unmatched·카드로 드러남)
+    }
+    const buyerOfShip = s => s._kb || s.senderTel;
     for (const [buyer, osAll] of tlByBuyer) {
-        const cand = leftover.filter(s => s.senderTel === buyer && !used.has(s.tracking)); if (!cand.length) continue;
+        const cand = leftover.filter(s => s.senderTel === buyer && (!s._kb || s._kb === buyer) && !used.has(s.tracking)), candI = leftover.filter(s => buyerOfShip(s) === buyer && !used.has(s.tracking)); if (!cand.length && !candI.length) continue;   // cand = 종전(구매자 번호로 나간 줄) · candI = + 메모함 K 로 찾은 줄(입력삭제 주문에만)
         // #900 1-F·1-G(대표 10/27) 그날 최종발주가 넘긴 입력삭제 주문(IND)만 = 주문마다 1장 · 주문 주소와 같은 줄 먼저(indiv_store_addr) · 나머지는 남은 줄에서 서로 다른 1장(indiv_any) · 할 일 안 냄
         //   자사몰 입력삭제(개인결제창 꼴) = 품목 안 봄(그 번호 자사몰 1건이면 품목 무시 · 2건 이상이면 품목 맞는 줄 먼저 → 없으면 아무 줄) · 네이버·쿠팡 = 품목 맞는 줄만
         //   IND 없는 날(옛 화면·빈 localStorage)·IND 밖 주문 = 아래 종전 길 그대로(뒤 날짜 주문과 섞일 수 있어 할 일)
         const osI = IND.size ? osAll.filter(o => IND.has(o.channel + ':' + o.order_key)) : [], os = osI.length ? osAll.filter(o => !osI.includes(o)) : osAll;
         if (osI.length) {
             const c24n = osI.filter(o => o.channel === 'cafe24').length, ord = osI.filter(o => o.channel !== 'cafe24').concat(osI.filter(o => o.channel === 'cafe24'));   // 품목 맞춰야 하는 주문 먼저 · 자사몰(품목 안 봄) 나중
-            const pool = () => cand.filter(s => !used.has(s.tracking));
+            // #965 1차 = 구매자 번호로 나간 줄(cand · 종전과 같은 선택) → 그래도 못 받은 입력삭제 주문만 2차 = 메모함 K 로 찾은 줄 · 종전에 이 주문이 쓰던 줄이 남아 IND 밖 주문으로 넘어가지 않게(워커3 재현)
+            let src = cand; const pool = () => src.filter(s => !used.has(s.tracking));
             const mineOf = o => { const p = pool(); if (o.channel !== 'cafe24') return p.filter(s => prodHit(o, s)); const p2 = p.filter(s => !os.some(x => prodHit(x, s))); if (c24n === 1) return p2; const h = p2.filter(s => prodHit(o, s)); return h.length ? h : p2; };   // 자사몰 = 다른 주문(목록 밖) 품목 운송장은 안 집음
-            const done = new Set();
-            for (const o of ord) { const same = mineOf(o).filter(s => normAddr(s.addr) === o.kAddr); if (same.length) { used.add(same[0].tracking); give(o, [same[0]], 'indiv_store_addr'); done.add(o); } }
-            for (const o of ord) { if (done.has(o)) continue; const m = mineOf(o); if (m.length) { used.add(m[0].tracking); give(o, [m[0]], 'indiv_any'); }
-                else if (o.channel === 'cafe24' && pool().length) { todos.push({ o, rule: 'todo_pick', options: pool(), suggest: null, suggest_why: null }); todoKeys.add(o.channel + ':' + o.order_key); } }   // 남은 게 다른 주문 품목뿐 = 사람이 고름(종전 꼴)
+            const got = new Set(), passes = candI.length > cand.length ? [cand, candI] : [cand];
+            passes.forEach((list, pi) => { src = list; const last = pi === passes.length - 1;
+                for (const o of ord) { if (got.has(o)) continue; const same = mineOf(o).filter(s => normAddr(s.addr) === o.kAddr); if (same.length) { used.add(same[0].tracking); give(o, [same[0]], 'indiv_store_addr'); got.add(o); } }
+                for (const o of ord) { if (got.has(o)) continue; const m = mineOf(o); if (m.length) { used.add(m[0].tracking); give(o, [m[0]], 'indiv_any'); got.add(o); }
+                    else if (last && o.channel === 'cafe24' && pool().length) { todos.push({ o, rule: 'todo_pick', options: pool(), suggest: null, suggest_why: null }); todoKeys.add(o.channel + ':' + o.order_key); } }   // 남은 게 다른 주문 품목뿐 = 사람이 고름(종전 꼴)
+            });
         }
         for (const o of os) {
             const mine = cand.filter(s => !used.has(s.tracking) && prodHit(o, s)); if (!mine.length) continue;
@@ -144,7 +159,7 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
     // #937(대표 11/1) 입력삭제(IND) 주문인데 운송장 0 = 조용히 넘기지 않고 할 일 카드(종전 = 「운송장 없는 주문」 숫자에만 → 배송준비로 남아 다음 발주에 또 잡힐 수 있음)
     //   새 자동 짝 없음 · 후보 = 그 구매자의 남은 운송장 중 품목 맞는 줄(상한 20) · 없으면 빈 목록(화면 = 고르기 없이 「채널에서 직접」 · 등록을 막지 않음)
     orders.filter(o => IND.has(o.channel + ':' + o.order_key) && !assign.has(o.channel + ':' + o.order_key) && !todoKeys.has(o.channel + ':' + o.order_key)).forEach(o => {
-        const options = validTel(o.kBuyer) ? leftover.filter(s => !used.has(s.tracking) && s.senderTel === o.kBuyer && prodHit(o, s)).slice(0, 20) : [];
+        const options = validTel(o.kBuyer) ? leftover.filter(s => !used.has(s.tracking) && buyerOfShip(s) === o.kBuyer && prodHit(o, s)).slice(0, 20) : [];
         todos.push({ o, rule: 'todo_indiv_none', options, suggest: null, suggest_why: null, why: '입력삭제 주문인데 운송장을 못 찾았어요 · 거래처 파일을 다 올렸는지·그날 주소 줄이 나갔는지 확인' }); todoKeys.add(o.channel + ':' + o.order_key);
     });
     const assignedBuyers = new Set([...assign.values()].map(a => a.o.kBuyer).filter(validTel));
@@ -152,7 +167,7 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
     const extra = [], unmatched = [];
     for (const s of leftover) {
         if (used.has(s.tracking) || todoTr.has(s.tracking)) continue;
-        if (validTel(s.senderTel) && assignedBuyers.has(s.senderTel)) extra.push(s); else unmatched.push(s);
+        if (validTel(buyerOfShip(s)) && assignedBuyers.has(buyerOfShip(s))) extra.push(s); else unmatched.push(s);
     }
     // #841 손질(워커3 점검): 미리 고른 운송장이 이미 다른 주문에 붙었거나(assign·입력삭제 used) 두 할 일이 같은 장을 골랐으면 미리 고르기를 뺀다
     const taken = new Set(used); assign.forEach(a => a.ships.forEach(s => taken.add(s.tracking)));
@@ -164,7 +179,7 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
 // 응답 꼴 — #841 ③ 화면용 전체 이름·번호(recipient_name·recipient_tel · 로그인 직원 응답에만) + 가림(recipient_masked) · 주소 0
 //   🔴 DB(invoice_auto_runs.result)·audit 에는 stripPII 로 뺀 꼴만 저장(종전처럼 가림만)
 // #961 주문에 안 붙은 운송장 이유 = 판정 분기(matchShipments unmatched) 그대로 · 번호는 끝 4자리만(DB 에도 이 글이 남음)
-const unmatchedWhy = s => { const t = String((s && s.senderTel) || '').replace(/\D/g, ''); return '그날 주문에 받는분 이름·번호·주소가 같은 주문이 없어요 · ' + (validTel(t) ? `운송장 보내는 분 번호 끝 ${t.slice(-4)} 도 그날 짝지은 구매자 번호에 없어요` : '운송장에 보내는 분 번호가 없어요'); };
+const unmatchedWhy = s => { const t = String((s && s.senderTel) || '').replace(/\D/g, ''); return '그날 주문에 받는분 이름·번호·주소가 같은 주문이 없어요 · ' + (validTel(t) ? `운송장 보내는 분 번호 끝 ${t.slice(-4)} 도 그날 짝지은 구매자 번호에 없어요` : '운송장에 보내는 분 번호가 없어요') + (s && s._kbWhy ? ' · ' + s._kbWhy : ''); };
 // #961 수기 파일·화면 공통 이유(이유 없는 줄 0)
 const manualWhy = x => { const e = String((x && x.error) || '').trim(), st = x && x.state; if (st === 'manual') return e || '수기(고르지 않음·수기 선택)'; if (st === 'unknown') return '모름 — 응답을 못 받았어요 · 다시 보내지 말고 채널 화면에서 발송됐는지 먼저 확인' + (e ? ': ' + e : ''); if (st === 'failed') return '실패: ' + (e || '이유 미상 · 총괄 확인'); return '전송 안 됨(' + (st || '?') + ')' + (e ? ': ' + e : ' · 이유 미상 · 총괄 확인'); };
 const PII_KEYS = ['recipient_name', 'recipient_tel'];
@@ -193,7 +208,7 @@ function buildCard(m, orders) {
         by[o.channel].todo++;
     }
     const assignedKeys = new Set(m.assign.map(a => a.o.channel + ':' + a.o.order_key).concat(m.todos.map(t => t.o.channel + ':' + t.o.order_key)));
-    const extraByCh = new Map(m.assign.map(a => [a.o.kBuyer, a.o.channel])); m.extra.forEach(s => { const ch = extraByCh.get(s.senderTel); if (ch) by[ch].skipped++; });
+    const extraByCh = new Map(m.assign.map(a => [a.o.kBuyer, a.o.channel])); m.extra.forEach(s => { const ch = extraByCh.get(s._kb || s.senderTel); if (ch) by[ch].skipped++; });
     return {
         by_channel: by, rows,
         cash: m.cash.map(s => ({ ...shipOpt(s), why: '보내는이 ! = 현금 주문(송장만 · 등록 대상 아님)' })),
@@ -291,7 +306,11 @@ module.exports = function mountInvoiceAuto(app, d) {
                     indivKeys = si; holdKeys = sh;
                 }
             } catch (e) { log.error('[#939 최종발주 표식] 읽기 실패(브라우저 값으로):', e && e.message); }
-            const m = matchShipments({ ships, orders, pricingNames, indivKeys, holdKeys });
+            // #965 그날 메모함 주소 줄(읽기 · 입력삭제 표식 있을 때만 · 비운 줄 포함 = used_on·ship_date 기준 · 실패하면 종전 길)
+            let memoAddr = [];
+            if (indivKeys.length && Object.values(fetchInfo).every(x => x.ok)) { try { const mr = await pool.query(`SELECT cells, service FROM order_memo_rows WHERE kind = 'cash' AND (ship_date = $1::date OR (ship_date IS NULL AND used_on = $1::date)) AND (state = 'open' OR used_on = $1::date)`, [shipDate]);   // 채널 하나라도 조회 실패 = 주문이 빠진 채 묶지 않음 · 그날 안 쓰고 지운 줄 안 읽음
+                memoAddr = (mr.rows || []).filter(r => Array.isArray(r.cells)).map(r => ({ name: r.cells[3], tel: r.cells[6], k: r.cells[10], block: !!r.service || /[!！]/.test(String(r.cells[0] || '')) })); } catch (e) { log.error('[#965 메모함 주소 줄] 읽기 실패(종전 길로):', e && e.message); } }
+            const m = matchShipments({ ships, orders, pricingNames, indivKeys, holdKeys, memoAddr });
             const card = buildCard(m, orders);
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;
