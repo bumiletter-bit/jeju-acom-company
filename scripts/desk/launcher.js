@@ -757,6 +757,7 @@ async function handle(order, key) {
     const sec = Math.round((Date.now() - t0) / 1000);
     const after = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
     const stillOpen = !after || ['대기', '처리중', '승인됨'].includes(after.status);
+    if (HF_ORDER_RE.test(String((r.info || {}).result_text || ''))) hfs.soon = true;   // #975 지시 답에 힉스필드 로그인 글 → 다음 틱에 바로 확인
     const info = r.info || {};
     const costNote = (info.cost_usd != null ? ` · $${Number(info.cost_usd).toFixed(3)} · ${info.turns || '?'}턴` : '') + (info.warm ? ` · 켜 둔 창구(${info.warm === 'reused' ? '다시 씀' : '새로 켬'})` : '');
     if (!stillOpen) {
@@ -872,6 +873,74 @@ function shipMaybe() {
     } catch (e) { log('송장 올리기 확인 실패(무시): ' + e.message); } finally { shs.busy = false; }
 }
 
+// #975 창구 힉스필드 로그인 풀림 알리기(대표 11/2 · 텔레그램 X) — 나스 창구가 「higgsfield account status」 로 하루 1회(풀린 동안 1시간마다 · 힉스필드 로그인 글이 나온 지시 뒤엔 바로) 확인.
+//   풀림 = 대표 할 일(owner_todo · 「지금 챙길 일」) 한 줄 + 설정 'desk_higgsfield_login' {at, done:false, todo_n, notified:false}(서버 1분 틱이 대표 알림 1회) · 복구 = 둘 다 내림.
+//   판별 = 로그인 글(「Hint: Run: hf auth login」 꼴) = 풀림 · 종료 0 + credits 글 = 정상 · 「request failed (no response received)」 = 10분 뒤 한 번 더 봐서 또 그러면 풀림(네트워크 한 번에 가짜 경보 막기) · 그 밖(명령 없음·시간 초과) = 아무것도 안 함.
+const HF_FLAG = 'desk_higgsfield_login', HF_TODO_TEXT = '창구 힉스필드 로그인이 풀렸어요 · 총괄에게 말하면 승인 주소를 보내 드려요(컨테이너에서 hf auth login · 노트북 로그인 파일 복사 금지)';
+const HF_STATE = path.join(os.homedir(), '.akkome', 'higgsfield-check.json');
+const HF_FAIL_RE = /(?:hf|higgsfield)\s+auth\s+login|not\s+logged\s+in|not\s+authenticated|unauthori[sz]ed|login\s+required|session\s+expired/i;
+const HF_MAYBE_RE = /request\s+failed/i;
+const HF_ORDER_RE = /(?:hf|higgsfield)\s+auth\s+login|힉스필드\s*로그인\s*필요/i;
+const hfClassify = (code, out) => { const t = String(out || ''); if (HF_FAIL_RE.test(t)) return 'fail'; if (code === 0 && /credits/i.test(t)) return 'ok'; if (HF_MAYBE_RE.test(t)) return 'maybe'; return 'unknown'; };
+function hfRunStatus() {
+    return new Promise(res => {
+        let out = '', done = false, tm = null;
+        const fin = code => { if (done) return; done = true; if (tm) clearTimeout(tm); res({ code, out }); };
+        let ch; try { ch = spawn('higgsfield', ['account', 'status'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { return res({ code: null, out: '' }); }
+        tm = setTimeout(() => { try { ch.kill(); } catch (e) { /* 이미 끝남 */ } fin(null); }, 30000);
+        ch.stdout.on('data', d => { out += d; }); ch.stderr.on('data', d => { out += d; });
+        ch.on('error', () => fin(null)); ch.on('close', c => fin(c));
+    });
+}
+async function hfNote(kind, deps) {
+    const d = Object.assign({ pool, log, now: Date.now }, deps || {});
+    const cur = ((await d.pool.query('SELECT value FROM agent_office_config WHERE key = $1', [HF_FLAG])).rows[0] || {}).value || null;
+    const open = !!(cur && !cur.done);
+    const kst = new Date(d.now() + 9 * 3600000).toISOString().slice(0, 10);
+    if (kind === 'fail') {
+        if (open) return { skipped: 'open' };
+        const v = await loginTodoLoad(d.pool);
+        let it = v.items.find(x => !x.done && x.text === HF_TODO_TEXT);
+        if (!it) {
+            const n = v.items.reduce((m, x) => Math.max(m, x.n || 0), 0) + 1;
+            it = { n, text: HF_TODO_TEXT, when: '지금', where: '나스 창구 · 그동안 창구 그림·영상 안 됨(#975)', at: kst };
+            v.items.push(it); await loginTodoSave(d.pool, v); await loginAudit(d.pool, 'create', n, { text: it.text, why: '#975 힉스필드 로그인 풀림 감지' });
+        }
+        await cfgSet(HF_FLAG, { at: new Date(d.now()).toISOString(), done: false, todo_n: it.n, notified: false, host: os.hostname() }, d.pool);
+        d.log('힉스필드 로그인 풀림 표시 — 설정 ' + HF_FLAG + ' · 대표 할 일 ' + it.n + '번(서버가 대표 알림 1회)');
+        return { flagged: true, todo_n: it.n };
+    }
+    if (kind === 'ok') {
+        if (!open) return { skipped: 'closed' };
+        const v = await loginTodoLoad(d.pool);
+        const it = v.items.find(x => !x.done && x.text === HF_TODO_TEXT);
+        if (it) { it.done = true; it.done_at = kst; await loginTodoSave(d.pool, v); await loginAudit(d.pool, 'update', it.n, { done: true, text: it.text, why: '#975 힉스필드 다시 로그인됨' }); }
+        await cfgSet(HF_FLAG, Object.assign({}, cur, { done: true, done_at: new Date(d.now()).toISOString() }), d.pool);
+        d.log('힉스필드 다시 로그인됨 — 표시 내림');
+        return { cleared: true };
+    }
+    return { skipped: 'unknown' };
+}
+const hfs = { nextAt: Date.now() + 5 * 60000, busy: false, soon: false, maybe: false };
+function hfMaybe() {   // 나스(리눅스) 창구만 — 노트북 CLI 는 원래 미인증이라 대상 아님
+    if (process.platform === 'win32' || hfs.busy || (Date.now() < hfs.nextAt && !hfs.soon)) return;
+    hfs.nextAt = Date.now() + 60 * 60000; const forced = hfs.soon || hfs.maybe; hfs.soon = false; hfs.busy = true;
+    (async () => {
+        const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+        const cur = await cfgGet(HF_FLAG);
+        let last = null; try { last = JSON.parse(fs.readFileSync(HF_STATE, 'utf8')).day; } catch (e) { /* 처음 */ }
+        if (!forced && last === today && !(cur && !cur.done)) return;   // 하루 1회 · 풀린 동안은 시간마다
+        const r = await hfRunStatus(); let kind = hfClassify(r.code, r.out);
+        if (kind === 'maybe') {
+            if (!hfs.maybe) { hfs.maybe = true; hfs.nextAt = Date.now() + 10 * 60000; return; }   // 첫 번째는 10분 뒤 다시
+            kind = 'fail';
+        }
+        hfs.maybe = false;
+        if (kind !== 'unknown') { try { fs.writeFileSync(HF_STATE, JSON.stringify({ day: today, at: new Date().toISOString(), kind })); } catch (e) { /* 다음에 다시 */ } }
+        await hfNote(kind);
+    })().catch(e => log('힉스필드 로그인 확인 실패(무시): ' + e.message)).finally(() => { hfs.busy = false; });
+}
+
 // 10초마다: 화면 버튼 신호·설정·상태 기록(종전 tick의 앞부분 그대로)
 async function slowTick() {
     const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
@@ -880,6 +949,7 @@ async function slowTick() {
     if (Date.now() - st.lastTrim > 86400e3) { st.lastTrim = Date.now(); trimLog(); }   // 하루 한 번(상주 시작 때는 main 이 이미 돌렸다)
     scratchMaybe();   // #827-B 끝난 지시의 .scratch 폴더 정리(설정 켰을 때만 · 하루 한 번 · 기다리지 않음)
     shipMaybe();      // #916 리눅스(나스) 창구만 = 송장 올리기 KST 10:00 하루 한 번(Windows 는 작업 스케줄러 install-ship-upload.js 그대로 · 여기선 바로 돌아감)
+    hfMaybe();        // #975 나스 창구 힉스필드 로그인 확인(하루 1회 · 기다리지 않음)
     rankMaybe();      // #910 키워드 순위 자동 수집(설정 켰을 때만 · 09:30 지나면 하루 한 번 · 기다리지 않음)
     warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
@@ -1020,4 +1090,4 @@ async function main() {
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t916: { procInfoProc, spawnG, shipMaybe, rankMaybe, shs, krs }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t975: { hfClassify, hfNote, HF_FLAG, HF_TODO_TEXT, HF_ORDER_RE }, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t916: { procInfoProc, spawnG, shipMaybe, rankMaybe, shs, krs }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)

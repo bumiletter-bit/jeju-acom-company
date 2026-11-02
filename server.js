@@ -15971,6 +15971,18 @@ async function deskLoginExpiredTick() {
 }
 setInterval(() => { deskLoginExpiredTick().catch(e => console.error('[#813 창구 로그인 만료] 알림 실패:', String(e.message || e).slice(0, 120))); }, 60000);
 // ── #813 창구 로그인 만료 알림 끝
+// ── #975 창구 힉스필드 로그인 풀림 알림 시작 — 나스 창구(launcher)가 'desk_higgsfield_login' {at, done, notified, …} 와 대표 할 일을 적으면 대표에게 알림(종·푸시) 1회 · 텔레그램 X · 집기 = UPDATE … RETURNING(배포 겹침 때 2번 막음)
+async function deskHiggsfieldLoginTick() {
+    const r = await pool.query(`UPDATE agent_office_config SET value = value || jsonb_build_object('notified', true, 'notified_at', NOW()::text), updated_at = NOW()
+        WHERE key = 'desk_higgsfield_login' AND COALESCE(value->>'done', 'false') <> 'true' AND COALESCE(value->>'notified', 'false') <> 'true' RETURNING value`);
+    if (!r.rowCount) return 0;
+    const owner = await deskMorningOwner(deskMorningCfg(await naverCfgGet('desk_morning')));
+    if (!owner) return 0;
+    await createNotification(owner.id, 'desk_login', '창구 힉스필드 로그인이 풀렸어요', '총괄에게 말하면 승인 주소를 보내 드려요(컨테이너에서 hf auth login · 노트북 로그인 파일 복사 금지) · 그동안 창구 그림·영상이 안 돼요', 'agent-office');
+    return 1;
+}
+setInterval(() => { deskHiggsfieldLoginTick().catch(e => console.error('[#975 힉스필드 로그인] 알림 실패:', String(e.message || e).slice(0, 120))); }, 60000);
+// ── #975 창구 힉스필드 로그인 풀림 알림 끝
 // ── #910 키워드 순위 알림 시작 — 창구 PC scripts/desk/keyword-rank.js(09:30)가 keyword_rankings(source 'auto')와 설정 keyword_rank_last {date, at, errors} 를 쓰면(보낸 날 = notified_date · 서버가 씀)
 //   ⓐ 그날 한 번 텔레그램(카톡 글 꼴 + 어제 대비 ↑↓) + 알림 종(전 직원 · 순위관리) ⓑ miss_alert(기본 10:00) 지나도 오늘 auto 줄 0 이면 텔레그램 「미수집」 1번
 //   설정 keyword_rank 가 없으면(배포 뒤 총괄이 넣기 전) 둘 다 아무것도 안 함 · 보낼 자격은 UPDATE … RETURNING 으로 먼저 집음(배포 겹침 때 2통 막음)

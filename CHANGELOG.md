@@ -1,3 +1,8 @@
+## v5.9.690 (2026-11-02) — #975 창구 힉스필드 로그인 풀림 알림(지금 챙길 일 + 알림 · 텔레그램 X · 대표 11/2)
+
+- 나스 창구 launcher(윈도 창구 제외)가 하루 1회 `higgsfield account status`(풀린 동안 1시간마다 · 지시 답에 로그인 글이 있으면 바로 · 「request failed」는 10분 뒤 재확인) → 풀림이면 owner_todo 1줄 + 설정 desk_higgsfield_login 신호 → 서버 1분 틱(#813 알림 뒤 · UPDATE RETURNING)이 대표 알림 1회(종·푸시 · 링크 agent-office) · 복구되면 todo·신호 자동 내림. 시간 초과·명령 없음 = 아무것도 안 함. 글 = 「총괄에게 말하면 승인 주소 · 컨테이너에서 hf auth login · 노트북 로그인 파일 복사 금지」. verify-975-hf 37/37 · verify-813 27/28(HEAD 도 같은 1건) · ro-preload ✓ · 워커2 읽기 점검 막을 것 0 · 상태 파일 ~/.akkome/higgsfield-check.json.
+- 🔴 배포 뒤 = 나스 /work git pull + 창구 재시작(launcher 변경) · 5분 안 첫 확인. 🔵 후보 = notified 먼저 찍어 알림 실패 때 재발송 없음 · 대표가 할 일을 손으로 닫으면 풀린 동안 재알림 없음 · CLI 자체가 사라지면(unknown) 알림 없음. 같은 날 #974 = 창구 힉스필드 재로그인(12:28 · 로그인 파일 10/31 소실 · 어사이드 승인) · #976 = 이미지 akkome-desk:0.2(CLI 포함 · 13:09 교체 · 되돌리기 compose.pre976).
+
 ## v5.9.689 (2026-11-02) — #972 노지귤·노지황금향 오픈 = 매칭 코드(노지 황금향·새콤달콤 노지감귤 분기) · 유라조생·하우스 황금향 가정용 종료(대표 11/2)
 
 - **매칭(워커2 시공 · 워커1 읽기 점검 막을 것 0)**: app.js PRODUCT_CATALOG 노지 황금향 4줄 + 새콤달콤 노지감귤 9줄 · matchProductRaw 유라 분기 앞 노지 황금향·노지귤 분기(#957 = 글이 단가표와 다르면 기존 황금향 단가로 조용히 잡히던 것 → 노지 줄 또는 미매칭 · 등급 없으면 미매칭 · 오매칭>미매칭) · aoInvoiceFeat·cafe24OptKey(server.js·price-check.js) 과일 칸 「새콤달콤노지감귤」(유라 열쇠 유지 · cafe24_option_texts 는 다음 05:10 부터 새 꼴) · server.js qnaFilterStoreLines 「노지」 대상 좁힘(「노지귤이 뭐예요」에 황금향 줄까지 13줄 붙던 것). 옛 옵션(유라·하우스 황금향·못난이 랜덤과·타이벡) 결과 = 옛 판과 156건 차이 0 · 쿠팡 실제 글 30꼴 ✓ · verify-972-match 155 · 972-roundtrip 104(3채널 변환·거래처 대성·사이즈 꼬리·자동 송장 짝) · ro-preload 기동 ✓ · 캐시 app.js 434.
