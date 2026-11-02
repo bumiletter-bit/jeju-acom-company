@@ -129,7 +129,7 @@
         if (ctx.coupang.length) P.convertDataCoupang(ctx.coupang).forEach((conv, i) => entries.push({ ch: 'coupang', i, conv }));
         entries.sort((a, b) => (a.conv['옵션정보'] || '').localeCompare(b.conv['옵션정보'] || '', 'ko'));   // = 본 화면 getMergedConverted 정렬
         const prev = new Map(ctx.merged.map(e => [e.ch + ':' + e.i, e]));
-        entries.forEach(e => { const p = prev.get(e.ch + ':' + e.i); e.excluded = p ? p.excluded : false; e.userTouched = p ? p.userTouched : false; e.parse = p ? p.parse : null; e.flag = p ? p.flag : null; e.memoFlag = p ? p.memoFlag : null; e.individual = false; e.req = null; e.reqKind = null; });
+        entries.forEach(e => { const p = prev.get(e.ch + ':' + e.i); e.excluded = p ? p.excluded : false; e.userTouched = p ? p.userTouched : false; e.parse = p ? p.parse : null; e.flag = p ? p.flag : null; e.memoFlag = p ? p.memoFlag : null; e.indivOff = p ? p.indivOff : false; e.individual = false; e.req = null; e.reqKind = null; });
         // #453 보내는이 변경 요청 읽기(확실한 것만 · 애매 = 표시만). 변환 결과(conv)는 건드리지 않고 시트1에 쓸 때만 덮는다(senderOut).
         entries.forEach(e => { e.sender = window.IvtSender ? window.IvtSender.parseSender(e.conv['배송메세지'], buyerOf(e)) : null; });
         ctx.merged = entries;

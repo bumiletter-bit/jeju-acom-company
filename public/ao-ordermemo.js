@@ -95,6 +95,7 @@
         update: (id, body) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'PUT', body)),
         remove: id => safe(call('/api/order-memo/rows/' + encodeURIComponent(id), 'DELETE')),
         restore: id => safe(call('/api/order-memo/restore/' + encodeURIComponent(id), 'POST')),
+        normal: (id, orders) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id) + '/normal', 'POST', { orders })),   // #970 입력삭제 줄 일반발송 주문
         addrOk: (id, body) => safe(call('/api/order-memo/rows/' + encodeURIComponent(id) + '/addr-ok', 'POST', body)),   // #880-b { raw } = 「이대로 둘게요」 남김 · { undo: true } = 지움 · raw ≠ 지금 주소 = 409
         pair: body => safe(call('/api/order-memo/pair', 'POST', body)),
         service: body => safe(call('/api/order-memo/service', 'POST', body)),   // #936 추가 매칭 판 「붙은 주소 줄」 서비스 켜고 끄기(#900 1-C 길 그대로)
@@ -684,12 +685,12 @@
         ul.innerHTML = shown.length ? shown.map(r => rowHtml(r, false, OM.sel)).join('') : '<li class="om-empty"><b>찾는 줄이 없어요</b><span>이름·번호 끝자리·주소·품목으로 찾아요.</span></li>';
     }
     // #936(대표 11/1) 입력삭제 줄 배지 = 서버 badge(메모함 기준 미리보기 · 최종 판정은 최종발주 카드) · 누르면 ④ 추가 매칭 판 · 옛 서버(badge 없음) = 종전 [추가 매칭] 글 단추
-    const BADGE_K = { ok: 'ok', split: 'later', short: 'short', over: 'over', unknown: 'unk', pre: 'unk', personal: 'pers' };   // split = 오늘 n + 뒤 날짜 later 가 딱 m(중립 · 대기 색)
+    const BADGE_K = { allnormal: 'ok', normal_later: 'later', ok: 'ok', split: 'later', short: 'short', over: 'over', unknown: 'unk', pre: 'unk', personal: 'pers' };   // split = 오늘 n + 뒤 날짜 later 가 딱 m(중립 · 대기 색)
     function badgeText(b) {
         if (!b) return '';
         const lt = Number(b.later) || 0, wait = lt ? ` 오늘 · ${lt}박스 ${b.later_date ? md(b.later_date) + ' ' : ''}대기` : '';   // 날짜 나눔(#870) = 「14/15 오늘 · 1박스 11/4 대기」
-        const main = b.state === 'personal' ? `개인결제창 · 주소 줄 ${b.n}` : b.state === 'unknown' ? `${b.n}/? 주문 확인 중${wait}` : b.state === 'pre' ? `${b.n}/${b.m} 발주확인 전${wait}` : b.state === 'ok' ? (b.unsure ? `${b.n}/${b.m}` : `${b.n}/${b.m} 매칭완료`) : b.state === 'split' ? `${b.n}/${b.m}${wait}` : b.state === 'short' ? `${b.n}/${b.m}${wait} · ${b.m - b.n - lt}박스 모자람` : `${b.n}/${b.m}${wait} · ${b.n + lt - b.m}박스 초과`;
-        const tail = [b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');   // #936-b 확인 줄 = 박스는 세되 완료 아님
+        const main = b.state === 'allnormal' ? `전부 일반발송 ${b.normal}건` : b.state === 'normal_later' ? `일반발송 ${b.normal}건 · 주소 줄 ${b.later_date ? md(b.later_date) + ' ' : '다음 날짜 '}대기` : b.state === 'personal' ? `개인결제창 · 주소 줄 ${b.n}` : b.state === 'unknown' ? `${b.n}/? 주문 확인 중${wait}` : b.state === 'pre' ? `${b.n}/${b.m} 발주확인 전${wait}` : b.state === 'ok' ? (b.unsure ? `${b.n}/${b.m}` : `${b.n}/${b.m} 매칭완료`) : b.state === 'split' ? `${b.n}/${b.m}${wait}` : b.state === 'short' ? `${b.n}/${b.m}${wait} · ${b.m - b.n - lt}박스 모자람` : `${b.n}/${b.m}${wait} · ${b.n + lt - b.m}박스 초과`;
+        const tail = [b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.normal && b.state !== 'allnormal' && b.state !== 'normal_later' ? `· 일반발송 ${b.normal}건` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');   // #936-b 확인 줄 = 박스는 세되 완료 아님
         return tail ? main + ' ' + tail : main;
     }
     const badgeK = b => (b.unsure > 0 && !['over', 'personal', 'unknown'].includes(b.state)) ? 'short' : (BADGE_K[b.state] || 'unk');   // #936-b 확인 줄 있으면 호박(완료 아님 · 발송됨도 = 실제 안 나간 줄) · 초과는 빨강 그대로
@@ -1038,7 +1039,7 @@
     // #868 막힌 저장(입력삭제 받는 분 번호·번호 확인 중) = 회색·흐림 + aria-disabled · 누르면 그대로 안내+초점(disabled 를 안 씀 = 눌러서 이유를 들을 수 있게) · 풀리면 원래 색
     const saveBlocked = () => indivPendAt() >= 0 || indivBadAt() >= 0;
     function saveSync(sv) { if (!sv) return; const b = saveBlocked(); sv.classList.toggle('om-blocked', b); if (b) sv.setAttribute('aria-disabled', 'true'); else sv.removeAttribute('aria-disabled'); }
-    const saveLabel = n => indivPendAt() >= 0 ? '번호 확인 중…' : indivBadAt() >= 0 ? '저장 <small>입력삭제 번호를 구매자 번호로 바꿔 주세요</small>' : n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? (editPairJob(OM.card) ? `고친 대로 저장 <small>+ ${editPairJob(OM.card).ids.length}줄 짝짓기</small>` : '고친 대로 저장') : '저장');   // #867 · #934-b 고치기 카드에서 체크한 짝도 저장 단추로
+    const saveLabel = n => indivPendAt() >= 0 ? '번호 확인 중…' : indivBadAt() >= 0 ? '저장 <small>입력삭제 번호를 구매자 번호로 바꿔 주세요</small>' : n ? '저장 <small>빈칸은 「확인」으로 남아요</small>' : (OM.card.mode === 'edit' ? (editPairJob(OM.card) || normDirty(OM.card) ? `고친 대로 저장 <small>${[editPairJob(OM.card) ? `+ ${editPairJob(OM.card).ids.length}줄 짝짓기` : '', normDirty(OM.card) ? `+ 일반발송 ${OM.card.norm.sel.size}건` : ''].filter(Boolean).join(' ')}</small>` : '고친 대로 저장') : '저장');   // #867 · #934-b 고치기 카드에서 체크한 짝도 저장 단추로
     const blankN = () => OM.card ? OM.card.rows.reduce((s, r) => s + blanksOf(r, true).length + (addrBad(r) ? 1 : 0), 0) : 0;   // #850-g 주소 확인 안 됨 = 빈칸 1
     // #900 2-B 줄이 50장 넘는 카드(파일 1,500줄) = 앞에서부터 50장씩 그림 + 「더 보기」 · 위에 「빈칸 n줄 → 첫 빈칸으로」 · 50장 이하 = 종전 그대로
     //   그리는 줄은 늘 앞부분(0 ~ shown) = 줄 번호(ri)와 .om-rowcard 순서가 같음(touched·lkPaint 등 종전 길 그대로) · 안 그린 줄의 칠하기는 칸이 없어 조용히 건너뜀
@@ -1256,8 +1257,28 @@
         return `<div class="om-pair om-pairx" role="group" data-px="${esc(d)}" aria-labelledby="om-px-t-${esc(d)}"><b id="om-px-t-${esc(d)}">${c.pxOnly ? `입력삭제 ${esc(x.key)} 주소 줄로 바꿀 현금 줄을 고르세요` : `번호가 다른 현금 줄 가운데 입력삭제 ${esc(x.key)} 주소 줄을 고르세요`}</b>
                 <p class="om-pair-s">${c.pxOnly ? '같은 번호 줄은 미리 체크했어요 · 손님이 「따로 보내 달라」며 다른 번호로 들어온 줄도 체크하면 같이' : '손님이 「따로 보내 달라」며 다른 번호로 들어온 줄 등'} · 체크한 줄은 저장하면 주소 줄이 돼요(단추를 안 눌러도) · 체크 안 한 줄은 현금 그대로 · 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
                 <div class="om-cash-q om-pairx-q"><label class="om-sr" for="om-px-q-${esc(d)}">현금 줄 찾기</label><input type="search" id="om-px-q-${esc(d)}" data-cact="pxq" data-k="${esc(d)}" value="${esc(x.q)}" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
-                <div class="om-pairx-b">${pxListHtml(c, d)}</div>${c.pxOnly ? pxPairedHtml(c, d) : ''}
+                <div class="om-pairx-b">${pxListHtml(c, d)}</div>${c.pxOnly ? normHtml(c) + pxPairedHtml(c, d) : ''}
                 <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pxgo" data-k="${esc(d)}"${n ? '' : ' disabled'}>${pxGoLabel(n)}</button><button type="button" class="om-btn sm" data-cact="pxclose" data-k="${esc(d)}">닫기</button></div></div>`;
+    }
+    // #970 ④ 판 「이 번호의 주문」 = 주문마다 [일반발송] 체크(입력삭제에서 빼고 스토어 주소로 · 송장도 일반 짝) · [고친 대로 저장]에 같이 저장 · 저장 안 하고 닫으면 버림
+    const normSaved = r => { const x = (OM.list || []).find(y => r && y.id === r.id) || r; return (x && x.checked && Array.isArray(x.checked.normal_orders) ? x.checked.normal_orders : []).map(String); };   // 고치기 카드 줄은 확인 표시를 안 들고 있음 = 목록 값
+    const normDirty = c => { const x = c && c.norm; if (!x || x.state !== 'done') return false; const a = [...x.sel].sort().join(), b = normSaved(c.rows[0]).slice().sort().join(); return a !== b; };
+    async function normLoad(c, d) {
+        if (c.norm) return; const r = c.rows[0]; c.norm = { state: 'busy', list: [], sel: new Set(normSaved(r)) }; renderCard();
+        const res = await API.lookup(d, ''); if (OM.card !== c) return;
+        if (!res.ok) { c.norm.state = 'err'; renderCard(); return; }
+        const plat = String(r.plat || '네이버'), L = res.body && Array.isArray(res.body.matches) ? res.body.matches : []; { const by = new Map(); L.filter(m => m.as === 'buyer' && m.plat === plat).forEach(m => { const k = String(m.pno || ('@' + by.size)); const g = by.get(k); if (g) { g.qty = (Number(g.qty) || 0) + (Number(m.qty) || 0); if (String(m.option || '') !== String(g.option || '')) g.option2 = (g.option2 ? g.option2 + ' + ' : '') + m.option; } else by.set(k, Object.assign({}, m)); }); c.norm.list = [...by.values()]; }   // 쿠팡 한 주문 상자 여러 줄 = 주문 하나로(식별값 = 주문번호)
+        c.norm.state = 'done'; renderCard();
+    }
+    function normHtml(c) {
+        const x = c.norm; if (!x) return ''; if (x.state === 'busy') return '<div class="om-norm" role="status"><p class="om-pair-s">이 번호 주문 찾는 중…</p></div>'; if (x.state === 'err') return '<div class="om-norm" role="alert"><p class="om-pair-s">이 번호 주문을 못 읽었어요 · 일반발송은 최종발주 카드에서 할 수 있어요</p></div>';
+        const short = o => [o.option, o.option2].filter(Boolean).map(v => String(v).split('/').pop().replace(/^[^:]*:\s*/, '').trim()).join(' + '), ids = new Set(x.list.map(o => String(o.pno || ''))), gone = [...x.sel].filter(v => !ids.has(v)), r = c.rows[0], paired = pxPaired(lineD(r)).filter(y => y.indiv), allOn = x.list.length && x.list.every(o => o.pno && x.sel.has(String(o.pno)));
+        return `<div class="om-norm" role="group" aria-label="이 번호의 주문"><b>이 번호의 주문 ${x.list.length}건</b><p class="om-pair-s">입력삭제가 아니라 주문 주소로 보낼 주문을 체크해요 · 다음 최종발주에서 스토어 주소로 나가고 송장도 그 주문에 붙어요 · [고친 대로 저장]을 눌러야 저장돼요</p><ul class="om-pair-l">${x.list.map(o => { const who = `${o.plat} ${String(o.order_no || '').slice(-6)} · ${short(o)} · ${o.qty || 1}박스 · ${o.recv_name || ''}${o.addr ? ' · ' + o.addr : ''}`; return o.pno ? `<li><label><input type="checkbox" data-cact="normchk" data-v="${esc(String(o.pno))}"${x.sel.has(String(o.pno)) ? ' checked' : ''}> <span>${esc(who)}</span></label></li>` : `<li><span>${esc(who)} · 주문번호가 없어 여기선 못 골라요 · 최종발주 카드에서</span></li>`; }).join('')}${gone.map(v => `<li><label><input type="checkbox" data-cact="normchk" data-v="${esc(v)}" checked> <span>${esc('주문 ' + v + ' · 발송 전 주문에 없어요(취소·발송됐을 수 있어요) · 체크를 풀면 지워요')}</span></label></li>`).join('')}</ul>${allOn && paired.length ? `<p class="om-pair-s om-norm-warn" role="alert">전부 일반발송이면 붙은 주소 줄 ${paired.length}개는 주문 없이 나가요 · 확인해 주세요</p>` : ''}</div>`;
+    }
+    async function normSave(c) {
+        if (!normDirty(c)) return true; const r = c.rows[0], res = await API.normal(r.id, [...c.norm.sel]);
+        if (!res.ok) { toast(errText(res, '일반발송 체크를 저장하지 못했어요')); return false; }
+        if (res.body && res.body.row) { const li = (OM.list || []).find(y => y.id === r.id); if (li) li.checked = res.body.row.checked; } return true;
     }
     // #936 ④ 판 아래 「붙은 주소 줄」 = 이미 그 번호에 붙은 줄(「!」 없음) + 서비스 줄 · 줄마다 서비스 체크(POST /service · 「!」 없는 줄만 켜짐 = 서버 규칙 그대로) · 바뀌면 목록 다시(배지 갱신)
     // #949 [현금으로 변경] = 서버 toCashCells·toCashDate 와 같은 규칙(묶기 전 A·B·K·발송일 복원 · 묶은 뒤 사람이 고친 값은 그대로 · 옛 줄은 B 가 입력삭제 번호가 아니면 K = B · 아니면 받는 분 + guess = 구매자 번호 확인 안내)
@@ -1310,7 +1331,7 @@
         if (!c || c.mode !== 'new' || c._refreshed) return; c._refreshed = true;
         load().then(() => { const go = () => { if (OM.card !== c || c._saving) return; if (cardTyping()) { setTimeout(go, 400); return; } renderCard(); }; go(); });   // 저장 중이면 건너뜀(저장 뒤 load 가 그림)
     }
-    async function pxOpen(c, d, show) { await load(); if (OM.card !== c) return; const x = pxState(c, d, show); x.open = true; if (c.pxOnly && !x.seeded) { x.seeded = true; pxCands(c, d).filter(r => pxSame(r, d)).forEach(r => x.sel.add(String(r.id))); } renderCard(); const q = $('om-card').querySelector(`#om-px-q-${d}`); if (q) q.focus({ preventScroll: true }); }
+    async function pxOpen(c, d, show) { await load(); if (OM.card !== c) return; const x = pxState(c, d, show); x.open = true; if (c.pxOnly && !x.seeded) { x.seeded = true; pxCands(c, d).filter(r => pxSame(r, d)).forEach(r => x.sel.add(String(r.id))); } renderCard(); const q = $('om-card').querySelector(`#om-px-q-${d}`); if (q) q.focus({ preventScroll: true }); if (c.pxOnly) normLoad(c, d); }
     // #947 고른 줄이 60줄 넘을 수 있음(단체 120줄) = 서버 한 번에 60줄 → 나눠 보냄(60줄 이하 = 종전과 같은 요청 1회) · 실패하면 거기서 멈춤(된 줄은 되돌리기에 남음)
     async function pairPick(key, ids) {
         let n = 0, sent = 0; const undo = [];
@@ -1332,6 +1353,7 @@
         const pr = await pairPick(x.key, ids), n = pr.n, undo = pr.undo;
         if (OM.card !== c) return;
         if (!pr.ok && !pr.sent) { toast(errText(pr.res, '현금 줄을 주소 줄로 못 바꿨어요') + ' · 현금 줄 그대로예요'); renderCard(); return; }
+        await normSave(c); if (OM.card !== c) return;   // #970 같은 판 체크도 같이
         x.open = false; x.sel.clear();
         if (n) { cardClose(true); undoShow(`현금 줄 ${n}개를 입력삭제 ${x.key} 주소 줄로 바꿨어요`, () => pairUndoAll(undo)); }   // 카드를 닫아야 되돌리기 띠를 누를 수 있음(열어 두면 카드 뒤에 깔림 · 총괄 결정)
         if (!pr.ok) toast(errText(pr.res, '현금 줄을 주소 줄로 못 바꿨어요') + ` · ${n}줄까지 바꿨고 나머지 ${ids.length - pr.sent}줄은 현금 그대로예요`);
@@ -1761,6 +1783,7 @@
         if (a === 'h3no') { (c.pair3 = c.pair3 || {})[b.dataset.k] = 'no'; renderCard(); return; }
         if (a === 'h3undo') { if (c.pair3) delete c.pair3[b.dataset.k]; renderCard(); return; }
         if (a === 'pxopen') { pxOpen(c, b.dataset.k, b.dataset.show); return; }   // #934 추가 매칭
+        if (a === 'normchk') { const x = c.norm; if (!x) return; if (b.checked) x.sel.add(b.dataset.v); else x.sel.delete(b.dataset.v); const sv = $('om-card-save'); if (sv) sv.innerHTML = saveLabel(blankN()); return; }   // #970
         if (a === 'pxclose') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) x.open = false; renderCard(); return; }
         if (a === 'pxchk') { const x = pxState(c, b.dataset.k); if (b.checked) x.sel.add(b.dataset.v); else x.sel.delete(b.dataset.v); pxRefresh(c, b.dataset.k); const back = $('om-card').querySelector(`.om-pairx input[data-cact="pxchk"][data-v="${b.dataset.v}"]`); if (back) back.focus({ preventScroll: true }); return; }
         if (a === 'pxall') { const d = b.dataset.k, x = pxState(c, d), hit = pxFilter(pxCands(c, d), x.q); hit.forEach(r => { if (b.checked) x.sel.add(String(r.id)); else x.sel.delete(String(r.id)); }); pxRefresh(c, d); const back = $('om-card').querySelector(`.om-pairx[data-px="${d}"] input[data-cact="pxall"]`); if (back) back.focus({ preventScroll: true }); return; }   // #947
@@ -1925,7 +1948,7 @@
         }
         if (!res.ok) { c._saving = false; btn.disabled = false; btn.innerHTML = keep; c.dupOk = null; toast(res.status === 409 ? errText(res, '비운 줄이에요 — 되살린 뒤 고쳐 주세요') : errText(res, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
         if (c.mode !== 'edit') await pair2Run(c, rows, res.body && Array.isArray(res.body.rows) ? res.body.rows : []);   // #874 ②·③ 저장된 뒤(서버가 그 입력삭제 줄 묶음으로 옮김)
-        else await editPairRun(c);   // #934-b 고치기 카드 = 저장 뒤 판에서 체크한 추가 매칭(④)·고른 입력삭제(⑤)도 이어서(대표 12:48 실사례 = 체크 뒤 [고친 대로 저장]을 눌러 아무 일도 안 생김)
+        else { await normSave(c); await editPairRun(c); }   // #970 체크한 일반발송도 · #934-b 고치기 카드 = 저장 뒤 판에서 체크한 추가 매칭(④)·고른 입력삭제(⑤)도 이어서(대표 12:48 실사례 = 체크 뒤 [고친 대로 저장]을 눌러 아무 일도 안 생김)
         {   // #880-b 저장 전에 누른 「이대로 둘게요」 = 저장된 줄 id 로 남김(저장된 주소가 그때 주소와 같을 때만)
             const sv = c.mode === 'edit' ? (res.body && res.body.row ? [res.body.row] : []) : (res.body && Array.isArray(res.body.rows) ? res.body.rows : []);
             const sp = v => String(v || '').replace(/\s+/g, ' ').trim();   // 서버가 탭·줄바꿈을 빈칸으로 바꿔 저장 → 견줄 땐 빈칸 하나로 · 보낼 땐 서버에 저장된 글 그대로(claude-69)

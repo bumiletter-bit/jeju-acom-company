@@ -56,6 +56,10 @@ console.log('③-c 🔴 종전에 쓰던 B=K 운송장이 표식 없는 주문�
   S = [ship(1, '남편줄', '010-1111-0001', HB, '서울 가짜구 주문로 1'), ship(2, '남편줄2', '010-1111-0003', HB)];
   a = summary(run([nv(1, K)], S, ['naver:1'], [addr('남편줄', '010-1111-0001', K), addr('남편줄2', '010-1111-0003', K)])); ok(a.a[0][1] === 'indiv_store_addr' && a.a[0][2].join() === '001', '전부 B≠K = 주문 주소 같은 줄 먼저(indiv_store_addr)', a);
 }
+console.log('③-d #970 일반발송으로 뺀 쿠팡 주문 = 일반 짝');
+{ const cp = ia.normOrders('coupang', [{ _shipmentBoxId: 'B1', _orderId: '3100000001', _vendorItemId: 'V1', '수취인이름': '쿠팡받는', '수취인전화번호': '0507-1111-0001', '수취인 주소': '서울 가짜구 쿠팡로 1', '구매자전화번호': K, '등록옵션명': OPT, '구매수(수량)': 1 }]), nvO = orders([nv(2, K)]), S = ia.normShips([ship(1, '쿠팡받는', '0507-1111-0001', K, '서울 가짜구 쿠팡로 1'), ship(2, '이하정', '010-1111-0001', HB)], '효돈');
+  const m = ia.matchShipments({ ships: S, orders: cp.concat(nvO), pricingNames: [], indivKeys: ['naver:2'], holdKeys: [], memoAddr: [addr('이하정', '010-1111-0001', K)] }), a = m.assign.map(x => [x.o.channel, x.rule, x.ships.map(s => s.tracking.slice(-3)).join()]);
+  ok(a.some(x => x[0] === 'coupang' && x[1] === 'auto' && x[2] === '001') && a.some(x => x[0] === 'naver' && /^indiv/.test(x[1]) && x[2] === '002'), '쿠팡 주문 = 이름+번호+주소 일반 짝 · 입력삭제 주문은 주소 줄', a); }
 console.log('④ IND 없는 날 · 메모함 없음 = 종전 바이트 동일');
 { const O = [nv(1, K), nv(2, K, OPT2)], S = [ship(1, '이하정', '010-1111-0001', K), ship(2, '최수아', '010-1111-0002', HB)], M = [addr('이하정', '010-1111-0001', K), addr('최수아', '010-1111-0002', K)];
   ok(JSON.stringify(summary(run(O, S, [], M))) === JSON.stringify(summary(run(O, S, [], undefined))), 'IND 없음 = 메모함 있어도 같음');

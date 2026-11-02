@@ -216,7 +216,7 @@
         });
         $('fo-cards').addEventListener('input', onFixInput);   // #583-g2
         $('fo-result').addEventListener('click', onResultClick);
-        $('fo-info').addEventListener('click', e => { const fb = e.target.closest('button[data-info-flip]'); if (fb) { e.preventDefault(); if (!st.busy && st.judged) infoFlip(Number(fb.dataset.infoFlip)); return; } const li = e.target.closest('li[data-info]'); if (!li || !li.querySelector('[data-info-go]') || (() => { const sl = window.getSelection && window.getSelection(); return !!sl && !!String(sl).trim() && !!sl.anchorNode && $('fo-info').contains(sl.anchorNode); })()) return; e.preventDefault(); infoGo(Number(li.dataset.info)); });   // #583 ⑨ · #869: 글자 고름으로 막는 것은 참고 목록 안에서 끌어 고른 때만(메모 칸 줄 고름이 남아 있어도 [고치기]가 되게)
+        $('fo-info').addEventListener('click', e => { const nb = e.target.closest('button[data-info-omnorm]'); if (nb) { e.preventDefault(); if (!st.busy && st.judged) { const it = st.info[Number(nb.dataset.infoOmnorm)]; if (it && it.omNorm) { const off = st.omNormOff || (st.omNormOff = new Set()); if (it.omNorm.on) off.add(it.omNorm.k); else off.delete(it.omNorm.k); st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg(); applyOrderDecisions(); buildCards(); applyOrderDecisions(); renderSummaryOnly(); } } return; } const fb = e.target.closest('button[data-info-flip]'); if (fb) { e.preventDefault(); if (!st.busy && st.judged) infoFlip(Number(fb.dataset.infoFlip)); return; } const li = e.target.closest('li[data-info]'); if (!li || !li.querySelector('[data-info-go]') || (() => { const sl = window.getSelection && window.getSelection(); return !!sl && !!String(sl).trim() && !!sl.anchorNode && $('fo-info').contains(sl.anchorNode); })()) return; e.preventDefault(); infoGo(Number(li.dataset.info)); });   // #583 ⑨ · #869: 글자 고름으로 막는 것은 참고 목록 안에서 끌어 고른 때만(메모 칸 줄 고름이 남아 있어도 [고치기]가 되게)
         // #583-A(워커2 조사): 캡처는 보통 클립보드 — 메모 구획에 붙여넣기(Ctrl+V)·끌어다 놓기로도 사진을 넣는다(종전엔 아무 일도 없었다)
         { const sec = $('fo-memo-sec'), pickImg = list => Array.from(list || []).find(x => /^image\//.test(x.type) || IMG_EXT.test(x.name || ''));
           sec.addEventListener('paste', e => { const f = pickImg(e.clipboardData && e.clipboardData.files); if (f) { e.preventDefault(); memoPhoto(f); } });
@@ -270,7 +270,7 @@
     //   짝 = 메모 칸 그 줄 글자가 메모함이 넣은 줄과 같을 때만(사람이 고쳤으면 종전대로 「주문 없음」)
     function omChecked(i) { if (OMF.removed || !OMF.lines.length) return null; const ta = document.getElementById('fo-memo'), t = ta ? String(ta.value.replace(/\r/g, '').split('\n')[i] || '').trim() : ''; if (!t) return null; const x = OMF.lines.find(y => y.checked && y.text.trim() === t); return x ? x.checked : null; }
     const omCheckedTip = ck => `메모함에 넣을 때 ${ck.plat} 주문을 ${ck.as === 'recv' ? '받는 분 번호로 ' : ''}찾았던 번호인데 지금 배송준비에 없어요 — 취소·이미 발송인지 확인해 주세요`;
-    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [] };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
+    const OMF = { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [], normal: [] };   // pend = AI 읽기 중에 받은 응답(끝나면 다시 안 묻고 그대로 넣음)
     const omBand = html => { const b = $('fo-om-band'); if (!b) return; b.hidden = !html; b.innerHTML = html || ''; };
     const omWarn = n => { const b = $('fo-om-band'); if (!b) return; b.querySelectorAll('.fo-om-warn').forEach(x => x.remove()); const d = document.createElement('div'); d.className = 'fo-om-warn'; d.textContent = `⚠ 메모함 ${n}줄은 「오늘 씀」 표시를 못 했어요 · 비우기 전에 메모함 확인`; b.appendChild(d); b.hidden = false; };   // #900-2A 이중 발송 막기 = 표시 못 한 줄 수(성공이면 띠 그대로)
     const omPost = async (ids, undo) => { const date = OMF.date; let miss = 0; for (let i = 0; i < ids.length; i += 500) { const send = () => window.api('/api/order-memo/used', 'POST', Object.assign({ date, ids: ids.slice(i, i + 500) }, undo ? { undo: true } : {})); try { await send(); } catch (_) { await new Promise(r => setTimeout(r, 800)); try { await send(); } catch (_) { miss += Math.min(500, ids.length - i); } } } if (miss && !undo) omWarn(miss); return miss; };   // #900-2A 500줄씩 나눠 보냄(501줄째부터 「오늘 씀」이 안 찍히던 것) · 묶음 실패 = 1회 재시도 → 그래도 실패면 띠 한 줄
@@ -325,7 +325,7 @@
     }
     function omReset() {   // 최종발주 [초기화] — 넣은 표시를 되돌리고 처음 상태로(다시 불러오면 다시 들어감)
         if (OMF.date && OMF.ids.length && !OMF.removed) omPost(OMF.ids.slice(), true);
-        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [] }); omBand('');
+        Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [], normal: [] }); omBand('');
     }
     async function omInsert(force) {
         const date = ($('fo-ship') || {}).value;
@@ -342,6 +342,7 @@
         const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
         OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
         OMF.shipMemos = Array.isArray(r.ship_memos) ? r.ship_memos : [];   // #955
+        OMF.normal = Array.isArray(r.normal_orders) ? r.normal_orders : []; st.omNormOff = new Set();   // #970
         { const smIds = new Set(OMF.shipMemos.map(m => String(m.id))); OMF.ids = Array.isArray(r.ids) ? r.ids.filter(id => !smIds.has(String(id))) : []; }   // 배송메모 줄 「오늘 씀」 = 파일 만들 때 들어간 줄만(omMarkShip)
         const pastN = Array.isArray(r.held) ? r.held.filter(h => (h.why || []).includes('지난 날짜예요')).length : 0;   // #905 날짜 지정 현금 줄이 발주일보다 지남 = 「확인 안 된」과 따로(넣지 않음 = 종전)
         const held = (Array.isArray(r.held) ? r.held.length : 0) - pastN, wait = Array.isArray(r.waiting) ? r.waiting.length : 0;
@@ -364,7 +365,7 @@
         const b = $('fo-om-apply'); if (b) b.disabled = true;
         try {
             if (!OMF.removed && (OMF.lines.length || OMF.cash.length || OMF.shipMemos.length)) { omTake(); if (OMF.ids.length) await omPost(OMF.ids.slice(), true); }   // 되돌리기가 끝난 뒤 새로 넣기(순서가 뒤집히면 used_on 이 NULL 로 남음)
-            Object.assign(OMF, { ids: [], lines: [], cash: [], removed: false, pend: null, date: '', shipMemos: [] });
+            Object.assign(OMF, { ids: [], lines: [], cash: [], removed: false, pend: null, date: '', shipMemos: [], normal: [] });
             await omInsert(true);
         } finally { if (b) b.disabled = false; }
         if (!OMF.lines.length && !OMF.cash.length && !OMF.shipMemos.length) { if (!$('fo-om-band').innerHTML) omBand('발주 메모함: 이번 발송일에 넣을 줄이 없어요'); markStale(); syncInput(); return; }
@@ -604,6 +605,7 @@
         s.merged.forEach(e => { e.userTouched = false; });   // 카드 결정은 판정 뒤에 다시 건다 — 앞선 결정의 흔적(제외 체크)이 카드가 사라진 주문에 남지 않게(워커2 재현 C)
         s.shipDate = ship; D().getElementById('ln-all').value = st.prep.v2Text;
         // v2 saveLines 는 실패를 안에서 삼킨다(안내 칸에 글만 적음) → 판정 결과(today)가 새로 채워졌는지로 성공을 확인한다(워커2 재현 A)
+        { const nk = omNormKeys(); s.merged.forEach(e => { if (nk.has(keyOf(e))) e.indivOff = true; }); }   // #970 점검 ① 첫 판정부터 v2 가 일반발송으로 보게(손님 메모 뒤 날짜 = 오늘 안 나감 · 두 번째 판정과 같음)
         const prevToday = s.today; s.today = null;
         await IVT().saveLines(s);
         if (sessionLost()) { s.today = prevToday; throw new Error('로그인이 풀렸어요.'); }
@@ -1224,7 +1226,8 @@
         chk.notIndiv.forEach(m => cards.push({ id: `cnot:${m.digits}:${[].concat(m.cashRows).join('.')}:${m.allExcluded ? 'x' : 'o'}`, type: 'cash', tag: '현금파일', title: `${m.buyer} · 현금파일 ${[].concat(m.cashRows).length}행(엑셀 ${[].concat(m.cashRows).join(', ')}행)`, lines: [['이유', m.allExcluded ? '현금파일에 이 구매자의 줄이 있는데, 주문은 오늘 안 나가는 건(뒤 날짜)이에요. 이대로면 현금파일 주소로는 오늘 나가요.' : '현금파일에 이 구매자의 줄이 있는데 주문은 입력삭제가 아니에요. 이대로면 주문 주소로도 나가고 현금파일 주소로도 나가요.'], ['처리', '입력삭제가 맞으면 메모에 입력삭제 줄을 넣고 [다시 판정]을 눌러 주세요.']], choices: [['extra', m.allExcluded ? '현금파일 줄은 오늘 보내는 게 맞음' : '둘 다 보내는 게 맞음(추가 발송)']] }));
         (chk.mixed || []).forEach(m => info.push(`${m.buyer}: 입력삭제 주문과 주문 주소로 나가는 주문이 함께 있어요(주문 ${m.orderKeys.length}건은 택배사 양식에 그대로).`));
         // #886 박스 수 카드 = 「일반 발송으로」를 고른 주문도 원래 입력삭제로 셈(카드가 그대로 남아 [바꾸기]로 되돌림) · 그 밖 카드는 지금 상태로
-        const chkO = s.merged.some(e => e._indivOff) ? c.cashCheck({ orders: s.merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), qty: qtyOf(e), individual: !!(e.individual || e._indivOff), excluded: !!e.excluded, buyer: buyerName(e) })), cash: cashLive() }) : chk;
+        const omNk = omNormKeys();
+        const chkO = s.merged.some(e => e._indivOff) ? c.cashCheck({ orders: s.merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), qty: qtyOf(e), individual: !!(e.individual || (e._indivOff && !omNk.has(keyOf(e)))), excluded: !!e.excluded, buyer: buyerName(e) })), cash: cashLive() }) : chk;
         const bdList = chk.boxDiff.slice(); chkO.boxDiff.forEach(m => { const id = `cbox:${m.digits}:${m.orderQty}:${m.cashQty}`, v = st.dec.get(id); if (typeof v === 'string' && v.startsWith('norm:') && !bdList.some(x => x.digits === m.digits)) bdList.push(m); });
         const normAddr = t => String(t || '').replace(/\s+/g, '').replace(/[,()]/g, '');
         // #900 1-A~E·G(대표 10/27) 입력삭제 박스 확인 = 구매자마다 카드 하나 · 품목별 표(주문/입력/차이) + 입력삭제 주문(「일반발송」 체크) + 주소 줄(「서비스」 체크) + 놓친 짝([바꾸기])
@@ -1234,7 +1237,7 @@
         const optLab = o => core().stripTail(String(o || ''), inCatalog).split(':').pop().trim() || String(o || '');
         const cbxD = new Map(); bdList.forEach(m => cbxD.set(m.digits, { m, sum: false })); (chk.itemDiff || []).forEach(m => { if (!cbxD.has(m.digits)) cbxD.set(m.digits, { m, sum: true }); });
         cbxD.forEach(({ m, sum }, d) => {
-            const es = s.merged.filter(e => (e.individual || e._indivOff) && !e.excluded && buyerTel(e) === d);
+            const es = s.merged.filter(e => (e.individual || (e._indivOff && !omNk.has(keyOf(e)))) && !e.excluded && buyerTel(e) === d);   // #970 점검 ② 메모함에서 일반발송으로 고른 주문 = 입력삭제로 안 셈
             const crow = cashLive().filter(r => !r.bang && !r.service && r.digits === d);
             const buyer = m.buyer || (es[0] ? buyerName(es[0]) : '');
             if (es.length && es.every(e => e.ch === 'cafe24' && qtyOf(e) === 1 && !inCatalog(core().stripTail(String(optOf(e) || ''), inCatalog)))) { info.push(`${buyer}: 개인결제창입니다! · 주소 줄 ${crow.length}줄`); return; }   // 1-G
@@ -1311,11 +1314,25 @@
     }
     // 지금 떠 있는 카드의 결정만 인정한다(사라진 카드의 옛 결정이 주문을 빼지 않게 — 워커2 재현 C)
     const liveDec = id => (st.cards.some(cd => cd.id === id) ? st.dec.get(id) : undefined);
+    // #970 메모함 「일반발송」 주문 → 입력삭제에서 뺌(#886 박스 카드 「일반발송」과 같은 표시 e.indivOff · 손님 메모 뒤 날짜 판정은 메모함 쪽만 판정 때 바로 반영) · 주문번호 + 구매자 번호가 같은 주문만 · 없어진 주문은 다른 주문으로 안 옮김 · 사람이 되돌리면(st.omNormOff) 입력삭제 그대로
+    function omNormHits() {
+        const out = []; if (OMF.removed || !OMF.normal.length) return out;
+        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, merged = S().merged;
+        OMF.normal.forEach(m => { const ch = CH[m.plat] || null; (m.orders || []).forEach(id => { out.push({ m, id, es: merged.filter(e => (!ch || e.ch === ch) && idsOf(e).includes(String(id))) }); }); });   // 주문번호로만(쿠팡 안심번호도 같은 패턴)
+        return out;
+    }
+    function omNormKeys() { const off = st.omNormOff || new Set(), keys = new Set(); omNormHits().forEach(h => { if (!off.has(String(h.id))) h.es.forEach(e => keys.add(keyOf(e))); }); return keys; }   // 되돌림 기억 = 주문번호(다시 불러와도 유지)
+    function omNormInfo() {
+        const out = [], off = st.omNormOff || new Set();
+        omNormHits().forEach(h => { if (!h.es.length) { out.push({ t: `메모 줄 ✕ 주문 없음: ${h.m.line} (일반발송 주문 ${h.id}) → 취소·이미 발송인지 확인해 주세요` }); return; }
+            h.es.forEach(e => { const k = keyOf(e), who = `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`; out.push(off.has(String(h.id)) ? { t: `메모 줄 ⚠ 일반발송을 사람이 되돌림: ${h.m.line} → 「입력삭제로 처리」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: false } } : { t: `메모 줄로 일반발송: ${h.m.line} → 「주문 ${String(h.id).slice(-6)} 스토어 주소로」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: true } }); }); });
+        return out;
+    }
     function applyOrderDecisions() {   // 카드 결정 → v2 상태(제외 체크). 판정(saveLines) 뒤마다 다시 건다
         const byKey = new Map(S().merged.map(e => [keyOf(e), e]));
         // #886(대표 10/27 김병우) 박스 수 카드 「이 주문은 일반 발송으로」 = 그 주문만 입력삭제에서 빼서 일반 주문처럼(택배사 양식에 주문 그대로) · [바꾸기]로 결정을 지우면 원래대로
-        { const off = new Set(); st.dec.forEach((v, id) => { if (/^cbox:/.test(id) && typeof v === 'string' && v.startsWith('norm:') && (st.cards || []).some(cd => cd.id === id)) v.slice(5).split(',').forEach(k => { if (k) off.add(k); }); });   // #900 1-B 여러 주문   // 지금 떠 있는 박스 수 카드의 결정만(박스 수가 바뀌어 카드가 달라지면 원래대로)
-          byKey.forEach((e, k) => { if (off.has(k)) { e.indivOff = true; if (e.individual) { e._indivOff = true; e.individual = false; e.reqKind = null; e.req = null; e.flag = e.memoFlag; } }
+        { const off = new Set(), omK = omNormKeys(); omK.forEach(k => off.add(k)); st.dec.forEach((v, id) => { if (/^cbox:/.test(id) && typeof v === 'string' && v.startsWith('norm:') && (st.cards || []).some(cd => cd.id === id)) v.slice(5).split(',').forEach(k => { if (k) off.add(k); }); });   // #900 1-B 여러 주문   // 지금 떠 있는 박스 수 카드의 결정만(박스 수가 바뀌어 카드가 달라지면 원래대로)
+          byKey.forEach((e, k) => { if (off.has(k)) { e.indivOff = true; if (e.individual) { e._indivOff = true; e.individual = false; e.reqKind = null; e.req = null; e.flag = e.memoFlag; if (!e.userTouched && omK.has(k)) e.excluded = (e.memoFlag === 'excl'); } }   // 메모함 일반발송만 손님 메모 판정대로 · #886 카드 길은 종전 그대로(뺀 뒤 카드 id 가 바뀌면 결정이 떨어짐)
               else if (e.indivOff) { e.indivOff = false; if (e._indivOff) { e._indivOff = false; e.individual = true; e.reqKind = 'indiv'; e.flag = null; e.excluded = false; } } }); }   // e.indivOff = v2 applyLines 가 보는 표시(파일 만들 때 v2 가 다시 판정해도 유지)
         // #583-f 「메모 확인」 카드의 [제외] — 카드가 사라졌거나 결정이 바뀌면 원래대로(오늘 발송)
         byKey.forEach((e, k) => { const id = st.missCard && st.missCard.get(k), ex = !!id && st.dec.get(id) === 'excl'; if (ex) { e.excluded = true; e.userTouched = true; e._missExcl = true; } else if (e._missExcl) { e.excluded = false; e.userTouched = false; e._missExcl = false; } });
@@ -1888,7 +1905,7 @@
     }
     const isAiDone = cd => st.dec.has(cd.id) && st.ai.tag.has(cd.id) && !patchDec(cd);
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
-    const INFO_KIND = [[/^메모 줄로 배송메시지 지정/, '배송메시지', 'hand'], [/^메모 줄 ✓/, '확인완료', 'hand'], [/^메모 줄 ⚠/, '확인 필요', 'warn'], [/^메모 줄 ✕/, '주문 없음', 'warn'], [/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
+    const INFO_KIND = [[/^메모 줄로 일반발송/, '일반발송', 'hand'], [/^메모 줄로 배송메시지 지정/, '배송메시지', 'hand'], [/^메모 줄 ✓/, '확인완료', 'hand'], [/^메모 줄 ⚠/, '확인 필요', 'warn'], [/^메모 줄 ✕/, '주문 없음', 'warn'], [/^메모 줄로 보내는이 지정/, '보내는이', 'plain'], [/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^취소됐을 수 있어요/, '확인 필요', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
@@ -1904,12 +1921,13 @@
         h = h.replace(/메모 줄 요청일 [^\s<]+/g, x => '<mark class="fo-hl">' + x + '</mark>').replace(/메모 줄 「([^」]*)」/g, '메모 줄 <mark class="fo-hl">$1</mark>')
             .replace(/^(메모 줄 [✓⚠✕] [^:]+: )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')   // #869
             .replace(/^(메모 줄(?:\(업그레이드\))?로 (?:박스별 사이즈|사이즈 지정|보내는이 지정|배송메시지 지정): )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
+            .replace(/^(메모 줄로 일반발송: )(.+?)( → )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/( → 귤 로얄과 (?:\d+줄 )?)([^<]+)$/, '$1<b class="fo-em">$2</b>')
             .replace(/^(건수 다름: )(.+?)( — )/, '$1<mark class="fo-hl">$2</mark>$3')
             .replace(/^(주문 없음: |취소됐을 수 있어요 · 확인 필요: |사이즈를 붙일 귤 로얄과 주문이 없어요: )(.+?)(?= \(받는 분 번호|$)/, '$1<mark class="fo-hl">$2</mark>');
         const fromMemo = (typeof it === 'object' && it.line != null) || /메모 줄/.test(t) || /^받는 분 번호로 적은 줄/.test(t);   // #611(대표 10/10): 직원이 메모 칸에 적은 줄에서 나온 참고 줄 — 손님 메모에서 온 줄과 구분
         const badge = (kd ? `<span class="fo-ibadge" data-k="${kd[2]}">${kd[1]}</span>` : '') + (fromMemo ? SRC_BADGE : '');
-        return `<li data-info="${i}"${kd ? ` data-info-kind="${kd[2]}"` : ''}${fromMemo ? ' data-info-src="memo"' : ''}>${badge}<span class="fo-itext">${h}</span>${typeof it === 'object' && it.flip && it.keys && it.keys.length ? `<button type="button" class="fo-btn sm fo-igo fo-iflip" data-info-flip="${i}">${it.flip === 'send' ? '오늘 발송으로' : '오늘 발송 제외'}</button>` : ''}${go ? `<button type="button" class="fo-btn sm fo-igo" data-info-go="${i}">${typeof it === 'object' && it.card ? '카드 보기' : typeof it === 'object' && it.keys && it.keys.length ? '고치기' : '줄 보기'}</button>` : ''}</li>`;
+        return `<li data-info="${i}"${kd ? ` data-info-kind="${kd[2]}"` : ''}${fromMemo ? ' data-info-src="memo"' : ''}>${badge}<span class="fo-itext">${h}</span>${typeof it === 'object' && it.omNorm ? `<button type="button" class="fo-btn sm fo-igo" data-info-omnorm="${i}">${it.omNorm.on ? '입력삭제로 되돌리기' : '다시 일반발송'}</button>` : ''}${typeof it === 'object' && it.flip && it.keys && it.keys.length ? `<button type="button" class="fo-btn sm fo-igo fo-iflip" data-info-flip="${i}">${it.flip === 'send' ? '오늘 발송으로' : '오늘 발송 제외'}</button>` : ''}${go ? `<button type="button" class="fo-btn sm fo-igo" data-info-go="${i}">${typeof it === 'object' && it.card ? '카드 보기' : typeof it === 'object' && it.keys && it.keys.length ? '고치기' : '줄 보기'}</button>` : ''}</li>`;
     }
     function renderReview() {
         const peek = anchorLive() ? null : anchorPeek();   // #583-j
@@ -1921,7 +1939,7 @@
         $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span><span id="fo-jeju">제주도 배송 <b>${esc(jejuText())}</b></span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
         {   // #603(대표 10/9 「여기서 보내야 할 것을 안 보내는 경우가 많다」): 기본으로 펼쳐 두고(접으면 이 화면 동안 기억) · 「오늘 안 나감」 → 배송메세지 → 사이즈 → 그 밖 순(같은 종류 안은 종전 순) · data-info 는 st.info 의 원래 자리 그대로
           const cur = $('fo-info').querySelector('details'); if (cur) st.infoClosed = !cur.open;
-          if (st.infoBase) st.info = st.infoBase.concat(memoInfo(), shipMemoInfo());   // #869
+          if (st.infoBase) st.info = st.infoBase.concat(memoInfo(), shipMemoInfo(), omNormInfo());   // #869
           const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감|^오늘 발송 제외\(사람\)/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
           const order = st.info.map((it, i) => [rank(it), i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
           $('fo-info').innerHTML = st.info.length ? `<details${st.infoClosed ? '' : ' open'}><summary>참고 ${st.info.length}건 (확인만 하면 돼요 · 줄을 누르면 그 주문·메모 줄로 가요 · 여기를 누르면 접혀요)</summary><ul>${order.map(([, i]) => infoHtml(st.info[i], i)).join('')}</ul></details>` : ''; }

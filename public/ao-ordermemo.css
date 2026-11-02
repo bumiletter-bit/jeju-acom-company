@@ -709,3 +709,8 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 
 /* #966 후보 이유 표시 */
 .om-px-k { color: var(--d-accent); font-size: 11.5px; font-weight: 700; }
+
+/* #970 ④ 판 이 번호의 주문 */
+.om-norm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--d-line); display: grid; gap: 6px; }
+.om-norm b { color: var(--d-ink); font-size: 13px; }
+.om-norm-warn { color: var(--d-err); font-weight: 700; }

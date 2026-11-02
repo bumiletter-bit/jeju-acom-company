@@ -18,10 +18,11 @@ const EMPTY = { ok: true, memo_text: '', lines: [], cash_aoa: [], cash_ids: [], 
 const sm = (id, key, text, plat) => ({ id, key, plat: plat || '네이버', text, line: key + ' 배송메모 ' + text + ' ' + (plat || '네이버'), ship_date: null, checked: { plat: plat || '네이버', as: 'order', at: '2026-11-02T00:00:00Z', ship_memo: text } });
 
 async function run(br, fx, cfg) {
-    const hits = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }, used = [];
+    const hits = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }, used = [], marksSent = [];
     const ctx = await newCtx(br, fx, hits, cfg.vp || { width: 1400, height: 900 }, false, {});
     await ctx.route('**/api/order-memo/for-ship*', r => r.fulfill({ json: Object.assign({}, EMPTY, cfg.forShip || {}) }));
     await ctx.route('**/api/order-memo/used', r => { used.push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, n: 1 } }); });
+    await ctx.route('**/api/agent-office/final-order/marks', r => { marksSent.push(r.request().postDataJSON()); r.fulfill({ json: { ok: true } }); });
     if (cfg.head) await ctx.route('**/final-order.js*', r => r.fulfill({ contentType: 'application/javascript', body: HEAD_FO }));
     const pg = await ctx.newPage(), errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept());
     await pg.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pg.waitForTimeout(2500); await pg.evaluate(() => switchPage('agent-office')); await pg.waitForTimeout(1000);
@@ -57,7 +58,7 @@ async function run(br, fx, cfg) {
     for (const n of names) { const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 30000 }), pg.locator(`[data-fo-save="${n}"]`).click()]); const f = path.join(TMP, 'v955-' + Date.now() + '.xlsx'); await d.saveAs(f); const wb = XLSX.readFile(f); files[n] = {}; wb.SheetNames.forEach(sn => { files[n][sn] = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' }); }); }
     const after = await snap(), marks = await pg.evaluate(() => { const s = window.AkmFinalOrder.state; return s.out ? Object.keys(s.out).slice(0, 8) : []; });
     await ctx.close();
-    return { before, after, files, used, errs, marks, blockedBefore };
+    return { before, after, files, used, errs, marks, blockedBefore, marksSent };
 }
 const rowJ = (r, name) => { for (const fn of Object.keys(r.files)) { const s = r.files[fn].Sheet1 || []; const row = s.find(x => String(x[3]) === name); if (row) return String(row[9]); } return null; };
 const allRows = r => JSON.stringify(Object.keys(r.files).sort().map(fn => [fn.replace(/\d{4,}/g, ''), r.files[fn]]));
@@ -213,6 +214,46 @@ const allRows = r => JSON.stringify(Object.keys(r.files).sort().map(fn => [fn.re
           if (ok(!!big, '2박스↑ 빈 메모 주문 자료')) { const BG = '2박스 주문 메모'; const R2d = await run(br, fx, { forShip: { ship_memos: [sm(993, big._pid, BG)], ids: [993] }, afterJudge: async pg => { await findOpen(pg, big['수취인명']); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } }); ok(rowJ(R2d, big['수취인명']) === BG, '2박스↑ 안 고치고 [적용] = 배송메모 유지', rowJ(R2d, big['수취인명'])); }
           let flash = null; await run(br, fx, { forShip: { ship_memos: [sm(994, plain._pid, '키보드 글')], ids: [994] }, afterJudge: async pg => { await pg.locator('#fo-sm-lines [data-smline="994"]').focus(); await pg.keyboard.press('Enter'); await pg.waitForTimeout(100); flash = await pg.locator('#fo-info li.fo-flash').count(); } });
           ok(flash >= 1, '④ 줄에서 Enter = 참고 줄로', flash);
+        }
+
+        console.log('\nⅢ-f #970 메모함 일반발송');
+        { const twn = fx.naver.filter(o => o['구매자연락처'] === tel).slice(0, 2), [A0, B0] = twn, md0 = (+ship.slice(5, 7)) + '/' + (+ship.slice(8, 10)), LN = md0 + ' ' + tel + ' 입력o삭제x', dig = String(tel).replace(/\D/g, '');
+          const cashR = ['가족 드림', tel, '제주특별자치도 제주시 연삼로 1066-31', '주소받는분', fx.cashAoa[1][4], String(B0['수량'] || 1), '010-8111-0001', '', '서울 가짜구 주소줄로 1', '', tel, '', ''];
+          const base = extra => ({ forShip: Object.assign({ memo_text: LN, lines: [{ id: 995, line: LN, ship_date: ship, checked: null, state: 'today' }], cash_aoa: [fx.cashAoa[0], cashR], cash_ids: [996], ids: [995, 996] }, extra || {}) });
+          const nm = orders => ({ normal_orders: [{ id: 995, key: tel, plat: '네이버', line: LN, buyer: dig, orders }] });
+          const cashHas = r => Object.values(r.files).some(f => (f.Sheet1 || []).some(x => String(x[3]) === '주소받는분'));
+          const R0 = await run(br, fx, Object.assign({}, base(), { memo: null }));
+          ok(R0.before.cards.some(c => /^cbox:/.test(c.id)) && rowJ(R0, A0['수취인명']) === null && rowJ(R0, B0['수취인명']) === null, '값 없음 = 종전(박스 수 카드 · 입력삭제)', R0.before.cards.map(c => c.id).filter(x => /cbox/.test(x)));
+          const R1 = await run(br, fx, base(nm([A0._pid])));
+          ok(!R1.before.cards.some(c => /^cbox:/.test(c.id)), '일반발송 체크 = 박스 수 카드 없음', R1.before.cards.map(c => c.id));
+          ok(rowJ(R1, A0['수취인명']) !== null && rowJ(R1, B0['수취인명']) === null && cashHas(R1), '양식 = 그 주문 스토어 주소 줄 · 다른 주문 입력삭제 · 현금 줄 그대로', [rowJ(R1, A0['수취인명']), rowJ(R1, B0['수취인명'])]);
+          const row = Object.values(R1.files).map(f => (f.Sheet1 || []).find(x => String(x[3]) === A0['수취인명'])).find(Boolean); ok(row && String(row[8]).includes(String(A0['통합배송지']).slice(0, 8)), '그 줄 주소 = 스토어 주소', row && row[8]);
+          const mk = R1.marksSent[R1.marksSent.length - 1] || {}; ok(mk.indiv && !mk.indiv.some(k => String(k).includes(A0._pid)) === true, 'final_order_marks IND 에서 빠짐', mk);
+          ok(R1.after.info.some(x => x.startsWith('메모 줄로 일반발송') && x.includes(String(A0._pid).slice(-6))), '참고 줄 = 메모 줄로 일반발송', R1.after.info.filter(x => /일반발송/.test(x)));
+          let LI; const R1b = await run(br, fx, Object.assign(base(nm([A0._pid])), { afterJudge: async pg => { LI = await pg.evaluate(() => { const li = [...document.querySelectorAll('#fo-info li')].find(x => /메모 줄로 일반발송/.test(x.textContent)); return li && { b: (li.querySelector('.fo-ibadge') || {}).textContent, s: !!li.querySelector('.fo-isrc'), h: !!li.querySelector('mark.fo-hl'), u: !!li.querySelector('[data-info-omnorm]') }; }); } }));
+          ok(LI && LI.b === '일반발송' && LI.s && LI.h && LI.u, '참고 줄 꼴 = 알약 · 메모 칩 · 형광 · 되돌리기', LI);
+          const R2 = await run(br, fx, Object.assign(base(nm([A0._pid])), { afterJudge: async pg => { await pg.locator('[data-info-omnorm]').first().click(); await pg.waitForTimeout(400); } }));
+          ok(R2.after.cards.some(c => /^cbox:/.test(c.id)) && rowJ(R2, A0['수취인명']) === null, '사람 되돌림 = 입력삭제 · 박스 카드', R2.after.cards.map(c => c.id).filter(x => /cbox/.test(x)));
+          const R3 = await run(br, fx, base(nm(['2099777777777'])));
+          ok(R3.after.info.some(x => x.includes('주문 없음') && x.includes('2099777777777')) && rowJ(R3, A0['수취인명']) === null && rowJ(R3, B0['수취인명']) === null, '주문 취소 = 「주문 없음」 · 다른 주문으로 안 옮김', R3.after.info.filter(x => /2099777777777/.test(x)));
+          // 점검 ① 손님 메모 뒤 날짜 + 일반발송 = 판정 1회·2회 같음(오늘 안 나감 · 파일에 없음)
+          const ex = fx.naver.find(o => /\d+월\s*\d+일/.test(String(o['배송메세지'] || '')) && !fx.naver.some(x => x !== o && x['구매자연락처'] === o['구매자연락처'])), exT = ex['구매자연락처'], exL = md0 + ' ' + exT + ' 입력o삭제x';
+          const exF = { forShip: { memo_text: exL, lines: [{ id: 995, line: exL, ship_date: ship, checked: null, state: 'today' }], cash_aoa: [], cash_ids: [], ids: [995], normal_orders: [{ id: 995, key: exT, plat: '네이버', line: exL, buyer: String(exT).replace(/\D/g, ''), orders: [ex._pid] }] } };
+          const exState = pg => pg.evaluate(n => { const e = document.querySelector('#fo-frame').contentWindow.__ivt.S.merged.find(y => String(y.conv['수취인명']) === n); return { ex: !!e.excluded, ind: !!e.individual, off: !!e.indivOff, cards: window.AkmFinalOrder.state.cards.map(c => c.id).sort().join('|') }; }, ex['수취인명']);
+          let e1, e2; const REx = await run(br, fx, Object.assign({}, exF, { afterJudge: async (pg, rj) => { e1 = await exState(pg); await rj(); e2 = await exState(pg); } }));
+          ok(e1 && e1.ex && !e1.ind && e1.off, '① 판정 1회 = 오늘 안 나감(일반발송 · 메모 뒤 날짜)', e1);
+          ok(e1 && e2 && e1.ex === e2.ex && e1.cards === e2.cards, '① 판정 2회와 상태·카드 같음', [e1, e2]);
+          ok(rowJ(REx, ex['수취인명']) === null, '① 파일에 없음', rowJ(REx, ex['수취인명']));
+          let e3, e4; await run(br, fx, Object.assign({}, exF, { afterJudge: async pg => { await pg.locator('[data-info-omnorm]').first().click(); await pg.waitForTimeout(300); e3 = await exState(pg); await pg.locator('[data-info-omnorm]').first().click(); await pg.waitForTimeout(300); e4 = await exState(pg); } }));
+          ok(e3 && e3.ind && !e3.ex && e4 && !e4.ind && e4.ex, '① 입력삭제로 되돌리기 → 다시 일반발송 = 다시 오늘 안 나감', [e3, e4]);
+          // 점검 ② 박스 카드 = 일반발송 주문을 입력삭제로 안 셈
+          const cashBig = cashR.slice(); cashBig[5] = String((Number(B0['수량']) || 1) + 1);
+          const R5b = await run(br, fx, { forShip: Object.assign(base(nm([A0._pid])).forShip, { cash_aoa: [fx.cashAoa[0], cashBig] }) });
+          const cb = R5b.before.cards.find(c => /^cbox:/.test(c.id));
+          ok(!!cb && cb.id.split(':')[2] === String(Number(B0['수량']) || 1) && !JSON.stringify(cb).includes(String(A0._pid).slice(-6)), '② 박스 카드 주문 수 = 남은 주문만 · 일반발송 주문 안 보임', cb && [cb.id, cb.lines]);
+          // 점검 ③ 되돌림 뒤 [주문 다시 불러오기]
+          let after3; const R6 = await run(br, fx, Object.assign(base(nm([A0._pid])), { afterJudge: async (pg, rj) => { await pg.locator('[data-info-omnorm]').first().click(); await pg.waitForTimeout(300); await pg.click('#fo-reload'); await idle(pg); await pg.waitForFunction(() => window.AkmFinalOrder.state.loaded, null, { timeout: 60000 }); await rj(); after3 = await pg.evaluate(() => window.AkmFinalOrder.state.info.map(i => typeof i === 'string' ? i : i.t).filter(t => /일반발송/.test(t))); } }));
+          ok(after3 && after3.some(x => x.includes('사람이 되돌림')) && !after3.some(x => x.startsWith('메모 줄로 일반발송')) && rowJ(R6, A0['수취인명']) === null, '③ 되돌림 = 다시 불러와도 입력삭제 유지', after3);
         }
 
         console.log('\nⅣ 빼기 = 안 나감');
