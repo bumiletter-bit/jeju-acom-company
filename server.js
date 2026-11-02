@@ -10844,20 +10844,20 @@ setInterval(() => { deskMorningTick(); }, 60 * 1000);
 // ===== #821 계산서 정리(자동) — 시작 (verify-821-invoice-auto.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) =====
 // 대표 10/22 「고」: 계산서 발행현황이 사람이 안 시켜도 채워지게 — 메일 색인(#811)에 새 계산서 메일이 보이면 대표 이름으로 「[계산서 정리] YYYY-MM[, …]」 지시 1건
 //   → 창구가 달마다 scripts/desk/invoice-month.js <달> --order <id> (★에이전트오피스/업무지식.md 「계산서 정리」 절) · 아침 정리(#581)와 같은 꼴
-//   설정 = agent_office_config 'desk_invoice' { enabled(기본 true), time '08:10', debounce_min 30 } · 기록 'desk_invoice_last' { date, at, id, mail_at, month1 }
+//   설정 = agent_office_config 'desk_invoice' { enabled(기본 true), time '11:00' }(#981 하루 1회 · 남은 debounce_min 값은 안 씀) · 기록 'desk_invoice_last' { date, at, id, mail_at, month1 }
 //   🔴 기록의 mail_at = 메일 날짜(at)가 아니라 색인이 그 줄을 적은 시각(indexed_at · 늦게 색인된 옛 메일도 잡힘 · 키 이름만 종전 그대로) · 달은 메일 날짜(at)로
 //   🔴 mail_at 은 DB 글자(indexed_at::text · µs)로 저장·비교 — JS Date(ms)로 바꾸면 µs 가 잘려 같은 메일이 늘 「새 메일」(10/22 12:41 라이브 #3011 · v5.9.606)
-//   ⓐ 새 메일 = mail_index kind tax_invoice 이고 indexed_at > last.mail_at · time 뒤(밤에 온 메일은 아침에) · 마지막 등록 뒤 debounce_min 지남 · 같은 머리말 지시가 대기·처리중이면 안 넣음(mail_at 그대로 → 끝난 뒤 다시)
+//   #981(대표 11/2) 자동 지시 = 하루 1회 · time(11:00) 지난 첫 틱에(재시작·다운으로 놓쳐도 그 뒤 첫 틱) · 그날 이미 만들었으면(last.date === today && last.id) 0건 · 사람 지시는 이 틱과 무관(즉시)
+//   ⓐ 새 메일 = mail_index kind tax_invoice 이고 indexed_at > last.mail_at · 같은 머리말 지시가 대기·처리중이면 안 넣음(mail_at 그대로 → 끝난 뒤 다음 틱에)
 //      달 = 그 메일들의 받은 달과 그 전달(작성월 후보 · invoice-month 는 그 달 1일 ~ 다음 달 10일 메일을 봄)
-//   ⓑ 안전망 = 매달 1일 time 에 「지난달, 이번 달」 1건(그날 ⓐ 로 이미 넣었으면 생략) · 엔진 desk 일 때만 · 첫 가동 날은 기준(mail_at = 계산서 메일의 마지막 indexed_at · 없으면 지금)만 적고 안 넣음
-const DESK_INVOICE_DEFAULT = { enabled: true, time: '08:10', debounce_min: 30 };
+//   ⓑ 안전망 = 그 달 첫 지시(보통 1일 time)에 「지난달, 이번 달」을 메일 없어도 넣음(ⓐ 와 같은 지시로 합침 · 1일을 통째로 놓치면 그 뒤 첫 틱 · 기록 month1) · 엔진 desk 일 때만 · 첫 가동 날은 기준(mail_at = 계산서 메일의 마지막 indexed_at · 없으면 지금)만 적고 안 넣음
+const DESK_INVOICE_DEFAULT = { enabled: true, time: '11:00' };
 const DESK_INVOICE_HEAD = '[계산서 정리] ';
 const DESK_INVOICE_TEXT = (months) => DESK_INVOICE_HEAD + months.join(', ') + ' — 계산서 메일을 읽어 발행현황 표를 채워 주세요.';
 function deskInvoiceCfg(raw) {
     const v = (raw && typeof raw === 'object') ? raw : {};
     const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v.time || '')) ? String(v.time) : DESK_INVOICE_DEFAULT.time;
-    const d = Number(v.debounce_min);
-    return { enabled: v.enabled !== false, time, debounce_min: Number.isFinite(d) && d >= 0 && d <= 1440 ? d : DESK_INVOICE_DEFAULT.debounce_min };
+    return { enabled: v.enabled !== false, time };
 }
 const deskInvoiceYm = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 7);   // KST 달
 const deskInvoicePrevYm = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7); };
@@ -10891,14 +10891,14 @@ async function deskInvoiceTick(nowMs) {
             return { skipped: 'first_run' };
         }
         if (!cfg.enabled || hhmm < cfg.time) return null;
+        if (last.date === today && last.id) return null;   // #981 하루 1회(쓰기 0 · mail_at 그대로)
         const busy = (await pool.query(`SELECT id FROM pending_orders WHERE content LIKE $1 AND status IN ('대기', '처리중') AND is_deleted IS NOT TRUE LIMIT 1`, [DESK_INVOICE_HEAD + '%'])).rows[0];
         if (busy) return null;
         let months = null, mailAt = last.mail_at || null, why = null;
         const hasIdx = (await pool.query(`SELECT to_regclass('public.mail_index') IS NOT NULL AS ok`)).rows[0].ok;
         if (hasIdx) {
-            const since = last.at ? Date.parse(last.at) : 0;
             const fresh = (await pool.query(`SELECT COALESCE(at, indexed_at) AS at, indexed_at::text AS ix FROM mail_index WHERE parsed->>'kind' = 'tax_invoice' AND indexed_at > COALESCE($1::timestamptz, '-infinity'::timestamptz) ORDER BY indexed_at`, [last.mail_at || null])).rows;
-            if (fresh.length && (!since || now - since >= cfg.debounce_min * 60 * 1000)) {
+            if (fresh.length) {
                 const set = new Set();
                 for (const r of fresh) { const m = deskInvoiceYm(new Date(r.at).getTime()); set.add(deskInvoicePrevYm(m)); set.add(m); }
                 months = [...set].sort().slice(-6);
@@ -10906,12 +10906,12 @@ async function deskInvoiceTick(nowMs) {
                 why = 'mail';
             }
         }
-        if (!months && today.slice(8) === '01' && last.month1 !== ym) { months = [deskInvoicePrevYm(ym), ym]; why = 'month1'; }   // 그날 ⓐ 로 넣었으면 month1 이 이미 이번 달 = 생략
+        if (last.month1 !== ym) { months = [...new Set([...(months || []), deskInvoicePrevYm(ym), ym])].sort().slice(-6); why = why || 'month1'; }   // #981 그 달 첫 지시에 합침(메일 없어도 · 1일을 놓쳐도 빠지지 않게)
         if (!months) return null;
         const r = await deskInvoiceCreate(months);
         if (!r.ok) return r;   // 엔진 api · 대표 계정 없음 · 그 사이 다른 인스턴스가 넣음(busy) = 기록 안 바꿈(다음 틱에 다시 · 조용히)
-        await naverCfgSet('desk_invoice_last', { date: today, at: new Date(now).toISOString(), id: r.id, mail_at: mailAt, month1: today.slice(8) === '01' ? ym : (last.month1 || null), why });
-        console.log(`[계산서 정리] 지시 #${r.id} 등록(${months.join(', ')} · ${why === 'mail' ? '새 메일' : '1일 안전망'})`);
+        await naverCfgSet('desk_invoice_last', { date: today, at: new Date(now).toISOString(), id: r.id, mail_at: mailAt, month1: ym, why });
+        console.log(`[계산서 정리] 지시 #${r.id} 등록(${months.join(', ')} · ${why === 'mail' ? '새 메일' : '달 첫 안전망'})`);
         return { ...r, months, why };
     } catch (e) { console.error('[계산서 정리] 틱 오류:', e.message); return { error: e.message }; }
     finally { _deskInvoiceBusy = false; }

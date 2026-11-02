@@ -63,8 +63,8 @@ function world(opt = {}) {
     console.log('① 설정 · 글');
     { const W = world(); const { deskInvoiceCfg: C, DESK_INVOICE_TEXT: T, deskInvoicePrevYm: P } = W.M;
         const d = C(null);
-        ok(d.enabled === true && d.time === '08:10' && d.debounce_min === 30, '설정 없음 = 켜짐 · 08:10 · 30분');
-        ok(C({ enabled: false }).enabled === false && C({ enabled: 'false' }).enabled === true && C({ time: '9:00' }).time === '08:10' && C({ time: '09:00' }).time === '09:00' && C({ debounce_min: -1 }).debounce_min === 30 && C({ debounce_min: 0 }).debounce_min === 0, 'enabled 불리언 false 만 · 시각 HH:MM 만 · debounce 0~1440');
+        ok(d.enabled === true && d.time === '11:00' && !('debounce_min' in d), '설정 없음 = 켜짐 · 11:00 · debounce 없음', d);
+        ok(C({ enabled: false }).enabled === false && C({ enabled: 'false' }).enabled === true && C({ time: '9:00' }).time === '11:00' && C({ time: '09:00' }).time === '09:00' && !('debounce_min' in C({ debounce_min: 30 })), 'enabled 불리언 false 만 · 시각 HH:MM 만 · 남은 debounce_min 값 무시');
         ok(T(['2026-09', '2026-10']) === '[계산서 정리] 2026-09, 2026-10 — 계산서 메일을 읽어 발행현황 표를 채워 주세요.', '지시 글 = 「[계산서 정리] 달, 달 — …」');
         ok(P('2026-01') === '2025-12' && P('2026-10') === '2026-09', '전달 계산(1월 → 지난해 12월)');
     }
@@ -79,28 +79,42 @@ function world(opt = {}) {
     {
         const last = { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' };
         const W = world({ store: { desk_invoice_last: last }, mails: [{ at: iso(KST(21, 19, 0)) }, { at: iso(KST(22, 2, 0)) }] });
-        ok((await W.tick(KST(22, 8, 9))) === null && W.orders.length === 0, '밤 02:00 에 온 메일 = 08:10 전엔 안 넣음');
-        const r = await W.tick(KST(22, 8, 10));
-        ok(r && r.ok && r.why === 'mail' && W.orders.length === 1 && W.orders[0].content === '[계산서 정리] 2026-09, 2026-10 — 계산서 메일을 읽어 발행현황 표를 채워 주세요.' && W.orders[0].status === '대기' && W.orders[0].created_by === '전대표 대표' && W.orders[0].created_by_id === 1, '08:10 = 지시 1건(받은 달 + 전달 · 대표 이름 · 대기) · 기준보다 옛 메일(19:00)은 안 셈', W.orders);
+        ok((await W.tick(KST(22, 10, 59))) === null && W.orders.length === 0, '10:59 = 메일 있어도 0건');
+        const r = await W.tick(KST(22, 11, 0));
+        ok(r && r.ok && r.why === 'mail' && W.orders.length === 1 && W.orders[0].content === '[계산서 정리] 2026-09, 2026-10 — 계산서 메일을 읽어 발행현황 표를 채워 주세요.' && W.orders[0].status === '대기' && W.orders[0].created_by === '전대표 대표' && W.orders[0].created_by_id === 1, '11:00 메일 있음 = 지시 1건(받은 달 + 전달 · 대표 이름 · 대기) · 기준보다 옛 메일은 안 셈', W.orders);
         const L = W.store.desk_invoice_last;
-        ok(L.date === '2026-10-22' && L.id === 5000 && L.mail_at === iso(KST(22, 2, 0)) && L.at === iso(KST(22, 8, 10)) && L.why === 'mail', '기록 = date·at·id·mail_at(본 메일 중 가장 늦은 것)', L);
+        ok(L.date === '2026-10-22' && L.id === 5000 && L.mail_at === iso(KST(22, 2, 0)) && L.at === iso(KST(22, 11, 0)) && L.why === 'mail', '기록 = date·at·id·mail_at(본 메일 중 가장 늦은 것)', L);
         ok(W.audits.length === 1 && W.audits[0].source === 'desk_invoice' && W.audits[0].actor.name === '계산서 정리(자동)' && W.audits[0].changes.after.kind === 'invoice' && W.audits[0].targetId === 5000, '감사 기록(source desk_invoice · actor 계산서 정리(자동))', W.audits);
-        // 같은 지시가 대기 중 → 새 메일이 와도 0건 · 기준 그대로
-        W.mails.push({ at: iso(KST(22, 9, 0)) });
-        for (const mm of [41, 50, 59]) await W.tick(KST(22, 8, mm));
-        ok(W.orders.length === 1 && W.store.desk_invoice_last.mail_at === iso(KST(22, 2, 0)), '같은 머리말 지시가 대기 중 = 새 메일이 있어도 0건 · mail_at 그대로(끝난 뒤 다시)');
-        W.orders[0].status = '처리중';
-        ok((await W.tick(KST(22, 9, 1))) === null && W.orders.length === 1, '처리중이어도 0건');
-        W.orders[0].status = '완료';
-        const r2 = await W.tick(KST(22, 9, 2));
-        ok(r2 && r2.ok && W.orders.length === 2 && W.orders[1].content.startsWith('[계산서 정리] 2026-09, 2026-10 ') && W.store.desk_invoice_last.mail_at === iso(KST(22, 9, 0)), '끝난 뒤 = 남은 새 메일로 1건 더', W.orders.map(o => o.content));
-        // debounce: 방금 넣은 뒤 30분 안에 새 메일 → 0건 · 30분 지나면 1건
-        W.orders[1].status = '완료';
-        W.mails.push({ at: iso(KST(22, 9, 10)) });
-        ok((await W.tick(KST(22, 9, 31))) === null && W.orders.length === 2, '마지막 등록 뒤 30분 안 = 0건(29분)');
-        const r3 = await W.tick(KST(22, 9, 32));
-        ok(r3 && r3.ok && W.orders.length === 3, '30분 지나면 1건');
-        ok((await W.tick(KST(22, 10, 30))) === null && W.orders.length === 3, '새 메일 없으면 0건(같은 메일 두 번 안 셈)');
+        // 같은 날 = 메일이 더 와도 · 지시가 끝나도 0건 · 기록 그대로
+        W.mails.push({ at: iso(KST(22, 12, 0)) });
+        W.orders[0].status = '완료'; const before = JSON.stringify(W.store.desk_invoice_last);
+        for (const [h, m] of [[11, 1], [12, 30], [15, 0], [23, 59]]) ok((await W.tick(KST(22, h, m))) === null, '같은 날 ' + h + ':' + m + ' = 0건');
+        ok(W.orders.length === 1 && JSON.stringify(W.store.desk_invoice_last) === before, '같은 날 재틱 = 지시 1건뿐 · 기록 바이트 그대로(mail_at µs 보존)');
+        // 다음 날 = 남은 메일로 다시
+        ok((await W.tick(KST(23, 10, 59))) === null, '다음 날 10:59 = 0건');
+        const r2 = await W.tick(KST(23, 11, 0));
+        ok(r2 && r2.ok && W.orders.length === 2 && W.store.desk_invoice_last.mail_at === iso(KST(22, 12, 0)) && W.store.desk_invoice_last.date === '2026-10-23', '다음 날 11:00 = 어제 11시 뒤 메일로 1건', W.store.desk_invoice_last);
+        W.orders[1].status = '완료'; const b2 = JSON.stringify(W.store.desk_invoice_last);
+        ok((await W.tick(KST(24, 11, 0))) === null && W.orders.length === 2 && JSON.stringify(W.store.desk_invoice_last) === b2, '그다음 날 메일 없음 = 0건 · 기록 그대로(쓰기 0)');
+    }
+    {   // 놓친 틱 · 대기 중
+        const base = { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' };
+        const W = world({ store: { desk_invoice_last: { ...base } }, mails: [{ at: iso(KST(22, 2, 0)) }] });
+        const r = await W.tick(KST(22, 11, 30));
+        ok(r && r.ok && W.orders.length === 1, '재시작 뒤 11:30 첫 틱 = 1건(11:00 틱을 놓쳐도)', r);
+        const W2 = world({ store: { desk_invoice_last: { ...base } }, mails: [{ at: iso(KST(22, 2, 0)) }] });
+        W2.orders.push({ id: 1, content: '[계산서 정리] 2026-10 — …', status: '처리중' });
+        ok((await W2.tick(KST(22, 11, 0))) === null && W2.orders.length === 1 && W2.store.desk_invoice_last.mail_at === base.mail_at, '같은 머리말 지시 처리중 = 0건 · 기록 그대로');
+        W2.orders[0].status = '완료';
+        const r3 = await W2.tick(KST(22, 11, 20));
+        ok(r3 && r3.ok && W2.orders.length === 2, '끝나면 그날 첫 틱에 1건');
+        const W3 = world({ store: { desk_invoice_last: { ...base } }, mails: [{ at: iso(KST(22, 2, 0)) }], owner: null });
+        const b3 = JSON.stringify(W3.store.desk_invoice_last); await W3.tick(KST(22, 11, 0));
+        ok(JSON.stringify(W3.store.desk_invoice_last) === b3, '못 넣음 = 기록 그대로(다음 틱에 다시)');
+        // 오늘 라이브와 같은 기록(옛 코드가 오늘 이미 만듦) = 오늘 0건
+        const W4 = world({ store: { desk_invoice_last: { date: '2026-10-22', at: iso(KST(22, 9, 0)), id: 3417, why: 'mail', month1: '2026-10', mail_at: iso(KST(22, 8, 0)) } }, mails: [{ at: iso(KST(22, 10, 0)) }] });
+        ok((await W4.tick(KST(22, 12, 0))) === null && W4.orders.length === 0, '배포 날 = 옛 코드가 오늘 만들었으면 오늘 0건');
+        ok((await W4.tick(KST(23, 11, 0))).ok && W4.orders.length === 1, '→ 다음 날 11:00 에 그 메일 처리');
     }
     {   // µs 보존(10/22 12:41 라이브 #3011): 첫 가동 기준 = 색인 시각 글자 그대로 → 같은 메일 2통(.965534)이 다음 틱에 「새 메일」로 안 잡힘
         const mk = () => [{ at: iso(Date.UTC(2026, 0, 20, 3, 0)), idx: '2026-10-22 04:38:58.965534+00' }, { at: iso(Date.UTC(2026, 1, 10, 3, 0)), idx: '2026-10-22 04:38:58.965534+00' }];
@@ -115,25 +129,25 @@ function world(opt = {}) {
         const r1 = await W2.tick(KST(22, 13, 0));
         ok(r1 && r1.ok && W2.store.desk_invoice_last.mail_at === '2026-10-22 04:38:58.965534+00', '등록 뒤 mail_at = 가장 늦은 색인 시각 글자(µs)', W2.store.desk_invoice_last);
         W2.orders[0].status = '완료';
-        await W2.tick(KST(22, 13, 40)); await W2.tick(KST(22, 15, 0));
-        ok(W2.orders.length === 1, '→ debounce 지나도 같은 메일로 다시 안 넣음(1건뿐)');
+        await W2.tick(KST(23, 11, 0)); await W2.tick(KST(24, 11, 0));
+        ok(W2.orders.length === 1, '→ 다음 날도 같은 메일로 다시 안 넣음(1건뿐)');
         const W3 = world({ hasIdx: false });
         await W3.tick(KST(22, 12, 39));
         ok(W3.store.desk_invoice_last.mail_at === '2026-10-22 05:00:00.123456+00', '색인 표 없으면 기준 = DB now() 글자');
     }
     {   // 색인이 늦게 적은 옛 메일(메일 날짜 = 7월 · 색인 시각 = 지금) = 잡힘 · 달은 메일 날짜로 · 기준은 색인 시각
         const W = world({ store: { desk_invoice_last: { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' } }, mails: [{ at: iso(Date.UTC(2026, 6, 15, 3, 0)), idx: iso(KST(22, 7, 0)) }] });
-        const r = await W.tick(KST(22, 8, 10));
+        const r = await W.tick(KST(22, 11, 0));
         ok(r && r.ok && W.orders[0].content.startsWith('[계산서 정리] 2026-06, 2026-07 ') && W.store.desk_invoice_last.mail_at === iso(KST(22, 7, 0)), '늦게 색인된 7월 메일 = 「2026-06, 2026-07」 · mail_at = 색인 시각', { o: W.orders, L: W.store.desk_invoice_last });
         W.orders[0].status = '완료';
-        ok((await W.tick(KST(22, 9, 0))) === null && W.orders.length === 1, '같은 메일 두 번 안 셈(색인 시각 기준)');
+        ok((await W.tick(KST(23, 11, 0))) === null && W.orders.length === 1, '다음 날도 같은 메일 두 번 안 셈(색인 시각 기준)');
         const W2 = world({ store: { desk_invoice_last: { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' } }, mails: [{ at: iso(KST(22, 1, 0)), idx: iso(KST(21, 19, 0)) }] });
-        ok((await W2.tick(KST(22, 8, 10))) === null && W2.orders.length === 0, '메일 날짜가 기준 뒤여도 색인 시각이 기준 전이면 안 셈');
+        ok((await W2.tick(KST(22, 11, 0))) === null && W2.orders.length === 0, '메일 날짜가 기준 뒤여도 색인 시각이 기준 전이면 안 셈');
     }
     {   // 두 인스턴스 경합 = 검사 직후 다른 쪽이 넣어도 INSERT … WHERE NOT EXISTS 가 막음
         const W = world({ store: { desk_invoice_last: { date: '2026-10-21', mail_at: iso(KST(21, 20, 0)), month1: '2026-10' } }, mails: [{ at: iso(KST(22, 1, 0)) }] });
         W.race = '[계산서 정리] 2026-09, 2026-10 — 다른 인스턴스';
-        const r = await W.tick(KST(22, 8, 10));
+        const r = await W.tick(KST(22, 11, 0));
         ok(r && r.ok === false && r.why === 'busy' && W.orders.length === 1 && W.orders[0].id === 9000 && W.store.desk_invoice_last.mail_at === iso(KST(21, 20, 0)) && W.audits.length === 0, '경합 = 두 번째 지시 0 · 기록·감사 그대로', { r, o: W.orders });
     }
     {   // 달 넘김 · 여러 달 · 옛 메일 · 다른 kind
@@ -150,51 +164,63 @@ function world(opt = {}) {
         const W = world({ store: { ...base(), desk_invoice: { enabled: false } }, mails: [{ at: iso(KST(22, 1, 0)) }] });
         ok((await W.tick(KST(22, 9, 0))) === null && W.orders.length === 0, 'enabled:false = 0건');
         const W2 = world({ store: base(), mails: [{ at: iso(KST(22, 1, 0)) }], engine: 'api' });
-        const r2 = await W2.tick(KST(22, 9, 0));
+        const r2 = await W2.tick(KST(22, 11, 0));
         ok(r2 && r2.why === 'engine_api' && W2.orders.length === 0 && W2.store.desk_invoice_last.mail_at === iso(KST(21, 0, 0)), '엔진 api = 0건 · 기준 그대로(desk 로 돌아오면 그때)');
         const W3 = world({ store: base(), mails: [{ at: iso(KST(22, 1, 0)) }], owner: null });
-        const r3 = await W3.tick(KST(22, 9, 0));
+        const r3 = await W3.tick(KST(22, 11, 0));
         ok(r3 && r3.why === 'owner_missing' && W3.orders.length === 0, '대표 계정 없음 = 0건');
         const W4 = world({ store: base(), hasIdx: false });
-        ok((await W4.tick(KST(22, 9, 0))) === null && W4.orders.length === 0 && !W4.sql.some(s => /FROM mail_index/.test(s)), '메일 색인 표가 없으면 안 묻고 0건');
-        const W5 = world({ store: { ...base(), desk_invoice: { time: '10:00', debounce_min: 0 } }, mails: [{ at: iso(KST(22, 1, 0)) }] });
+        ok((await W4.tick(KST(22, 11, 0))) === null && W4.orders.length === 0 && !W4.sql.some(s => /FROM mail_index/.test(s)), '메일 색인 표가 없으면 안 묻고 0건');
+        const W5 = world({ store: { ...base(), desk_invoice: { time: '10:00', debounce_min: 30 } }, mails: [{ at: iso(KST(22, 1, 0)) }] });
         ok((await W5.tick(KST(22, 9, 59))) === null && (await W5.tick(KST(22, 10, 0))).ok && W5.orders.length === 1, '시각을 10:00 으로 바꾸면 그때');
     }
 
-    console.log('③ 매달 1일 안전망(ⓑ)');
+    console.log('③ 매달 1일(ⓑ)');
     {
         const W = world({ store: { desk_invoice_last: { date: '2026-10-28', at: iso(KST(28, 9, 0)), id: 1, mail_at: iso(KST(28, 8, 0)), month1: '2026-10' } } });
         ok((await W.tick(KST(31, 23, 0))) === null && W.orders.length === 0, '10/31 = 0건');
-        ok((await W.tick(KST(32, 8, 9))) === null && W.orders.length === 0, '11/1 08:09 = 아직');
-        const r = await W.tick(KST(32, 8, 10));
-        ok(r && r.ok && r.why === 'month1' && W.orders.length === 1 && W.orders[0].content.startsWith('[계산서 정리] 2026-10, 2026-11 ') && W.store.desk_invoice_last.month1 === '2026-11' && W.store.desk_invoice_last.mail_at === iso(KST(28, 8, 0)), '11/1 08:10 = 「지난달, 이번 달」 1건 · 기준 메일 시각은 그대로', W.store);
+        ok((await W.tick(KST(32, 10, 59))) === null && W.orders.length === 0, '11/1 10:59 = 아직');
+        const r = await W.tick(KST(32, 11, 0));
+        ok(r && r.ok && r.why === 'month1' && W.orders.length === 1 && W.orders[0].content.startsWith('[계산서 정리] 2026-10, 2026-11 ') && W.store.desk_invoice_last.month1 === '2026-11' && W.store.desk_invoice_last.mail_at === iso(KST(28, 8, 0)), '11/1 11:00 메일 없음 = 「지난달, 이번 달」 1건 · 기준 메일 시각은 그대로', W.store);
         W.orders[0].status = '완료';
-        for (const h of [9, 12, 20]) await W.tick(KST(32, h, 0));
+        for (const h of [12, 15, 20]) await W.tick(KST(32, h, 0));
         ok(W.orders.length === 1, '그날 다시 틱 = 안 넣음');
-        await W.tick(KST(33, 8, 10));
+        await W.tick(KST(33, 11, 0));
         ok(W.orders.length === 1, '11/2 = 안 넣음');
     }
     {   // 그날 ⓐ 로 이미 넣었으면 안전망 생략
         const W = world({ store: { desk_invoice_last: { date: '2026-10-28', mail_at: iso(KST(28, 8, 0)), month1: '2026-10' } }, mails: [{ at: iso(KST(32, 3, 0)) }] });
-        const r = await W.tick(KST(32, 8, 10));
+        const r = await W.tick(KST(32, 11, 0));
         ok(r && r.why === 'mail' && W.orders.length === 1 && W.orders[0].content.startsWith('[계산서 정리] 2026-10, 2026-11 ') && W.store.desk_invoice_last.month1 === '2026-11', '1일에 새 메일로 넣음 = month1 도 이번 달로');
         W.orders[0].status = '완료';
-        await W.tick(KST(32, 9, 0)); await W.tick(KST(32, 15, 0));
-        ok(W.orders.length === 1, '→ 그날 안전망 생략(1건뿐)');
+        await W.tick(KST(32, 12, 0)); await W.tick(KST(32, 15, 0));
+        ok(W.orders.length === 1, '→ 그날 안전망 따로 없음(1건뿐)');
+    }
+    {   // 1일 옛 달 메일 + 안전망 = 한 지시로 합침
+        const W = world({ store: { desk_invoice_last: { date: '2026-10-28', mail_at: iso(KST(28, 8, 0)), month1: '2026-10' } }, mails: [{ at: iso(Date.UTC(2026, 7, 15, 3, 0)), idx: iso(KST(32, 3, 0)) }] });
+        const r = await W.tick(KST(32, 11, 0));
+        ok(r && r.why === 'mail' && W.orders.length === 1 && W.orders[0].content.startsWith('[계산서 정리] 2026-07, 2026-08, 2026-10, 2026-11 ') && W.store.desk_invoice_last.month1 === '2026-11', '1일 8월 메일 = 메일 달 + 지난달·이번 달 한 지시', W.orders);
+    }
+    {   // 1일을 통째로 놓침(렌더 다운·종일 처리 중) = 그 뒤 첫 틱
+        const W = world({ store: { desk_invoice_last: { date: '2026-10-28', mail_at: iso(KST(28, 8, 0)), month1: '2026-10' } } });
+        const r = await W.tick(KST(33, 11, 30));
+        ok(r && r.why === 'month1' && W.orders[0].content.startsWith('[계산서 정리] 2026-10, 2026-11 ') && W.store.desk_invoice_last.month1 === '2026-11', '11/1 전체를 놓침 = 11/2 첫 틱에 1건', r);
+        W.orders[0].status = '완료';
+        ok((await W.tick(KST(34, 11, 0))) === null && W.orders.length === 1, '→ 그다음 날 다시 안 넣음');
     }
     {   // 1일에 대기 중인 지시 있음 → 끝난 뒤 안전망
         const W = world({ store: { desk_invoice_last: { date: '2026-10-28', mail_at: iso(KST(28, 8, 0)), month1: '2026-10' } } });
         W.orders.push({ id: 1, content: '[계산서 정리] 2026-10 — …', status: '대기' });
-        ok((await W.tick(KST(32, 8, 10))) === null && W.orders.length === 1, '1일 같은 머리말 지시 대기 중 = 기다림');
+        ok((await W.tick(KST(32, 11, 0))) === null && W.orders.length === 1, '1일 같은 머리말 지시 대기 중 = 기다림');
         W.orders[0].status = '완료';
-        const r = await W.tick(KST(32, 8, 11));
+        const r = await W.tick(KST(32, 11, 1));
         ok(r && r.why === 'month1' && W.orders.length === 2, '끝난 뒤 안전망 1건');
     }
     {   // 첫 가동 날이 1일 = 안 넣음
         const W = world();
-        const r = await W.tick(KST(32, 8, 30));
+        const r = await W.tick(KST(32, 11, 30));
         ok(r && r.skipped === 'first_run' && W.orders.length === 0 && W.store.desk_invoice_last.month1 === '2026-11', '첫 가동 날이 1일이어도 지시 0(기준만)');
-        await W.tick(KST(32, 9, 0)); await W.tick(KST(32, 20, 0));
+        await W.tick(KST(32, 12, 0)); await W.tick(KST(32, 20, 0));
         ok(W.orders.length === 0, '그날 내내 0건');
     }
 
