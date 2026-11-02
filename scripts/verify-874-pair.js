@@ -254,7 +254,7 @@ function mkPool(db) {
     console.log('④ 화면 묻기(ao-ordermemo.js 를 떼어 실행)');
     const ui = fs.readFileSync(path.join(ROOT, 'public', 'ao-ordermemo.js'), 'utf8').replace(/\r\n/g, '\n');
     const head = ui.slice(ui.indexOf('    const esc = s =>'), ui.indexOf('    const lineView = s =>'));
-    const helpers = cut(ui, '    const nameOf = r =>', ';\n') + cut(ui, '    const INDIV_RE = ', ';\n');
+    const helpers = cut(ui, '    const nameOf = r =>', ';\n') + cut(ui, '    const INDIV_RE = ', ';\n') + cut(ui, '    const SHIP_NOTE = ', ';\n');
     const pairSrc = ui.slice(ui.indexOf('    const pairKeys = c =>'), ui.indexOf('    function indivSync() {'));
     const toasts = [];
     const U = new Function('window', 'OM', 'renderCard', 'toastFn', 'API', 'undoShow', 'load', 'errText', head.replace(/const toast = [^\n]*\n/, '') + '\nconst toast = toastFn;\n' + helpers + pairSrc + '\nreturn { pairKeys, pairHtml, pair1Go, savedCashOf, pair2Run };');

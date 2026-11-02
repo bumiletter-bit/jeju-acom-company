@@ -163,6 +163,10 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
 
 // 응답 꼴 — #841 ③ 화면용 전체 이름·번호(recipient_name·recipient_tel · 로그인 직원 응답에만) + 가림(recipient_masked) · 주소 0
 //   🔴 DB(invoice_auto_runs.result)·audit 에는 stripPII 로 뺀 꼴만 저장(종전처럼 가림만)
+// #961 주문에 안 붙은 운송장 이유 = 판정 분기(matchShipments unmatched) 그대로 · 번호는 끝 4자리만(DB 에도 이 글이 남음)
+const unmatchedWhy = s => { const t = String((s && s.senderTel) || '').replace(/\D/g, ''); return '그날 주문에 받는분 이름·번호·주소가 같은 주문이 없어요 · ' + (validTel(t) ? `운송장 보내는 분 번호 끝 ${t.slice(-4)} 도 그날 짝지은 구매자 번호에 없어요` : '운송장에 보내는 분 번호가 없어요'); };
+// #961 수기 파일·화면 공통 이유(이유 없는 줄 0)
+const manualWhy = x => { const e = String((x && x.error) || '').trim(), st = x && x.state; if (st === 'manual') return e || '수기(고르지 않음·수기 선택)'; if (st === 'unknown') return '모름 — 응답을 못 받았어요 · 다시 보내지 말고 채널 화면에서 발송됐는지 먼저 확인' + (e ? ': ' + e : ''); if (st === 'failed') return '실패: ' + (e || '이유 미상 · 총괄 확인'); return '전송 안 됨(' + (st || '?') + ')' + (e ? ': ' + e : ' · 이유 미상 · 총괄 확인'); };
 const PII_KEYS = ['recipient_name', 'recipient_tel'];
 const who = (name, tel) => ({ recipient_name: String(name == null ? '' : name).trim(), recipient_tel: String(tel == null ? '' : tel).trim() });
 function stripPII(card) {
@@ -194,7 +198,7 @@ function buildCard(m, orders) {
         by_channel: by, rows,
         cash: m.cash.map(s => ({ ...shipOpt(s), why: '보내는이 ! = 현금 주문(송장만 · 등록 대상 아님)' })),
         extra: m.extra.map(s => ({ ...shipOpt(s), why: '같은 구매자의 다른 주소 박스(입력삭제 나머지 · 등록 안 함 · 색인에만)' })),
-        unmatched: m.unmatched.map(s => ({ ...shipOpt(s), why: '그날 주문에 받는분 이름·번호·주소가 같은 주문이 없어요' })),
+        unmatched: m.unmatched.map(s => ({ ...shipOpt(s), why: unmatchedWhy(s) })),
         orders_without_tracking: orders.filter(o => !assignedKeys.has(o.channel + ':' + o.order_key)).length,
     };
 }
@@ -480,8 +484,8 @@ module.exports = function mountInvoiceAuto(app, d) {
             const r = await pool.query(`SELECT id, ship_date, result, register FROM invoice_auto_runs WHERE id = $1`, [runId]);
             if (!r.rows.length) return res.status(404).json({ ok: false, error: '그 실행이 없어요' });
             const card = r.rows[0].result || {}, reg = r.rows[0].register || {}; const byId = new Map((card.rows || []).map(x => [x.id, x]));
-            const bad = (reg.items || []).filter(x => ['failed', 'unknown', 'manual'].includes(x.state));
-            const why = x => x.state === 'manual' ? (x.error || '수기(고르지 않음·수기 선택)') : x.state === 'unknown' ? '모름 — 채널 화면에서 발송됐는지 먼저 확인: ' + (x.error || '') : '실패: ' + (x.error || '');
+            const bad = (reg.items || []).filter(x => !/^(ready|already|sent|skipped)$/.test(x.state || ''));   // #961 화면 숫자(failRows)와 같은 기준
+            const why = manualWhy;
             const wb = new ExcelJS.Workbook();
             const s1 = wb.addWorksheet('발송처리'); s1.addRow(['상품주문번호', '배송방법', '택배사', '송장번호', '받는분(가림)', '옵션', '사유']);
             const s2 = wb.addWorksheet('쿠팡·자사몰'); s2.addRow(['채널', '주문번호', '배송번호·품주코드', '운송장', '받는분(가림)', '옵션', '사유']);
@@ -500,6 +504,8 @@ module.exports = function mountInvoiceAuto(app, d) {
 
     return { initDB };
 };
+module.exports.unmatchedWhy = unmatchedWhy;
+module.exports.manualWhy = manualWhy;
 module.exports.matchShipments = matchShipments;
 module.exports.normOrders = normOrders;
 module.exports.normShips = normShips;

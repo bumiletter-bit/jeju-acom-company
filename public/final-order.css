@@ -244,7 +244,15 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 .fo .fo-linebar button.none { background: #FEE2E2; color: #B42318; }
 .fo .fo-linebar button:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; }
 .fo .fo-linebar .stale-note { display: none; font-size: 12.5px; color: var(--f-sub); }
-.fo .fo-ed.stale + .fo-linebar .stale-note { display: inline; }
+.fo .fo-ed.stale ~ .fo-linebar .stale-note { display: inline; }
+/* #959 메모함 배송메모 줄(표시 전용 · 메모 칸 밖) */
+.fo .fo-sm-lines { margin-top: 6px; border: 1px solid var(--f-card-line); border-radius: 10px; background: #fff; overflow: hidden; }
+.fo .fo-sm-lines[hidden] { display: none; }
+.fo .fo-sm-row { display: flex; align-items: stretch; cursor: pointer; }
+.fo .fo-sm-row + .fo-sm-row { border-top: 1px solid var(--f-line); }
+.fo .fo-sm-row .fo-gut { padding: 8px 0; }
+.fo .fo-sm-t { flex: 1 1 auto; min-width: 0; padding: 8px 12px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; color: inherit; }
+@media (max-width: 960px), (pointer: coarse) { .fo .fo-sm-row { min-height: 44px; } }
 @media (max-width: 640px) { .fo .fo-gut { flex-basis: 100px; } .fo .fo-gut .m { font-size: 10.5px; padding: 0 5px; } .fo .fo-gut .m span { padding: 0 5px; } .fo .fo-linebar button { min-height: 44px; } }
 /* #548 보충: 파일을 고른 뒤 「오늘은 없음」은 흐리게(누를 수 없음) */
 .fo .fo-check.off { opacity: .45; cursor: default; }
@@ -376,6 +384,7 @@ html[data-ao-theme="dark"] .fo-reset-confirm { border-color: var(--fd-err-line);
 
 /* 메모 칸 줄별 표시 — ✓ 초록 · ⚠ 노랑 · ✕ 빨강(뜻 그대로) */
 html[data-ao-theme="dark"] .fo .fo-ed { background: var(--fd-bg); }
+html[data-ao-theme="dark"] .fo .fo-sm-lines { background: var(--fd-bg); }
 html[data-ao-theme="dark"] .fo .fo-ed:focus-within { box-shadow: 0 0 0 3px rgba(140, 148, 255, .24); }
 html[data-ao-theme="dark"] .fo .fo-gut .m.ok span, html[data-ao-theme="dark"] .fo .fo-linebar button.ok { background: var(--fd-ok-bg); color: var(--fd-ok); }
 html[data-ao-theme="dark"] .fo .fo-gut .m.warn span, html[data-ao-theme="dark"] .fo .fo-linebar button.warn { background: var(--fd-warn-bg); color: var(--fd-warn); }

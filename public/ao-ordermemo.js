@@ -394,7 +394,9 @@
     // #955 메모 수정 — 번호 → 발송 전 주문 찾기(lookup) → 주문 카드 → 저장(메모함 줄 · checked.ship_memo) → 다음 최종발주 양식 배송메시지 · 판매처 주문 원본은 안 바뀜
     function smReset() { clearTimeout(OM.smT); OM.sm = null; const p = $('om-sm'); if (p) { p.hidden = true; p.innerHTML = ''; } }
     const smPhone = () => { const v = String($('om-tp-tel').value || '').trim(), d = digits(v); return isPhoneish(v) && d.length >= 9 ? d : ''; };
-    const smExisting = m => { if (!m) return null; const ks = [digits(m.pno || m.order_no), OM.sm && OM.sm.phone].filter(Boolean); return (OM.list || []).find(x => x.kind === 'line' && x.state === 'open' && x.checked && x.checked.ship_memo && ks.includes(digits(x.key))) || null; };
+    // #958 같은 주문의 배송메모 줄 = checked.pno 같음(번호 키) · 주문번호 키 옛 줄(11/2 줄 205 꼴) · pno 없는 주문(쿠팡 등)만 번호 키 pno 없는 줄
+    const smTel = m => { const x = OM.sm; return !m ? '' : m.as === 'buyer' && x && x.phone ? x.phone : digits(m.buyer_phone || m.buyer_tel || ''); };
+    const smExisting = m => { if (!m) return null; const pn = digits(m.pno || m.order_no), tel = smTel(m); return (OM.list || []).find(x => { if (x.kind !== 'line' || x.state !== 'open' || !x.checked || !x.checked.ship_memo) return false; const xp = digits(x.checked.pno); if (xp) return !!pn && xp === pn; if (pn && digits(x.key) === pn) return true; return !m.pno && !!tel && digits(x.key) === tel; }) || null; };
     function smDraw() {
         const p = $('om-sm'), x = OM.sm; if (!p) return; if (!x) { p.hidden = true; p.innerHTML = ''; return; }
         p.hidden = false;
@@ -406,6 +408,7 @@
         p.innerHTML = `<div class="om-sm-card">${one ? '' : '<p class="om-sm-s"><b>주문이 ' + m.length + '건이에요</b> · 메모를 고칠 주문을 골라 주세요</p>'}<ul class="om-ordl">${m.map((o, i) => `<li><label class="om-ordck"><input type="radio" name="om-sm-o" value="${i}"${x.pick === i ? ' checked' : ''}><span>${esc(o.plat)} · ${esc(o.buyer_name || '')}${o.recv_name && o.recv_name !== o.buyer_name ? ' → ' + esc(o.recv_name) : ''} · ${esc(short(o))} · ${esc(o.qty || 1)}박스${o.addr ? '<br><small>' + esc(o.addr) + '</small>' : ''}</span></label></li>`).join('')}</ul>`
             + `<p class="om-sm-s">${x.pick == null ? '주문을 고르면 넣어 둔 메모를 보여 드려요' : ex ? '지금 넣어 둔 배송메모: <b>' + esc(ex.checked.ship_memo) + '</b>' : '메모함에 넣어 둔 배송메모 없음 · 손님이 쓴 원래 메모는 최종발주 참고에 같이 나와요'}</p>`
             + `<label class="om-sm-l" for="om-sm-t">배송 메모</label><textarea id="om-sm-t" class="om-sm-t" rows="2" maxlength="200" placeholder="예) 1층 문 열립니다. 2층에 꼭 올려주세요">${esc(x.text || '')}</textarea>`
+            + (x.pick != null && !smTel(m[x.pick]) ? `<p class="om-sm-s err">${m[x.pick].pno || m[x.pick].order_no ? '이 주문의 구매자 번호를 못 찾았어요 · 주문번호로 저장해요' : '이 주문의 구매자 번호를 못 찾아 저장할 수 없어요 · 구매자 번호로 다시 찾아 주세요'}</p>` : x.pick != null && m[x.pick].as === 'recv' ? `<p class="om-sm-s">받는 분 번호로 찾았어요 · 구매자 번호 <b>${esc(fmtTel(smTel(m[x.pick])))}</b>로 저장해요</p>` : '')
             + `<p class="om-sm-s">다음 최종발주의 <b>우리 택배 양식 배송메시지</b>로 나가요. 네이버·쿠팡·자사몰 주문 원본은 바뀌지 않아요.</p>`
             + `<div class="om-sm-acts"><button type="button" class="om-btn" data-smact="close">닫기</button><button type="button" class="om-btn primary" data-smact="save"${x.saving ? ' disabled' : ''}>${x.saving ? '저장 중…' : ex ? '메모 고쳐 저장' : '메모 저장'}</button></div></div>`;
     }
@@ -427,8 +430,10 @@
         const box = $('om-sm-t'), t = String(box ? box.value : x.text || '').replace(/\s*\n+\s*/g, ' ').trim();
         if (x.pick == null) { tpNote('메모를 고칠 주문을 골라 주세요', 'err'); return; }
         if (!t) { tpNote('배송 메모를 넣어 주세요', 'err'); if (box) box.focus({ preventScroll: true }); return; }
-        const o = x.matches[x.pick], key = String(o.pno || o.order_no || x.phone), buyer = o.as === 'buyer' ? x.phone : (o.buyer_phone || '');
-        const checked = Object.assign({ plat: o.plat, as: o.as, at: new Date().toISOString(), ship_memo: t }, buyer ? { buyer } : {}), note = '배송메모 ' + t, ex = smExisting(o);
+        const o = x.matches[x.pick], buyer = smTel(o), orderKey = String(o.pno || o.order_no || '');
+        if (!buyer && !orderKey) { tpNote('이 주문의 구매자 번호를 못 찾아 저장할 수 없어요', 'err'); return; }
+        const key = buyer ? lineTel(buyer) : orderKey;   // #958 줄 = 구매자 번호(다른 메모함 줄과 같은 꼴) · 고른 주문 = checked.pno · 쿠팡 등 pno 없음 = 번호만
+        const checked = Object.assign({ plat: o.plat, as: o.as, at: new Date().toISOString(), ship_memo: t }, buyer ? { buyer } : {}, buyer && o.pno ? { pno: String(o.pno) } : {}), note = '배송메모 ' + t, ex = smExisting(o);
         x.text = t; x.saving = true; tpNote(''); smDraw();
         const res = ex ? await API.update(ex.id, { key, note, plat: o.plat, ship_date: ex.ship_date || null, checked }) : await API.save({ raw: '', tags: [], source: 'manual', rows: [{ kind: 'line', key, note, plat: o.plat, ship_date: null, src: 'edit', checked }] });
         if (OM.sm !== x) return;
@@ -694,7 +699,7 @@
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>
             <button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + ' 열어 고치기')}"><span class="om-ml-l">${esc(lineView(r.line) || '(빈 줄)')}</span>${b ? `<span class="om-pill k-${b.k}">${esc(b.t)}</span>` : ''}${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button>
-            ${INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || '')) && isPhoneKey(lineD(r)) ? (r.badge ? badgeHtml(r) : `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(lineShow(r) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>`) : (r.badge && !isPhoneKey(lineD(r)) ? `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(badgeText(r.badge))}</span>` : '')}
+            ${isIndivText(r) && isPhoneKey(lineD(r)) ? (r.badge ? badgeHtml(r) : `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(lineShow(r) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>`) : (r.badge && !isPhoneKey(lineD(r)) ? `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(badgeText(r.badge))}</span>` : '')}
             <button type="button" class="om-x" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></li>`;
     }
     function rowHtml(r, isOpen, sel) {
@@ -1172,13 +1177,15 @@
     //   판정 = 서버 order-memo.js 의 INDIV 식 · isIndivLine 과 같게(「입력o삭제x」·「입력0삭제x」·「입력삭제」·「개별발송」 + 번호 8자리 이상)
     //   고치기(edit) 카드는 줄 하나만 열리므로 짝 줄이 카드에 없는 게 정상 → 주의 글 없이 「입력삭제 주문의 주소 줄이에요」만
     const INDIV_RE = /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i;
-    const hasIndivLine = c => c.rows.some(x => x.kind === 'line' && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')) && digits(x.key).length >= 8);
+    const SHIP_NOTE = /^배송메모(?:\s|$)/, isShipRow = x => !!x && x.kind === 'line' && SHIP_NOTE.test(String(x.note || ''));   // #958 배송메모 줄 = 같은 번호여도 입력삭제·짝·중복 확인·주문별 나누기 밖(서버 isIndivLine 과 같게)
+    const isIndivText = x => !SHIP_NOTE.test(String(x.note || '')) && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''));
+    const hasIndivLine = c => c.rows.some(x => x.kind === 'line' && isIndivText(x) && digits(x.key).length >= 8);
     const indivWarn = c => c.mode !== 'edit' && !hasIndivLine(c);
     const indivNote = (c, r) => c.mode === 'edit' ? (r && lostOf(r) ? '입력삭제 줄이 없어요(「풀림」) · 그 번호 입력삭제 줄을 다시 넣으면 저절로 붙어요 · 현금으로 두려면 [현금으로 변경하기]' : r && lostWait(r) ? `입력삭제 줄은 그날 나갔고 이 줄은 발송일(${md(r.ship_date)})까지 기다려요` : '입력삭제 주문의 주소 줄이에요 · 입력삭제 줄을 지우면 이 줄은 「풀림」이 돼요') : hasIndivLine(c) ? '입력삭제 줄을 지우면 이 주소는 현금 손님이 돼요' : '입력삭제 줄이 빠졌어요 — 저장하면 이 주소는 현금 손님(「!」)으로 들어가요';   // #935 풀림 안내
     // ── #874(대표 10/27) 입력삭제 번호 ↔ 현금(「!」) 줄 짝짓기 = 묻고 → 사람이 누를 때만(자동 없음 · 안 누르면 종전과 같음)
     //   ① 같은 카드의 현금 줄(아직 짝 안 됨) = 줄마다 고르기(기본 안 고름) + 번호 고르기(입력삭제 줄이 둘 이상) → [주소 줄로 짝짓기] = K(구매자 연락처) = 그 번호 → 저장 때 서버 markIndiv 가 짝
     //   ② 메모함에 이미 저장된 현금 줄(K·B 번호 = 그 번호) = [바꾸기] 고르면 저장 뒤 POST /api/order-memo/pair(서버가 그 입력삭제 줄 묶음으로 옮김 · 되돌리기 6초)
-    const pairKeys = c => { const m = new Map(); (c && c.mode !== 'edit' ? c.rows : []).forEach(x => { if (x.kind === 'line' && !x._new && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')) && /^0\d{8,11}$/.test(digits(x.key)) && !m.has(digits(x.key))) m.set(digits(x.key), telShow(x.key)); }); return [...m].map(([d, show]) => ({ d, show })); };   // #938 전화번호 키 줄만(주문번호 키 줄은 ②·후보·[추가 매칭] 길 X · K 는 늘 전화번호 · 워커2 점검 ②)
+    const pairKeys = c => { const m = new Map(); (c && c.mode !== 'edit' ? c.rows : []).forEach(x => { if (x.kind === 'line' && !x._new && isIndivText(x) && /^0\d{8,11}$/.test(digits(x.key)) && !m.has(digits(x.key))) m.set(digits(x.key), telShow(x.key)); }); return [...m].map(([d, show]) => ({ d, show })); };   // #938 전화번호 키 줄만(주문번호 키 줄은 ②·후보·[추가 매칭] 길 X · K 는 늘 전화번호 · 워커2 점검 ②)
     const indKeyOk = c => !!(c && c.ind && c.ind.on && digits(c.ind.key).length >= 9);   // #895 주문 입력 카드 「입력삭제 주소예요」 켜고 번호(9자리↑)를 넣었나 · pairHtml 이 씀(verify-874 가 이 구간을 떼어 씀 = 여기 둠)
     const pair1Rows = c => c.rows.map((r, ri) => ({ r, ri })).filter(x => x.r.kind === 'cash' && !x.r.indiv && !x.r._new && !x.r.service);
     // #935 「입력삭제 풀림」 = 「!」 없는 주소 줄인데 그 번호(K·B) 열린 입력삭제 줄이 메모함에 없음(입력삭제 줄을 지운 뒤) · 화면 표시만(for-ship·최종발주는 종전대로 주소 줄 = core cnot 카드가 잡음 · 「!」로 바꾸면 주문 n박스 + 이 줄 = 조용한 이중 발송) · 그 번호 입력삭제 줄을 다시 넣으면 번호로 저절로 붙음(② 체크 대상 아님)
@@ -1186,7 +1193,7 @@
     const isPhoneKey = k => /^0\d{8,11}$/.test(digits(k));
     const lineD = x => { const b = x && x.checked && x.checked.buyer ? digits(x.checked.buyer) : ''; return isPhoneKey(b) ? b : digits(x && x.key); };
     const lineShow = x => { const b = x && x.checked && x.checked.buyer; return b && isPhoneKey(b) ? telShow(b) : telShow(x && x.key); };
-    const indivLineKeys = () => new Set((OM.list || []).filter(x => x.kind === 'line' && x.state === 'open' && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')) && lineD(x).length >= 8).map(x => lineD(x)));
+    const indivLineKeys = () => new Set((OM.list || []).filter(x => x.kind === 'line' && x.state === 'open' && isIndivText(x) && lineD(x).length >= 8).map(x => lineD(x)));
     const noLine = (r, keys) => { const K = keys || indivLineKeys(); return ![r.cells[10], r.cells[1]].map(digits).some(d => d && K.has(d)); };
     const lostWait = r => !!(r && r.kind === 'cash' && r.state === 'open' && r.indiv && !r.service && r.id != null && r.ship_date && OM.shipDate && r.ship_date > OM.shipDate && noLine(r));   // 입력삭제 줄은 그날 나갔고 이 줄은 발송일까지 기다리는 줄(#870 나눠 보내기) = 풀림 아님
     const lostOf = (r, keys) => { if (!r || r.kind !== 'cash' || r.state !== 'open' || !r.indiv || r.service || r.id == null || r.sure === false || (r.ship_date && OM.shipDate && r.ship_date > OM.shipDate)) return false; return noLine(r, keys); };   // 워커2 점검 = 날짜 대기 줄·「확인」 남은 줄은 거짓 경보 → 종전 알약
@@ -1197,7 +1204,7 @@
     //     → 메모함에 「아직 주소 줄이 없는 열린 입력삭제 줄」이 있으면 ①과 같은 묻기에 그 번호도 넣음(saved) · 고르면 저장 뒤 POST pair 로 그 줄 묶음에 짝
     //     #875(대표 10/27) 오늘(KST) 저장한 입력삭제 줄만 — 어제 이전 줄은 안 물음(묶음 created_at = UTC ISO → +9시간 날짜 · todayStr 와 같은 KST)
     const kstDay = v => { const t = Date.parse(String(v || '')); return Number.isFinite(t) ? new Date(t + 9 * 3600e3).toISOString().slice(0, 10) : ''; };
-    const savedIndivKeys = () => { const L = OM.list || [], m = new Map(), today = todayStr(); L.forEach(x => { const d = lineD(x); if (x.kind !== 'line' || x.state !== 'open' || d.length < 8 || m.has(d) || kstDay(x.entry && x.entry.created_at) !== today || !INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''))) return; if (L.some(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d))) return; m.set(d, lineShow(x)); }); return [...m].map(([d, show]) => ({ d, show, saved: true })); };
+    const savedIndivKeys = () => { const L = OM.list || [], m = new Map(), today = todayStr(); L.forEach(x => { const d = lineD(x); if (x.kind !== 'line' || x.state !== 'open' || d.length < 8 || m.has(d) || kstDay(x.entry && x.entry.created_at) !== today || !isIndivText(x)) return; if (L.some(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d))) return; m.set(d, lineShow(x)); }); return [...m].map(([d, show]) => ({ d, show, saved: true })); };
     const pair1Keys = c => { const own = pairKeys(c); return c && c.mode !== 'edit' ? own.concat(savedIndivKeys().filter(k => !own.some(o => o.d === k.d))) : []; };
     const pairWho = r => [nameOf(r), last4(r.cells[6]) ? '…' + last4(r.cells[6]) : '', String(r.cells[8] || '').split(/\s+/).slice(0, 3).join(' ')].filter(Boolean).join(' · ');
     // #900 1-H(대표 10/27) 짝 묻기마다 같은 체크 목록 — 줄마다 체크 · 기본 전부 · 체크한 줄만 입력삭제 짝 · 안 한 줄 = 현금 그대로
@@ -1331,7 +1338,7 @@
         await load(); if (OM.card === c) renderCard();
     }
     // ⑤ 현금 줄 고치기 카드 → 열린 입력삭제 줄 목록(전부 · 번호 무관) → 하나 골라 그 주문의 주소 줄로
-    const pyLines = () => { const L = OM.list || [], m = new Map(); L.forEach(x => { const d = lineD(x); if (x.kind !== 'line' || x.state !== 'open' || !isPhoneKey(d) || m.has(d) || !INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || ''))) return; const rows = L.filter(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d)); m.set(d, { d, show: lineShow(x), note: String(x.note || '').trim(), when: hintWhen(x.entry && x.entry.created_at), at: Date.parse(String((x.entry && x.entry.created_at) || '')) || 0, date: x.ship_date || null, n: rows.length, boxes: rows.reduce((t, r) => t + qtyOf(r), 0) }); }); return [...m.values()].sort((a, b) => b.at - a.at); };
+    const pyLines = () => { const L = OM.list || [], m = new Map(); L.forEach(x => { const d = lineD(x); if (x.kind !== 'line' || x.state !== 'open' || !isPhoneKey(d) || m.has(d) || !isIndivText(x)) return; const rows = L.filter(y => y.kind === 'cash' && y.state === 'open' && y.indiv && [y.cells[10], y.cells[1]].map(digits).includes(d)); m.set(d, { d, show: lineShow(x), note: String(x.note || '').trim(), when: hintWhen(x.entry && x.entry.created_at), at: Date.parse(String((x.entry && x.entry.created_at) || '')) || 0, date: x.ship_date || null, n: rows.length, boxes: rows.reduce((t, r) => t + qtyOf(r), 0) }); }); return [...m.values()].sort((a, b) => b.at - a.at); };
     const pyRowOk = (c, r) => !!(c && c.mode === 'edit' && c.rows.length === 1 && r && r.kind === 'cash' && !r.indiv && !r.service && r.id != null);
     const pyWho = l => [l.show, l.note, l.when, l.date ? md(l.date) + ' 발송' : '', l.n ? `주소 줄 ${l.n}줄(${l.boxes}박스)` : '주소 줄 없음'].filter(Boolean).join(' · ');
     function pyHtml(c) {
@@ -1421,7 +1428,7 @@
     // #899 5-b 저장 때 「똑같은 줄은 빼고 저장」으로 뺀 입력삭제 줄(메모함에 같은 줄이 이미 있음) — 그 묶음에 입력삭제 줄이 없어져 서버가 주소 줄로 못 짝지음
     //   → 같은 카드의 현금 줄 가운데 K·B 번호가 그 번호인 줄(입력삭제 줄이 남았으면 서버 markIndiv 가 짝지었을 줄과 같은 집합)에 _pairSaved 표식 → 저장 뒤 pair2Run 이 메모함 그 줄과 짝
     function dupPairMark(rows, sameIdx) {
-        const keys = new Map(); sameIdx.forEach(i => { const r = rows[i]; if (r && r.kind === 'line' && INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || '')) && digits(r.key).length >= 8) keys.set(digits(r.key), telShow(r.key)); });
+        const keys = new Map(); sameIdx.forEach(i => { const r = rows[i]; if (r && r.kind === 'line' && isIndivText(r) && digits(r.key).length >= 8) keys.set(digits(r.key), telShow(r.key)); });
         if (keys.size) rows.forEach((r, i) => { if (sameIdx.has(i) || r.kind !== 'cash' || r._pairSaved) return; const d = [r.cells[10], r.cells[1]].map(digits).find(x => keys.has(x)); if (d) r._pairSaved = keys.get(d); });
     }
     async function pair2Run(c, sent, saved) {
@@ -1515,6 +1522,7 @@
     }
     function ordHtml(r, ri) {
         const c = OM.card;
+        if (isShipRow(r)) return '';
         if (c && c.mode === 'edit' && r.kind === 'line' && !isPhoneKey(r.key) && r.checked && isPhoneKey(r.checked.buyer)) return ordMergeHtml(r);   // 저장된 주문번호 줄 = 합치기
         const L = ordList(r); if (L.length < 2) return '';
         if (!r._ord) ordInit(r); const o = r._ord, sp = ordSplit(r);
@@ -1523,7 +1531,7 @@
             <ul class="om-ordl">${L.map(x => { const e = o.by[x.order_no], dt = ordDate(r, e); return `<li><label class="om-ordck"><input type="checkbox" data-cact="ordchk" data-ri="${ri}" data-o="${esc(x.order_no)}"${e.on ? ' checked' : ''}> <span>${esc(optBrief(x.option))}${x.qty ? ` ${x.qty}박스` : ''} · ${esc(x.order_no)}${x.paid_at ? ` · ${esc(md(x.paid_at))} 결제` : ''}</span></label><label class="om-orddt"><span>발송일</span><input data-cact="orddate" data-ri="${ri}" data-o="${esc(x.order_no)}" value="${esc(dt ? md(dt) : '')}" placeholder="비우면 줄 발송일" inputmode="numeric"${e.on ? '' : ' disabled'}></label></li>`; }).join('')}</ul>
             <p class="om-ordn">${sp ? `저장하면 주문번호 줄 ${sp.length}개로 나뉘어 저장돼요(전화번호 줄은 안 남아요)${dated.length ? ` · ${dated.map(z => `${md(ordDate(r, z.e))} 주문(${z.x.qty || '?'}박스)의 주소 줄 ${z.x.qty || ''}개에는 발송일 칸에 ${md(ordDate(r, z.e))}를 직접 넣어 주세요`).join(' · ')}` : ''}` : '주문별 발송일이 다르면 주문번호 줄로 나뉘어 저장돼요 · 지금은 전부 같아 전화번호 줄 하나로 저장돼요'}</p></div>`;
     }
-    const ordSibs = r => (OM.list || []).filter(x => x.kind === 'line' && x.state === 'open' && x.id != null && x.id !== r.id && !isPhoneKey(x.key) && lineD(x) === lineD(r) && String(x.plat || '') === String(r.plat || '') && String(x.note || '').replace(/\s+/g, '') === String(r.note || '').replace(/\s+/g, ''));
+    const ordSibs = r => (OM.list || []).filter(x => x.kind === 'line' && !isShipRow(x) && x.state === 'open' && x.id != null && x.id !== r.id && !isPhoneKey(x.key) && lineD(x) === lineD(r) && String(x.plat || '') === String(r.plat || '') && String(x.note || '').replace(/\s+/g, '') === String(r.note || '').replace(/\s+/g, ''));
     function ordMergeHtml(r) {
         const sibs = ordSibs(r), same = sibs.every(x => (x.ship_date || null) === (r.ship_date || null));
         return `<div class="om-ordbox" role="group" aria-label="주문번호 줄"><b>주문번호 줄 · 구매자 ${esc(lineShow(r))}${sibs.length ? ` · 같은 구매자 주문번호 줄 ${sibs.length}개 더(${esc(sibs.map(x => (x.ship_date ? md(x.ship_date) : '다음 발주') + ' ' + String(x.key)).join(', '))})` : ''}</b>
@@ -1583,7 +1591,7 @@
         return `${x.plat}${x.as === 'order' ? ' 주문번호' : ''} · ${body} · 맞아요`;
     }
     // #867 입력삭제 줄(INDIV_RE)인데 고른 판매처에서 받는 분 번호로만 찾힘 = 저장 막음 · [구매자 번호로 바꾸기](그 주문 구매자 번호 하나일 때만 · 서버 lookup buyer_phone)
-    const isIndivRow = r => !!r && r.kind === 'line' && INDIV_RE.test(String(r.note || '') + ' ' + String(r.line || ''));
+    const isIndivRow = r => !!r && r.kind === 'line' && isIndivText(r);
     function indivRecv(r) {
         if (!isIndivRow(r) || !r.plat || !r._lk || r._lk.state !== 'done' || r._lk.key !== digits(r.key)) return false;
         const m = lkIn(r); return m.length > 0 && m.every(x => x.as === 'recv');
@@ -1857,7 +1865,7 @@
     }
     // ── #850-f 같은 번호(숫자)에 같은 종류(사이즈·날짜·보내는이·입력삭제) 열린 줄이 이미 있으면 — 같으면 안 넣음 · 다르면 바꿀지 묻기(화면 판정 · 서버 무변경)
     const DUP_KINDS = [['size', '사이즈', n => /사이즈|(?:^|[\s,·])\d?\s*[SMLsml](?=$|[\s,·])/.test(n)], ['date', '날짜', (n, r) => !!r.ship_date || /\d+\s*일\s*(?:발송|출고|보내)/.test(n)], ['sender', '보내는이', n => /보내는\s*(?:이|분|사람)|드림/.test(n)], ['indiv', '입력삭제', n => INDIV_RE.test(n)]];
-    const dupKinds = r => r.kind !== 'line' ? [] : DUP_KINDS.filter(k => k[2](String(r.note || ''), r));
+    const dupKinds = r => r.kind !== 'line' || isShipRow(r) ? [] : DUP_KINDS.filter(k => k[2](String(r.note || ''), r));
     const dupSame = (a, b) => String(a.note || '').replace(/\s+/g, '').toLowerCase() === String(b.note || '').replace(/\s+/g, '').toLowerCase() && (a.ship_date || '') === (b.ship_date || '');
     async function dupCheck(rows) {
         const res = await API.list('open'); if (!res.ok) return null;   // 못 읽으면 확인 없이 종전대로 저장
@@ -2055,7 +2063,7 @@
     //      머리줄 = 위 15줄 안에서 「수취인명·옵션정보·배송지」 칸 이름으로 찾음 · 빈 줄·합계 줄(받는 분·주소 없음) 뺌 · 옵션 = 단가표 이름과 맞을 때만(아니면 비워 고르게)
     const IND_MIN = 9, FILE_MAX = 1500, SAVE_CHUNK = 60;   // #900 2-B 명절 = 파일 1,500줄(카드는 50장씩 그림 · cardRows)   // SAVE_CHUNK = 서버 한 번 저장 상한(order-memo.js MAX_ROWS)
     const FILE_HEADERS = ['보내는사람', '보내는사람연락처', '출고지', '수취인명', '옵션정보', '수량', '수취인연락처1', '수취인연락처2', '배송지', '배송메세지', '구매자연락처', '박스타입(입력x)', '보내는이 변경주소'];   // final-order-core.js HEADERS 와 같은 순서(그 파일이 없을 때 대비)
-    const savedIndivLine = d => (OM.list || []).some(x => x.kind === 'line' && x.state === 'open' && digits(x.key) === d && INDIV_RE.test(String(x.note || '') + ' ' + String(x.line || '')));
+    const savedIndivLine = d => (OM.list || []).some(x => x.kind === 'line' && x.state === 'open' && digits(x.key) === d && isIndivText(x));
     // #902 「입력삭제 주소예요」가 넣은 구매자·보내는사람 번호(_ik)만 있는 줄도 = 손대지 않은 빈 줄(종전엔 그 번호 때문에 파일 줄로 안 바뀌고 빈 「현금 줄 1」이 남음)
     const cashEmpty = r => r.kind === 'cash' && !r.ship_date && !r.cells.some((v, i) => { const t = String(v == null ? '' : v).trim(); return t && !(r._ik != null && (i === 10 || i === 1) && digits(t) === r._ik); });
     function indNote(c) {

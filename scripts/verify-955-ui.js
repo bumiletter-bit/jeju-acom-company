@@ -70,10 +70,10 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
         const T1 = '1층 문 열립니다. 2층에 꼭 올려주세요';
         await pg.fill('#om-sm-t', T1); await pg.click('[data-smact="save"]'); await pg.waitForFunction(() => document.getElementById('om-sm').hidden);
         let R = await rows();
-        ok(R.length === 1 && R[0].line_key === '2099110200001' && R[0].note === '배송메모 ' + T1 && R[0].checked.ship_memo === T1 && R[0].checked.plat === '네이버' && R[0].sure === true, '서버 줄 = 주문번호 키 · checked.ship_memo', R);
+        ok(R.length === 1 && R[0].line_key === fmt(ONE) && R[0].checked.pno === '2099110200001' && R[0].note === '배송메모 ' + T1 && R[0].checked.ship_memo === T1 && R[0].checked.plat === '네이버' && R[0].sure === true, '#958 서버 줄 = 구매자 번호 키 + checked.pno', R);
         ok(R[0].checked.buyer === ONE, '구매자 번호 보관', R[0].checked);
         let F = await forShip();
-        ok(F.ship_memos.length === 1 && F.ship_memos[0].text === T1 && F.ship_memos[0].key === '2099110200001' && F.ship_memos[0].id === R[0].id, '실제 for-ship 응답에 ship_memos', F);
+        ok(F.ship_memos.length === 1 && F.ship_memos[0].text === T1 && F.ship_memos[0].key === fmt(ONE) && F.ship_memos[0].checked.pno === '2099110200001' && F.ship_memos[0].id === R[0].id, '실제 for-ship 응답에 ship_memos', F);
         ok(F.lines.length === 0 && F.memo_text === '' && F.ids.includes(R[0].id), 'lines·memo_text 밖(메모 칸·중간발주 영향 0) · ids 안(오늘 씀)', F);
         { const o = await (await fetch(BASE + '/api/order-memo/for-ship?date=' + D2)).json(); ok(!('ship_memos' in o) && o.ids.length === 0 && o.lines.length === 0 && o.held.length === 0, '옛 화면(sm 없음) = 배송메모 줄 모름 · HEAD 와 같은 칸', o); }
         const listed = await (await fetch(BASE + '/api/order-memo?state=open')).json();
@@ -94,14 +94,19 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
         await pg.locator('input[name="om-sm-o"]').nth(1).check(); ok(await pg.inputValue('#om-sm-t') === '둘째 주문 메모', '고른 뒤 적던 글 유지');
         const chosenAddr = await pg.locator('.om-sm .om-ordl li').nth(1).textContent();
         await pg.click('[data-smact="save"]'); await pg.waitForFunction(() => document.getElementById('om-sm').hidden);
-        R = await rows(); const r2 = R[1], m2 = (await db.query(`SELECT addr FROM order_memo_preorders WHERE product_order_no=$1`, [r2.line_key])).rows[0];
-        ok(R.length === 2 && /^20991102/.test(r2.line_key) && chosenAddr.includes(m2.addr), '고른 주문번호 줄만', [r2.line_key, chosenAddr]);
+        R = await rows(); const r2 = R[1], m2 = (await db.query(`SELECT addr FROM order_memo_preorders WHERE product_order_no=$1`, [r2.checked.pno])).rows[0];
+        ok(R.length === 2 && r2.line_key === fmt(TWO) && !!m2 && chosenAddr.includes(m2.addr), '#958 번호 키 · 고른 주문만 pno', [r2.line_key, chosenAddr]);
+        await pg.fill('#om-tp-tel', TWO); await pg.click('#om-tp-go'); await pg.waitForSelector('#om-sm-t');
+        { const other = m2.addr.includes('이로 2') ? 0 : 1; await pg.locator('input[name="om-sm-o"]').nth(other).check(); ok(await pg.inputValue('#om-sm-t') === '' && !(await pg.textContent('#om-sm')).includes('둘째 주문 메모'), '다른 주문 고름 = 앞 주문 글 안 끌어옴'); await pg.fill('#om-sm-t', '같은 번호 다른 주문 메모'); await pg.click('[data-smact="save"]'); await pg.waitForFunction(() => document.getElementById('om-sm').hidden); R = await rows(); ok(R.length === 3 && R[1].checked.ship_memo === '둘째 주문 메모' && R[2].checked.ship_memo === '같은 번호 다른 주문 메모' && R[2].checked.pno !== R[1].checked.pno, '같은 번호 두 주문 = 줄 둘 · 안 합쳐지고 안 덮음', R.map(x => x.checked)); }
+        await pg.fill('#om-tp-tel', '01066660003'); await pg.click('#om-tp-go'); await pg.waitForSelector('#om-sm-t');
+        ok((await pg.textContent('#om-sm')).includes('받는 분 번호로 찾았어요') && (await pg.textContent('#om-sm')).includes(fmt(TWO)), '받는 분 번호 = 구매자 번호로 저장 안내', await pg.textContent('#om-sm'));
+        await pg.fill('#om-sm-t', ''); await pg.fill('#om-sm-t', '받는 분 번호로 찾아 고침'); await pg.click('[data-smact="save"]'); await pg.waitForFunction(() => document.getElementById('om-sm').hidden); R = await rows(); { const hit = R.filter(x => x.checked && x.checked.pno === '2099110200003'); ok(hit.length === 1 && hit[0].line_key === fmt(TWO) && hit[0].checked.ship_memo === '받는 분 번호로 찾아 고침', '받는 분 번호로 찾아도 구매자 번호 키 · 같은 주문 줄 고침', hit); }
 
         console.log('Ⅴ 주문 없음·주문번호로 찾기');
         await pg.fill('#om-tp-tel', GONE); await pg.click('#om-tp-go'); await pg.waitForFunction(() => /못 찾았어요/.test(document.getElementById('om-sm').textContent));
         ok(await pg.locator('#om-sm-t').count() === 0, '주문 없음 = 안내만 · 저장 칸 없음');
         await pg.waitForFunction(() => /잠시 뒤/.test(document.getElementById('om-sm').textContent), null, { timeout: 9000 }); ok(true, '6초 뒤 한 번 더 찾고 안내');
-        await pg.fill('#om-tp-tel', '2099110200001'); await pg.click('#om-tp-go'); await pg.waitForSelector('#om-sm-t'); ok(await pg.inputValue('#om-tp-tel') === '2099110200001' && await pg.inputValue('#om-sm-t') === T1 + ' 감사합니다', '주문번호로도 찾음·넣어 둔 글');
+        await pg.fill('#om-tp-tel', '2099110200001'); await pg.click('#om-tp-go'); await pg.waitForSelector('#om-sm-t'); ok(await pg.inputValue('#om-tp-tel') === '2099110200001' && await pg.inputValue('#om-sm-t') === T1 + ' 감사합니다', '주문번호로도 찾음·넣어 둔 글'); { const n0 = (await rows()).length; await pg.fill('#om-sm-t', '주문번호로 찾아 고친 글'); await pg.click('[data-smact="save"]'); await pg.waitForFunction(() => document.getElementById('om-sm').hidden); const Rr = await rows(); const x0 = Rr.find(x => x.checked && x.checked.pno === '2099110200001'); ok(Rr.length === n0 && x0.line_key === fmt(ONE) && x0.checked.ship_memo === '주문번호로 찾아 고친 글', '주문번호로 찾아도 번호 키 + pno(구매자 번호 앎)', x0); await pg.click('.om-tag[data-tag="smemo"]'); await pg.fill('#om-tp-tel', '2099110200001'); await pg.click('#om-tp-go'); await pg.waitForSelector('#om-sm-t'); }
         await pg.click('[data-smact="close"]'); ok(await pg.isHidden('#om-tp'), '[닫기]');
 
         console.log('Ⅵ 서버 규칙');
@@ -121,6 +126,35 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
         ok(plain.lines.length === 1 && plain.ship_memos.length === 0 && JSON.stringify(plain.ids) === '[1]', '값 없는 줄 = 종전 lines · ids 그대로');
         ok(!OM.markIndiv || OM.indivKeysOf([{ kind: 'line', key: '01055550002', note: '배송메모 입력삭제', line: '01055550002 배송메모 입력삭제' }]).size === 0, '글에 「입력삭제」 있어도 입력삭제 줄 아님');
 
+        console.log('Ⅵ-b #958 같은 번호 입력삭제 줄 공존 · 옛 주문번호 키 줄');
+        { const w2 = await post([{ kind: 'line', key: fmt(TWO), note: '입력o삭제x', plat: '네이버', ship_date: null, src: 'edit' }, { kind: 'line', key: '2099110200003', note: '배송메모 옛 주문번호 키 줄', plat: '네이버', ship_date: null, src: 'edit', checked: Object.assign(ck('옛 주문번호 키 줄'), { buyer: TWO }) }]);
+          const F2 = await forShip(); ok(F2.ship_memos.some(m => m.text === '옛 주문번호 키 줄' && m.key === '2099110200003') && F2.lines.some(l => l.id === w2.rows[0].id), '옛 주문번호 키 줄 그대로 동작 · 입력삭제 줄은 lines');
+          const L2 = await (await fetch(BASE + '/api/order-memo?state=open')).json(), rowsL = L2.entries.flatMap(e => e.rows), ind = rowsL.find(x => x.id === w2.rows[0].id), shipSame = rowsL.filter(x => x.checked && x.checked.ship_memo && String(x.key).replace(/\D/g, '') === TWO);
+          ok(!!ind && !!ind.badge && shipSame.length >= 2 && shipSame.every(x => !x.badge), '입력삭제 줄만 배지 · 같은 번호 배송메모 줄 배지 0', { b: ind && ind.badge, n: shipSame.length });
+          const c0 = (await db.query(`SELECT count(*)::int n FROM order_memo_rows WHERE kind='cash'`)).rows[0].n; const cs = await post([{ kind: 'cash', src: 'edit', ship_date: null, cells: ['가 드림!', fmt(TWO), '제주', '받는이', '고당도 타이벡감귤 / 가정용 - 5kg', '1', '010-1111-2222', '', '서울 가짜구 1', '', fmt(TWO), '', ''] }, { kind: 'line', key: fmt(ONE), note: '배송메모 입력삭제 낱말', plat: '네이버', ship_date: null, src: 'edit', checked: ck('입력삭제 낱말') }, { kind: 'cash', src: 'edit', ship_date: null, cells: ['나 드림!', fmt(ONE), '제주', '받는이2', '고당도 타이벡감귤 / 가정용 - 5kg', '1', '010-1111-3333', '', '서울 가짜구 2', '', fmt(ONE), '', ''] }]);
+          ok(cs.rows[2].indiv !== true && /!/.test(cs.rows[2].cells[0]), '같은 묶음 배송메모 낱말(입력삭제) 줄과 현금 줄 = 짝 안 지음', cs.rows[2].cells);
+          await pg.goto(BASE + '/page'); await pg.waitForFunction(() => !!window.AkmOrderMemo); await pg.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await pg.waitForFunction(() => document.getElementById('om-list').textContent.includes('입력삭제 낱말'));
+          const px = await pg.evaluate(() => [...document.querySelectorAll('#om-list .om-item, #om-list li')].filter(li => /입력삭제 낱말/.test(li.textContent)).map(li => !!li.querySelector('[data-act="pairx"]')));
+          ok(px.length > 0 && px.every(v => !v), '낱말 든 배송메모 줄 = [추가 매칭] 없음', px);
+          const idE = cs.rows[1].id; await fetch(BASE + '/api/order-memo/rows/' + idE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '배송메모 pno 줄', key: fmt(ONE), plat: '네이버', checked: { plat: '네이버', as: 'buyer', at: new Date().toISOString(), pno: '2099110200001', buyer: ONE, ship_memo: 'pno 줄' } }) });
+          const put3 = await fetch(BASE + '/api/order-memo/rows/' + idE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '배송메모 글만 고침', key: fmt(ONE), plat: '네이버', checked: { plat: '네이버', as: 'buyer', at: new Date().toISOString() } }) }); const r5 = (await rows()).find(x => x.id === idE);
+          ok(put3.status === 200 && r5.checked.pno === '2099110200001' && r5.checked.buyer === ONE && r5.checked.ship_memo === '글만 고침', '글만 고침 = buyer·pno 유지', r5.checked);
+          await fetch(BASE + '/api/order-memo/rows/' + idE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '배송메모 번호 고침', key: fmt(TWO), plat: '네이버', checked: null }) }); const r6 = (await rows()).find(x => x.id === idE);
+          ok(!r6.checked.pno && !r6.checked.buyer && r6.checked.ship_memo === '번호 고침' && r6.line_key === fmt(TWO), '번호 고침 = buyer·pno 버림', r6.checked);
+        }
+        console.log('Ⅵ-c #958 최종발주 shipMemoPlan 실코드(vm · 실서버 없이)');
+        { const src = fs.readFileSync(path.join(ROOT, 'public', 'final-order.js'), 'utf8'), a = src.indexOf('    function shipMemoPlan(cards, info) {'), b = src.indexOf('    function buildCards() {'); const body = src.slice(a, b);
+          const mk = (memos, merged) => { const st = { dec: new Map(), cards: [], patch: new Map(), ai: { tag: new Map() } }; const OMF = { removed: false, shipMemos: memos }; const f = new Function('st', 'S', 'OMF', 'CH_LABEL', 'buyerName', 'digitsOf', 'buyerTel', 'idsOf', 'keyOf', 'goingOut', body + '; return { shipMemoPlan, shipOutcome };')(st, () => ({ merged }), OMF, { naver: '네이버' }, e => e.bn, v => String(v || '').replace(/\D/g, ''), e => e.tel, e => e.ids, e => e.k, e => !e.excluded); const cards = [], info = []; f.shipMemoPlan(cards, info); st.cards = cards; return { st, f, cards, info }; };
+          const E = (k, tel, pid) => ({ k, ch: 'naver', tel, ids: [pid], bn: '가', conv: { '옵션정보': 'x', '수량': 1, '배송메세지': '' } });
+          const smp = (id, key, text, pno) => ({ id, key, plat: '네이버', text, line: key + ' 배송메모 ' + text, checked: Object.assign({ ship_memo: text }, pno ? { pno } : {}) });
+          let r = mk([smp(1, '010-5555-0002', '글A', 'P2')], [E('a', TWO, 'P1'), E('b', TWO, 'P2')]);
+          ok(r.cards.length === 0 && !r.f.shipOutcome('a') && r.f.shipOutcome('b').text === '글A', '번호 키 + pno · 같은 번호 2건 = 고른 주문에만 · 카드 없음', r.cards);
+          r = mk([smp(1, '010-5555-0002', '글A', 'P9')], [E('a', TWO, 'P1'), E('b', TWO, 'P2')]);
+          ok(r.cards.length === 0 && !r.f.shipOutcome('a') && !r.f.shipOutcome('b') && r.info.some(x => x.t.includes('주문 없음') && x.t.includes('P9')), '고른 주문 취소 = 다른 주문으로 안 옮김 · 「주문 없음」', r.info);
+          r = mk([smp(1, '010-5555-0002', '글A')], [E('a', TWO, 'P1')]); ok(r.cards.length === 1 && /^shipm:/.test(r.cards[0].id) && !r.f.shipOutcome('a'), '#959 pno 없는 번호 줄 1건 = 카드로 묻기', r.cards.map(c => c.id)); r.st.dec.set(r.cards[0].id, 'all'); ok(r.f.shipOutcome('a').text === '글A', '[이 주문에 넣기] 뒤 = 그 주문');
+          r = mk([smp(1, '010-5555-0002', '글A')], [E('a', TWO, 'P1'), E('b', TWO, 'P2')]); ok(r.cards.length === 1 && /^shipm:/.test(r.cards[0].id) && !r.f.shipOutcome('a'), 'pno 없는 번호 줄 2건 = 카드로 묻기', r.cards.map(c => c.id));
+          r = mk([smp(1, 'P2', '옛글')], [E('a', TWO, 'P1'), E('b', TWO, 'P2')]); ok(r.cards.length === 0 && r.f.shipOutcome('b').text === '옛글' && !r.f.shipOutcome('a'), '옛 주문번호 키 줄(줄 205 꼴) 그대로');
+        }
         console.log('Ⅶ 폭·야간');
         for (const [w0, h0, dark, lb] of [[390, 800, false, '390'], [900, 800, false, '900'], [1280, 900, true, '1280 야간'], [390, 800, true, '390 야간']]) {
             const p = await open({ width: w0, height: h0 }, dark);

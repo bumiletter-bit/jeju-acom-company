@@ -19,7 +19,7 @@ const sm = (id, key, text, plat) => ({ id, key, plat: plat || '네이버', text,
 
 async function run(br, fx, cfg) {
     const hits = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }, used = [];
-    const ctx = await newCtx(br, fx, hits, { width: 1400, height: 900 }, false, {});
+    const ctx = await newCtx(br, fx, hits, cfg.vp || { width: 1400, height: 900 }, false, {});
     await ctx.route('**/api/order-memo/for-ship*', r => r.fulfill({ json: Object.assign({}, EMPTY, cfg.forShip || {}) }));
     await ctx.route('**/api/order-memo/used', r => { used.push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, n: 1 } }); });
     if (cfg.head) await ctx.route('**/final-order.js*', r => r.fulfill({ contentType: 'application/javascript', body: HEAD_FO }));
@@ -126,14 +126,14 @@ const allRows = r => JSON.stringify(Object.keys(r.files).sort().map(fn => [fn.re
         { const SM = '대표가 정한 메모 A', fx2 = JSON.parse(JSON.stringify(fx)), o13 = fx2.naver.find(o => o['수취인명'].endsWith('13')), o21 = fx2.naver.find(o => o['수취인명'].endsWith('21'));
           o13['배송메세지'] = '보내는이 홍길동으로 해주세요 1층 문앞';
           const base = { forShip: { ship_memos: [sm(941, o13._pid, SM), sm(942, o21._pid, SM)], ids: [941, 942] } }, mine = c => /^(memo|samb):/.test(String(c.id));
-          const cardFor = (r, o) => r.before.cards.find(c => mine(c) && JSON.stringify(c).includes(o['수취인명'])), infoOf = (r, o) => r.after.info.find(x => x.includes('메모함 배송메모') && x.includes(o['구매자명']));
+          const cardFor = (r, o) => r.before.cards.find(c => mine(c) && JSON.stringify(c).includes(o['수취인명'])), infoOf = (r, o) => r.after.info.find(x => x.includes('메모 줄') && x.includes(o._pid));
           const useAll = async pg => { for (let g = 0; g < 8; g++) { const b = pg.locator('#fo-cards [data-fo-card]:not([data-fo-done])[data-id^="memo:"] [data-fo-act="use"], #fo-cards [data-fo-card]:not([data-fo-done])[data-id^="samb:"] [data-fo-act="use"]').first(); if (!(await b.count())) break; await b.click(); await pg.waitForTimeout(120); } };
           const A = await run(br, fx2, Object.assign({}, base, { afterJudge: async pg => { await useAll(pg); } }));
           const c13 = cardFor(A, o13), c21 = cardFor(A, o21);
           ok(!!c13 && !!c21, 'memo-edit·보내는이 카드가 뜸', A.before.cards.map(c => c.id).slice(0, 12));
           ok(rowJ(A, o13['수취인명']) === SM, 'memo-edit 안 고치고 [이대로 넣기] = 배송메모', rowJ(A, o13['수취인명']));
           ok(rowJ(A, o21['수취인명']) === SM, 'sender-order 안 고치고 [이대로 넣기] = 배송메모', rowJ(A, o21['수취인명']));
-          ok(infoOf(A, o13) && infoOf(A, o13).includes('✓') && infoOf(A, o13).includes(SM), '참고 줄 = 파일 값', infoOf(A, o13));
+          ok(infoOf(A, o13) && infoOf(A, o13).includes('배송메시지 지정') && infoOf(A, o13).includes(SM), '참고 줄 = 파일 값', infoOf(A, o13));
           ok(A.used.filter(u => !u.undo).flatMap(u => u.ids || []).includes(941), '들어간 줄 = 오늘 씀', A.used);
           const E = '사람이 카드에서 고친 글';
           const B = await run(br, fx2, Object.assign({}, base, { afterJudge: async pg => { for (const pre of ['memo:', 'samb:']) { const f = pg.locator('#fo-cards [data-id^="' + pre + '"] [data-f="memo"]').first(); if (await f.count()) await f.fill(E); } await useAll(pg); } }));
@@ -150,6 +150,70 @@ const allRows = r => JSON.stringify(Object.keys(r.files).sort().map(fn => [fn.re
           ok(rowJ(F, withMemo['수취인명']) === withMemo['배송메세지'], '🔴 오늘 날짜 줄(clearMemo)로 비운 칸도 채움 · 글자 같아도', rowJ(F, withMemo['수취인명']));
         }
         ok(!R2.used.filter(u => !u.undo).flatMap(u => u.ids || []).some(i => [903, 905].includes(i)), '오늘 안 나감·주문 없음 = 오늘 씀 안 찍음', R2.used);
+
+        console.log('\nⅢ-c #958 번호 키 + pno');
+        { const smP = (id, tel, text, pno) => { const x = sm(id, tel, text); x.checked = Object.assign({}, x.checked, { pno, buyer: tel }); return x; };
+          const pick = twins.length ? twins[0] : null;
+          if (ok(!!pick, '같은 번호 2건 자료')) { const P1 = await run(br, fx, { forShip: { ship_memos: [smP(971, tel, '고른 주문만', pick._pid)], ids: [971] } }); ok(!P1.before.cards.some(c => /^shipm:/.test(c.id)), '묻는 카드 없음'); ok(rowJ(P1, pick['수취인명']) === '고른 주문만' && twins.slice(1).every(o => rowJ(P1, o['수취인명']) !== '고른 주문만'), '고른 주문에만 J칸', twins.map(o => rowJ(P1, o['수취인명'])));
+            const P2 = await run(br, fx, { forShip: { ship_memos: [smP(972, tel, '취소된 주문 글', '2099888888888')], ids: [972] } }); ok(twins.every(o => rowJ(P2, o['수취인명']) !== '취소된 주문 글') && P2.after.info.some(x => x.includes('주문 없음') && x.includes('2099888888888')), '고른 주문 없음 = 안 옮김 · 주문 없음');
+            ok(!P2.used.filter(u => !u.undo).flatMap(u => u.ids || []).includes(972), '오늘 씀 안 찍음', P2.used);
+            const P3 = await run(br, fx, { forShip: { ship_memos: [smP(973, tel, '입력삭제와 공존', pick._pid)], ids: [973] }, memo: (+ship.slice(5, 7)) + '/' + (+ship.slice(8, 10)) + ' ' + tel + ' 입력o삭제x' }); ok(P3.errs.length === 0, '같은 번호 입력삭제 줄과 공존 = 오류 0', P3.errs); }
+        }
+
+        console.log('\nⅢ-d #959 표시 줄·참고 꼴·직접 고치기 칸');
+        { const TM = '1층 문 열립니다. 2층에 꼭 올려주세요', base = { forShip: { ship_memos: [sm(981, plain._pid, TM), sm(982, excl._pid, '제외 글'), sm(983, '2099999999999', '없는 글')], ids: [981, 982, 983] } };
+          const inspect = async pg => pg.evaluate(() => { const rows = [...document.querySelectorAll('#fo-sm-lines .fo-sm-row')].map(r => ({ pill: (r.querySelector('.m span') || {}).textContent || '', k: r.querySelector('.m').className, t: r.querySelector('.fo-sm-t').textContent })); const li = [...document.querySelectorAll('#fo-info li')].find(x => /배송메시지 지정/.test(x.textContent)); const f = document.querySelector('#fo-frame'), v2 = f && f.contentDocument && f.contentDocument.getElementById('ln-all'); return { rows, memo: document.getElementById('fo-memo').value, v2: v2 ? v2.value : null, bar: document.getElementById('fo-memo-bar').textContent, band: (document.querySelector('.fo-om-judge') || {}).textContent || '', li: li ? { ibadge: (li.querySelector('.fo-ibadge') || {}).textContent, src: !!li.querySelector('.fo-isrc'), hl: (li.querySelector('mark.fo-hl') || {}).textContent, em: (li.querySelector('b.fo-em') || {}).textContent, go: (li.querySelector('[data-info-go]') || {}).textContent } : null }; });
+          let I1; const R = await run(br, fx, Object.assign({}, base, { afterJudge: async pg => { I1 = await inspect(pg); } }));
+          const row0 = I1.rows.find(x => x.t.includes(plain._pid)), rowEx = I1.rows.find(x => x.t.includes(excl._pid)), rowNo = I1.rows.find(x => x.t.includes('2099999999999'));
+          ok(row0 && row0.pill.includes('확인완료 1건') && /\bok\b/.test(row0.k), '① 줄 + 「✓ 확인완료 1건」 알약', I1.rows);
+          ok(rowEx && rowEx.pill.includes('오늘 안 나감') && /warn/.test(rowEx.k), '① 오늘 안 나감 = ⚠', rowEx);
+          ok(rowNo && rowNo.pill.includes('주문 없음') && /none/.test(rowNo.k), '① 고른 주문 없음 = 주문 없음', rowNo);
+          ok(!I1.memo.includes(TM) && !String(I1.v2).includes(TM), '🔴 메모 칸·v2 칸에 안 들어감(표시 전용)', [I1.memo.slice(0, 80), String(I1.v2).slice(0, 80)]);
+          ok(/확인완료\s*1/.test(I1.bar) && /주문 없음\s*1/.test(I1.bar), '① 위 칩 수에 포함', I1.bar);
+          ok(/메모함 3줄/.test(I1.band) && /확인완료 1/.test(I1.band), '① 띠 「판정: 메모함 n줄 · 확인완료 n」', I1.band);
+          ok(I1.li && I1.li.ibadge === '배송메시지' && I1.li.src && (I1.li.hl || '').includes(plain._pid) && I1.li.em === TM && I1.li.go === '고치기', '② 참고 줄 = 알약 + 메모 칩 + 형광 + [고치기]', I1.li);
+          const ids = ['직접 고치기 칸'];
+          let v0; const F0 = await run(br, fx, Object.assign({}, base, { afterJudge: async pg => { await pg.evaluate(k => { const li = [...document.querySelectorAll('#fo-info li')].find(x => x.textContent.includes(k) && /배송메시지 지정/.test(x.textContent)); li.querySelector('[data-info-go]').click(); }, plain._pid); await pg.waitForTimeout(300); const box = pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first(); v0 = await box.inputValue(); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } }));
+          ok(v0 === TM, '③ 직접 고치기 칸 = 지금 나갈 글(배송메모)', v0);
+          ok(rowJ(F0, plain['수취인명']) === TM, '③ 그대로 [적용] = 값 안 바뀜·배송메모 유지', rowJ(F0, plain['수취인명']));
+          const applyMemo = val => Object.assign({}, base, { afterJudge: async pg => { await pg.evaluate(k => { const li = [...document.querySelectorAll('#fo-info li')].find(x => x.textContent.includes(k) && /배송메시지 지정/.test(x.textContent)); li.querySelector('[data-info-go]').click(); }, plain._pid); await pg.waitForTimeout(300); await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().fill(val); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } });
+          const F1 = await run(br, fx, applyMemo('고친 배송 글'));
+          ok(rowJ(F1, plain['수취인명']) === '고친 배송 글' && F1.after.info.some(x => x.includes('카드에서 고친 글') && x.includes('고친 배송 글')), '③ 고쳐 [적용] = 그 글 · 참고 줄 같음', [rowJ(F1, plain['수취인명']), F1.after.info.filter(x => x.includes(plain._pid))]);
+          ok(!F1.used.filter(u => !u.undo).flatMap(u => u.ids || []).includes(981), '③ 고친 줄 = 오늘 씀 안 찍음(메모함 줄 그대로)', F1.used);
+          const F2 = await run(br, fx, applyMemo(''));
+          ok(rowJ(F2, plain['수취인명']) !== TM && String(rowJ(F2, plain['수취인명'])).length > 0, '③ 비워 [적용] = 기본 문구', rowJ(F2, plain['수취인명']));
+          // 칸 없던 경로: 끝난 주문 확인 카드 · 입력삭제 안내
+          let hasOrd = null, ownOpen = null; const F3 = await run(br, fx, Object.assign({}, { forShip: { ship_memos: [sm(984, ordC._pid, '주문 확인 카드 글')], ids: [984] } }, { afterJudge: async pg => { const c = pg.locator('#fo-cards [data-fo-card="order"]').filter({ hasText: ordC['수취인명'] }).first(); ownOpen = await c.locator('.fo-fix [data-x="memo"]').count(); await c.locator('[data-fo-act="send"]').first().click(); await pg.waitForTimeout(200); await pg.evaluate(k => { const li = [...document.querySelectorAll('#fo-info li')].find(x => x.textContent.includes(k) && /배송메시지 지정/.test(x.textContent)); li.querySelector('[data-info-go]').click(); }, ordC._pid); await pg.waitForTimeout(300); hasOrd = await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().inputValue(); } }));
+          ok(ownOpen === 0, '③ 열린 주문 확인 카드 = 칸 안 겹침(종전)', ownOpen);
+          ok(hasOrd === '주문 확인 카드 글', '③ 끝난 주문 확인 카드 직접 고치기 = 칸 생김·배송메모 채움', hasOrd);
+          let noteT = null, memoN = null; const shipMd2 = (+ship.slice(5, 7)) + '/' + (+ship.slice(8, 10)); await run(br, fx, { memo: shipMd2 + ' ' + plain['구매자연락처'] + ' 입력o삭제x', afterJudge: async pg => { await pg.evaluate(() => { const i = document.getElementById('fo-find-q'); }); await pg.evaluate(k => { const s = window.AkmFinalOrder.state; }, 0); await pg.fill('#fo-find-q', plain['수취인명']); await pg.waitForTimeout(300); await pg.locator('.fo-find [role="option"], .fo-find li, .fo-find button').first().click().catch(() => {}); await pg.waitForTimeout(300); const b = pg.locator('[data-fix-indnote]').first(); noteT = await b.count() ? await b.textContent() : null; memoN = await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').count(); } });
+          ok(noteT && noteT.includes('현금파일') , '③ 입력삭제 주문 = 안내 글', noteT);
+          for (const [w, h, dark, lb] of [[390, 800, false, '390'], [900, 800, false, '900'], [1280, 900, true, '1280 야간'], [390, 800, true, '390 야간']]) {
+            let M; await run(br, fx, Object.assign({}, base, { vp: { width: w, height: h }, afterJudge: async pg => { if (dark) await pg.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); M = await pg.evaluate(() => { const b = document.getElementById('fo-sm-lines'), o = document.getElementById('fo-panel'), r = b.getBoundingClientRect(), s = getComputedStyle(b.querySelector('.fo-sm-t')), bg = getComputedStyle(b).backgroundColor, row = b.querySelector('.fo-sm-row').getBoundingClientRect(), li = [...document.querySelectorAll('#fo-info li')].find(x => /배송메시지 지정/.test(x.textContent)), hl = li && li.querySelector('mark.fo-hl'); return { over: r.right - o.getBoundingClientRect().right, h: row.height, fg: s.color, bg, hl: hl ? getComputedStyle(hl).backgroundColor : null, ov: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth }; }); } }));
+            const lum = c => { const v = c.match(/[\d.]+/g).slice(0, 3).map(Number).map(x => { x /= 255; return x <= .03928 ? x / 12.92 : Math.pow((x + .055) / 1.055, 2.4); }); return .2126 * v[0] + .7152 * v[1] + .0722 * v[2]; }, cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
+            ok(M.over <= 1 && M.ov <= 0 && (w > 960 || M.h >= 44) && cr(M.fg, M.bg) >= 4.5, lb + ': 넘침 0 · 44px · 글 대비 4.5↑', M);
+          }
+        }
+
+        console.log('\nⅢ-e #959 재점검: 안 고친 칸이 파일 값을 안 되돌림');
+        { const findOpen = async (pg, nm) => { await pg.fill('#fo-find-q', nm); await pg.waitForTimeout(250); await pg.locator('.fo-find-row').first().click(); await pg.waitForTimeout(300); };
+          const fx3 = JSON.parse(JSON.stringify(fx)), tw = fx3.naver.filter(x => x['구매자연락처'] === tel).slice(0, 2);
+          const M3 = '보내는이 홍길동으로 해주세요 1층 문앞'; tw.forEach(o => { o['배송메세지'] = M3; });
+          const Y = '사람이 정한 글 Y';
+          const R1 = await run(br, fx3, { afterJudge: async pg => { const c = pg.locator('#fo-cards [data-fo-card="memo-edit"]').filter({ hasText: '홍길동으로 해주세요' }).first(); const cid = await c.getAttribute('data-id'); await c.locator('details.fo-fix > summary').first().click(); await c.locator('details.fo-fixsub > summary').first().click(); await pg.waitForTimeout(100); await c.locator('[data-f="memo"]').first().fill(Y); await c.locator('[data-fo-act="use"]').first().click(); await pg.waitForTimeout(250); await findOpen(pg, tw[0]['수취인명']); const c2 = pg.locator('#fo-cards [data-id="' + cid + '"]'); const sub = c2.locator('details.fo-fixsub').first(); if (!(await sub.evaluate(d => d.open))) await sub.locator('summary').click(); await sub.locator('[data-x="tail"]').fill('2S사이즈로!'); await sub.locator('[data-fix-apply]').first().click(); await pg.waitForTimeout(250); } });
+          ok(tw.every(o => rowJ(R1, o['수취인명']) === Y), '🔴 묶음 주문별 벌: 카드 글 뒤 꼬리만 [적용] = J칸 카드 글 그대로', tw.map(o => rowJ(R1, o['수취인명'])));
+          const GT = '게이트 뒤 글', gid = 'shipm:991';
+          let shown = null; const pTel = plain['구매자연락처']; const R2b = await run(br, fx, { forShip: { ship_memos: [sm(991, pTel, GT)], ids: [991] }, afterJudge: async pg => { await findOpen(pg, plain['수취인명']); await pg.locator('#fo-cards [data-id="' + gid + '"] [data-fo-act="all"]').first().click(); await pg.waitForTimeout(250); shown = await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().inputValue(); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } });
+          ok(R2b.before.cards.some(c => c.id === gid), '③ pno 없는 번호 줄 1건 = 카드로 묻기', R2b.before.cards.map(c => c.id).slice(0, 8));
+          ok(shown === GT, '머리 패널: 게이트 뒤 다시 그리면 새 글 보임', shown);
+          ok(rowJ(R2b, plain['수취인명']) === GT, '머리 패널: 안 고치고 [적용] = 배송메모 유지', rowJ(R2b, plain['수취인명']));
+          const R2c = await run(br, fx, { forShip: { ship_memos: [sm(992, pTel, GT)], ids: [992] }, choose: { 'shipm:992': 'all' }, afterJudge: async pg => { await findOpen(pg, plain['수취인명']); await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().fill('사람 글 유지'); await pg.locator('#fo-cards [data-id="shipm:992"] [data-fo-act="all"]').first().click(); await pg.waitForTimeout(250); const v = await pg.locator('#fo-cards .fo-fix[open] [data-x="memo"]').first().inputValue(); if (v !== '사람 글 유지') throw new Error('고친 글 사라짐 ' + v); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } });
+          ok(rowJ(R2c, plain['수취인명']) === '사람 글 유지', '사람이 고친 글 = 다시 그려도 유지·[적용]으로 나감', rowJ(R2c, plain['수취인명']));
+          const big = fx.naver.find(o => Number(o['수량']) >= 2 && !o['배송메세지']);
+          if (ok(!!big, '2박스↑ 빈 메모 주문 자료')) { const BG = '2박스 주문 메모'; const R2d = await run(br, fx, { forShip: { ship_memos: [sm(993, big._pid, BG)], ids: [993] }, afterJudge: async pg => { await findOpen(pg, big['수취인명']); await pg.locator('#fo-cards .fo-fix[open] [data-fix-apply]').first().click(); await pg.waitForTimeout(200); } }); ok(rowJ(R2d, big['수취인명']) === BG, '2박스↑ 안 고치고 [적용] = 배송메모 유지', rowJ(R2d, big['수취인명'])); }
+          let flash = null; await run(br, fx, { forShip: { ship_memos: [sm(994, plain._pid, '키보드 글')], ids: [994] }, afterJudge: async pg => { await pg.locator('#fo-sm-lines [data-smline="994"]').focus(); await pg.keyboard.press('Enter'); await pg.waitForTimeout(100); flash = await pg.locator('#fo-info li.fo-flash').count(); } });
+          ok(flash >= 1, '④ 줄에서 Enter = 참고 줄로', flash);
+        }
 
         console.log('\nⅣ 빼기 = 안 나감');
         const R4 = await run(br, fx, { forShip: { ship_memos: [sm(931, plain._pid, '뺄 글')], ids: [931] }, afterJudge: async (pg, rj) => { await pg.click('[data-om="take"]'); await pg.waitForTimeout(300); await rj(); } });
