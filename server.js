@@ -8788,7 +8788,8 @@ function qnaFilterStoreLines(text, message) {
         const m = t.match(/(\d+(?:\.\d+)?)kg/i);
         if (m) { narrowToks.push(m[1].toLowerCase() + 'kg'); continue; }
         const hit = PRODUCT_WORDS.find(([w]) => t.includes(w));
-        if (hit) productToks.push(hit[1]); else if (t.includes('감귤')) productToks.push('감귤'); else narrowToks.push(t.toLowerCase());
+        // #972 「노지귤」 문의에 노지 황금향 줄까지 붙던 것 = 「노지」만 말하면 노지감귤 줄 · 「노지 황금향」이면 그 줄 · 다른 만감 이름이 있으면 종전 그대로(노지 한라봉 등)
+        if (hit) productToks.push(hit[1] !== '노지' ? hit[1] : /노지황금향/.test(msgNorm) ? '노지황금향' : /황금향|한라봉|천혜향|레드향/.test(msgNorm) ? '노지' : '노지감귤'); else if (t.includes('감귤')) productToks.push('감귤'); else narrowToks.push(t.toLowerCase());
     }
     if (!productToks.length && gyulInjected) productToks.push('감귤');   // 「귤」만 말했으면 감귤 줄로(종전과 같은 범위)
     for (const w of ['선물용', '가정용', '못난이']) if (msgNorm.includes(w)) narrowToks.push(w);
@@ -16157,7 +16158,7 @@ setInterval(async () => {
 //   카페24(「·」)·네이버(「/」) 형식이 달라도 같은 옵션이면 같은 키가 나온다. 한쪽에만 있는 옵션(못난이 등)은 매칭 안 되어 비교에서 자연 제외.
 function cafe24OptKey(s) {
     const t = String(s || '').replace(/\s+/g, '');
-    const fruit = (t.match(/하우스감귤|타이벡감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';   // #842 타이벡감귤 = 유라(과일 칸 빈칸)와 열쇠 겹침 막음
+    const fruit = (t.match(/하우스감귤|타이벡감귤|새콤달콤노지감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';   // #842 타이벡감귤 = 유라(과일 칸 빈칸)와 열쇠 겹침 막음
     const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
     const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
     const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
