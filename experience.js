@@ -23,19 +23,11 @@ const NOTIFY_DEFAULT = { enabled: false, daily_cap: 40, recv_from: '09:00', recv
     alimtalk: { enabled: false, confirm_tpl: 'UN_1894', remind_tpl: 'UN_1895' }, auto_confirm: true, auto_dispatch: true };   // #780 auto_confirm = 체험 주문 자동 발주확인
 // 알림톡 템플릿 원문(알리고 등록본과 글자 하나까지 같아야 나감 · 변수 #{고객명} #{방문일시} #{인원}) — 🔴 원문이 비어 있으면(null) 알림톡을 시도하지 않고 LMS 만
 //   UN_1894 「제주아꼼이네_감귤체험_예약확인2」 · UN_1895 「제주아꼼이네_감귤체험_방문안내2」(#942 재심사 승인 · #1000 · 옛 글과 다른 곳 = 교환권 문장 「체험 시즌 중 언제든 사용 · 10~20시」 하나) — 원문은 알리고 template/list 에서 그대로 옮긴다
-//   UM_6987·UM_6988 = 옛 승인본(「체험 당일 사용」) · 🔴 지우지 말 것: 설정 experience_notify 가 아직 옛 코드인 배포 사이에 상수가 없으면 알림톡이 LMS 로 빠짐 → 설정을 새 코드로 바꾼 뒤 다음 배포에서 지움
+//   옛 UM_6987·UM_6988(「체험 당일 사용」) = #1004 에서 상수 지움(알리고에서도 삭제 · 설정은 UN_1894·UN_1895) · 원문 없는 코드가 설정에 오면 LMS 만
 //   원문 = 총괄이 알리고 화면에 넣은 글자 그대로(10/20 · 줄바꿈 \n · 빈 줄 \n\n · 「·」「■」「"」 그대로) — 승인 뒤 template/list 로 한 번 더 대조
 const EXP_MAP_URL = 'https://map.naver.com/p/entry/place/1911847116', EXP_PRODUCT_URL = 'https://brand.naver.com/jejuakkome/products/7673020911';
 const wl = (name, url) => ({ name, linkType: 'WL', linkTypeName: '웹링크', linkMo: url, linkPc: url });
 const EXP_ALIMTALK = {
-    UM_6987: {
-        content: '[제주아꼼이네 감귤체험장] 예약 확정 안내\n\n#{고객명}님, 감귤체험 예약이 확정되었습니다.\n\n■ 방문 일시 : #{방문일시}\n■ 인원 : #{인원}\n\n■ 오시는 길\n제주시 연삼로 1066-31 제주아꼼이네\n(카카오내비 "제주아꼼이네" 검색)\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요.\n주황색 컨테이너 옆 주차장에 후진주차 부탁드립니다. 자리가 없으면 직원이 안내해 드립니다.\n도착하시면 아꼼이 벽화가 있는 창고 건물에서 예약 확인 후 입장해 주세요. (주황 컨테이너는 안내·소품 공간입니다)\n\n■ 체험 안내\n- [이벤트] 귤따기 체험 손님께는 체험장에서 차로 약 5분 거리, 바다가 한눈에 보이는 제주아꼼이네 오션라운지에서 쓰실 수 있는 아메리카노 또는 하겐다즈 아이스크림 교환권을 드립니다. (체험 당일 사용 · 제주시 서흘길 9, 3층)\n- 비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드립니다.\n\n■ 취소·변경\n- 방문 전날까지 취소 시 전액 환불됩니다.\n- 날짜 변경·취소 문의 : 체험장 010-6259-8420\n- 예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.',
-        button: { button: [wl('길찾기', EXP_MAP_URL), wl('체험 안내 보기', EXP_PRODUCT_URL)] },
-    },
-    UM_6988: {
-        content: '[제주아꼼이네 감귤체험장] 방문 전날 안내\n\n#{고객명}님, 내일 감귤체험 방문 예약을 안내드립니다.\n\n■ 방문 일시 : #{방문일시}\n■ 주소 : 제주시 연삼로 1066-31 제주아꼼이네\n(카카오내비 "제주아꼼이네" 검색)\n\n■ 오시는 길\n주황색 컨테이너 옆 주차장에 후진주차 부탁드립니다. 자리가 없으면 직원이 안내해 드립니다.\n도착하시면 아꼼이 벽화가 있는 창고 건물에서 예약 확인 후 입장해 주세요. (주황 컨테이너는 안내·소품 공간입니다)\n\n■ 체험 안내\n- [이벤트] 귤따기 체험 손님께는 체험장에서 차로 약 5분 거리, 바다가 한눈에 보이는 제주아꼼이네 오션라운지에서 쓰실 수 있는 아메리카노 또는 하겐다즈 아이스크림 교환권을 드립니다. (체험 당일 사용 · 제주시 서흘길 9, 3층)\n- 비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드립니다.\n- 변경·취소 문의 : 체험장 010-6259-8420\n\n큰길에서 골목길로 들어오시면 길이 좁으니 조심히 오세요. 내일 뵙겠습니다!',
-        button: { button: [wl('길찾기', EXP_MAP_URL)] },
-    },
     UN_1894: {
         content: '[제주아꼼이네 감귤체험장] 예약 확정 안내\n\n#{고객명}님, 감귤체험 예약이 확정되었습니다.\n\n■ 방문 일시 : #{방문일시}\n■ 인원 : #{인원}\n\n■ 오시는 길\n제주시 연삼로 1066-31 제주아꼼이네\n(카카오내비 "제주아꼼이네" 검색)\n큰길에서 골목길로 들어오시면 길이 좁으니 천천히 오세요.\n주황색 컨테이너 옆 주차장에 후진주차 부탁드립니다. 자리가 없으면 직원이 안내해 드립니다.\n도착하시면 아꼼이 벽화가 있는 창고 건물에서 예약 확인 후 입장해 주세요. (주황 컨테이너는 안내·소품 공간입니다)\n\n■ 체험 안내\n- [이벤트] 귤따기 체험 손님께는 체험장에서 차로 약 5분 거리, 바다가 한눈에 보이는 제주아꼼이네 오션라운지에서 쓰실 수 있는 아메리카노 또는 하겐다즈 아이스크림 교환권을 드립니다. (체험 시즌 중 언제든 사용 · 제주시 서흘길 9, 3층 · 10~20시)\n- 비가 많이 오면 운영이 바뀔 수 있어 당일 직접 연락드립니다.\n\n■ 취소·변경\n- 방문 전날까지 취소 시 전액 환불됩니다.\n- 날짜 변경·취소 문의 : 체험장 010-6259-8420\n- 예약일이 멀어 네이버에서 자동 구매확정이 되어도 그대로 두시면 됩니다.',
         button: { button: [wl('길찾기', EXP_MAP_URL), wl('체험 안내 보기', EXP_PRODUCT_URL)] },
@@ -221,7 +213,7 @@ function fillAlim(content, vars) {
 }
 
 // ── 문자 문구 ───────────────────────────────────────────────────────────
-// #804 플레이스 예약 = 네이버 「자동 구매확정」이 없는 길 → 그 줄(스토어 전용)을 뺀 문구 · 알림톡 UM_6987/6988 원문엔 그 줄이 없어 무관
+// #804 플레이스 예약 = 네이버 「자동 구매확정」이 없는 길 → 그 줄(스토어 전용)을 뺀 문구 · 알림톡 UN_1894/1895 원문엔 그 줄이 없어 무관
 const STORE_ONLY_LINE = /자동 구매확정/;
 function tplFor(tpl, b) { return b && b.source && b.source !== 'store' ? String(tpl || '').split('\n').filter(l => !STORE_ONLY_LINE.test(l)).join('\n') : tpl; }
 function renderTpl(tpl, b) {
@@ -731,7 +723,7 @@ module.exports = function mountExperience(app, deps) {
             if (b.alimtalk && typeof b.alimtalk === 'object') {   // 알림톡(검수 승인 뒤 켬) — 켜기·템플릿 코드만 · 원문은 코드 상수(EXP_ALIMTALK)
                 const a = { ...cur.alimtalk };
                 if ('enabled' in b.alimtalk) a.enabled = b.alimtalk.enabled === true;
-                for (const k of ['confirm_tpl', 'remind_tpl']) if (k in b.alimtalk) { const v = String(b.alimtalk[k] || ''); if (!/^U[A-Z]_\d{4}$/.test(v)) return res.status(400).json({ error: '템플릿 코드는 UM_6987 꼴' }); a[k] = v; }
+                for (const k of ['confirm_tpl', 'remind_tpl']) if (k in b.alimtalk) { const v = String(b.alimtalk[k] || ''); if (!/^U[A-Z]_\d{4}$/.test(v)) return res.status(400).json({ error: '템플릿 코드는 UN_1894 꼴' }); a[k] = v; }
                 next.alimtalk = a;
             }
             await cfgSet(KEY_NOTIFY, next);

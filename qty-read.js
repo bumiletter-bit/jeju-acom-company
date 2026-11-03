@@ -1,5 +1,6 @@
 // #1002(대표 11/3): 중간발주 이미지 → 「품목 이름 · 수량」 줄 목록 + 그림의 합계 숫자 (공개 길 · 거래처 차이 표 화면 public/qty-diff.html 이 씀)
-//   POST /api/public/qty-read  { image: "data:image/jpeg;base64,…" }  →  { ok, items:[{name,qty,check?}], total, read_sum, mismatch, ms }
+//   POST /api/public/qty-read  { image: "data:image/jpeg;base64,…" }  →  { ok, items:[{name,qty,check?}], total, read_sum, mismatch, names, ms }
+//     · check = 그림 글자를 목록 이름으로 바꿔 낀 줄만 true(1글자 차이 맞춤 · 화면 「이름 확인」) · 오류 = { ok:false, error } 400·413·422·429·502·503
 //   · 저장 0 · DB 쓰기 0 · 그림·읽은 글 로그 0(실패 종류만 한 줄) · 그림 5MB 상한 · 그림 꼴(JPEG·PNG·WEBP) 머리 바이트로 확인
 //   · 남용 막기 = 접속자(IP)당 시간당 30 · 전체 하루 300(KST) · 메모리 셈(재시작 때 0)
 //   · 이름 = 「후보 이름표」(품목별 금액 대성 거래처 · 지난 품목 포함 전부 · 최근 기간 먼저 · 품목 이름만 · 5분 기억)를 AI 에 줌 →
@@ -86,7 +87,9 @@ function cleanItems(raw, names) {
         if (!nm || !Number.isInteger(q) || q < 0 || q >= 100000) return null;
         const s = snapName(nm, names);
         if (tail && !/!$/.test(tail) && TAIL_OK.test(tail)) tail += '!';
-        return { name: s.name + (tail ? ' ' + tail : ''), qty: q };
+        const o = { name: s.name + (tail ? ' ' + tail : ''), qty: q };
+        if (s.snapped) o.check = true;   // #1004 목록 이름으로 바꿔 낀 줄만 = 화면 「이름 확인」 알약
+        return o;
     }).filter(Boolean);
 }
 function sniff(buf) {
@@ -161,18 +164,16 @@ function mount(app, deps) {
             let att = await readOnce(client, mime, b64, names, false);
             let items = cleanItems(att.raw, names);
             const polluted = /antml|<\s*\/?\s*parameter/i.test(JSON.stringify(att.raw || ''));
-            let usage = { in: att.usage.input_tokens || 0, out: att.usage.output_tokens || 0 };
             if (att.stop === 'max_tokens' || !items.length || polluted) {
                 console.warn(`[qty-read] 도구 경로 이상 → 평문: stop=${att.stop} items=${items.length} polluted=${polluted}`);
                 const p = await readOnce(client, mime, b64, names, true);
-                usage = { in: usage.in + (p.usage.input_tokens || 0), out: usage.out + (p.usage.output_tokens || 0) };
                 const pi = cleanItems(p.raw, names);
                 if (p.stop !== 'max_tokens' && pi.length) { att = p; items = pi; } else if (polluted) items = [];
             }
             if (!items.length) return res.status(422).json({ ok: false, error: '표를 못 읽었어요. 다시 넣어 주세요.' });
             const total = Number.isInteger(att.raw && att.raw.total) ? att.raw.total : null;
             const readSum = items.reduce((s, x) => s + x.qty, 0);
-            res.json({ ok: true, items, total, read_sum: readSum, mismatch: total !== null && total !== readSum, names: names.length, ms: Date.now() - t0, usage, model });
+            res.json({ ok: true, items, total, read_sum: readSum, mismatch: total !== null && total !== readSum, names: names.length, ms: Date.now() - t0 });
         } catch (e) {
             console.warn('[qty-read] 실패:', (e && (e.status || e.name)) || 'error');
             if (!res.headersSent) res.status(502).json({ ok: false, error: '읽기에 실패했어요. 다시 넣어 주세요.' });

@@ -404,7 +404,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const t2 = mk(); t2.db.S.rows.push(row(1), row(2), row(3)); t2.db.S.cfg.experience_notify = { enabled: true, daily_cap: 5, recv_from: '00:00', recv_to: '23:59' }; t2.db.S.sentToday = 4;
         await t2.M.collectSms();
         ok(t2.sent.length === 1, '하루 상한(5 중 4 씀) = 1통만', t2.sent.length);
-        // 알림톡(#1000 기본 = UN_1894 접수 · UN_1895 전날 · 옛 UM_6987·UM_6988 은 설정이 옛 코드일 때 그대로) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
+        // 알림톡(#1000 기본 = UN_1894 접수 · UN_1895 전날 · 옛 UM_6987·UM_6988 상수는 #1004 에서 지움 = 설정에 남아 있으면 LMS) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
         ok(t.sent.every(x => !x.alim), '알림톡 설정 꺼짐(기본) = LMS 만');
         const t3 = mk(); t3.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, sms_recv_at: 'x', name: '' }));
         t3.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true } };
@@ -419,13 +419,20 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         ok(sha1000(T.EXP_ALIMTALK.UN_1894.content) === 'fd74778cd7a8dc5ca4beb4837ab574182e769b86d17591a32439e721d48782e2' && sha1000(T.EXP_ALIMTALK.UN_1895.content) === '7e7019a2734c931e4cb266e0c2b03bf86a8e6dd33ae12b0af2459d95f50f072f', '#1000 UN_1894·UN_1895 원문 = 승인 원문 지문과 같음');
         ok(T.EXP_ALIMTALK.UN_1894.button.button.map(b => b.name).join() === '길찾기,체험 안내 보기' && T.EXP_ALIMTALK.UN_1895.button.button.map(b => b.name).join() === '길찾기', '#1000 버튼 = UN_1894 2개 · UN_1895 1개');
         ok(!/체험 당일/.test(T.EXP_ALIMTALK.UN_1894.content + T.EXP_ALIMTALK.UN_1895.content) && /체험 시즌 중 언제든 사용 · 제주시 서흘길 9, 3층 · 10~20시/.test(T.EXP_ALIMTALK.UN_1895.content), '#1000 새 원문 = 「체험 시즌 중 언제든 사용」');
-        for (const [nm, cc, rc] of [['새 코드', 'UN_1894', 'UN_1895'], ['옛 코드(전환 중)', 'UM_6987', 'UM_6988']]) {
+        for (const [nm, cc, rc] of [['새 코드', 'UN_1894', 'UN_1895']]) {
             const tc = mk(); tc.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, visit_time: '11:00', sms_recv_at: 'x' }));
             tc.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true, confirm_tpl: cc, remind_tpl: rc } };
             await tc.M.collectSms();
             const rv = tc.sent.find(x => x.tplCode === cc), ev = tc.sent.find(x => x.tplCode === rc);
             ok(tc.sent.length === 2 && tc.sent.every(x => x.alim) && rv && ev && !/#\{/.test(rv.message + ev.message), `#1000 설정이 ${nm} = 접수 ${cc} · 전날 ${rc} 알림톡 2통(LMS 0 · 변수 다 채움)`, tc.sent.map(x => x.tplCode));
             ok(rv && ev && rv.buttons.button.length === 2 && ev.buttons.button.length === 1 && (cc === 'UN_1894' ? /체험 시즌 중/.test(rv.message) && /체험 시즌 중/.test(ev.message) && !/체험 당일/.test(rv.message + ev.message) : /체험 당일 사용/.test(rv.message) && /체험 당일 사용/.test(ev.message)), `#1000 ${nm} = 본문·버튼이 그 코드 원문대로`);
+        }
+        {   // #1004 옛 코드 상수 지움 = 설정에 옛 코드가 남아 있으면 알림톡 0 · LMS 2통
+            ok(!T.EXP_ALIMTALK.UM_6987 && !T.EXP_ALIMTALK.UM_6988, '#1004 옛 UM_6987·UM_6988 상수 없음');
+            const to = mk(); to.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, visit_time: '11:00', sms_recv_at: 'x' }));
+            to.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+            await to.M.collectSms();
+            ok(to.sent.length === 2 && to.sent.every(x => !x.alim), '#1004 설정이 옛 코드 = 알림톡 대신 LMS 2통', to.sent.map(x => x.tplCode || 'lms'));
         }
         // 총괄 10/20 손질 ① 접수 문자 시간 창(기본 09~21 · 창 밖이면 안 보내고 다음 창에)
         const kh = new Date(Date.now() + 9 * 3600e3), hm = String(kh.getUTCHours()).padStart(2, '0') + ':' + String(kh.getUTCMinutes()).padStart(2, '0');
@@ -493,7 +500,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const fut = kstDay(10);
         const place = (id, extra) => Object.assign({ id, source: 'place', ext_key: 'place:' + id, order_no: String(id), status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '11:00', exp_count: 2, entry_count: 1, infant_count: 0, name: '박*현', phone: null, sms_recv_tries: 0, sms_eve_tries: 0 }, extra || {});
         const t = mk(); const d = t.db.S;
-        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UN_1894', remind_tpl: 'UN_1895' } };
         d.rows.push(place(11), place(12), { id: 13, source: 'store', ext_key: 'store:13', status: 'confirmed', date_ok: true, visit_date: fut, visit_time: '10:00', exp_count: 1, entry_count: 0, infant_count: 0, name: '홍길동', phone: '01011112222' });
         const call = async (id, body) => { const r = res(); await t.app.routes[PATCH]({ params: { id: String(id) }, body, user: { id: 7, name: '직원' } }, r); return r; };
         let r = await call(13, { name: '김철수', phone: '01033334444' });
@@ -507,7 +514,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         r = await call(11, { name: '박지현', phone: '010-5555-6666' });
         const b11 = d.rows.find(x => x.id === 11);
         ok(r.code === 200 && b11.name === '박지현' && b11.phone === '01055556666' && b11.contact_at && b11.contact_by === '직원', '이름·번호 저장 · contact_at·contact_by 기록', { name: b11.name, phone: b11.phone, by: b11.contact_by });
-        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].alim && t.sent[0].tplCode === 'UM_6987' && t.sent[0].receiver === '01055556666' && /박지현님/.test(t.sent[0].message) && /체험 2명 · 입장 1명/.test(t.sent[0].message), '그 자리에서 접수 알림톡 1통(UM_6987 · 이름·인원 채움)', { sent: r.body.sent, n: t.sent.length });
+        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].alim && t.sent[0].tplCode === 'UN_1894' && t.sent[0].receiver === '01055556666' && /박지현님/.test(t.sent[0].message) && /체험 2명 · 입장 1명/.test(t.sent[0].message), '그 자리에서 접수 알림톡 1통(UN_1894 · 이름·인원 채움)', { sent: r.body.sent, n: t.sent.length });
         ok(t.sent[0].failoverMessage && !/자동 구매확정/.test(t.sent[0].failoverMessage) && /예약이 확정되었습니다/.test(t.sent[0].failoverMessage), '대체 문자(실패 때) = 플레이스용(스토어 전용 「자동 구매확정」 줄 없음)');
         ok(b11.sms_recv_at === 'now' && r.body.item, '발송 표시 = sms_recv_at · 응답에 줄');
         const au = t.audits.find(a => a.action === 'experience_edit' && a.targetId === 11);
@@ -558,7 +565,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const POST = 'POST /api/agent-office/experience', PATCH = 'PATCH /api/agent-office/experience/:id';
         const fut = kstDay(7);
         const t = mk(); const d = t.db.S;
-        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+        d.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UN_1894', remind_tpl: 'UN_1895' } };
         const add = async (body) => { const r = res(); await t.app.routes[POST]({ body, user: { id: 7, name: '직원' } }, r); return r; };
         ok(!!t.app.routes[POST], '수기 추가 라우트 있음');
         let r = await add({ visit_date: '2026-11-31', visit_time: '11:00', name: '김현금', exp_count: 1 });
@@ -574,7 +581,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         r = await add({ visit_date: fut, visit_time: '오후 1시 30분', name: '김현금', phone: '010 2222 3333', exp_count: 2, entry_count: 1, infant_count: 1, amount: 46000, memo: '현금' });
         const m = d.rows.find(x => x.source === 'manual');
         ok(r.code === 200 && m && m.ext_key === 'manual:' + m.id && m.order_no === 'M' + m.id && m.visit_time === '13:30' && m.phone === '01022223333' && m.amount === 46000 && m.contact_by === '직원' && m.status === 'confirmed', '수기 저장 = manual:<id> · M<id> · 시간 13:30 · 번호 숫자만 · 금액 · 저장한 사람', m && { k: m.ext_key, no: m.order_no, t: m.visit_time, ph: m.phone });
-        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].tplCode === 'UM_6987' && /김현금님/.test(t.sent[0].message) && /체험 2명 · 입장 1명 · 유아 1명/.test(t.sent[0].message) && !/자동 구매확정/.test(t.sent[0].failoverMessage), '추가하는 그 자리에서 접수 알림톡(이름·인원) · 대체 문자에 스토어 줄 없음', r.body.sent);
+        ok(r.body.sent === 'sent' && t.sent.length === 1 && t.sent[0].tplCode === 'UN_1894' && /김현금님/.test(t.sent[0].message) && /체험 2명 · 입장 1명 · 유아 1명/.test(t.sent[0].message) && !/자동 구매확정/.test(t.sent[0].failoverMessage), '추가하는 그 자리에서 접수 알림톡(이름·인원) · 대체 문자에 스토어 줄 없음', r.body.sent);
         ok(m.sms_recv_via === 'alimtalk' && m.sms_recv_at === 'now', '나간 길 기록 = sms_recv_via alimtalk', m.sms_recv_via);
         ok(t.audits.some(a => a.action === 'experience_manual_add' && a.changes.after.phone === '…3333'), 'audit experience_manual_add(번호 끝 4자리)');
         // 번호 없는 수기 = 저장만 · 전날 문자 대상(번호 넣은 수기)
@@ -607,7 +614,7 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         // #930(대표 10/31) 수기 시간 「미정」 = visit_time NULL · 확인 끝(date_ok) · 글에는 「시간 미정」 · 스토어·플레이스는 종전
         {
             const t9 = mk(); const d9 = t9.db.S;
-            d9.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UM_6987', remind_tpl: 'UM_6988' } };
+            d9.cfg.experience_notify = { enabled: true, daily_cap: 30, recv_from: '00:00', recv_to: '24:00', eve_from: '00:00', eve_to: '24:00', alimtalk: { enabled: true, confirm_tpl: 'UN_1894', remind_tpl: 'UN_1895' } };
             const add9 = async (body) => { const q = res(); await t9.app.routes[POST]({ body, user: { id: 7, name: '직원' } }, q); return q; };
             const pat9 = async (id, body) => { const q = res(); await t9.app.routes[PATCH]({ params: { id: String(id) }, body, user: { id: 7, name: '직원' } }, q); return q; };
             let q = await add9({ visit_date: fut, visit_time: '미정', name: '한손님', phone: '010-3333-4444', exp_count: 2 });

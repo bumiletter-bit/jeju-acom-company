@@ -199,7 +199,7 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
       if (bHits.length !== 1) return;
       var a = A.m.get(ak), b = B.m.get(bk);
       var longer = a.name.length > b.name.length ? a.name : b.name;
-      A.m.delete(ak); A.m.set(bk, { name: longer, qty: a.qty }); A.order[A.order.indexOf(ak)] = bk; b.name = longer;
+      A.m.delete(ak); A.m.set(bk, { name: longer, qty: a.qty, check: a.check }); A.order[A.order.indexOf(ak)] = bk; b.name = longer;
       aLeft.splice(aLeft.indexOf(ak), 1);
     });
     var rows = [];
