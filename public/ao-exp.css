@@ -224,6 +224,11 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
 @media (max-width: 720px) {
     .xp-tpick { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .xp-panel-h { flex-wrap: wrap; }
+    /* #1012 폰 판 머리 = 1줄 날짜(한 줄)·소제목 + × · 2줄 단추 둘 같은 폭 (salebtn flex:none 이 아래 260행에 있어 .xp-panel 로 한 단 높임) */
+    .xp-panel-h > div { flex: 1 1 calc(100% - 54px); }
+    .xp-panel-h h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .xp-panel-h .xp-x { order: 1; flex: none; }
+    .xp-panel .xp-panel-h .xp-addbtn, .xp-panel .xp-panel-h .xp-salebtn { order: 2; flex: 1 1 calc(50% - 5px); }
 }
 /* #822(대표 10/22) 현장 판매(귤) = 날짜 칸 아래 귤색 한 줄(폰 = ₩ 표식) · 달력 위 이달 합계 띠 · 날짜 판 머리 [+ 현장 판매] → 적는 칸 · 값 있으면 한 줄 + 수정·삭제(#822-b) · [문자 설정] 단추는 숨김(기능 그대로) */
 .xp-sale { display: inline-flex; align-items: center; gap: 3px; margin-top: auto; padding: 1px 6px; border-radius: 999px; background: #FFF4E6; color: var(--x-pl); font-size: 11.5px; font-weight: 700; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
