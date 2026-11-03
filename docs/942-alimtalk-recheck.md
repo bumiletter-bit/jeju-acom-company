@@ -86,7 +86,7 @@
 3. 실DB `experience_notify.alimtalk` 의 `confirm_tpl`·`remind_tpl` 을 새 코드로 바꾼다(audit).
 4. 실DB `tpl_recv`·`tpl_eve` 문장과 `experience.js` `DEFAULT_TPL_RECV`·`DEFAULT_TPL_EVE` 도 같은 뜻으로 바꾼다. 대체 문자·LMS 글이다.
 5. 다음 실제 예약 1건에서 `sms_recv_via = alimtalk` 을 확인한다.
-6. 옛 UM_6987·UM_6988 정리는 대표 결정 뒤에(`DELETABLE_TPL` 밖이라 지금 러너로는 못 지움).
+6. 옛 UM_6987·UM_6988 정리: 대표 지시(11/3)로 러너 삭제 시도 → 알리고 509 「삭제 가능 상태가 아닙니다」(승인 status A). 발송엔 안 쓰임 · 알리고 화면 길은 대표 폰 인증 뒤 확인. 11/3 교체·시험 합격 끝(v5.9.694).
 
 ## 그동안
 
