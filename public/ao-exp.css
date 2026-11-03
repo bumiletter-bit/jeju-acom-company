@@ -142,8 +142,8 @@ html[data-ao-theme="dark"] .xp-layer { --x-sun: #F6948D; --x-sat: #84ADFF; }
     .xp-cnt.off { background: transparent; }
 }
 @media (max-width: 720px) {
-    .xp-panel { top: auto; left: 0; width: 100%; max-height: 88%; border-left: 0; border-top: 1px solid var(--x-line); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 32px rgba(0, 0, 0, .22); animation-name: xp-pup; }
-    @keyframes xp-pup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    /* #1011 폰 = 창 전체 판(위 모서리 고정) — 종전 아래 판은 max-height 만 있어 내용 길이마다 위 모서리가 달라졌음 · 들어오는 꼴 = PC 와 같은 xp-pin */
+    .xp-panel { top: 0; bottom: 0; left: 0; width: 100%; max-height: none; border-left: 0; border-top: 0; border-radius: 0; box-shadow: none; }
     .xp-panel-h { padding-left: 16px; } .xp-panel-b { padding: 0 16px 28px; }
     .xp-cell { min-height: 54px; }
 }
