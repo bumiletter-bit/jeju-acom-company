@@ -20,6 +20,15 @@
 //   없음·max_rank 밖 = null · 차단·캡차·탭 끊김·오류 = 그 키워드 세 칸 null + errors[].
 //   요청(페이지 열기·쪽 넘김) 사이 1.5초.
 //
+//   #1001 판매 중 상품 키워드 자동 = 설정 keyword_rank.auto { rules:[{no, opt?, keywords:[…]}], ignore:[상품번호] } (없으면 종전과 같음 = keywords 칸만)
+//     - keywords 칸 = 고정(언제나 모음) · rules = 상품 스냅샷(naver_product_snapshot 최근 1줄)에서 판매 중일 때만 모음 · 판매 끝나면 그날 줄이 안 생길 뿐 이력은 표에 남음
+//     - 판매 중 = statusType SALE · 시험 상품 아님 · usable 이고 재고 > 0 인 옵션(opt 있으면 그 낱말이 n1+n2 에 든 옵션)이 1개↑ · opts 칸 없음(옵션 수집 실패) = 판매 중으로 봄
+//     - 🔴 상품 이름에서 낱말을 뽑지 않음(이름 = 검색용 낱말 모음 · 「제주 노지 감귤 타이벡 하우스」) → 짝 없는 판매 상품·옵션은 안 모으고 unmapped 로 알림
+//     - 스냅샷 없음·48시간 넘음 = 어제 자동 목록 유지(잘못 빠지는 쪽을 막음) · 상한 KR_CAP(화면 KR_MAX_KEYWORDS 와 같음) = 고정 먼저 → 규칙 순서 · 넘친 것 = cut
+//     - 결과 = keyword_rank_last.auto {keywords(자동만), unmapped, cut, snapshot_at, stale} → 서버 틱·화면은 읽기만
+//   #1001 막힘 = 네이버 보안 확인·차단·캡차 또는 쇼핑 목록 2개 연속 못 찾음 → 남은 키워드 안 돌고 멈춤 · keyword_rank_last.blocked {kind, keyword, at, skipped}
+//   #1001 재수집 = 직전 회차(같은 날)에 errors·blocked 가 있었으면 notified_date 를 비움 → 서버 틱이 결과를 다시 보냄(없으면 풀고 다시 모아도 텔레그램 0)
+//
 //   저장(--apply) = keyword_rankings UPSERT(date, keyword · 화면 /api/rankings/bulk 와 같은 SQL · created_by NULL · source 'auto' 는 칸이 있을 때만 · 없으면 경고)
 //     🔴 같은 날 직원이 손으로 넣은 줄(source 'manual' 또는 source 칸 없이 created_by 있는 줄)은 덮지 않는다(사람 값 우선 · ON CONFLICT … WHERE 한 문장).
 //     🔴 읽기 실패 키워드는 DB 줄로 넣지 않는다(keyword_rank_last.errors 에만) — 전체 실패 날 auto 줄 0 → 서버 10:00 「미수집」 알림 · 같은 날 재실행이 좋은 값을 NULL 로 안 덮음.
@@ -29,6 +38,7 @@
 // 사용: node scripts/desk/keyword-rank.js                 (dry — DB 읽기만 · 표로 출력)
 //       node scripts/desk/keyword-rank.js --apply         (저장)
 //       node scripts/desk/keyword-rank.js --date 2026-10-28 --keywords 귤,제주귤 --pc   (--pc = 파워링크 PC 화면도 같이 읽어 표에 · --mobile-only 반대)
+//       node scripts/desk/keyword-rank.js --list          (#1001 어사이드·쓰기 0 · 오늘 모을 키워드 목록만 출력)
 //       env ASIDE_EXE(aside.exe 경로) · KR_PAGE_WAIT_MS(요청 사이 · 기본 1500)
 'use strict';
 const path = require('path');
@@ -42,6 +52,10 @@ const PAGE_WAIT_MS = Math.max(300, parseInt(process.env.KR_PAGE_WAIT_MS, 10) || 
 const REPL_TIMEOUT_MS = 125000;      // 어사이드 repl 자체 상한 120초
 const MAX_PAGES = 3;                 // 한 키워드 쇼핑 3쪽 넘게 안 봄
 const PAGE_SIZE = 40;                // 모바일 쇼핑 한 쪽 상품 수(실측)
+const KR_CAP = 20;                   // #1001 고정+자동 합계 상한(server.js KR_MAX_KEYWORDS 와 같게)
+const KR_SNAPSHOT_MAX_MS = 48 * 3600e3;   // #1001 상품 스냅샷이 이보다 낡으면 판매 상태를 믿지 않음
+const KR_LIST_MISS_STOP = 2;         // #1001 쇼핑 목록 못 찾음이 이만큼 연속이면 멈춤(보안 화면 글자가 또 바뀌어도 헛돌지 않게)
+const KR_TEST_NOS = new Set(['13817259794']);   // 시험 상품(server.js NAVER_TEST_PRODUCTS_DEFAULT 와 같음)
 
 const DEFAULT_CFG = {
     enabled: true,
@@ -60,11 +74,12 @@ const norm = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 
 // ───────── 인자
 function parseArgs(argv) {
-    const a = { apply: false, date: null, keywords: null, pc: null, mobileOnly: false, verbose: false };
+    const a = { apply: false, list: false, date: null, keywords: null, pc: null, mobileOnly: false, verbose: false };
     for (let i = 0; i < argv.length; i++) {
         const v = argv[i];
         if (v === '--apply') a.apply = true;
         else if (v === '--dry') a.apply = false;
+        else if (v === '--list') a.list = true;
         else if (v === '--date') a.date = argv[++i];
         else if (v === '--keywords') a.keywords = String(argv[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
         else if (v === '--pc') a.pc = true;
@@ -129,9 +144,9 @@ class Aside {
         for (let i = lines.length - 1; i >= 0; i--) { if (lines[i].startsWith('{') || lines[i].startsWith('[')) { try { return JSON.parse(lines[i]); } catch (e) { /* 다음 줄 */ } } }
         throw new Error('repl 결과에 JSON 줄이 없음: ' + text.slice(0, 300));
     }
-    async stop() {
+    async stop(o) {
         if (!this.proc || this.exited) return;
-        try { await this.repl('탭 정리', 'try { for (const t of [...tabs]) { try { await closeTab(t); } catch (e) {} } } catch (e) {} console.log("{}")'); } catch (e) { /* 무시 */ }
+        if (!(o && o.keepTabs)) try { await this.repl('탭 정리', 'try { for (const t of [...tabs]) { try { await closeTab(t); } catch (e) {} } } catch (e) {} console.log("{}")'); } catch (e) { /* 무시 */ }
         try { this.proc.stdin.end(); } catch (e) { /* 무시 */ }
         await Promise.race([new Promise(r => this.proc.once('exit', r)), sleep(3000)]);
         if (!this.exited) { try { this.proc.kill(); } catch (e) { /* 무시 */ } }
@@ -140,7 +155,7 @@ class Aside {
 
 // ───────── 페이지 안에서 돌릴 코드(문자열) — 결과는 마지막 줄 JSON 하나로
 // 공통: 차단 화면 판정
-const JS_BLOCK_CHECK = `(() => { const t = (document.body && document.body.innerText || '').slice(0, 600); if (/접속이 일시적으로 제한|비정상적인 접근/.test(t)) return 'blocked'; if (/captcha|보안문자|자동입력 방지/i.test(t) || document.querySelector('#captcha, img[src*="captcha"]')) return 'captcha'; return ''; })()`;
+const JS_BLOCK_CHECK = `(() => { const t = (document.body && document.body.innerText || '').slice(0, 600); if (/보안 ?확인을 완료/.test(t)) return 'security'; if (/접속이 일시적으로 제한|비정상적인 접근/.test(t)) return 'blocked'; if (/captcha|보안문자|자동입력 방지/i.test(t) || document.querySelector('#captcha, img[src*="captcha"]')) return 'captcha'; return ''; })()`;
 
 // 쇼핑 목록 한 쪽 읽기(스크롤로 전부 그린 뒤) → { items:[{ad, mall}], page, blocked }
 const JS_SHOP_READ = `(() => {
@@ -261,6 +276,7 @@ function matchStoreHost(text, store) {
     return false;
 }
 
+const krBlockedError = (msg, kind) => Object.assign(new Error(msg), { krBlocked: kind });
 async function rankShopping(aside, keyword, cfg, log) {
     const maxRank = Math.max(1, Number(cfg.max_rank) || 40);
     const pagesNeeded = Math.min(MAX_PAGES, Math.ceil(maxRank / PAGE_SIZE));
@@ -269,10 +285,10 @@ async function rankShopping(aside, keyword, cfg, log) {
     for (let p = 1; p <= pagesNeeded; p++) {
         if (p > 1) await sleep(PAGE_WAIT_MS);
         const r = await aside.replJson(`쇼핑 「${keyword}」 ${p}쪽`, jsShopPage(keyword, p));
-        if (r.blocked) throw new Error('네이버 쇼핑 차단 화면(' + r.blocked + ')');
+        if (r.blocked) throw krBlockedError('네이버 쇼핑 차단 화면(' + r.blocked + ')', r.blocked);
         if (r.error) throw new Error('쇼핑 ' + p + '쪽 ' + r.error);
         if (r.noPage) { notes.push(p + '쪽 없음'); break; }
-        if (!Array.isArray(r.items)) throw new Error('쇼핑 ' + p + '쪽 목록을 못 찾음(' + (r.title || '') + ')');
+        if (!Array.isArray(r.items)) throw Object.assign(new Error('쇼핑 ' + p + '쪽 목록을 못 찾음(' + (r.title || '') + ')'), { krListMiss: true });
         if (r.page && r.page !== p) { notes.push('쪽 번호 어긋남 ' + r.page + '≠' + p); }
         pages = p;
         for (const it of r.items) { if (it.ad) ads.push(it); else organic.push(it); }
@@ -288,14 +304,70 @@ async function rankShopping(aside, keyword, cfg, log) {
 
 async function rankPowerlink(aside, keyword, cfg, which) {
     const r = await aside.replJson(`통합검색(${which}) 「${keyword}」 파워링크`, jsPowerlink(keyword, which));
-    if (r.blocked) throw new Error('통합검색(' + which + ') 차단 화면(' + r.blocked + ')');
+    if (r.blocked) throw krBlockedError('통합검색(' + which + ') 차단 화면(' + r.blocked + ')', r.blocked);
     if (r.error) throw new Error('통합검색(' + which + ') ' + r.error);
     if (!Array.isArray(r.ads)) throw new Error('통합검색(' + which + ') 파워링크를 못 읽음');
     const i = r.ads.findIndex(t => matchStoreHost(t, cfg.store));
     return { rank: i >= 0 ? i + 1 : null, total: r.ads.length, noSection: !!r.noSection, more: r.more || null, ads: r.ads };
 }
 
+// ───────── #1001 판매 중 상품 키워드(순수 함수 — DB·어사이드 0)
+// 재고 칸이 비었거나(null·빈 글자) 숫자가 아니면 모름 = 판매 중 · 숫자 0 이하만 품절(수집 실패로 키워드가 잘못 빠지지 않게)
+function krOptOn(o) { if (!o || o.usable === false) return false; const n = o.stock == null || o.stock === '' ? NaN : Number(o.stock); return !(n <= 0); }
+function krOptText(o) { return norm((o.n1 || '') + ' ' + (o.n2 || '')); }
+function krItemSkip(it, ignore) { return !it || ignore.has(String(it.no)) || KR_TEST_NOS.has(String(it.no)) || /테스트|시험용/.test(String(it.name || '')); }
+// 옵션 칸이 없으면(수집 실패 · 옵션 없는 상품) 판매 중으로 본다 — 잘못 빠지는 쪽을 막음
+function krRuleOn(it, rule) {
+    if (!it || String(it.statusType || '') !== 'SALE') return false;
+    if (!Array.isArray(it.opts) || !it.opts.length) return true;
+    const on = it.opts.filter(krOptOn);
+    if (!rule.opt) return on.length > 0;
+    const w = norm(rule.opt);
+    return on.some(o => krOptText(o).includes(w));
+}
+// o = { fixed:[…], auto:{rules,ignore}, items, snapshotAt, prevAuto, now(ms), cap } → { keywords(모을 전부), auto:{keywords,unmapped,cut,snapshot_at,stale} }
+function computeAutoKeywords(o) {
+    const cap = o.cap || KR_CAP, now = o.now || Date.now(), rules = Array.isArray(o.auto && o.auto.rules) ? o.auto.rules : [];
+    const ignore = new Set((Array.isArray(o.auto && o.auto.ignore) ? o.auto.ignore : []).map(String));
+    const out = [], seen = new Set(), autoKw = [], cut = [];
+    const add = (k, isAuto) => { const t = String(k || '').trim(), n = norm(t); if (!t || seen.has(n)) return; seen.add(n); if (out.length >= cap) { cut.push(t); return; } out.push(t); if (isAuto) autoKw.push(t); };
+    for (const k of (o.fixed || [])) add(k, false);
+    const at = o.snapshotAt ? new Date(o.snapshotAt).getTime() : NaN;
+    const stale = !Array.isArray(o.items) || !o.items.length || !(now - at <= KR_SNAPSHOT_MAX_MS);
+    const unmapped = [];
+    if (stale) {
+        for (const k of (o.prevAuto && Array.isArray(o.prevAuto.keywords) ? o.prevAuto.keywords : [])) add(k, true);
+    } else {
+        const byNo = new Map(o.items.filter(Boolean).map(it => [String(it.no), it]));
+        for (const r of rules) { const it = byNo.get(String(r.no)); if (!krItemSkip(it, ignore) && krRuleOn(it, r)) for (const k of (r.keywords || [])) add(k, true); }
+        for (const it of o.items) {
+            if (krItemSkip(it, ignore) || String(it.statusType || '') !== 'SALE') continue;
+            const mine = rules.filter(r => String(r.no) === String(it.no));
+            const on = Array.isArray(it.opts) ? it.opts.filter(krOptOn) : [];
+            if (Array.isArray(it.opts) && it.opts.length && !on.length) continue;   // SALE 인데 팔 옵션 0 = 판매 중 아님
+            const entry = { no: String(it.no), name: String(it.name || '').slice(0, 30) };
+            if (!mine.length) { unmapped.push(entry); continue; }
+            if (mine.some(r => !r.opt)) continue;   // 상품 통째 규칙 = 옵션 전부 덮음
+            const words = mine.map(r => norm(r.opt));
+            const miss = on.filter(x => !words.some(w => krOptText(x).includes(w)));
+            if (miss.length) unmapped.push(Object.assign(entry, { opt: String(miss[0].n1 || miss[0].n2 || '').slice(0, 30) }));
+        }
+    }
+    return { keywords: out, auto: { keywords: autoKw, unmapped, cut, snapshot_at: o.snapshotAt || null, stale } };
+}
+
 // ───────── DB
+async function readSnapshot(pool) {
+    const r = await pool.query(`SELECT run_at, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+    return r.rows[0] || { run_at: null, items: null };
+}
+async function readLast(pool) {
+    const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'keyword_rank_last'`);
+    return r.rows[0] && r.rows[0].value && typeof r.rows[0].value === 'object' ? r.rows[0].value : {};
+}
+// 같은 날 직전 회차에 오류·막힘이 있었으면 이번 결과를 다시 알림(notified_date 비움 · 서버 틱이 집음)
+function krResetNotified(prev, date) { return !!prev && prev.date === date && prev.notified_date === date && (!!prev.blocked || (Array.isArray(prev.errors) && prev.errors.length > 0)); }
+
 async function readConfig(pool) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'keyword_rank'`);
     const v = r.rows[0] && r.rows[0].value && typeof r.rows[0].value === 'object' ? r.rows[0].value : {};
@@ -309,6 +381,7 @@ async function readConfig(pool) {
     for (const h of DEFAULT_CFG.store.hosts) if (!cfg.store.hosts.includes(h)) cfg.store.hosts.push(h);
     cfg.max_rank = Math.min(120, Math.max(1, Number(cfg.max_rank) || 40));
     if (!['mobile', 'pc', 'both'].includes(cfg.powerlink_source)) cfg.powerlink_source = 'mobile';
+    cfg.auto = v.auto && typeof v.auto === 'object' && Array.isArray(v.auto.rules) && v.auto.rules.length ? v.auto : null;   // #1001 없으면 종전과 같음
     return { cfg, fromDb: !!r.rows[0] };
 }
 
@@ -362,6 +435,58 @@ function table(rows, withPc) {
     return [head.map((h, i) => pad(h, w[i])).join(' | ')].concat(lines.map(l => l.map((c, i) => pad(c, w[i])).join(' | '))).join('\n');
 }
 
+// ───────── 키워드 고리 — 막히면(#1001) 남은 키워드는 안 돌고 errors 에만 적음
+async function collectRows({ aside, cfg, readMobile, readPc, storePl, log, verbose }) {
+    const rows = [], errors = [];
+    let blocked = null, listMiss = 0;
+    for (let k = 0; k < cfg.keywords.length; k++) {
+        const keyword = cfg.keywords[k];
+        const tk = Date.now();
+        const row = { keyword, shopping: null, ad: null, powerlink: null, notes: [] };
+        if (readPc && readMobile) row.powerlink_pc = null;
+        if (k > 0) await sleep(PAGE_WAIT_MS);
+        try {
+            const sh = await rankShopping(aside, keyword, cfg, log);
+            listMiss = 0;
+            row.shopping = sh.shopping; row.ad = sh.ad; row.seen = `${sh.organicSeen}+광고${sh.adsSeen}`; row.pages = sh.pages; row.notes.push(...sh.notes);
+            if (verbose) { log(`  일반 ${sh.organic.map((o, i) => (i + 1) + '.' + o.mall).join(' ')}`); log(`  광고 ${sh.ads.map((o, i) => (i + 1) + '.' + o.mall).join(' ')}`); }
+        } catch (e) {
+            row.error = '쇼핑: ' + e.message; errors.push({ keyword, error: row.error }); log(`  ✗ ${keyword} ${row.error}`);
+            if (e.krListMiss) listMiss++; else listMiss = 0;
+            if (e.krBlocked) blocked = { kind: e.krBlocked, keyword };
+            else if (listMiss >= KR_LIST_MISS_STOP) blocked = { kind: 'list_missing', keyword };
+        }
+        const plOut = {};
+        if (!blocked) for (const which of [readMobile ? 'mobile' : null, readPc ? 'pc' : null].filter(Boolean)) {
+            await sleep(PAGE_WAIT_MS);
+            try {
+                const pl = await rankPowerlink(aside, keyword, cfg, which);
+                plOut[which] = pl;
+                if (pl.noSection) row.notes.push(`파워링크(${which}) 묶음 없음`);
+                else row.notes.push(`파워링크(${which}) ${pl.total}개${pl.more ? '+더보기' : ''}`);
+                if (verbose) log(`  파워링크(${which}) ${pl.ads.map((a, i) => (i + 1) + '.' + a.slice(0, 28)).join(' | ')}`);
+            } catch (e) {
+                const msg = `파워링크(${which}): ` + e.message; row.error = row.error ? row.error + ' / ' + msg : msg; errors.push({ keyword, error: msg }); log(`  ✗ ${keyword} ${msg}`);
+                if (e.krBlocked) { blocked = { kind: e.krBlocked, keyword }; break; }
+            }
+        }
+        if (plOut[storePl]) row.powerlink = plOut[storePl].rank;
+        if (readPc && readMobile && plOut.pc) row.powerlink_pc = plOut.pc.rank;
+        if (readPc && !readMobile && plOut.pc) row.powerlink = plOut.pc.rank;
+        if (row.error) { row.shopping = null; row.ad = null; row.powerlink = null; }   // 읽기 실패 키워드 = 세 칸 전부 NULL(설계)
+        rows.push(row);
+        log(`  ${keyword}: 쇼핑 ${fmt(row.shopping)} · 광고 ${fmt(row.ad)} · 파워링크 ${fmt(row.powerlink)}${row.powerlink_pc !== undefined ? ' · PC ' + fmt(row.powerlink_pc) : ''} · ${Math.round((Date.now() - tk) / 1000)}초`);
+        if (blocked) {
+            const rest = cfg.keywords.slice(k + 1), msg = '막혀서 안 읽음(' + blocked.kind + ')';
+            for (const kw of rest) { rows.push({ keyword: kw, shopping: null, ad: null, powerlink: null, error: msg }); errors.push({ keyword: kw, error: msg }); }
+            blocked.skipped = rest.length;
+            log(`  ■ ${keyword} 에서 막힘(${blocked.kind}) — 남은 ${rest.length}개 안 돌림`);
+            break;
+        }
+    }
+    return { rows, errors, blocked };
+}
+
 // ───────── 본체
 async function main() {
     const args = parseArgs(process.argv.slice(2));
@@ -369,7 +494,16 @@ async function main() {
     const log = m => console.log(new Date().toISOString().slice(11, 19) + ' ' + m);
     const { pool } = require('./_db');
     const { cfg, fromDb } = await readConfig(pool);
+    const prevLast = await readLast(pool);
+    let autoInfo = null;
+    if (cfg.auto && !args.keywords) {   // --keywords 시험은 자동 목록을 건드리지 않음
+        const snap = await readSnapshot(pool);
+        const c = computeAutoKeywords({ fixed: cfg.keywords, auto: cfg.auto, items: snap.items, snapshotAt: snap.run_at, prevAuto: prevLast.auto });
+        cfg.keywords = c.keywords; autoInfo = c.auto;
+    }
     if (args.keywords) cfg.keywords = args.keywords;
+    if (autoInfo) log(`#1001 자동 키워드 ${autoInfo.keywords.length}개${autoInfo.stale ? '(스냅샷 낡음 · 어제 목록)' : ''}: ${autoInfo.keywords.join(',')} · 짝 없음 ${autoInfo.unmapped.map(u => u.name + (u.opt ? '/' + u.opt : '')).join(',') || '0'} · 상한 넘침 ${autoInfo.cut.join(',') || '0'}`);
+    if (args.list) { console.log(JSON.stringify({ keywords: cfg.keywords, auto: autoInfo })); await pool.end().catch(() => { }); process.exit(0); }
     const date = args.date || kstDate();
     const readPc = args.mobileOnly ? false : (args.pc === true || cfg.powerlink_source === 'pc' || cfg.powerlink_source === 'both');
     const readMobile = args.mobileOnly ? true : (cfg.powerlink_source !== 'pc');
@@ -378,49 +512,25 @@ async function main() {
 
     const aside = new Aside(ASIDE_EXE, log);
     const rows = [], errors = [];
+    let blocked = null;
     try {
         const s = await aside.start();
         log(`어사이드 MCP 연결 ${(s.server || {}).name || ''} ${(s.server || {}).version || ''} · 도구 ${s.tools.join(',')} · ${Date.now() - t0}ms`);
-        for (let k = 0; k < cfg.keywords.length; k++) {
-            const keyword = cfg.keywords[k];
-            const tk = Date.now();
-            const row = { keyword, shopping: null, ad: null, powerlink: null, notes: [] };
-            if (readPc && readMobile) row.powerlink_pc = null;
-            if (k > 0) await sleep(PAGE_WAIT_MS);
-            try {
-                const sh = await rankShopping(aside, keyword, cfg, log);
-                row.shopping = sh.shopping; row.ad = sh.ad; row.seen = `${sh.organicSeen}+광고${sh.adsSeen}`; row.pages = sh.pages; row.notes.push(...sh.notes);
-                if (args.verbose) { log(`  일반 ${sh.organic.map((o, i) => (i + 1) + '.' + o.mall).join(' ')}`); log(`  광고 ${sh.ads.map((o, i) => (i + 1) + '.' + o.mall).join(' ')}`); }
-            } catch (e) { row.error = '쇼핑: ' + e.message; errors.push({ keyword, error: row.error }); log(`  ✗ ${keyword} ${row.error}`); }
-            const plOut = {};
-            for (const which of [readMobile ? 'mobile' : null, readPc ? 'pc' : null].filter(Boolean)) {
-                await sleep(PAGE_WAIT_MS);
-                try {
-                    const pl = await rankPowerlink(aside, keyword, cfg, which);
-                    plOut[which] = pl;
-                    if (pl.noSection) row.notes.push(`파워링크(${which}) 묶음 없음`);
-                    else row.notes.push(`파워링크(${which}) ${pl.total}개${pl.more ? '+더보기' : ''}`);
-                    if (args.verbose) log(`  파워링크(${which}) ${pl.ads.map((a, i) => (i + 1) + '.' + a.slice(0, 28)).join(' | ')}`);
-                } catch (e) { const msg = `파워링크(${which}): ` + e.message; row.error = row.error ? row.error + ' / ' + msg : msg; errors.push({ keyword, error: msg }); log(`  ✗ ${keyword} ${msg}`); }
-            }
-            if (plOut[storePl]) row.powerlink = plOut[storePl].rank;
-            if (readPc && readMobile && plOut.pc) row.powerlink_pc = plOut.pc.rank;
-            if (readPc && !readMobile && plOut.pc) row.powerlink = plOut.pc.rank;
-            if (row.error) { row.shopping = null; row.ad = null; row.powerlink = null; }   // 읽기 실패 키워드 = 세 칸 전부 NULL(설계)
-            rows.push(row);
-            log(`  ${keyword}: 쇼핑 ${fmt(row.shopping)} · 광고 ${fmt(row.ad)} · 파워링크 ${fmt(row.powerlink)}${row.powerlink_pc !== undefined ? ' · PC ' + fmt(row.powerlink_pc) : ''} · ${Math.round((Date.now() - tk) / 1000)}초`);
-        }
+        const c = await collectRows({ aside, cfg, readMobile, readPc, storePl, log, verbose: args.verbose });
+        rows.push(...c.rows); errors.push(...c.errors); blocked = c.blocked;
     } catch (e) {
         log('✗ 어사이드 연결·실행 실패: ' + e.message);
         for (const keyword of cfg.keywords) if (!rows.find(r => r.keyword === keyword)) { rows.push({ keyword, shopping: null, ad: null, powerlink: null, error: e.message }); errors.push({ keyword, error: e.message }); }
     } finally {
-        await aside.stop().catch(() => { });
+        await aside.stop({ keepTabs: !!blocked }).catch(() => { });
     }
 
     console.log('\n' + table(rows, readPc && readMobile));
-    const ok = errors.length === 0 && rows.length > 0;
+    const ok = errors.length === 0 && rows.length > 0 && !blocked;
     // 읽기 실패 키워드는 DB 줄로 안 넣는다(errors 에만) — 전체 실패 날은 auto 줄 0 → 서버 10:00 「미수집」 알림이 살고 · 같은 날 재실행이 앞 회차 좋은 값을 NULL 로 안 덮음
-    const last = { date, at: new Date().toISOString(), ok, rows: rows.filter(r => !r.error).map(r => ({ keyword: r.keyword, shopping: r.shopping, ad: r.ad, powerlink: r.powerlink })), errors, powerlink_source: storePl, took_ms: Date.now() - t0 };
+    const last = { date, at: new Date().toISOString(), ok, rows: rows.filter(r => !r.error).map(r => ({ keyword: r.keyword, shopping: r.shopping, ad: r.ad, powerlink: r.powerlink })), errors, powerlink_source: storePl, took_ms: Date.now() - t0, blocked: blocked ? Object.assign({ at: new Date().toISOString() }, blocked) : null };
+    if (!args.keywords) last.auto = autoInfo;
+    if (krResetNotified(prevLast, date)) last.notified_date = '';
 
     if (args.apply) {
         const sv = await saveRows(pool, date, last.rows, log);
@@ -438,4 +548,4 @@ async function main() {
 if (require.main === module) {
     main().catch(e => { console.error('실패:', e && e.stack || e); process.exit(1); });
 }
-module.exports = { Aside, rankShopping, rankPowerlink, matchStore, matchStoreHost, readConfig, DEFAULT_CFG };
+module.exports = { Aside, rankShopping, rankPowerlink, matchStore, matchStoreHost, readConfig, DEFAULT_CFG, computeAutoKeywords, collectRows, krResetNotified, JS_BLOCK_CHECK, KR_CAP };

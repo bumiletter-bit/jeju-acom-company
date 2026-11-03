@@ -9922,6 +9922,26 @@ function renderRankKw(msg, err) {
     const m = document.getElementById('rank-kw-msg');
     if (m) { m.textContent = msg != null ? msg : (dirty && !_rankKw.length ? '키워드가 1개 이상 있어야 저장돼요' : dirty ? '바꾼 것이 있어요 · [저장]을 눌러야 다음 09:30 부터 반영돼요' : ''); m.classList.toggle('err', !!err); }
 }
+// #1001 판매 중 자동 키워드(수집기가 적은 keyword_rank_last.auto · 읽기만 · × 없음) + 짝 없는 상품·상한·막힘 안내 — 자동 설정 전·옛 자료면 안 보임
+function renderRankAuto(last) {
+    const chips = document.getElementById('rank-kw-chips'); if (!chips) return;
+    let box = document.getElementById('rank-kw-auto');
+    const a = last && last.auto && typeof last.auto === 'object' ? last.auto : null, b = last && last.blocked && typeof last.blocked === 'object' ? last.blocked : null;
+    if (!a && !b) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement('div'); box.id = 'rank-kw-auto'; box.style.margin = '0 0 10px'; chips.after(box); }
+    const fixed = _rankKw || [], list = (a && Array.isArray(a.keywords) ? a.keywords : []).map(String).filter(k => !fixed.includes(k));
+    const warn = t => `<div style="margin-top:6px;font-size:12px;color:#B54708">${_rankKwEsc(t)}</div>`;
+    const md = /^\d{4}-\d{2}-\d{2}$/.test(String(last.date || '')) ? `${Number(last.date.slice(5, 7))}/${Number(last.date.slice(8, 10))} 기준 · ` : '';
+    let h = '';
+    if (a) h += `<div style="margin-bottom:6px;font-size:12px;color:#667085">판매 중 자동 · ${md}상품 판매 상태로 저절로 들어오고 빠져요</div>`
+        + `<div class="rank-kw-chips" style="margin-bottom:0">${list.length ? list.map(k => `<span class="rank-kw-chip" style="padding-right:12px;background:#F2F4F7;color:#344054">${_rankKwEsc(k)}</span>`).join('') : '<span class="rank-kw-empty">지금은 없어요</span>'}</div>`;
+    if (b) h += warn(b.kind === 'list_missing' ? '네이버 쇼핑 목록을 못 읽어 수집이 멈췄어요 · 보안 확인일 수 있어요' : '네이버 보안 확인에 막혀 수집이 멈췄어요 · 어사이드 창에서 풀어 주세요');
+    const um = a && Array.isArray(a.unmapped) ? a.unmapped : [];
+    if (um.length) h += warn('키워드 없는 판매 상품: ' + um.map(u => String(u && u.name || '') + (u && u.opt ? '/' + u.opt : '')).join(', '));
+    if (a && Array.isArray(a.cut) && a.cut.length) h += warn('상한 넘어 못 모음: ' + a.cut.join(', '));
+    if (a && a.stale) h += warn('상품 스냅샷이 없거나 낡아 어제 자동 목록으로 모았어요');
+    box.innerHTML = h;
+}
 async function loadRankKeywords() {
     const card = document.getElementById('rank-kw-card'), note = document.getElementById('rank-auto-note');
     if (!card) return;
@@ -9931,6 +9951,7 @@ async function loadRankKeywords() {
         _rankKw = r.keywords.map(k => String(k)); _rankKwSaved = JSON.stringify(_rankKw);
         card.hidden = false; if (note) note.hidden = false;
         renderRankKw();
+        renderRankAuto(r.last);
     } catch (e) {
         _rankKw = null; card.hidden = true; if (note) note.hidden = true;   // 옛 서버 = 종전 화면 그대로
     }

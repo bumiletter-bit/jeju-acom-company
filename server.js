@@ -16020,6 +16020,23 @@ function krChunks(lines, max) {
 }
 async function krCfg(db, key) { const r = await db.query('SELECT value FROM agent_office_config WHERE key=$1', [key]); return r.rows.length ? r.rows[0].value : null; }
 function krKstHM(ms) { return new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(11, 16); }
+// #1001 수집기가 적은 keyword_rank_last.blocked·auto 를 안내 줄로 → { top:[맨 위], tail:[맨 끝] } (칸 없으면 둘 다 빈 배열 = 종전 글 그대로)
+function krNoticeLines(last) {
+    const top = [], tail = [], b = last && last.blocked, a = last && last.auto;
+    if (b && typeof b === 'object') {
+        const n = Number(b.skipped) > 0 ? ` · ${Number(b.skipped)}개 못 모음` : '';
+        top.push(b.kind === 'list_missing'
+            ? `⚠️ 네이버 쇼핑 목록을 못 읽어 멈춤(보안 확인일 수 있음)${n} · 어사이드 창 확인해 주세요`
+            : `⚠️ 네이버 보안 확인 필요${n} · 어사이드 창에서 풀어 주세요 · 푼 뒤 터미널 클코에게 「키워드 순위 다시」`);
+    }
+    if (a && typeof a === 'object') {
+        const um = Array.isArray(a.unmapped) ? a.unmapped : [];
+        if (um.length) tail.push('키워드 없는 판매 상품: ' + um.slice(0, 5).map(u => String(u && u.name || '') + (u && u.opt ? '/' + u.opt : '')).join(', ') + (um.length > 5 ? ` 외 ${um.length - 5}` : ''));
+        if (Array.isArray(a.cut) && a.cut.length) tail.push(`상한(${KR_MAX_KEYWORDS}개) 넘어 못 모음: ` + a.cut.slice(0, 10).join(', ') + (a.cut.length > 10 ? ` 외 ${a.cut.length - 10}` : ''));
+        if (a.stale) tail.push('상품 스냅샷이 없거나 낡아 어제 자동 목록으로 모음');
+    }
+    return { top, tail };
+}
 // o = { db, send, noti, today, hm } — 검증이 가짜를 넣음 · 평소엔 실제 pool·notifyTelegram·createNotification
 async function keywordRankNotifyTick(o = {}) {
     const db = o.db || pool, send = o.send || notifyTelegram, noti = o.noti || createNotification, day = o.today || kstTodayStr();
@@ -16034,14 +16051,16 @@ async function keywordRankNotifyTick(o = {}) {
     for (const r of rows) (r.is_today ? today : yest).set(r.keyword, r);
     const errors = new Set((Array.isArray(last.errors) ? last.errors : []).map(e => String(e && typeof e === 'object' ? e.keyword : e)));
     const keywords = (Array.isArray(cfg.keywords) ? cfg.keywords.map(String) : []).slice();
-    for (const k of [...today.keys(), ...errors]) if (k && !keywords.includes(k)) keywords.push(k);
+    const autoKw = last.auto && Array.isArray(last.auto.keywords) ? last.auto.keywords.map(String) : [];   // #1001 고정 → 자동 순서 고정(아래 today 는 순서 없음)
+    for (const k of [...autoKw, ...today.keys(), ...errors]) if (k && !keywords.includes(k)) keywords.push(k);
     const at = last.at && !isNaN(Date.parse(last.at)) ? krKstHM(Date.parse(last.at)) : (o.hm || krKstHM());
-    const lines = krFormatLines({ day, hm: at, keywords, today, yest, errors });
+    const notice = krNoticeLines(last);
+    const lines = [...notice.top, ...krFormatLines({ day, hm: at, keywords, today, yest, errors }), ...notice.tail];
     for (const msg of krChunks(lines, 380)) await send(msg);
     const users = (await db.query('SELECT id FROM users WHERE deleted_at IS NULL')).rows;
     const md = `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
     const short = keywords.slice(0, 6).map(k => { const t = today.get(k); return `${k} ${t && t.shopping_rank != null ? t.shopping_rank + '위' : '-'}`; }).join(' · ');
-    for (const u of users) await noti(u.id, 'rank', `키워드 순위 (${md})`, short + (keywords.length > 6 ? ` 외 ${keywords.length - 6}` : ''), 'rankings');
+    for (const u of users) await noti(u.id, 'rank', `키워드 순위 (${md})`, (last.blocked ? '⚠️ 보안 확인 필요 · ' : '') + short + (keywords.length > 6 ? ` 외 ${keywords.length - 6}` : ''), 'rankings');
     return 1;
 }
 async function keywordRankMissTick(o = {}) {
