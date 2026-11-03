@@ -43,11 +43,11 @@ function listBody(n, ent) {
     for (let i = 0; i < n; i++) {
         const k = String(i + 1).padStart(4, '0');
         entries[i % ent].rows.push({ id: 10000 + i, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null,
-            cells: ['', S.tel && i === 1 ? '010-7777-8888' : S.tel && i === 0 ? '010-1111-2222' : '', '', '손님' + k, CAT[i % 2], '1', '010-55' + k.slice(0, 2) + '-' + k, '', '제주특별자치도 제주시 연동 ' + (S.multi && i % 6 === 0 ? '다중 ' : '') + (i + 1) + '번지', '', S.tel && i < 2 ? '01011112222' : '', '', ''] });   // #927 tel = 0번 줄 B=K(서버가 채운 꼴) · 1번 줄 B≠K(대신 주문)
+            exp_site: !!(S.exp && i === 0), cells: ['', S.tel && i === 1 ? '010-7777-8888' : S.tel && i === 0 ? '010-1111-2222' : '', '', '손님' + k, CAT[i % 2], '1', '010-55' + k.slice(0, 2) + '-' + k, '', '제주특별자치도 제주시 연동 ' + (S.multi && i % 6 === 0 ? '다중 ' : '') + (i + 1) + '번지', '', S.tel && i < 2 ? '01011112222' : '', '', ''] });   // #927 tel = 0번 줄 B=K(서버가 채운 꼴) · 1번 줄 B≠K(대신 주문)
     }
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries };
 }
-const S = { n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, badges: {}, services: [], lookup: null, lines938: false, linesPlat311: null, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
+const S = { exp: false, n: 0, ent: 1, juso: 0, calls: [], multi: false, tel: false, puts: [], px: false, px2: false, px3: false, px3Later: false, pxHide: false, deleted: new Set(), listDelay: 0, badges: {}, services: [], lookup: null, lines938: false, linesPlat311: null, preview: null, pairs: [], saves: [] };   // #934 px = 실사례 목록 · preview = 가짜 정리 답 · pairs/saves = 받은 POST 본문   // multi = 6줄마다 주소 후보 둘(「주소 확인 필요」)
 const page0 = v => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;background:#EEF0F4;font-family:system-ui,"Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased}*{animation:none!important;transition:none!important;caret-color:transparent!important}.om-tag[data-tag="smemo"]{display:none!important}</style>
 <link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/theme.css"><link rel="stylesheet" href="/app/ao-desk.css"><link rel="stylesheet" href="/om.css?v=${v}"></head><body>
@@ -197,7 +197,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             for (const v of ['old', 'new']) {
                 const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 }); const p = await c.newPage();
                 await openMemo(p, v === 'old' ? 'mix' : v, 5, 2); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
-                shots[v] = await p.evaluate(() => { const k = document.getElementById('om-card').cloneNode(true); k.querySelectorAll('[data-fwrap$="-c1"]').forEach(e => e.remove()); return k.innerHTML; }).then(h => h.replace(/ fk-(?:ship|\d+)/g, '').replace(/om-grid cash(?:-more)?/g, 'om-grid').replaceAll(' <small>비우면 다음 발주</small>', '').replaceAll('placeholder="예) 10/30"', 'placeholder="비우면 다음 발주 · 예) 10/30"')); await c.close();   // #927 새 칸 「보내는 분 연락처」(c1)는 빼고 비교 · #911 카드 꼴을 일부러 바꿈 = 픽셀 대신 칸 HTML(자리 이름 fk-·cash 빼고)이 종전과 같은지
+                shots[v] = await p.evaluate(() => { const k = document.getElementById('om-card').cloneNode(true); k.querySelectorAll('[data-fwrap$="-c1"], .om-expchk').forEach(e => e.remove()); return k.innerHTML; }).then(h => h.replace(/ fk-(?:ship|\d+)/g, '').replace(/om-grid cash(?:-more)?/g, 'om-grid').replaceAll(' <small>비우면 다음 발주</small>', '').replaceAll('placeholder="예) 10/30"', 'placeholder="비우면 다음 발주 · 예) 10/30"')); await c.close();   // #927 새 칸 「보내는 분 연락처」(c1)는 빼고 비교 · #911 카드 꼴을 일부러 바꿈 = 픽셀 대신 칸 HTML(자리 이름 fk-·cash 빼고)이 종전과 같은지
             }
             // #911 카드 꼴 = 넘침 0 · 수량 묶음 좁게 · 입력 칸 높이(폰 44)
             for (const [w, h, phone] of [[1280, 900, false], [390, 844, true]]) {
@@ -210,6 +210,64 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
                 await c.close();
             }
             ok(shots.old === shots.new, '빈 주문입력 카드(1줄) = 칸 HTML 종전과 같음(#911 자리 이름·발송일 안내 글 빼고)', (() => { let i = 0; while (i < shots.old.length && shots.old[i] === shots.new[i]) i++; return [shots.old.slice(i - 40, i + 80), shots.new.slice(i - 40, i + 80)]; })()); }   // 다르면 처음 어긋난 곳 앞뒤 글을 보여 줌
+
+        // #1003 현금 줄 「체험장」 = 고치기·빈 현금·정리 결과 카드 체크칸 · 알약 「현금 · 체험장」(밝음·야간 다른 색) · 주소 줄·서비스 줄엔 칸 없음 · PUT/POST 에 exp_site
+        console.log('#1003 현금 줄 체험장 표시');
+        { const pe = []; const c = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const p = await c.newPage(); p.on('pageerror', e => pe.push(String(e)));
+            S.exp = true; await openMemo(p, 'new', 3, 1); await jusoQuiet();
+            let st = await p.evaluate(() => { const ps = [...document.querySelectorAll('#om-ctw tbody tr .om-ct-p > .om-pill:first-child')]; const cs = e => { const g = getComputedStyle(e); return g.backgroundColor + '|' + g.color; }; return { t: ps.map(e => e.textContent), cls: ps.map(e => e.className), light: ps.length > 1 ? [cs(ps[0]), cs(ps[1])] : [] }; });
+            ok(st.t[0] === '현금 · 체험장' && st.cls[0] === 'om-pill k-cash k-exp' && st.t.slice(1).every(t => t === '현금') && st.light[0] !== st.light[1], '체험장 줄 알약 「현금 · 체험장」(다른 색) · 나머지 「현금」 그대로', st);
+            st = await p.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); const ps = [...document.querySelectorAll('#om-ctw tbody tr .om-ct-p > .om-pill:first-child')]; const cs = e => { const g = getComputedStyle(e); return g.backgroundColor + '|' + g.color; }; const r = [cs(ps[0]), cs(ps[1])]; document.documentElement.removeAttribute('data-ao-theme'); return r; });
+            ok(st[0] !== st[1] && /rgba\(251, 146, 60/.test(st[0]), '야간 = 체험장 알약 야간 색(현금과 다름)', st);
+            // 고치기 카드: 체험장 줄 = 체크됨 · 끄고 저장 = PUT exp_site false / 다른 줄 켜고 저장 = true · 안 건드리면 칸 안 보냄
+            await p.click('#om-ctw tbody tr:nth-child(1) .om-ct-open'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard');
+            st = await p.evaluate(() => { const b = document.querySelector('#om-card input[data-cact="exprow"]'); return { has: !!b, on: b && b.checked, h: b && Math.round(b.closest('label').getBoundingClientRect().height) }; });
+            ok(st.has && st.on === true && st.h >= 36, '고치기 카드 = [체험장] 체크칸(체험장 줄은 켜져 있음)', st);
+            S.puts = []; await p.click('#om-card input[data-cact="exprow"]'); await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForTimeout(150);
+            ok(S.puts[0].exp_site === false && Array.isArray(S.puts[0].cells) && S.puts[0].cells.length === 13, '체험장 끄고 저장 = PUT exp_site false · cells 13칸 그대로', S.puts[0]);
+            await openMemo(p, 'new', 3, 1); await p.click('#om-ctw tbody tr:nth-child(2) .om-ct-open'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard');
+            S.puts = []; await p.click('#om-card input[data-cact="exprow"]'); await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForTimeout(150);
+            ok(S.puts[0].exp_site === true, '다른 줄 체험장 켜고 저장 = PUT exp_site true', S.puts[0]);
+                                                S.exp = false;
+            // 빈 현금 카드(주문입력) = 체크칸 있음 · 저장 POST 에 exp_site true
+            await openMemo(p, 'new', 3, 1); await p.click('.om-tag[data-tag="cash"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard');
+            st = await p.evaluate(() => !!document.querySelector('#om-card input[data-cact="exprow"]'));
+            ok(st, '빈 현금 카드 = [체험장] 체크칸 있음', st);
+            // 정리 결과 카드(붙여 넣은 글) = 현금 줄 체크 → 저장 POST rows[0].exp_site true · 메모 줄엔 칸 없음
+            S.preview = { ok: true, rows: [{ kind: 'cash', sure: true, check_why: [], cells: ['체험장 드림!', '010-4400-1234', '제주시 연삼로 1066-31', '체험손님', CAT[0], '1', '010-4400-1234', '', '서울 송파구 올림픽로 9', '', '010-4400-1234', '', ''] }, { kind: 'line', key: '010-4400-5678', note: '큰 걸로', plat: '네이버', line: ['', '010-4400-5678', '큰 걸로', '네이버'].join('\t'), sure: true, check_why: [] }] };
+            await openMemo(p, 'new', 3, 1); S.saves = []; await p.evaluate(t => window.AkmOrderMemo.fromText(t), '체험손님 현금 5kg 1박스'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+            st = await p.evaluate(() => [...document.querySelectorAll('#om-card .om-rowcard')].map(s => !!s.querySelector('input[data-cact="exprow"]')));
+            ok(st.join() === 'true,false', '정리 결과 카드 = 현금 줄만 [체험장] 칸(메모 줄 없음)', st);
+            await p.click('#om-card input[data-cact="exprow"]'); await p.click('#om-card-save'); await until(() => S.saves.length); await p.waitForTimeout(200);
+            ok(S.saves[0] && S.saves[0].rows[0].exp_site === true && !('exp_site' in S.saves[0].rows[1]) && S.saves[0].rows[0].cells.length === 13, '정리 결과 저장 = 현금 줄 exp_site true · 메모 줄엔 칸 없음 · cells 13칸', S.saves[0] && S.saves[0].rows);
+            S.preview = null;
+            // 입력삭제 주소 줄·서비스 줄 고치기 카드 = 체험장 칸 없음
+            S.px = true; await openMemo(p, 'new', 4, 1);
+            for (const nm of ['주소줄손님', '서비스손님']) {
+                await p.locator('#om-ctw tbody tr', { hasText: nm }).locator('.om-ct-open').click(); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard');
+                st = await p.evaluate(() => !!document.querySelector('#om-card input[data-cact="exprow"]'));
+                ok(!st, nm + ' 고치기 카드 = 체험장 칸 없음', st);
+                await p.keyboard.press('Escape'); await p.waitForTimeout(150); if (await p.evaluate(() => !document.getElementById('om-card').hidden)) await p.click('#om-card [data-cact="close"], #om-card .om-x').catch(() => {});
+            }
+            S.px = false;
+            ok(pe.length === 0, '#1003 스크립트 오류 0', pe); await c.close(); }
+        // #1003 390·900 × 밝음·야간 = 넘침 0 · 체크칸 44px(폰) · PNG(PNG1003 폴더 있으면)
+        for (const [w, h] of [[390, 844], [900, 900]]) for (const dark of [false, true]) {
+            const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: true, isMobile: true, colorScheme: dark ? 'dark' : 'light' }); const p = await c.newPage(); const pe = []; p.on('pageerror', e => pe.push(String(e)));
+            S.exp = true; await openMemo(p, 'new', 3, 1, w < 700); await jusoQuiet(); if (dark) await p.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark'));
+            const tag = w + (dark ? ' 야간' : ' 밝음'), out = process.env.PNG1003;
+            const pill = await p.evaluate(() => { const e = document.querySelector('.om-pill.k-exp'); if (!e) return null; const r = e.getBoundingClientRect(); return { w: Math.round(r.width), sw: document.documentElement.scrollWidth }; });
+            if (out) await p.screenshot({ path: path.join(out, 'list-' + w + (dark ? '-dark' : '') + '.png') });
+            await p.click('#om-ctw tbody tr:nth-child(1) .om-ct-open'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(150);
+            const st = await p.evaluate(() => { const card = document.getElementById('om-card'), cr = card.getBoundingClientRect(), l = card.querySelector('.om-expchk'); l && l.scrollIntoView({ block: 'center' }); const r = l && l.getBoundingClientRect(); return { h: r && Math.round(r.height), over: r && r.right > cr.right + 0.5, sw: document.documentElement.scrollWidth }; });
+            if (out) await p.screenshot({ path: path.join(out, 'card-' + w + (dark ? '-dark' : '') + '.png') });
+            ok(pill && pill.sw <= w && st.h >= (w < 700 ? 44 : 36) && !st.over && st.sw <= w && pe.length === 0, tag + ' = 알약·체크칸 넘침 0 · 체크칸 높이 · 오류 0', { pill, st, pe });
+            S.exp = false; await c.close();
+        }
+        // #1003 for-ship = 체험장 칸 켜도 바이트 같음(순수 pickForShip)
+        { const OMS = require(path.join(ROOT, 'order-memo.js')), row = (id, ex) => ({ id, kind: 'cash', state: 'open', sure: true, service: false, exp_site: ex, ship_date: null, cells: ['체험장 드림!', '', '제주시', '손님' + id, CAT[0], '1', '010-4400-1234', '', '서울', '', '010-4400-1234', '', ''] });
+            const a = JSON.stringify(OMS.pickForShip([row(1, false), row(2, false)], '2026-11-04')), b = JSON.stringify(OMS.pickForShip([row(1, true), row(2, false)], '2026-11-04'));
+            ok(a === b, 'for-ship 출력 = 체험장 켜기 전후 바이트 같음(양식 A칸 「!」 꼴 그대로)', { same: a === b }); }
         // #927 「보내는 분 연락처」(B) 칸 = 「보내는이 변경」 묶음 안 · B=K 면 빈 칸(안내 글) · B≠K 면 값 보이고 묶음 열림 · 저장 때 빈 칸 = '' · 세 폭 넘침 0 + PNG
         { S.tel = true; const outDir = process.env.PNG927 || require('os').tmpdir();
             for (const [w, h, phone] of [[1280, 900, false], [900, 900, true], [390, 844, true]]) {

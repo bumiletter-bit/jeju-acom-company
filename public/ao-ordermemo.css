@@ -555,6 +555,9 @@ html[data-ao-theme="dark"] .om-barn.warn { background: rgba(251, 191, 74, .08); 
 .om-indchk small { margin-left: 4px; color: var(--d-sub); font-size: 12px; font-weight: 600; }
 .om-indchk + .om-indchk { margin-top: 6px; }
 .om-pill.k-svc { background: #EDE9FE; color: #5B21B6; }
+/* #1003 체험장 현금 줄(현금과 다른 색 · 귤빛) */
+.om-pill.k-cash.k-exp { background: #FFEAD5; color: #9C2A10; }
+html[data-ao-theme="dark"] .om-pill.k-cash.k-exp { background: rgba(251, 146, 60, .18); color: #FDBA74; }
 html[data-ao-theme="dark"] .om-pill.k-svc { background: rgba(167, 139, 250, .18); color: #C4B5FD; }
 @media (max-width: 960px), (pointer: coarse) { .om-indchk { min-height: 44px; } }
 
