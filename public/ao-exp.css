@@ -173,8 +173,11 @@ html[data-ao-theme="dark"] .xp-layer { --x-pl: #FF922B; }
 }
 @media (max-width: 720px) {
     .xp-nav { flex-wrap: wrap; }
-    .xp-quick label, .xp-quick input[type="text"], .xp-quick input[type="tel"] { flex: 1 1 140px; width: auto; }
+    /* #1010 flex 는 줄(label)에만 — input 은 label(세로 flex) 안이라 flex 140px 가 「높이」로 먹어 칸이 140px 로 늘었음 */
+    .xp-quick label { flex: 1 1 140px; }
+    .xp-quick input[type="text"], .xp-quick input[type="tel"] { width: 100%; box-sizing: border-box; }
 }
+@media (max-width: 960px), (pointer: coarse) { .xp-quick input[type="text"], .xp-quick input[type="tel"] { min-height: 44px; } }   /* #1010 폰 누르기 44px */
 /* #806(대표 10/21) 줄 머리 = 날짜(위 · 작게) + 시간(아래 · 굵게) · 예약번호(작은 회색 · 길게 눌러 복사) · 여러 날짜 판 = 날짜 구분 줄 */
 .xp-row { grid-template-columns: 66px minmax(0, 1fr) auto; }
 .xp-time { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.2; }

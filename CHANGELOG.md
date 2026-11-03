@@ -1,3 +1,7 @@
+## v5.9.703 (2026-11-04) — #1010 체험 예약 「번호 미입력」 판 폰 입력 칸 높이 결함
+
+- public/ao-exp.css ≤720 규칙 `.xp-quick label, input { flex:1 1 140px }` 가 input(label 세로 flex 안)에선 flex-basis 140px 가 높이로 먹어 이름·번호 칸이 140px 로 늘어남(10/21 #804 부터 · 폴드7 접은 화면에서 대표 발견) → flex 는 label 만 · input width 100% + box-sizing · ≤960/터치 min-height 44. 날짜 판·수기 추가 판 전/후 픽셀 동일(390·900·1280 밝음·야간) · verify-804-ui 75/75. 워커1 시공 · 워커3 점검 막을 것 0. 캐시 ao-exp.css 13. 🔵 후보 = 수정·추가 판 input 도 터치 44.
+
 ## v5.9.702 (2026-11-03) — #1004 차이 수량 「이름 확인」 표시 · 체험 옛 알림톡 상수 정리
 
 - qty-read.js: 목록 이름으로 바꿔 낀 줄만 check:true → 화면·결과 그림 「이름 확인」 알약 · 응답 model·usage 칸 뺌 · 머리 주석 갱신 · qty-diff.html 잘린 이름 합치기 때 check 유지.
