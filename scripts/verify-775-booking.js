@@ -404,16 +404,29 @@ const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; r
         const t2 = mk(); t2.db.S.rows.push(row(1), row(2), row(3)); t2.db.S.cfg.experience_notify = { enabled: true, daily_cap: 5, recv_from: '00:00', recv_to: '23:59' }; t2.db.S.sentToday = 4;
         await t2.M.collectSms();
         ok(t2.sent.length === 1, '하루 상한(5 중 4 씀) = 1통만', t2.sent.length);
-        // 알림톡(총괄 10/20 · UM_6987 접수 · UM_6988 전날) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
+        // 알림톡(#1000 기본 = UN_1894 접수 · UN_1895 전날 · 옛 UM_6987·UM_6988 은 설정이 옛 코드일 때 그대로) — 켜면 알림톡 + 실패 시 LMS(failover = 문자 전문) · 꺼짐(기본)·원문 없음·변수 빈칸 = LMS 바로
         ok(t.sent.every(x => !x.alim), '알림톡 설정 꺼짐(기본) = LMS 만');
         const t3 = mk(); t3.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, sms_recv_at: 'x', name: '' }));
         t3.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true } };
         await t3.M.collectSms();
         const a1 = t3.sent.find(x => x.alim), l2 = t3.sent.find(x => !x.alim);
-        ok(a1 && a1.tplCode === 'UM_6987' && a1.message === T.EXP_ALIMTALK.UM_6987.content.replace('#{고객명}', '홍길동').replace('#{방문일시}', '11월 30일(월) 12:30').replace('#{인원}', '체험 2명 · 입장 1명'), '접수 알림톡 = UM_6987 원문에 변수만(방문일시 「11월 30일(월) 12:30」 · 인원 「체험 2명 · 입장 1명」)', a1 && a1.tplCode);
+        ok(a1 && a1.tplCode === 'UN_1894' && a1.message === T.EXP_ALIMTALK.UN_1894.content.replace('#{고객명}', '홍길동').replace('#{방문일시}', '11월 30일(월) 12:30').replace('#{인원}', '체험 2명 · 입장 1명'), '접수 알림톡(설정에 코드 없음 = 기본 UN_1894) = 원문에 변수만(방문일시 「11월 30일(월) 12:30」 · 인원 「체험 2명 · 입장 1명」)', a1 && a1.tplCode);
         ok(a1 && /\[제주아꼼이네 감귤체험장\] 홍길동님, 예약이 확정되었습니다/.test(a1.failoverMessage) && a1.buttons && a1.buttons.button.length === 2 && a1.buttons.button[0].linkMo === 'https://map.naver.com/p/entry/place/1911847116' && a1.buttons.button[1].name === '체험 안내 보기', '실패 대체 = 확정 문자 전문 · 버튼 2(길찾기·체험 안내 보기)', a1 && a1.buttons);
         ok(l2 && !l2.alim && /내일/.test(l2.message), '이름 빈칸 예약 = 알림톡 대신 LMS(원문과 달라지면 거절되므로)', l2 && l2.message.slice(0, 40));
         ok(T.alimVars({ name: 'a', visit_date: '2026-11-01', visit_time: '10:00', exp_count: 0, entry_count: 3, infant_count: 1 })['인원'] === '입장 3명 · 유아 1명', '인원 = 0명 칸 빼고 · 유아 뒤에');
+        // #1000 새 템플릿 UN_1894·UN_1895 — 승인 원문 지문(CR 뺀 알리고 template/list 원문 · 한 글자만 달라도 거절됨) · 전환 안전 = 설정이 옛 코드면 옛 코드·옛 원문 그대로 알림톡
+        const sha1000 = s => require('crypto').createHash('sha256').update(s, 'utf8').digest('hex');
+        ok(sha1000(T.EXP_ALIMTALK.UN_1894.content) === 'fd74778cd7a8dc5ca4beb4837ab574182e769b86d17591a32439e721d48782e2' && sha1000(T.EXP_ALIMTALK.UN_1895.content) === '7e7019a2734c931e4cb266e0c2b03bf86a8e6dd33ae12b0af2459d95f50f072f', '#1000 UN_1894·UN_1895 원문 = 승인 원문 지문과 같음');
+        ok(T.EXP_ALIMTALK.UN_1894.button.button.map(b => b.name).join() === '길찾기,체험 안내 보기' && T.EXP_ALIMTALK.UN_1895.button.button.map(b => b.name).join() === '길찾기', '#1000 버튼 = UN_1894 2개 · UN_1895 1개');
+        ok(!/체험 당일/.test(T.EXP_ALIMTALK.UN_1894.content + T.EXP_ALIMTALK.UN_1895.content) && /체험 시즌 중 언제든 사용 · 제주시 서흘길 9, 3층 · 10~20시/.test(T.EXP_ALIMTALK.UN_1895.content), '#1000 새 원문 = 「체험 시즌 중 언제든 사용」');
+        for (const [nm, cc, rc] of [['새 코드', 'UN_1894', 'UN_1895'], ['옛 코드(전환 중)', 'UM_6987', 'UM_6988']]) {
+            const tc = mk(); tc.db.S.rows.push(row(1, { visit_date: '2026-11-30', visit_time: '12:30' }), row(2, { visit_date: tmr, visit_time: '11:00', sms_recv_at: 'x' }));
+            tc.db.S.cfg.experience_notify = { enabled: true, daily_cap: 40, recv_from: '00:00', recv_to: '23:59', eve_from: '00:00', eve_to: '23:59', alimtalk: { enabled: true, confirm_tpl: cc, remind_tpl: rc } };
+            await tc.M.collectSms();
+            const rv = tc.sent.find(x => x.tplCode === cc), ev = tc.sent.find(x => x.tplCode === rc);
+            ok(tc.sent.length === 2 && tc.sent.every(x => x.alim) && rv && ev && !/#\{/.test(rv.message + ev.message), `#1000 설정이 ${nm} = 접수 ${cc} · 전날 ${rc} 알림톡 2통(LMS 0 · 변수 다 채움)`, tc.sent.map(x => x.tplCode));
+            ok(rv && ev && rv.buttons.button.length === 2 && ev.buttons.button.length === 1 && (cc === 'UN_1894' ? /체험 시즌 중/.test(rv.message) && /체험 시즌 중/.test(ev.message) && !/체험 당일/.test(rv.message + ev.message) : /체험 당일 사용/.test(rv.message) && /체험 당일 사용/.test(ev.message)), `#1000 ${nm} = 본문·버튼이 그 코드 원문대로`);
+        }
         // 총괄 10/20 손질 ① 접수 문자 시간 창(기본 09~21 · 창 밖이면 안 보내고 다음 창에)
         const kh = new Date(Date.now() + 9 * 3600e3), hm = String(kh.getUTCHours()).padStart(2, '0') + ':' + String(kh.getUTCMinutes()).padStart(2, '0');
         const shut = hm >= '12:00' ? { recv_from: '00:00', recv_to: '00:01' } : { recv_from: '23:58', recv_to: '23:59' };   // 지금이 반드시 밖인 창
