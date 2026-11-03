@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>중간발주 추가 포장 수량</title>
-<!-- #1002(대표 11/3): 같은 날 중간발주를 두 번 보낼 때 「더 포장할 수량」만 표로.
-     서버 호출 0 · 저장 0 · AI 0. 거래처 링크는 내용을 주소 # 뒤(조각)에 담음 = 서버로 안 감. -->
+<!-- #1002(대표 11/3): ①앞 중간발주 그림 ②뒤 그림을 넣으면 더 포장할 수량만 그림으로.
+     그림 읽기 = POST /api/public/qty-read(서버 저장 0) · 차이 계산·그림 그리기는 이 브라우저 안. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
@@ -14,158 +14,127 @@
   --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF0FF; --primary-ring:rgba(79,70,229,.15);
   --page-bg:#E9EBF0; --card-border:#DFE2E8; --border:#ECEDF1;
   --text-dark:#101828; --text-mid:#667085; --text-on-page:#545D70;
-  --danger:#D92D20; --shadow-card:0 1px 2px rgba(16,24,40,.06),0 2px 6px -2px rgba(16,24,40,.10);
-  --shadow-primary:0 6px 16px -6px rgba(79,70,229,.55);
-  /* 묶음 바탕(중간발주 이미지처럼 옅게) */
+  --danger:#D92D20; --danger-bg:#FEF3F2; --ok:#067647;
+  --shadow-card:0 1px 2px rgba(16,24,40,.06),0 2px 6px -2px rgba(16,24,40,.10);
   --g-lemon:#E6F2D3; --g-hgh:#FFF0BF; --g-nhgh:#FFE2C2; --g-saek:#FDE3D6; --g-yura:#DCEAFB; --g-etc:#EEF0F4;
   --tail:#C2410C;
 }
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--page-bg);color:var(--text-dark);font-family:var(--font-app);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
-.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 48px}
-h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
-.lead{color:var(--text-on-page);margin:0 0 16px;font-size:14px}
-.card{background:#fff;border:1px solid var(--card-border);border-radius:14px;box-shadow:var(--shadow-card);padding:16px}
-.steps{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media (max-width:720px){.steps{grid-template-columns:1fr}}
-.step-h{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px;margin-bottom:8px}
+.wrap{max-width:820px;margin:0 auto;padding:18px 16px 48px}
+h1{font-size:21px;margin:0 0 4px;letter-spacing:-.01em}
+.lead{color:var(--text-on-page);margin:0 0 14px;font-size:14px}
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.slots{grid-template-columns:1fr}}
+.slot{background:#fff;border:1px solid var(--card-border);border-radius:14px;box-shadow:var(--shadow-card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.step-h{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px}
 .step-h .no{flex:none;width:28px;height:28px;border-radius:999px;background:var(--primary);color:#fff;display:grid;place-items:center;font-size:15px}
 .step-h small{font-weight:500;color:var(--text-mid);font-size:13px}
-textarea{width:100%;min-height:170px;resize:vertical;border:1px solid var(--card-border);border-radius:10px;padding:10px;font:14px/1.45 var(--font-app);color:var(--text-dark);background:#FBFBFD}
-textarea:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
-.count{font-size:13px;color:var(--text-mid);margin-top:4px;min-height:20px}
-.count b{color:var(--text-dark)}
-.count .w{color:var(--danger);font-weight:600}
-.step3{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
-.meta{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
-.meta .m{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-mid);font-weight:600}
-.meta input{height:44px;border:1px solid var(--card-border);border-radius:10px;padding:0 10px;font:16px var(--font-app);color:var(--text-dark);background:#fff}
-.meta input.n{width:64px;text-align:center}
-.meta input.d{width:120px}
-.meta input.p{width:100px}
-.chk{display:flex;align-items:center;gap:6px;height:44px;font-size:14px;color:var(--text-dark);font-weight:600;cursor:pointer}
-.chk input{width:20px;height:20px;accent-color:var(--primary)}
-.btns{display:flex;flex-wrap:wrap;gap:8px}
-.btns.main button{flex:1 1 150px}
-.btns.sub{margin-top:8px}
-button{font:700 16px var(--font-app);border-radius:10px;min-height:48px;padding:0 16px;cursor:pointer;border:1px solid var(--card-border);background:#fff;color:var(--text-dark);transition:transform .12s cubic-bezier(.23,1,.32,1),background .15s}
-button.sm{min-height:44px;font-size:14px;font-weight:600}
-button:active{transform:scale(.97)}
-button:hover{border-color:var(--primary);color:var(--primary)}
-button.pri{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:var(--shadow-primary)}
-button.pri:hover{background:var(--primary-dark);color:#fff}
-button:disabled{opacity:.45;cursor:default;transform:none}
-button:focus-visible{outline:3px solid var(--primary-ring);outline-offset:2px}
-.msg{font-size:14px;margin-top:10px;min-height:21px;color:var(--text-on-page);overflow-wrap:anywhere}
-.msg.err{color:var(--danger);font-weight:600}
-.linkbox{display:none;margin-top:8px;width:100%;height:44px;border:1px solid var(--card-border);border-radius:10px;padding:0 10px;font:13px var(--font-app);color:var(--text-mid);background:#FBFBFD}
+.drop{position:relative;display:flex;align-items:center;justify-content:center;gap:12px;min-height:120px;border:2px dashed #C7CCE0;border-radius:12px;background:#FAFAFE;cursor:pointer;padding:10px;text-align:center;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--primary);background:var(--primary-light)}
+.drop:focus-within{outline:3px solid var(--primary-ring);outline-offset:2px}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop .ph{font-weight:700;font-size:15px;color:var(--primary-dark)}
+.drop .ph small{display:block;font-weight:500;color:var(--text-mid);font-size:13px;margin-top:2px}
+.drop img.th{max-height:96px;max-width:40%;border-radius:8px;border:1px solid var(--card-border);object-fit:contain;background:#fff}
+.drop.has .ph{font-size:14px}
+.st{font-size:14px;min-height:21px;color:var(--text-on-page);overflow-wrap:anywhere}
+.st.ok{color:var(--ok);font-weight:700}
+.st.err{color:var(--danger);font-weight:700}
+.st .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--primary-ring);border-top-color:var(--primary);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.st .spin{animation:none}}
+details.txt{margin-top:12px;font-size:14px;color:var(--text-on-page)}
+details.txt summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+details.txt .tg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){details.txt .tg{grid-template-columns:1fr}}
+details.txt textarea{width:100%;min-height:110px;resize:vertical;border:1px solid var(--card-border);border-radius:10px;padding:8px;font:13px/1.45 var(--font-app);color:var(--text-dark);background:#fff}
+textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
 .result{margin-top:16px}
-.empty{color:var(--text-on-page);text-align:center;padding:28px 8px;font-size:15px}
+.warn{background:var(--danger-bg);color:var(--danger);border:1px solid #FECDCA;border-radius:12px;padding:10px 14px;font-weight:700;font-size:15px;margin-bottom:10px}
+.warn div+div{margin-top:4px}
+.empty{color:var(--text-on-page);text-align:center;padding:24px 8px;font-size:15px}
+.out{display:block;width:100%;max-width:720px;margin:0 auto;border-radius:14px;box-shadow:var(--shadow-card);background:#fff;-webkit-touch-callout:default;user-select:auto}
+.dl{display:block;width:100%;max-width:720px;margin:12px auto 0;min-height:52px;border:0;border-radius:12px;background:var(--primary);color:#fff;font:800 17px var(--font-app);cursor:pointer;box-shadow:0 6px 16px -6px rgba(79,70,229,.55);transition:transform .12s cubic-bezier(.23,1,.32,1)}
+.dl.top{margin:0 auto 12px}
+.dl:hover{background:var(--primary-dark)}
+.dl:active{transform:scale(.97)}
+.dl:focus-visible{outline:3px solid var(--primary-ring);outline-offset:2px}
+.hint{text-align:center;color:var(--text-on-page);font-size:13px;margin-top:8px}
 
-/* ===== 이미지로 나가는 표 ===== */
-#sheet{background:#fff;border:1px solid var(--card-border);border-radius:14px;overflow:hidden;max-width:760px;margin:0 auto}
-.sh-head{padding:18px 18px 12px;border-bottom:2px solid var(--text-dark);word-break:keep-all;overflow-wrap:anywhere}
-.sh-title{font-size:23px;font-weight:800;letter-spacing:-.01em;line-height:1.3}
-.sh-sub{font-size:15px;color:var(--text-mid);margin-top:4px;font-weight:600}
-.sh-total{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:10px;font-size:19px;font-weight:800}
-.sh-total .v{font-size:30px;color:var(--primary-dark);font-variant-numeric:tabular-nums;white-space:nowrap}
-.grp-h{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;font-weight:800;font-size:17px;border-top:2px solid rgba(16,24,40,.28);box-shadow:inset 0 -1px 0 rgba(16,24,40,.12)}
+/* ===== 그림으로 그릴 표(화면 밖에서 그려 <img> 로) ===== */
+#stage{position:fixed;left:-10000px;top:0;width:720px}
+#sheet{background:#fff;width:720px;font-family:var(--font-app);color:var(--text-dark)}
+.sh-head{padding:20px 20px 14px;border-bottom:2px solid var(--text-dark)}
+.sh-title{font-size:26px;font-weight:800;letter-spacing:-.01em;margin-bottom:6px}
+.sh-total{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:24px;font-weight:800}
+.sh-total .v{font-size:40px;color:var(--primary-dark);font-variant-numeric:tabular-nums;white-space:nowrap}
+.sh-sub{font-size:16px;color:var(--text-mid);margin-top:2px;font-weight:600}
+.grp-h{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;font-weight:800;font-size:20px;border-top:2px solid rgba(16,24,40,.28);box-shadow:inset 0 -1px 0 rgba(16,24,40,.12)}
 .grp-h .s{font-variant-numeric:tabular-nums;white-space:nowrap}
-.row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid rgba(16,24,40,.08)}
-.row .nm{flex:1;min-width:0;font-size:19px;font-weight:600;line-height:1.35;word-break:keep-all;overflow-wrap:anywhere}
+.row{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid rgba(16,24,40,.08)}
+.row .nm{flex:1;min-width:0;font-size:22px;font-weight:600;line-height:1.35;word-break:keep-all;overflow-wrap:anywhere}
 .row .nm .tail{color:var(--tail);font-weight:800}
-.row .nm .new{display:inline-block;font-size:12px;font-weight:800;color:#fff;background:var(--primary);border-radius:999px;padding:1px 7px;margin-left:6px;vertical-align:2px}
-.row .q{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;min-width:56px;text-align:right}
-.row .q small{display:block;font-size:12px;font-weight:600;color:var(--text-mid);line-height:1.2}
-.dec{padding:12px 16px 14px;border-top:2px dashed var(--card-border);background:#FAFAFB}
-.dec h3{margin:0 0 6px;font-size:14px;color:var(--text-mid)}
-.dec .r{display:flex;gap:8px;font-size:14px;color:var(--text-mid);padding:2px 0}
+.row .nm .chk{display:inline-block;font-size:14px;font-weight:800;color:#fff;background:var(--danger);border-radius:999px;padding:1px 8px;margin-left:6px;vertical-align:3px}
+.row .nm .new{display:inline-block;font-size:14px;font-weight:800;color:#fff;background:var(--primary);border-radius:999px;padding:1px 8px;margin-left:6px;vertical-align:3px}
+.row .q{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;min-width:64px;text-align:right}
+.row .q small{display:block;font-size:14px;font-weight:600;color:var(--text-mid);line-height:1.2}
+.dec{padding:12px 18px 14px;border-top:2px dashed var(--card-border);background:#FAFAFB}
+.dec h3{margin:0 0 6px;font-size:16px;color:var(--text-mid)}
+.dec .r{display:flex;gap:8px;font-size:16px;color:var(--text-mid);padding:2px 0}
 .dec .r span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}
 .dec .r b{color:var(--danger);font-variant-numeric:tabular-nums}
-.sh-foot{padding:8px 16px 12px;font-size:12px;color:var(--text-mid);text-align:right;border-top:1px solid var(--border)}
-@media (max-width:480px){
-  .sh-title{font-size:21px}
-  .row .nm{font-size:17px}
-  .row .q{font-size:24px}
-}
-/* 거래처 보기 모드(링크로 열었을 때) */
-body.view .wrap{padding-top:12px}
-body.view #edit{display:none}
-.view-bar{display:none;max-width:760px;margin:12px auto 0}
-body.view .view-bar{display:block}
-.view-bar button{width:100%}
+.sh-none{padding:28px 18px;text-align:center;font-size:20px;font-weight:700;color:var(--text-mid)}
+.sh-foot{padding:8px 18px 12px;font-size:13px;color:var(--text-mid);text-align:right;border-top:1px solid var(--border)}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div id="edit">
-    <h1>중간발주 추가 포장 수량</h1>
-    <p class="lead">같은 날 중간발주를 다시 보낼 때, 늘어난 수량만 표로 만들어요. 붙여 넣은 글은 이 화면 안에서만 계산하고 어디에도 저장하지 않아요.</p>
+  <h1>중간발주 추가 포장 수량</h1>
+  <p class="lead">① 먼저 보낸 중간발주 그림, ② 지금 그림을 넣으면 더 포장할 수량만 그림으로 나와요. 결과 그림을 길게 눌러 저장하거나 보내면 돼요.</p>
 
-    <div class="card">
-      <div class="steps">
-        <div>
-          <div class="step-h"><span class="no">1</span>앞 표 붙여넣기<small>먼저 보낸 것</small></div>
-          <textarea id="ta-a" aria-label="앞 표" placeholder="엑셀에서 「품목 이름 | 수량」 두 칸을 복사해 붙여 넣어요"></textarea>
-          <div class="count" id="cnt-a"></div>
-        </div>
-        <div>
-          <div class="step-h"><span class="no">2</span>뒤 표 붙여넣기<small>지금 보낼 것</small></div>
-          <textarea id="ta-b" aria-label="뒤 표" placeholder="엑셀에서 「품목 이름 | 수량」 두 칸을 복사해 붙여 넣어요"></textarea>
-          <div class="count" id="cnt-b"></div>
-        </div>
-      </div>
-      <div class="btns sub">
-        <button class="sm" id="btn-sample" type="button">예시 넣기</button>
-        <button class="sm" id="btn-clear" type="button">비우기</button>
-      </div>
-
-      <div class="step3">
-        <div class="step-h"><span class="no">3</span>이미지 저장 또는 링크 보내기</div>
-        <div class="meta">
-          <label class="m">날짜<input class="d" id="in-date"></label>
-          <label class="m">거래처<input class="p" id="in-partner" value="대성"></label>
-          <label class="m">앞 차수<input class="n" id="in-n" type="number" min="1" value="1" inputmode="numeric"></label>
-          <label class="m">뒤 차수<input class="n" id="in-m" type="number" min="1" value="2" inputmode="numeric"></label>
-          <label class="chk"><input type="checkbox" id="in-full">전체 이름으로</label>
-        </div>
-        <div class="btns main">
-          <button class="pri" id="btn-save" type="button">이미지 저장</button>
-          <button id="btn-link" type="button">거래처에 보낼 링크</button>
-          <button id="btn-copy" type="button">이미지 복사</button>
-        </div>
-        <input class="linkbox" id="linkbox" readonly aria-label="거래처 링크">
-        <div class="msg" id="msg" role="status" aria-live="polite"></div>
-      </div>
-    </div>
+  <div class="slots">
+    <section class="slot" data-k="A">
+      <div class="step-h"><span class="no">1</span>앞 그림<small>먼저 보낸 것</small></div>
+      <label class="drop" id="drop-A"><input type="file" accept="image/*" id="file-A" aria-label="앞 그림 넣기"><span class="ph">그림 넣기<small>사진 고르기 · 붙여넣기 · 끌어 놓기</small></span></label>
+      <div class="st" id="st-A" role="status" aria-live="polite"></div>
+    </section>
+    <section class="slot" data-k="B">
+      <div class="step-h"><span class="no">2</span>뒤 그림<small>지금 보낼 것</small></div>
+      <label class="drop" id="drop-B"><input type="file" accept="image/*" id="file-B" aria-label="뒤 그림 넣기"><span class="ph">그림 넣기<small>사진 고르기 · 붙여넣기 · 끌어 놓기</small></span></label>
+      <div class="st" id="st-B" role="status" aria-live="polite"></div>
+    </section>
   </div>
 
-  <div class="result" id="result"><div class="empty">①·② 칸에 두 표를 붙여 넣으면 여기에 차이 표가 나와요.</div></div>
-  <div class="view-bar"><button class="pri" id="btn-vsave" type="button">이미지 저장</button><div class="msg" id="vmsg" role="status" aria-live="polite"></div></div>
+  <details class="txt" id="txt">
+    <summary>그림 대신 글로 넣기(엑셀 「품목 이름 | 수량」 복사)</summary>
+    <div class="tg">
+      <textarea id="ta-A" aria-label="앞 표 글" placeholder="① 앞 표"></textarea>
+      <textarea id="ta-B" aria-label="뒤 표 글" placeholder="② 뒤 표"></textarea>
+    </div>
+  </details>
+
+  <div class="result" id="result" aria-live="polite"><div class="empty">③ 두 그림을 넣으면 여기에 차이 그림이 나와요.</div></div>
 </div>
+<div id="stage" aria-hidden="true"></div>
 
 <script>
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var WD = ['일', '월', '화', '수', '목', '금', '토'];
-  var now = new Date();
-  $('in-date').value = (now.getMonth() + 1) + '/' + now.getDate() + '(' + WD[now.getDay()] + ')';
+  var READ_URL = '/api/public/qty-read';
+  var MAX_SIDE = 1568;   // AI 가 보는 최대 긴 변 · 작은 그림(엑셀 캡처 폭 500~650)은 여기까지 키워 보냄(최대 3배)
 
-  // 이름 정리 = 전각→반각(NFKC) · 공백 모으기만. 사이즈 꼬리(「M사이즈로!」)는 이름 일부라 따로 줄.
-  function norm(s) {
-    return String(s == null ? '' : s).normalize('NFKC').replace(/[ ​﻿]/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-  // 엑셀 복사 글 → 줄·칸. 칸 안 줄바꿈은 따옴표로 묶여 옴("…" · "" = ")
+  // ===== 글 → 줄 =====
+  function norm(s) { return String(s == null ? '' : s).normalize('NFKC').replace(/[ ​﻿]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  // 짝 맞추는 열쇠 = 띄어쓰기·물결·줄표 꼴 차이 무시(그림 읽기가 장마다 조금씩 다르게 옮겨도 같은 줄로)
+  function key(s) { return norm(s).toLowerCase().replace(/\s+/g, '').replace(/[∼〜～]/g, '~').replace(/[‐-―−]/g, '-'); }
   function tsvRows(text) {
     var rows = [], row = [], cell = '', i = 0, s = String(text || ''), q = false;
     while (i < s.length) {
       var c = s[i];
-      if (q) {
-        if (c === '"') { if (s[i + 1] === '"') { cell += '"'; i += 2; continue; } q = false; i++; continue; }
-        cell += (c === '\r' || c === '\n') ? ' ' : c; i++; continue;
-      }
+      if (q) { if (c === '"') { if (s[i + 1] === '"') { cell += '"'; i += 2; continue; } q = false; i++; continue; } cell += (c === '\r' || c === '\n') ? ' ' : c; i++; continue; }
       if (c === '"' && cell === '') { q = true; i++; continue; }
       if (c === '\t') { row.push(cell); cell = ''; i++; continue; }
       if (c === '\r' || c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; if (c === '\r' && s[i + 1] === '\n') i++; i++; continue; }
@@ -174,42 +143,53 @@ body.view .view-bar{display:block}
     if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
     return rows;
   }
-  // 수량 = 정수(「11.0」「1,234」 받음 · 소수는 거절)
-  function toQty(v) {
-    var t = norm(v).replace(/개|박스|box$/i, '').trim();
-    if (!/^-?(\d{1,3}(,\d{3})+|\d+)(\.0+)?$/.test(t)) return null;
-    return parseInt(t.replace(/,/g, ''), 10);
-  }
+  function toQty(v) { var t = norm(v).replace(/개|박스|box$/i, '').trim(); if (!/^-?(\d{1,3}(,\d{3})+|\d+)(\.0+)?$/.test(t)) return null; return parseInt(t.replace(/,/g, ''), 10); }
   var TOTAL_NAME = /^(합\s*계|총\s*합?\s*계?|소\s*계|계|합|total|sum)\s*[:：]?$/i;
-  // 한 줄 = 「이름 <탭> 수량 (<탭> 금액 …)」. 이름 다음 첫 숫자 칸이 수량. 이름 없는 줄·합계 줄은 건너뜀.
-  function parse(text) {
-    var map = new Map(), order = [], skipped = 0, multi = 0, total = 0;
+  function parseText(text) {
+    var items = [], skipped = 0;
     tsvRows(text).forEach(function (cells) {
       if (!cells.some(function (c) { return norm(c); })) return;
       var name, qty;
       if (cells.length >= 2) {
-        var qi = -1, nums = 0;
-        for (var i = 0; i < cells.length; i++) {
-          var isNum = toQty(cells[i]) !== null;
-          if (isNum) { nums++; if (qi < 0) qi = i; }
-        }
+        var qi = -1; for (var i = 0; i < cells.length; i++) if (toQty(cells[i]) !== null) { qi = i; break; }
         if (qi < 0) { skipped++; return; }
-        name = norm(cells.slice(0, qi).join(' '));
-        if (!name) return;                       // 합계 줄(이름 칸 빈칸)
-        qty = toQty(cells[qi]);
-        if (nums > 1) multi++;                   // 숫자 칸 여럿 = 첫 칸을 수량으로 읽음(알림)
+        name = norm(cells.slice(0, qi).join(' ')); if (!name) return; qty = toQty(cells[qi]);
       } else {
         var m = norm(cells[0]).match(/^(.*\S)\s+(-?[\d,]+(?:\.0+)?)$/);
         if (!m) { if (toQty(cells[0]) !== null) return; skipped++; return; }
-        name = norm(m[1]); qty = toQty(m[2]);
-        if (qty === null) { skipped++; return; }
+        name = norm(m[1]); qty = toQty(m[2]); if (qty === null) { skipped++; return; }
       }
       if (TOTAL_NAME.test(name)) return;
-      if (!map.has(name)) { map.set(name, 0); order.push(name); }
-      map.set(name, map.get(name) + qty);
-      total += qty;
+      items.push({ name: name, qty: qty });
     });
-    return { map: map, order: order, skipped: skipped, multi: multi, total: total };
+    return { items: items, skipped: skipped };
+  }
+
+  // ===== 앞·뒤 → 차이 =====
+  function toMap(items) {
+    var m = new Map(), order = [];
+    items.forEach(function (x) { var k = key(x.name); if (!k) return; if (!m.has(k)) { m.set(k, { name: norm(x.name), qty: 0, check: false }); order.push(k); } m.get(k).qty += x.qty; if (x.check) m.get(k).check = true; });
+    return { m: m, order: order };
+  }
+  function diffItems(aItems, bItems) {
+    var A = toMap(aItems), B = toMap(bItems);
+    // 칸이 잘려 이름 뒤가 빠진 그림 = 한쪽 열쇠가 다른 쪽의 앞부분이고 짝이 하나뿐이면 같은 줄로
+    var aLeft = A.order.filter(function (k) { return !B.m.has(k); }), bLeft = B.order.filter(function (k) { return !A.m.has(k); });
+    bLeft.forEach(function (bk) {
+      if (bk.length < 12) return;
+      var hits = aLeft.filter(function (ak) { return ak.length >= 12 && (ak.indexOf(bk) === 0 || bk.indexOf(ak) === 0); });
+      if (hits.length !== 1) return;
+      var ak = hits[0], bHits = bLeft.filter(function (k) { return k.length >= 12 && (ak.indexOf(k) === 0 || k.indexOf(ak) === 0); });
+      if (bHits.length !== 1) return;
+      var a = A.m.get(ak), b = B.m.get(bk);
+      var longer = a.name.length > b.name.length ? a.name : b.name;
+      A.m.delete(ak); A.m.set(bk, { name: longer, qty: a.qty }); A.order[A.order.indexOf(ak)] = bk; b.name = longer;
+      aLeft.splice(aLeft.indexOf(ak), 1);
+    });
+    var rows = [];
+    B.order.forEach(function (k) { var b = B.m.get(k), a = A.m.get(k); rows.push({ name: b.name, a: a ? a.qty : 0, b: b.qty, isNew: !a, check: b.check || !!(a && a.check) }); });
+    A.order.forEach(function (k) { if (!B.m.has(k)) { var a = A.m.get(k); rows.push({ name: a.name, a: a.qty, b: 0, isNew: false, check: a.check }); } });
+    return rows;
   }
 
   var GROUPS = [
@@ -225,238 +205,150 @@ body.view .view-bar{display:block}
     var head = n.split('/')[0].trim() || n;
     return { key: 'etc:' + head, label: head, bg: 'var(--g-etc)' };
   }
-  // 짧은 이름 = 「상품 및 과수:」·「과수 및 크기:」 뒤 글자(묶음 이름이 위에 있으니)
-  function shortName(n) {
-    var m = n.match(/(?:상품\s*및\s*과수|과수\s*및\s*크기)\s*:\s*(.+)$/);
-    return m ? m[1] : n;
-  }
-  // 손님·링크 글은 전부 escape 뒤 넣음(&<>"' 다섯 글자 · 링크 조각도 같은 길)
+  function shortName(n) { var m = n.match(/(?:상품\s*및\s*과수|과수\s*및\s*크기)\s*:\s*(.+)$/); return m ? m[1] : n; }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-  function nameHtml(n) { return esc(n).replace(/(\S*사이즈로!?)\s*$/, '<span class="tail">$1</span>'); }
+  function nameHtml(n) { return esc(n).replace(/(\S*(?:사이즈로|과로)!?)\s*$/, '<span class="tail">$1</span>'); }
 
-  // 앞·뒤 → 바뀐 줄만 [이름, 앞, 뒤] (뒤 표 순서 → 앞에만 있던 줄)
-  function changes(A, B) {
-    var out = [];
-    B.order.forEach(function (n) { var a = A.map.get(n) || 0, b = B.map.get(n); if (a !== b) out.push([n, a, b]); });
-    A.order.forEach(function (n) { if (!B.map.has(n)) out.push([n, A.map.get(n), 0]); });
-    return out;
-  }
-  function diff(A, B) {
+  function sheetHtml(rows, at, bt) {
     var inc = [], dec = [];
-    changes(A, B).forEach(function (r) {
-      var d = r[2] - r[1];
-      if (d > 0) inc.push({ name: r[0], a: r[1], b: r[2], d: d, isNew: !A.map.has(r[0]) });
-      else dec.push({ name: r[0], a: r[1], b: r[2], d: d });
-    });
-    return { inc: inc, dec: dec };
-  }
-
-  // 표 그리기 = 모델 하나(입력 화면·링크 보기 같은 길)
-  function sheetHtml(M, full) {
-    var inc = [], dec = [];
-    M.rows.forEach(function (r) {
-      var d = r[2] - r[1];
-      if (d > 0) inc.push({ name: r[0], a: r[1], b: r[2], d: d, isNew: r[1] === 0 && !r[3] });
-      else if (d < 0) dec.push({ name: r[0], a: r[1], b: r[2], d: d });
-    });
+    rows.forEach(function (r) { var d = r.b - r.a; if (d > 0) inc.push({ name: r.name, a: r.a, b: r.b, d: d, isNew: r.isNew, check: r.check }); else if (d < 0) dec.push({ name: r.name, a: r.a, b: r.b, d: d, check: r.check }); });
     var groups = new Map();
-    inc.forEach(function (x) {
-      var g = groupOf(x.name);
-      if (!groups.has(g.key)) groups.set(g.key, { g: g, rows: [], sum: 0 });
-      var e = groups.get(g.key); e.rows.push(x); e.sum += x.d;
-    });
-    var keys = Array.from(groups.keys()).sort(function (a, b) {
-      var ia = SHOW_ORDER.indexOf(a), ib = SHOW_ORDER.indexOf(b);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
+    inc.forEach(function (x) { var g = groupOf(x.name); if (!groups.has(g.key)) groups.set(g.key, { g: g, rows: [], sum: 0 }); var e = groups.get(g.key); e.rows.push(x); e.sum += x.d; });
+    var keys = Array.from(groups.keys()).sort(function (a, b) { var ia = SHOW_ORDER.indexOf(a), ib = SHOW_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
     var total = inc.reduce(function (s, x) { return s + x.d; }, 0);
-    var h = '<div id="sheet"><div class="sh-head">'
-      + '<div class="sh-title">' + (M.partner ? esc(M.partner) + ' ' : '') + '중간발주 추가 포장 수량</div>'
-      + '<div class="sh-sub">' + esc(M.date) + ' · ' + esc(M.n) + '차 ' + M.at + '박스 → ' + esc(M.m) + '차 ' + M.bt + '박스</div>'
-      + '<div class="sh-total"><span>추가 포장</span><span class="v">' + total + '박스</span></div></div>';
-    if (!inc.length) h += '<div class="empty">늘어난 품목이 없어요.</div>';
+    var h = '<div id="sheet"><div class="sh-head"><div class="sh-title">포장해야 할 차이 수량입니다</div><div class="sh-total"><span>추가 포장</span><span class="v">' + total + '박스</span></div>'
+      + '<div class="sh-sub">앞 ' + at + '박스 → 지금 ' + bt + '박스</div></div>';
+    if (!inc.length) h += '<div class="sh-none">늘어난 품목이 없어요</div>';
     keys.forEach(function (k) {
       var e = groups.get(k);
       h += '<div class="grp-h" style="background:' + e.g.bg + '"><span>' + esc(e.g.label) + '</span><span class="s">' + e.sum + '박스</span></div>';
       e.rows.forEach(function (x) {
-        h += '<div class="row" style="background:' + e.g.bg + '">'
-          + '<div class="nm">' + nameHtml(full ? x.name : shortName(x.name)) + (x.isNew ? '<span class="new">새 품목</span>' : '') + '</div>'
+        h += '<div class="row" style="background:' + e.g.bg + '"><div class="nm">' + nameHtml(shortName(x.name)) + (x.isNew ? '<span class="new">새 품목</span>' : '') + (x.check ? '<span class="chk">이름 확인</span>' : '') + '</div>'
           + '<div class="q">+' + x.d + '<small>' + x.a + '→' + x.b + '</small></div></div>';
       });
     });
     if (dec.length) {
       h += '<div class="dec"><h3>줄어든 것(취소 등) · 포장 수량에서 빼 주세요</h3>';
-      dec.forEach(function (x) {
-        h += '<div class="r"><span>' + esc(full ? x.name : shortName(x.name)) + '</span><b>' + x.d + '</b><span>(' + x.a + '→' + x.b + ')</span></div>';
-      });
+      dec.forEach(function (x) { h += '<div class="r"><span>' + esc(shortName(x.name)) + '</span><b>' + x.d + '</b><span>(' + x.a + '→' + x.b + ')</span></div>'; });
       h += '</div>';
     }
-    h += '<div class="sh-foot">제주아꼼이네</div></div>';
-    return { html: h, total: total, inc: inc.length, dec: dec.length };
+    return { html: h + '<div class="sh-foot">제주아꼼이네</div></div>', total: total, inc: inc.length, dec: dec.length };
   }
 
-  // ===== 링크 = # 뒤에 담기(서버로 안 감) =====
-  // 글 꼴: 첫 줄 머리(거래처⇥날짜⇥앞차수⇥뒤차수⇥앞합계⇥뒤합계) · 다음 줄부터 이름⇥앞⇥뒤(바뀐 줄만 · 같은 앞글자는 기호로 줄임)
-  var DICT = [
-    ['\u0001', '과즙팡팡 황금향 / 상품 및 과수: '], ['\u0002', '새콤달콤 노지감귤 / 상품 및 과수: 가정용 - '],
-    ['\u0003', '유라품종 노지감귤 / 상품 및 과수: 가정용 - '], ['\u0004', '과수 및 크기: 제주 그린레몬'],
-    ['\u0005', '(로얄과 2S~M)'], ['\u0006', '(소과 2S미만)'], ['\u0007', '(중대과 L이상)'], ['\u000e', '사이즈로!'],
-    ['\u000f', '노지 황금향 '], ['\u0010', '황금향 ']
-  ];
-  function packText(M) {
-    var lines = [[M.partner, M.date, M.n, M.m, M.at, M.bt].map(function (v) { return String(v).replace(/[\t\n\r]/g, ' '); }).join('\t')];
-    M.rows.forEach(function (r) {
-      var n = r[0].replace(/[\t\n\r\u0001-\u0010]/g, ' ');
-      DICT.forEach(function (d) { n = n.split(d[1]).join(d[0]); });
-      lines.push(n + '\t' + r[1] + '\t' + r[2] + (r[3] ? '\t1' : ''));
+  // ===== 그림 넣기 · 읽기 =====
+  var S = { A: { seq: 0, img: null }, B: { seq: 0, img: null } };   // img = { items, total, readSum, mismatch }
+  function setSt(k, html, cls) { var el = $('st-' + k); el.className = 'st' + (cls ? ' ' + cls : ''); el.innerHTML = html; }
+  function shrink(file) {
+    return new Promise(function (ok, no) {
+      var url = URL.createObjectURL(file), im = new Image();
+      im.onload = function () {
+        var r = Math.min(3, MAX_SIDE / Math.max(im.naturalWidth, im.naturalHeight));
+        var w = Math.max(1, Math.round(im.naturalWidth * r)), h = Math.max(1, Math.round(im.naturalHeight * r));
+        var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        var cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(im, 0, 0, w, h);
+        URL.revokeObjectURL(url); ok({ data: cv.toDataURL('image/jpeg', 0.9), thumb: cv.toDataURL('image/jpeg', 0.6) });
+      };
+      im.onerror = function () { URL.revokeObjectURL(url); no(new Error('그림 파일이 아니에요')); };
+      im.src = url;
     });
-    return lines.join('\n');
   }
-  function unpackText(t) {
-    var L = t.split('\n'), h = L[0].split('\t');
-    var int = function (v) { if (!/^\d{1,6}$/.test(v)) throw new Error('수'); return parseInt(v, 10); };
-    var str = function (v, max) { v = String(v == null ? '' : v); if (v.length > max) throw new Error('글'); return v; };
-    if (h.length !== 6) throw new Error('머리');
-    var M = { partner: str(h[0], 40), date: str(h[1], 40), n: str(h[2], 6), m: str(h[3], 6), at: int(h[4]), bt: int(h[5]), rows: [] };
-    if (L.length > 401) throw new Error('줄');
-    for (var i = 1; i < L.length; i++) {
-      var c = L[i].split('\t');
-      if (c.length < 3 || c.length > 4) throw new Error('줄 꼴');
-      var n = c[0];
-      DICT.forEach(function (d) { n = n.split(d[0]).join(d[1]); });
-      M.rows.push([str(n, 300), int(c[1]), int(c[2]), c[3] === '1']);
-    }
-    return M;
+  function takeFile(k, file) {
+    if (!file) return;
+    if (!/^image\//.test(file.type || '')) { setSt(k, '그림 파일이 아니에요. 다시 넣어 주세요.', 'err'); return; }
+    var my = ++S[k].seq; S[k].img = null; render();
+    setSt(k, '<span class="spin"></span>그림 읽는 중…');
+    shrink(file).then(function (g) {
+      if (my !== S[k].seq) return;
+      var drop = $('drop-' + k); drop.classList.add('has');
+      var th = drop.querySelector('img.th'); if (!th) { th = document.createElement('img'); th.className = 'th'; th.alt = ''; drop.insertBefore(th, drop.querySelector('.ph')); }
+      th.src = g.thumb; drop.querySelector('.ph').innerHTML = '다른 그림으로 바꾸기<small>누르거나 붙여넣기</small>';
+      var t0 = Date.now();
+      return fetch(READ_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: g.data }) })
+        .then(function (r) { return r.json().catch(function () { return { ok: false }; }).then(function (j) { j._status = r.status; return j; }); })
+        .then(function (j) {
+          if (my !== S[k].seq) return;
+          if (!j || !j.ok) { setSt(k, esc((j && j.error) || '읽기에 실패했어요. 다시 넣어 주세요.'), 'err'); return; }
+          S[k].img = { items: j.items, total: j.total, readSum: j.read_sum, mismatch: !!j.mismatch };
+          var sec = Math.round((Date.now() - t0) / 100) / 10;
+          if (j.mismatch) setSt(k, '읽기 확인 필요: 읽은 합 ' + j.read_sum + ' · 그림 합계 ' + j.total, 'err');
+          else setSt(k, j.items.length + '줄 · ' + j.read_sum + '박스 읽음' + (j.total === null ? '(그림에 합계 없음)' : ' ✓') + ' · ' + sec + '초', j.total === null ? '' : 'ok');
+          render();
+        });
+    }).catch(function (e) { if (my === S[k].seq) setSt(k, esc(e.message || '읽기에 실패했어요') + '. 다시 넣어 주세요.', 'err'); });
   }
-  function b64u(bytes) { var s = ''; for (var i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
-  function unb64u(s) { if (!/^[A-Za-z0-9_-]*$/.test(s)) throw new Error('글자'); var b = atob(s.replace(/-/g, '+').replace(/_/g, '/')); var u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
-  function pipe(bytes, stream) { return new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer().then(function (ab) { return new Uint8Array(ab); }); }
-  function encodeHash(M) {
-    var raw = new TextEncoder().encode(packText(M));
-    if (window.CompressionStream) {
-      return pipe(raw, new CompressionStream('deflate-raw')).then(function (z) { return 'v1.z.' + b64u(z); }).catch(function () { return 'v1.u.' + b64u(raw); });
-    }
-    return Promise.resolve('v1.u.' + b64u(raw));
-  }
-  function decodeHash(h) {
-    var m = /^v1\.([zu])\.([A-Za-z0-9_-]+)$/.exec(h);
-    if (!m) return Promise.reject(new Error('꼴'));
-    var bytes;
-    try { bytes = unb64u(m[2]); } catch (e) { return Promise.reject(e); }
-    var p = m[1] === 'z'
-      ? (window.DecompressionStream ? pipe(bytes, new DecompressionStream('deflate-raw')) : Promise.reject(new Error('브라우저')))
-      : Promise.resolve(bytes);
-    return p.then(function (u) { return unpackText(new TextDecoder('utf-8', { fatal: true }).decode(u)); });
-  }
+  ['A', 'B'].forEach(function (k) {
+    var inp = $('file-' + k), drop = $('drop-' + k);
+    inp.addEventListener('change', function () { takeFile(k, inp.files && inp.files[0]); inp.value = ''; });
+    drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', function () { drop.classList.remove('over'); });
+    drop.addEventListener('drop', function (e) { e.preventDefault(); drop.classList.remove('over'); takeFile(k, e.dataTransfer.files && e.dataTransfer.files[0]); });
+    $('ta-' + k).addEventListener('input', render);
+  });
+  var lastFocus = null;
+  ['A', 'B'].forEach(function (k) { $('drop-' + k).addEventListener('pointerdown', function () { lastFocus = k; }); });
+  document.addEventListener('paste', function (e) {
+    if (e.target && e.target.tagName === 'TEXTAREA') return;
+    var f = null, it = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < it.length; i++) if (it[i].kind === 'file' && /^image\//.test(it[i].type)) { f = it[i].getAsFile(); break; }
+    if (!f) return;
+    e.preventDefault();
+    var k = lastFocus || (!S.A.img && !S.A.seq ? 'A' : (!S.B.img && !S.B.seq ? 'B' : 'B'));
+    lastFocus = null; takeFile(k, f);
+  });
 
-  // ===== 입력 화면 =====
-  var cur = null;   // 지금 표 모델
-  function model() {
-    var A = parse($('ta-a').value), B = parse($('ta-b').value);
-    if (!A.order.length || !B.order.length) return null;
-    var rows = changes(A, B).map(function (r) { return [r[0], r[1], r[2], A.map.has(r[0]) && r[1] === 0]; });
-    return { partner: norm($('in-partner').value), date: norm($('in-date').value), n: String($('in-n').value || 1), m: String($('in-m').value || 2), at: A.total, bt: B.total, rows: rows, A: A, B: B };
+  // 한쪽 = 글이 있으면 글, 없으면 그림
+  function side(k) {
+    var t = $('ta-' + k).value;
+    if (norm(t)) { var p = parseText(t); return p.items.length ? { items: p.items, total: null, mismatch: false, text: true, skipped: p.skipped } : null; }
+    return S[k].img;
   }
-  function countLine(r) {
-    if (!r.order.length) return '';
-    var w = [];
-    if (r.skipped) w.push('못 읽은 줄 ' + r.skipped);
-    if (r.multi) w.push('숫자 칸 여럿 ' + r.multi + '줄 = 이름 다음 첫 숫자를 수량으로 읽음');
-    return '<b>' + r.order.length + '줄 · ' + r.total + '박스</b>' + (w.length ? ' · <span class="w">' + esc(w.join(' · ')) + '</span>' : '');
-  }
-  function refresh() {
-    var A = parse($('ta-a').value), B = parse($('ta-b').value);
-    $('cnt-a').innerHTML = countLine(A); $('cnt-b').innerHTML = countLine(B);
-    $('linkbox').style.display = 'none'; $('linkbox').value = '';   // 표가 바뀌면 옛 링크는 버림
-    cur = model();
-    ['btn-save', 'btn-link', 'btn-copy'].forEach(function (id) { $(id).disabled = !cur; });
-    if (!cur) {
-      $('result').innerHTML = '<div class="empty">' + (B.order.length && !A.order.length ? '① 앞 표도 붙여 넣어 주세요. 처음 보내는 거라면 차이 표가 필요 없어요.' : '①·② 칸에 두 표를 붙여 넣으면 여기에 차이 표가 나와요.') + '</div>';
+  // [이미지 다운로드] = PNG 내려받기 · 아이폰은 공유 창(「이미지 저장」 = 사진 앱)으로
+  function fileName() { var d = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; }; return '추가포장_' + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.png'; }
+  function download(cv, png) {
+    var name = fileName();
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent) && navigator.canShare) {
+      cv.toBlob(function (bl) {
+        var f = bl && new File([bl], name, { type: 'image/png' });
+        if (f && navigator.canShare({ files: [f] })) navigator.share({ files: [f] }).catch(function () { });
+        else plain();
+      }, 'image/png');
       return;
     }
-    var s = sheetHtml(cur, $('in-full').checked);
-    $('result').innerHTML = s.html;
+    plain();
+    function plain() { var a = document.createElement('a'); a.download = name; a.href = png; document.body.appendChild(a); a.click(); a.remove(); }
   }
-  ['ta-a', 'ta-b', 'in-date', 'in-partner', 'in-n', 'in-m'].forEach(function (id) { $(id).addEventListener('input', refresh); });
-  $('in-full').addEventListener('change', refresh);
+  var drawSeq = 0;
+  function render() {
+    var a = side('A'), b = side('B'), out = $('result');
+    if (!a || !b) { out.innerHTML = '<div class="empty">③ 두 그림을 넣으면 여기에 차이 그림이 나와요.</div>'; return; }
+    var my = ++drawSeq;
+    var at = a.items.reduce(function (s, x) { return s + x.qty; }, 0), bt = b.items.reduce(function (s, x) { return s + x.qty; }, 0);
+    var s = sheetHtml(diffItems(a.items, b.items), at, bt);
+    var warn = [];
+    var unsure = []; [a, b].forEach(function (sd) { sd.items.forEach(function (x) { if (x.check && unsure.indexOf(x.name) < 0) unsure.push(x.name); }); });
+    if (unsure.length) warn.push('이름 확인 필요 ' + unsure.length + '줄(그림 속 「이름 확인」 줄): ' + unsure.slice(0, 3).join(' · ') + (unsure.length > 3 ? ' …' : ''));
+    [['앞', a], ['지금', b]].forEach(function (p) { if (p[1].mismatch) warn.push('읽기 확인 필요(' + p[0] + ' 그림): 읽은 합 ' + p[1].readSum + ' · 그림 합계 ' + p[1].total); if (p[1].skipped) warn.push(p[0] + ' 글에서 못 읽은 줄 ' + p[1].skipped + '개'); });
+    var stage = $('stage'); stage.innerHTML = s.html;
+    out.innerHTML = '<div class="empty"><span class="st"><span class="spin"></span></span>차이 그림 만드는 중…</div>';
+    var go = function () {
+      if (typeof html2canvas !== 'function') return Promise.reject(new Error('그림 도구를 못 불러왔어요(인터넷 확인)'));
+      return html2canvas($('sheet'), { scale: 1.5, backgroundColor: '#ffffff', logging: false, windowWidth: 760 });
+    };
+    (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(go).then(function (cv) {
+      if (my !== drawSeq) return;
+      var h = (warn.length ? '<div class="warn" role="alert">' + warn.map(function (w) { return '<div>' + esc(w) + '</div>'; }).join('') + '</div>' : '')
+        + '<button type="button" class="dl top" id="btn-dl">이미지 다운로드</button>'
+        + '<img class="out" id="out-img" alt="추가 포장 ' + s.total + '박스 차이 표">'
+        + '<div class="hint">그림을 길게 눌러 저장·공유해도 돼요</div>';
+      out.innerHTML = h; var png = cv.toDataURL('image/png'); $('out-img').src = png;
+      $('btn-dl').addEventListener('click', function () { download(cv, png); });
+    }).catch(function (e) { if (my === drawSeq) out.innerHTML = '<div class="warn">' + esc(e.message) + '</div>'; });
+  }
 
-  function say(el, t, err) { el.className = 'msg' + (err ? ' err' : ''); el.textContent = t; }
-  function fileName() {
-    var d = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; };
-    return '중간발주_추가포장_' + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.png';
-  }
-  function shot() {
-    var el = $('sheet');
-    if (!el || typeof html2canvas !== 'function') return Promise.reject(new Error('그림 도구를 못 불러왔어요(인터넷 확인)'));
-    return html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
-  }
-  function saveImg(btn, msgEl) {
-    btn.disabled = true;
-    shot().then(function (cv) {
-      var a = document.createElement('a'); a.download = fileName(); a.href = cv.toDataURL('image/png');
-      document.body.appendChild(a); a.click(); a.remove();
-      say(msgEl, '이미지를 저장했어요: ' + a.download);
-    }).catch(function (e) { say(msgEl, '저장 실패: ' + e.message, true); })
-      .then(function () { btn.disabled = false; });
-  }
-  $('btn-save').addEventListener('click', function () { saveImg(this, $('msg')); });
-  $('btn-vsave').addEventListener('click', function () { saveImg(this, $('vmsg')); });
-  $('btn-copy').addEventListener('click', function () {
-    var b = this;
-    if (!(navigator.clipboard && window.ClipboardItem)) { say($('msg'), '이 브라우저는 그림 복사가 안 돼요. [이미지 저장]을 써 주세요.', true); return; }
-    b.disabled = true;
-    var blobP = shot().then(function (cv) { return new Promise(function (ok, no) { cv.toBlob(function (bl) { bl ? ok(bl) : no(new Error('그림 만들기 실패')); }, 'image/png'); }); });
-    navigator.clipboard.write([new ClipboardItem({ 'image/png': blobP })])
-      .then(function () { say($('msg'), '이미지를 복사했어요. 카톡 대화창에 붙여 넣으세요.'); })
-      .catch(function (e) { say($('msg'), '복사 실패(' + e.message + '). [이미지 저장]을 써 주세요.', true); })
-      .then(function () { b.disabled = false; });
-  });
-  $('btn-link').addEventListener('click', function () {
-    if (!cur) return;
-    var b = this; b.disabled = true;
-    encodeHash(cur).then(function (h) {
-      // 거래처에는 회사 주소 대신 이벤트 주소(같은 렌더 서버 · server.js 50행은 「/」만 돌림)
-      var host = location.hostname.toLowerCase();
-      var url = (host === 'jeju-acom-company.onrender.com' || host === 'event.akkome.com')
-        ? 'https://event.akkome.com/qty-diff.html#' + h
-        : (location.protocol === 'file:' ? location.href.split('#')[0] : location.origin + location.pathname) + '#' + h;
-      var box = $('linkbox'); box.value = url; box.style.display = 'block';
-      var done = function () { say($('msg'), '링크를 복사했어요(' + url.length + '자). 카톡에 붙여 넣어 거래처에 보내 주세요.' + (url.length > 2000 ? ' 링크가 길어요. 잘리면 이미지로 보내 주세요.' : '')); };
-      var manual = function () { box.focus(); box.select(); say($('msg'), '아래 링크를 길게 눌러 복사해 주세요(' + url.length + '자).'); };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, manual); else manual();
-    }).catch(function (e) { say($('msg'), '링크 만들기 실패: ' + e.message, true); })
-      .then(function () { b.disabled = false; });
-  });
-  $('btn-clear').addEventListener('click', function () { $('ta-a').value = ''; $('ta-b').value = ''; say($('msg'), ''); refresh(); });
+  window.__qtyDiff = { parseText: parseText, diffItems: diffItems, groupOf: groupOf, key: key, state: S };   // 검증용(읽기만)
 
-  // [예시 넣기] = 11/3 대성 실제 두 표(127 → 204)
-  var L = '과수 및 크기: 제주 그린레몬', H = '과즙팡팡 황금향 / 상품 및 과수: ', S = '새콤달콤 노지감귤 / 상품 및 과수: 가정용 - ', Y = '유라품종 노지감귤 / 상품 및 과수: 가정용 - ';
-  var SA = [[L + ' 못난이5kg(랜덤과)', 1], [L + '3kg(중소과)', 3], [L + '5kg(중소과)', 2], [H + '노지 황금향 가정용 - 10kg(혼합과)', 4], [H + '노지 황금향 가정용 - 5kg(혼합과)', 11], [H + '노지 황금향 못난이 - 10kg(혼합과)', 3], [H + '노지 황금향 못난이 - 5kg(혼합과)', 3], [H + '황금향 가정용 - 3kg(중소과 17과 전후)', 2], [H + '황금향 못난이 - 10kg(랜덤과)', 1], [H + '황금향 못난이 - 5kg(랜덤과)', 1], [H + '황금향 선물용 - 3kg(중대과 7~15과)', 15], [H + '황금향 선물용 - 5kg(중대과 13~25과)', 6], [S + '10kg(로얄과 2S~M)', 17], [S + '10kg(로얄과 2S~M) 2S사이즈로!', 1], [S + '10kg(로얄과 2S~M) S사이즈로!', 1], [S + '10kg(소과 2S미만)', 8], [S + '10kg(중대과 L이상)', 1], [S + '3kg(로얄과 2S~M)', 9], [S + '3kg(소과 2S미만)', 2], [S + '3kg(중대과 L이상)', 1], [S + '5kg(로얄과 2S~M)', 13], [S + '5kg(소과 2S미만)', 1], [S + '5kg(중대과 L이상)', 4], [Y + '10kg(로얄과 2S~M)', 3], [Y + '10kg(로얄과 2S~M) M사이즈로!', 5], [Y + '10kg(소과 2S미만)', 2], [Y + '3kg(로얄과 2S~M)', 2], [Y + '5kg(로얄과 2S~M)', 3], [Y + '5kg(소과 2S미만)', 2]];
-  var SB = [[L + ' 못난이5kg(랜덤과)', 3], [L + '10kg(중소과)', 1], [L + '3kg(중소과)', 4], [L + '5kg(중소과)', 5], [H + '노지 황금향 가정용 - 10kg(혼합과)', 6], [H + '노지 황금향 가정용 - 5kg(혼합과)', 18], [H + '노지 황금향 못난이 - 10kg(혼합과)', 4], [H + '노지 황금향 못난이 - 5kg(혼합과)', 9], [H + '황금향 가정용 - 3kg(중소과 17과 전후)', 2], [H + '황금향 못난이 - 10kg(랜덤과)', 1], [H + '황금향 못난이 - 5kg(랜덤과)', 1], [H + '황금향 선물용 - 3kg(중대과 7~15과)', 19], [H + '황금향 선물용 - 5kg(중대과 13~25과)', 7], [S + '10kg(로얄과 2S~M)', 27], [S + '10kg(로얄과 2S~M) 2S사이즈로!', 1], [S + '10kg(로얄과 2S~M) M사이즈로!', 1], [S + '10kg(로얄과 2S~M) S사이즈로!', 1], [S + '10kg(소과 2S미만)', 13], [S + '10kg(중대과 L이상)', 2], [S + '3kg(로얄과 2S~M)', 19], [S + '3kg(소과 2S미만)', 5], [S + '3kg(중대과 L이상)', 1], [S + '5kg(로얄과 2S~M)', 26], [S + '5kg(소과 2S미만)', 5], [S + '5kg(중대과 L이상)', 5], [Y + '10kg(로얄과 2S~M)', 3], [Y + '10kg(로얄과 2S~M) M사이즈로!', 5], [Y + '10kg(로얄과 2S~M) S사이즈로!', 1], [Y + '10kg(소과 2S미만)', 2], [Y + '3kg(로얄과 2S~M)', 2], [Y + '5kg(로얄과 2S~M)', 3], [Y + '5kg(소과 2S미만)', 2]];
-  var tsv = function (rows, tot) { return rows.map(function (r) { return r[0] + '\t' + r[1]; }).join('\n') + '\n\t' + tot; };
-  $('btn-sample').addEventListener('click', function () { $('ta-a').value = tsv(SA, 127); $('ta-b').value = tsv(SB, 204); say($('msg'), '예시(11/3 대성 127 → 204)를 넣었어요.'); refresh(); });
-
-  window.__qtyDiff = { parse: parse, diff: diff, groupOf: groupOf, encodeHash: encodeHash, decodeHash: decodeHash, model: function () { return cur; } };   // 검증용(읽기만)
-
-  // ===== 링크로 열었을 때 = 거래처 보기 모드 =====
-  var hash = location.hash.slice(1);
-  if (hash) {
-    document.body.classList.add('view');
-    document.title = '추가 포장 수량';
-    $('result').innerHTML = '<div class="empty">표를 여는 중…</div>';
-    decodeHash(hash).then(function (M) {
-      var s = sheetHtml(M, false);
-      $('result').innerHTML = s.html;
-      document.title = (M.partner ? M.partner + ' ' : '') + '추가 포장 ' + s.total + '박스';
-    }).catch(function () {
-      $('result').innerHTML = '';
-      var d = document.createElement('div'); d.className = 'empty'; d.textContent = '링크가 잘렸어요 · 이미지로 받아 주세요.';
-      $('result').appendChild(d);
-      $('btn-vsave').disabled = true;
-    });
-  } else {
-    refresh();
-  }
+  // 지난판(v5.9.696) 거래처 링크 #v1.… 는 이제 만들지 않음 → 열리면 안내만
+  if (/^#v1\./.test(location.hash)) $('result').innerHTML = '<div class="warn">이 링크는 이제 쓰지 않아요. 차이 그림을 받아 주세요.</div>';
 })();
 </script>
 </body>

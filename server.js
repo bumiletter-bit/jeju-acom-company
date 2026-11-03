@@ -19585,6 +19585,7 @@ const EXPERIENCE = require('./experience.js')(app, { pool, authMiddleware, admin
     naverConfirmOrders, naverConfirmIsAlready });   // #780 체험 주문 자동 발주확인 = #92 와 같은 함수·같은 중계
 // #814 계산서 발행현황(정산관리 탭 · 표 tax_invoices · 채우기 = 창구 invoice-month.js · 확인 전 숫자는 어느 합계에도 안 섞음)
 require('./tax-invoices.js').mount(app, { pool, authMiddleware, adminOnly, writeAudit, matchItemToPricing, fetchSettlements: require('./agents/세미.js')._fetchSettlements });
+require('./qty-read.js').mount(app, { Anthropic, pool, model: process.env.QTY_READ_MODEL, clientIp: publicClientIp });   // #1002 중간발주 이미지 읽기(공개 · 저장 0 · public/qty-diff.html)
 // #850 발주 메모함(표 order_memo_entries·rows · API /api/order-memo/* · 계약 docs/850-api.md) — shipCal = memo-parse 와 같은 달력(정오 전이면 오늘) · 영구 삭제 타이머는 렌더에서만
 //   AI = 창구 경유(대표 「고」 · 최종발주 메모 읽기와 같은 길 · 요청한 계정 = created_by_id 로 대표 요금제/콘솔 가름) · deskAlive = 대기 프로그램 2분 안 소식 + 켜짐(desk-status 와 같은 기준)
 require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminActor, handleErr: handleAdminErr, cfgGet: naverCfgGet, kstToday: () => kstTodayStr(), noTimers: !process.env.RENDER,
