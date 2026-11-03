@@ -18,24 +18,29 @@
   --shadow-card:0 1px 2px rgba(16,24,40,.06),0 2px 6px -2px rgba(16,24,40,.10);
   --g-lemon:#E6F2D3; --g-hgh:#FFF0BF; --g-nhgh:#FFE2C2; --g-saek:#FDE3D6; --g-yura:#DCEAFB; --g-etc:#EEF0F4;
   --tail:#C2410C;
+  --tang:#D9570B; --tang-dark:#B8470A; --tang-ring:rgba(217,87,11,.18); --cream:#FDF5DC; --cream-line:#F1E2B8; --cream-ink:#6B4A12;
 }
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--page-bg);color:var(--text-dark);font-family:var(--font-app);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
 .wrap{max-width:820px;margin:0 auto;padding:18px 16px 48px}
-h1{font-size:21px;margin:0 0 4px;letter-spacing:-.01em}
-.lead{color:var(--text-on-page);margin:0 0 14px;font-size:14px}
+.hero{display:flex;align-items:flex-end;gap:12px;background:var(--cream);border:1px solid var(--cream-line);border-radius:16px;padding:14px 16px 0;margin-bottom:14px;overflow:hidden}
+.hero .tx{flex:1;min-width:0;padding-bottom:14px;align-self:center}
+.hero img{flex:none;width:84px;height:auto;display:block}
+h1{font-size:21px;margin:0 0 4px;letter-spacing:-.01em;word-break:keep-all}
+.lead{color:var(--cream-ink);margin:0;font-size:14px;word-break:keep-all}
+@media (min-width:561px){.hero img{width:104px}h1{font-size:24px}.lead{font-size:15px}}
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:560px){.slots{grid-template-columns:1fr}}
 .slot{background:#fff;border:1px solid var(--card-border);border-radius:14px;box-shadow:var(--shadow-card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .step-h{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px}
-.step-h .no{flex:none;width:28px;height:28px;border-radius:999px;background:var(--primary);color:#fff;display:grid;place-items:center;font-size:15px}
+.step-h .no{flex:none;width:28px;height:28px;border-radius:999px;background:var(--tang);color:#fff;display:grid;place-items:center;font-size:15px}
 .step-h small{font-weight:500;color:var(--text-mid);font-size:13px}
-.drop{position:relative;display:flex;align-items:center;justify-content:center;gap:12px;min-height:120px;border:2px dashed #C7CCE0;border-radius:12px;background:#FAFAFE;cursor:pointer;padding:10px;text-align:center;transition:border-color .15s,background .15s}
-.drop:hover,.drop.over{border-color:var(--primary);background:var(--primary-light)}
-.drop:focus-within{outline:3px solid var(--primary-ring);outline-offset:2px}
+.drop{position:relative;display:flex;align-items:center;justify-content:center;gap:12px;min-height:120px;border:2px dashed #EBC98A;border-radius:12px;background:#FFFBF0;cursor:pointer;padding:10px;text-align:center;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--tang);background:var(--cream)}
+.drop:focus-within{outline:3px solid var(--tang-ring);outline-offset:2px}
 .drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
-.drop .ph{font-weight:700;font-size:15px;color:var(--primary-dark)}
+.drop .ph{font-weight:700;font-size:15px;color:var(--tang-dark)}
 .drop .ph small{display:block;font-weight:500;color:var(--text-mid);font-size:13px;margin-top:2px}
 .drop img.th{max-height:96px;max-width:40%;border-radius:8px;border:1px solid var(--card-border);object-fit:contain;background:#fff}
 .drop.has .ph{font-size:14px}
@@ -56,21 +61,24 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
 .warn div+div{margin-top:4px}
 .empty{color:var(--text-on-page);text-align:center;padding:24px 8px;font-size:15px}
 .out{display:block;width:100%;max-width:720px;margin:0 auto;border-radius:14px;box-shadow:var(--shadow-card);background:#fff;-webkit-touch-callout:default;user-select:auto}
-.dl{display:block;width:100%;max-width:720px;margin:12px auto 0;min-height:52px;border:0;border-radius:12px;background:var(--primary);color:#fff;font:800 17px var(--font-app);cursor:pointer;box-shadow:0 6px 16px -6px rgba(79,70,229,.55);transition:transform .12s cubic-bezier(.23,1,.32,1)}
+.dl{display:block;width:100%;max-width:720px;margin:12px auto 0;min-height:52px;border:0;border-radius:12px;background:var(--tang);color:#fff;font:800 17px var(--font-app);cursor:pointer;box-shadow:0 6px 16px -6px rgba(217,87,11,.55);transition:transform .12s cubic-bezier(.23,1,.32,1)}
 .dl.top{margin:0 auto 12px}
-.dl:hover{background:var(--primary-dark)}
+.dl:hover{background:var(--tang-dark)}
 .dl:active{transform:scale(.97)}
-.dl:focus-visible{outline:3px solid var(--primary-ring);outline-offset:2px}
+.dl:focus-visible{outline:3px solid var(--tang-ring);outline-offset:2px}
 .hint{text-align:center;color:var(--text-on-page);font-size:13px;margin-top:8px}
 
 /* ===== 그림으로 그릴 표(화면 밖에서 그려 <img> 로) ===== */
 #stage{position:fixed;left:-10000px;top:0;width:720px}
 #sheet{background:#fff;width:720px;font-family:var(--font-app);color:var(--text-dark)}
-.sh-head{padding:20px 20px 14px;border-bottom:2px solid var(--text-dark)}
-.sh-title{font-size:26px;font-weight:800;letter-spacing:-.01em;margin-bottom:6px}
-.sh-total{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:24px;font-weight:800}
-.sh-total .v{font-size:40px;color:var(--primary-dark);font-variant-numeric:tabular-nums;white-space:nowrap}
-.sh-sub{font-size:16px;color:var(--text-mid);margin-top:2px;font-weight:600}
+.sh-head{display:flex;align-items:flex-end;gap:14px;background:var(--cream);padding:18px 22px 0;border-bottom:3px solid var(--tang)}
+.sh-head img{flex:none;width:132px;height:auto;display:block}
+.sh-head .tx{flex:1;min-width:0;padding-bottom:16px}
+.sh-title{font-size:27px;font-weight:800;letter-spacing:-.01em;line-height:1.25;word-break:keep-all}
+.sh-total{display:flex;align-items:baseline;gap:12px;margin-top:10px;font-size:22px;font-weight:800;color:var(--cream-ink)}
+.sh-total .v{font-size:54px;line-height:1;color:var(--tang);font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:-.02em}
+.sh-total .v small{font-size:26px;margin-left:2px}
+.sh-sub{font-size:16px;color:var(--cream-ink);margin-top:8px;font-weight:600}
 .grp-h{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;font-weight:800;font-size:20px;border-top:2px solid rgba(16,24,40,.28);box-shadow:inset 0 -1px 0 rgba(16,24,40,.12)}
 .grp-h .s{font-variant-numeric:tabular-nums;white-space:nowrap}
 .row{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid rgba(16,24,40,.08)}
@@ -86,13 +94,14 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
 .dec .r span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}
 .dec .r b{color:var(--danger);font-variant-numeric:tabular-nums}
 .sh-none{padding:28px 18px;text-align:center;font-size:20px;font-weight:700;color:var(--text-mid)}
-.sh-foot{padding:8px 18px 12px;font-size:13px;color:var(--text-mid);text-align:right;border-top:1px solid var(--border)}
+.sh-foot{display:flex;justify-content:flex-end;align-items:center;gap:6px;padding:10px 18px 12px;font-size:15px;font-weight:800;color:var(--cream-ink);background:var(--cream);border-top:1px solid var(--cream-line)}
+.sh-foot::before{content:'';width:10px;height:10px;border-radius:999px;background:var(--tang)}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>중간발주 추가 포장 수량</h1>
-  <p class="lead">① 먼저 보낸 중간발주 그림, ② 지금 그림을 넣으면 더 포장할 수량만 그림으로 나와요. 결과 그림을 길게 눌러 저장하거나 보내면 돼요.</p>
+  <header class="hero"><div class="tx"><h1>중간발주 추가 포장 수량</h1>
+  <p class="lead">① 먼저 보낸 중간발주 그림, ② 지금 그림을 넣으면 더 포장할 수량만 그림으로 나와요. 결과 그림을 길게 눌러 저장하거나 보내면 돼요.</p></div><img src="qty-akkomi.webp" alt="" width="300" height="481"></header>
 
   <div class="slots">
     <section class="slot" data-k="A">
@@ -216,8 +225,8 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
     inc.forEach(function (x) { var g = groupOf(x.name); if (!groups.has(g.key)) groups.set(g.key, { g: g, rows: [], sum: 0 }); var e = groups.get(g.key); e.rows.push(x); e.sum += x.d; });
     var keys = Array.from(groups.keys()).sort(function (a, b) { var ia = SHOW_ORDER.indexOf(a), ib = SHOW_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
     var total = inc.reduce(function (s, x) { return s + x.d; }, 0);
-    var h = '<div id="sheet"><div class="sh-head"><div class="sh-title">포장해야 할 차이 수량입니다</div><div class="sh-total"><span>추가 포장</span><span class="v">' + total + '박스</span></div>'
-      + '<div class="sh-sub">앞 ' + at + '박스 → 지금 ' + bt + '박스</div></div>';
+    var h = '<div id="sheet"><div class="sh-head"><img src="qty-akkomi.webp" alt=""><div class="tx"><div class="sh-title">포장해야 할 차이 수량입니다</div><div class="sh-total"><span>추가 포장</span><span class="v">' + total + '<small>박스</small></span></div>'
+      + '<div class="sh-sub">앞 ' + at + '박스 → 지금 ' + bt + '박스</div></div></div>';
     if (!inc.length) h += '<div class="sh-none">늘어난 품목이 없어요</div>';
     keys.forEach(function (k) {
       var e = groups.get(k);
@@ -334,7 +343,8 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
       if (typeof html2canvas !== 'function') return Promise.reject(new Error('그림 도구를 못 불러왔어요(인터넷 확인)'));
       return html2canvas($('sheet'), { scale: 1.5, backgroundColor: '#ffffff', logging: false, windowWidth: 760 });
     };
-    (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(go).then(function (cv) {
+    var imgsReady = function () { return Promise.all(Array.prototype.map.call(stage.querySelectorAll('img'), function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); })); };
+    (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(imgsReady).then(go).then(function (cv) {
       if (my !== drawSeq) return;
       var h = (warn.length ? '<div class="warn" role="alert">' + warn.map(function (w) { return '<div>' + esc(w) + '</div>'; }).join('') + '</div>' : '')
         + '<button type="button" class="dl top" id="btn-dl">이미지 다운로드</button>'
@@ -342,6 +352,7 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
         + '<div class="hint">그림을 길게 눌러 저장·공유해도 돼요</div>';
       out.innerHTML = h; var png = cv.toDataURL('image/png'); $('out-img').src = png;
       $('btn-dl').addEventListener('click', function () { download(cv, png); });
+      try { $('btn-dl').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); } catch (_) { }
     }).catch(function (e) { if (my === drawSeq) out.innerHTML = '<div class="warn">' + esc(e.message) + '</div>'; });
   }
 
