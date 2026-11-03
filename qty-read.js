@@ -3,7 +3,7 @@
 //   · 저장 0 · DB 쓰기 0 · 그림·읽은 글 로그 0(실패 종류만 한 줄) · 그림 5MB 상한 · 그림 꼴(JPEG·PNG·WEBP) 머리 바이트로 확인
 //   · 남용 막기 = 접속자(IP)당 시간당 30 · 전체 하루 300(KST) · 메모리 셈(재시작 때 0)
 //   · 이름 = 「후보 이름표」(품목별 금액 대성 거래처 · 지난 품목 포함 전부 · 최근 기간 먼저 · 품목 이름만 · 5분 기억)를 AI 에 줌 →
-//     목록에 없는 이름은 버리지 않음: 글자 1~2개 차이 + 숫자(kg·과수) 같음 + 가장 가까운 것 하나뿐이면 목록 이름으로, 아니면 읽은 그대로(새 품목)
+//     판정 = AI 가 옮긴 그림 글자(text) · 목록 이름으로 바꾸는 건 띄어쓰기·물결만 다르거나 1글자 차이 + 숫자 같음 + 과일 이름 같음 + 하나뿐일 때만 · 아니면 그림 글자 그대로(새 품목)
 //   · AI = 정산 이미지 판독(#396 settleOcrRead)과 같은 꼴: 도구 호출 → 잘림·0줄·태그 오염이면 평문 JSON 한 번 더
 //   · 모델 = env QTY_READ_MODEL 없으면 claude-sonnet-5-5(마루 모델과 따로)
 'use strict';
@@ -26,11 +26,12 @@ const TOOL = {
                 items: {
                     type: 'object', additionalProperties: false,
                     properties: {
-                        name: { type: 'string', description: '품목 이름 — 후보 목록이 있으면 그 목록의 이름 하나를 글자 그대로(꼬리 빼고)' },
+                        text: { type: 'string', description: '왼쪽 칸 글자를 그림에 보이는 그대로(꼬리 빼고) · 목록과 달라도 고치지 말 것' },
+                        name: { type: 'string', description: '참고: text 와 같은 목록 이름이 있으면 그 이름 · 없으면 text 와 같게' },
                         tail: { type: 'string', description: '이름 뒤 꼬리(예: 「M사이즈로!」 「2S사이즈로!」 「20과로!」) · 없으면 빈 글자' },
                         qty: { type: 'integer', description: '오른쪽 칸 수량' },
                     },
-                    required: ['name', 'tail', 'qty'],
+                    required: ['text', 'tail', 'qty'],
                 },
             },
             total: { type: ['integer', 'null'], description: '맨 아래 이름 칸이 빈 합계 줄의 숫자 · 없으면 null' },
@@ -39,8 +40,8 @@ const TOOL = {
     },
 };
 function prompt(names) {
-    let t = '이 그림은 「품목 이름 | 수량」 두 칸 표다. 모든 품목 줄을 위에서 아래 순서로 빠짐없이 읽어라(같은 이름이라도 꼬리가 다르면 다른 줄). 이름 뒤 꼬리(예: 「M사이즈로!」 「20과로!」)는 tail 칸에 따로 넣어라. 맨 아래 이름 칸이 빈 합계 줄은 items 에 넣지 말고 그 숫자를 total 에 넣어라. 칸이 잘려 이름 뒤가 안 보여도 보이는 앞부분으로 목록에서 고르고, 잘린 꼬리는 보이는 글자로 짐작해라.';
-    if (names && names.length) t += '\n\n아래는 이 거래처의 품목 이름 목록이다. 그림 글자가 목록 이름과 같으면 목록 글자 그대로 써라(띄어쓰기·기호까지). 목록에 없는 품목(새 품목)은 그림 글자 그대로 써라. kg·과수 숫자는 반드시 그림대로:\n' + names.map(n => '- ' + n).join('\n');
+    let t = '이 그림은 「품목 이름 | 수량」 두 칸 표다. 모든 품목 줄을 위에서 아래 순서로 빠짐없이 읽어라(같은 이름이라도 꼬리가 다르면 다른 줄). 이름 칸 글자는 text 에 그림에 보이는 그대로 옮기고(꼬리 빼고), 이름 뒤 꼬리(예: 「M사이즈로!」 「20과로!」)는 tail 칸에 따로 넣어라. 맨 아래 이름 칸이 빈 합계 줄은 items 에 넣지 말고 그 숫자를 total 에 넣어라. 칸이 잘려 이름 뒤가 안 보이면 text 엔 보이는 데까지만 쓰고 name 에 목록의 그 이름을 써라. 꼬리가 잘려 앞 한두 글자만 보여도(예: 「2…」 「M…」 「S…」) 버리지 말고 tail 에 짐작한 꼬리(「2S사이즈로!」 「M사이즈로!」 「S사이즈로!」)를 써라 — 이름이 같은 줄이 둘 이상이면 꼬리가 다른 것이다.';
+    if (names && names.length) t += '\n\n아래 목록은 이 거래처가 예전에 판 품목 이름이다(참고용). 글자가 흐릴 때 읽는 데만 참고하고, 그림 글자가 목록과 다르면 반드시 그림 글자 그대로 text 에 써라 — 과일 이름(레드향·수라향·카라향·한라봉 등)이 목록과 다르면 새 품목이다. kg·과수 숫자도 그림대로:\n' + names.map(n => '- ' + n).join('\n');
     return t + '\n\nread_qty_table 도구로 답하라.';
 }
 
@@ -57,15 +58,18 @@ function lev(a, b) {   // 글자 차이 수(2 넘으면 99)
     }
     return prev[b.length];
 }
-// 읽은 이름 → 목록 이름(같거나 · 글자 1~2개 차이 + 숫자 같음 + 가장 가까운 것 하나뿐) · 아니면 읽은 그대로(새 품목 · 확인 표시 없음)
+// 과일 이름 낱말(○○향·○○봉·○○귤·레몬·키위·호박·자몽·오렌지) — 이것이 다르면 1글자 차이여도 다른 품목(레드향↔수라향 · 한라봉↔한라향)
+const FRUIT_RE = /[가-힣]*(?:향|봉|귤|레몬|키위|호박|자몽|오렌지)/g;
+const fruitsOf = s => (String(s || '').normalize('NFKC').match(FRUIT_RE) || []).join('|');
+// 그림 글자 → 목록 이름(띄어쓰기·물결만 다름 · 또는 1글자 차이 + 숫자 같음 + 과일 이름 같음 + 가장 가까운 것 하나뿐) · 아니면 그림 글자 그대로(새 품목)
 function snapName(raw, names) {
     const r = String(raw || '').replace(/\s+/g, ' ').trim();
     if (!names || !names.length) return { name: r, snapped: false };
     const k = keyOf(r);
     const exact = names.find(n => keyOf(n) === k);
     if (exact) return { name: exact, snapped: false };
-    const d = digitsOf(r);
-    const near = names.filter(n => digitsOf(n) === d).map(n => ({ n, e: lev(keyOf(n), k) })).filter(x => x.e <= 2).sort((x, y) => x.e - y.e);
+    const d = digitsOf(r), fr = fruitsOf(r);
+    const near = names.filter(n => digitsOf(n) === d && fruitsOf(n) === fr).map(n => ({ n, e: lev(keyOf(n), k) })).filter(x => x.e <= 1).sort((x, y) => x.e - y.e);
     if (near.length && (near.length === 1 || near[0].e < near[1].e)) return { name: near[0].n, snapped: true };
     return { name: r, snapped: false };
 }
@@ -73,7 +77,10 @@ const TAIL_OK = /^((2S|S|M|L|2L|3L)사이즈로|\d{1,3}과로)!?$/i;
 function cleanItems(raw, names) {
     return (raw && Array.isArray(raw.items) ? raw.items : []).slice(0, 300).map(x => {
         const q = Number(x && x.qty);
-        let nm = String((x && x.name) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        // 판정 기준 = 그림 글자(text) · 잘린 이름(text 가 목록 이름 앞부분)일 때만 AI 가 고른 name 을 씀
+        const txt = String((x && x.text) || '').replace(/\s+/g, ' ').trim().slice(0, 200), pick = String((x && x.name) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        let nm = txt || pick;
+        if (txt && pick && keyOf(pick) !== keyOf(txt) && keyOf(txt).length >= 12 && keyOf(pick).startsWith(keyOf(txt)) && names && names.some(n => keyOf(n) === keyOf(pick))) nm = pick;
         let tail = String((x && x.tail) || '').normalize('NFKC').replace(/\s+/g, '').slice(0, 30);
         if (!tail) { const m = nm.match(/\s((?:2S|S|M|L|2L|3L)사이즈로!?|\d{1,3}과로!?)$/i); if (m) { tail = m[1]; nm = nm.slice(0, -m[0].length).trim(); } }
         if (!nm || !Number.isInteger(q) || q < 0 || q >= 100000) return null;
@@ -124,7 +131,7 @@ function mount(app, deps) {
 
     async function readOnce(client, mime, b64, names, plain) {
         const content = [{ type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
-            { type: 'text', text: prompt(names) + (plain ? '\n다른 설명·마크업 없이 JSON 객체 하나만 출력하라: {"items":[{"name":"이름","tail":"꼬리 또는 빈 글자","qty":숫자}],"total":숫자 또는 null}' : '') }];
+            { type: 'text', text: prompt(names) + (plain ? '\n다른 설명·마크업 없이 JSON 객체 하나만 출력하라: {"items":[{"text":"그림 글자 그대로","name":"목록 이름 또는 text","tail":"꼬리 또는 빈 글자","qty":숫자}],"total":숫자 또는 null}' : '') }];
         const req = { model, max_tokens: 8000, messages: [{ role: 'user', content }] };
         if (!plain) { req.tools = [TOOL]; req.tool_choice = { type: 'auto' }; }   // sonnet-5-5 = 도구 강제(tool·any) 안 받음 → auto + 글로 지시 · 안 부르면 평문으로 한 번 더
         const msg = await client.messages.create(req);

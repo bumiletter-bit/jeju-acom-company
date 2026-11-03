@@ -62,7 +62,13 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
 .empty{color:var(--text-on-page);text-align:center;padding:24px 8px;font-size:15px}
 .out{display:block;width:100%;max-width:720px;margin:0 auto;border-radius:14px;box-shadow:var(--shadow-card);background:#fff;-webkit-touch-callout:default;user-select:auto}
 .dl{display:block;width:100%;max-width:720px;margin:12px auto 0;min-height:52px;border:0;border-radius:12px;background:var(--tang);color:#fff;font:800 17px var(--font-app);cursor:pointer;box-shadow:0 6px 16px -6px rgba(217,87,11,.55);transition:transform .12s cubic-bezier(.23,1,.32,1)}
-.dl.top{margin:0 auto 12px}
+.acts{display:flex;gap:8px;max-width:720px;margin:0 auto 12px}
+.acts .dl{flex:1 1 auto;margin:0}
+.rs{flex:0 0 auto;min-height:52px;min-width:96px;padding:0 18px;border:1px solid var(--cream-line);border-radius:12px;background:#fff;color:var(--cream-ink);font:700 16px var(--font-app);cursor:pointer;transition:transform .12s cubic-bezier(.23,1,.32,1)}
+.rs:hover{border-color:var(--tang);color:var(--tang-dark)}
+.rs:active{transform:scale(.97)}
+.rs:focus-visible{outline:3px solid var(--tang-ring);outline-offset:2px}
+.acts.solo{justify-content:center}
 .dl:hover{background:var(--tang-dark)}
 .dl:active{transform:scale(.97)}
 .dl:focus-visible{outline:3px solid var(--tang-ring);outline-offset:2px}
@@ -264,7 +270,7 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
   function takeFile(k, file) {
     if (!file) return;
     if (!/^image\//.test(file.type || '')) { setSt(k, '그림 파일이 아니에요. 다시 넣어 주세요.', 'err'); return; }
-    var my = ++S[k].seq; S[k].img = null; render();
+    var my = ++S[k].seq; S[k].img = null; S[k].used = true; render();
     setSt(k, '<span class="spin"></span>그림 읽는 중…');
     shrink(file).then(function (g) {
       if (my !== S[k].seq) return;
@@ -293,6 +299,20 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
     drop.addEventListener('drop', function (e) { e.preventDefault(); drop.classList.remove('over'); takeFile(k, e.dataTransfer.files && e.dataTransfer.files[0]); });
     $('ta-' + k).addEventListener('input', render);
   });
+  var DROP_PH = '그림 넣기<small>사진 고르기 · 붙여넣기 · 끌어 놓기</small>';
+  function anyInput() { return !!(S.A.used || S.B.used || norm($('ta-A').value) || norm($('ta-B').value)); }
+  function resetAll() {
+    ['A', 'B'].forEach(function (k) {
+      S[k].seq++; S[k].img = null; S[k].used = false;   // seq 는 계속 올라감 = 읽는 중이던 응답은 늦게 와도 번호가 달라 버려짐
+      var drop = $('drop-' + k), th = drop.querySelector('img.th'); if (th) th.remove();
+      drop.classList.remove('has', 'over'); drop.querySelector('.ph').innerHTML = DROP_PH;
+      $('file-' + k).value = ''; $('ta-' + k).value = ''; setSt(k, '');
+    });
+    $('txt').open = false; $('stage').innerHTML = ''; ++drawSeq; lastFocus = null;
+    $('result').innerHTML = '<div class="empty">③ 두 그림을 넣으면 여기에 차이 그림이 나와요.</div>';
+    try { window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); } catch (_) { window.scrollTo(0, 0); }
+  }
+  function bindReset() { var b = $('btn-rs'); if (b) b.addEventListener('click', resetAll); }
   var lastFocus = null;
   ['A', 'B'].forEach(function (k) { $('drop-' + k).addEventListener('pointerdown', function () { lastFocus = k; }); });
   document.addEventListener('paste', function (e) {
@@ -301,7 +321,7 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
     for (var i = 0; i < it.length; i++) if (it[i].kind === 'file' && /^image\//.test(it[i].type)) { f = it[i].getAsFile(); break; }
     if (!f) return;
     e.preventDefault();
-    var k = lastFocus || (!S.A.img && !S.A.seq ? 'A' : (!S.B.img && !S.B.seq ? 'B' : 'B'));
+    var k = lastFocus || (!S.A.used ? 'A' : 'B');
     lastFocus = null; takeFile(k, f);
   });
 
@@ -329,13 +349,15 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
   var drawSeq = 0;
   function render() {
     var a = side('A'), b = side('B'), out = $('result');
-    if (!a || !b) { out.innerHTML = '<div class="empty">③ 두 그림을 넣으면 여기에 차이 그림이 나와요.</div>'; return; }
+    if (!a || !b) { ++drawSeq; out.innerHTML = (anyInput() ? '<div class="acts solo"><button type="button" class="rs" id="btn-rs">초기화</button></div>' : '') + '<div class="empty">③ 두 그림을 넣으면 여기에 차이 그림이 나와요.</div>'; bindReset(); return; }
     var my = ++drawSeq;
     var at = a.items.reduce(function (s, x) { return s + x.qty; }, 0), bt = b.items.reduce(function (s, x) { return s + x.qty; }, 0);
     var s = sheetHtml(diffItems(a.items, b.items), at, bt);
     var warn = [];
     var unsure = []; [a, b].forEach(function (sd) { sd.items.forEach(function (x) { if (x.check && unsure.indexOf(x.name) < 0) unsure.push(x.name); }); });
     if (unsure.length) warn.push('이름 확인 필요 ' + unsure.length + '줄(그림 속 「이름 확인」 줄): ' + unsure.slice(0, 3).join(' · ') + (unsure.length > 3 ? ' …' : ''));
+    // 한 그림 안에 같은 이름 줄이 둘 이상 = 꼬리(…사이즈로!)가 잘려 합쳐졌을 수 있음 → 합쳐서 셈 · 알림
+    [['앞', a], ['지금', b]].forEach(function (p) { if (p[1].text) return; var seen = {}, dup = []; p[1].items.forEach(function (x) { var k = key(x.name); if (seen[k] && dup.indexOf(x.name) < 0) dup.push(x.name); seen[k] = 1; }); if (dup.length) warn.push('읽기 확인 필요(' + p[0] + ' 그림): 같은 이름 줄이 여럿이라 합쳐 셌어요(사이즈 꼬리가 잘렸을 수 있음) · ' + dup.map(shortName).slice(0, 2).join(' · ')); });
     [['앞', a], ['지금', b]].forEach(function (p) { if (p[1].mismatch) warn.push('읽기 확인 필요(' + p[0] + ' 그림): 읽은 합 ' + p[1].readSum + ' · 그림 합계 ' + p[1].total); if (p[1].skipped) warn.push(p[0] + ' 글에서 못 읽은 줄 ' + p[1].skipped + '개'); });
     var stage = $('stage'); stage.innerHTML = s.html;
     out.innerHTML = '<div class="empty"><span class="st"><span class="spin"></span></span>차이 그림 만드는 중…</div>';
@@ -347,11 +369,11 @@ textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var
     (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(imgsReady).then(go).then(function (cv) {
       if (my !== drawSeq) return;
       var h = (warn.length ? '<div class="warn" role="alert">' + warn.map(function (w) { return '<div>' + esc(w) + '</div>'; }).join('') + '</div>' : '')
-        + '<button type="button" class="dl top" id="btn-dl">이미지 다운로드</button>'
+        + '<div class="acts"><button type="button" class="dl" id="btn-dl">이미지 다운로드</button><button type="button" class="rs" id="btn-rs">초기화</button></div>'
         + '<img class="out" id="out-img" alt="추가 포장 ' + s.total + '박스 차이 표">'
         + '<div class="hint">그림을 길게 눌러 저장·공유해도 돼요</div>';
       out.innerHTML = h; var png = cv.toDataURL('image/png'); $('out-img').src = png;
-      $('btn-dl').addEventListener('click', function () { download(cv, png); });
+      $('btn-dl').addEventListener('click', function () { download(cv, png); }); bindReset();
       try { $('btn-dl').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); } catch (_) { }
     }).catch(function (e) { if (my === drawSeq) out.innerHTML = '<div class="warn">' + esc(e.message) + '</div>'; });
   }
