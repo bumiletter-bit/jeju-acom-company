@@ -638,8 +638,9 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             for (const [w, h] of [[390, 844], [900, 900]]) {
                 const c2 = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: w < 721, deviceScaleFactor: 1 }); const p2 = await c2.newPage(); const pe2 = []; p2.on('pageerror', e => pe2.push(String(e)));
                 S.badges = { 190: B.tails }; await openMemo(p2, 'new', 4, 1); await until(() => p2.evaluate(() => !!document.querySelector('#om-list .om-badge')));
-                const m = await p2.evaluate(() => { const b = document.querySelector('#om-list .om-badge'), r = b.getBoundingClientRect(), li = b.closest('.om-ml'); return { sw: document.documentElement.scrollWidth, h: Math.round(r.height), right: Math.round(r.right), liOver: li.scrollWidth - li.clientWidth }; });
-                ok(m.sw <= w && m.liOver <= 0 && m.right <= w && m.h >= 44, `${w}폭 긴 배지(덧말 셋) = 넘침 0 · 단추 44px↑`, m);
+                // #1023-c 배지 = 보이는 높이 작게 · 누르는 곳 = ::before 덧판 위아래 +8(합 44↑) · 덧판은 머리 줄 안 여백에만(줄 글 띠와 겹침 0)
+                const m = await p2.evaluate(() => { const b = document.querySelector('#om-list .om-badge'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(), li = b.closest('.om-ml'), x = r.left + Math.min(r.width / 2, 20); const at = y => { const e = document.elementFromPoint(x, y); return !!(e && e.closest('button.om-badge') === b); }; const lt = li.querySelector('.om-ml-l').getBoundingClientRect(); return { sw: document.documentElement.scrollWidth, h: Math.round(r.height), hit: at(r.top - 7) && at(r.bottom + 7), right: Math.round(r.right), liOver: li.scrollWidth - li.clientWidth, gap: Math.round(lt.top - (r.bottom + 8)) }; });
+                ok(m.sw <= w && m.liOver <= 0 && m.right <= w && (m.h >= 44 || (m.hit && m.h + 16 >= 44)) && m.gap >= 0, `${w}폭 긴 배지(덧말 셋) = 넘침 0 · 누르는 곳 44px↑ · 줄 글과 겹침 0`, m);
                 ok(pe2.length === 0, `${w}폭 #936 스크립트 오류 0`, pe2);
                 await c2.close();
             }

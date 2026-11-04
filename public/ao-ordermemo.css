@@ -679,7 +679,9 @@ html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18);
 .om-ml-h + .om-ml-t { padding-top: 2px; }
 .om-ml .om-ml-h .om-pill { min-height: 18px; padding: 0 6px; font-size: 11px; line-height: 1.35; cursor: pointer; }
 .om-ml .om-ml-h .om-badge { margin: 0; max-width: 100%; align-self: auto; font-size: 11px; white-space: normal; }
-@media (max-width: 960px), (pointer: coarse) { .om-ml .om-ml-h .om-badge { min-height: 28px; } .om-ml .om-ml-h button.om-badge { position: relative; } .om-ml .om-ml-h button.om-badge::before { content: ""; position: absolute; inset: -8px 0; } }   /* #1023-b 보이는 28 · 누르는 곳 44(위아래 8 · 화면 높이 그대로) */
+@media (max-width: 960px), (pointer: coarse) { .om-ml .om-ml-h .om-badge { min-height: 28px; } .om-ml .om-ml-h button.om-badge { position: relative; } .om-ml .om-ml-h button.om-badge::before { content: ""; position: absolute; inset: -8px 0; }
+    .om-ml-h:has(> button.om-badge) { padding-top: 8px; padding-bottom: 8px; } .om-ml-h:has(> button.om-badge) + .om-ml-t { padding-top: 0; } }   /* #1023-b 보이는 28 · 누르는 곳 44(위아래 8) · #1023-c 덧판 8px 이 머리 줄 안 여백에만(줄 글·윗줄과 겹침 0 · 입력삭제 배지 줄만 약 7px 높아짐) */
+.om-ml .om-ck + .om-ml-b > .om-ml-t, .om-ml .om-ck + .om-ml-b > .om-ml-h { padding-left: 0; }   /* #1023-c 종전 .om-ck + .om-ml-t 왼쪽 0 을 .om-ml-b 안에도 */
 .om-ml-l.c-ok { color: #05603A; }
 .om-ml-l.c-bad { color: #B42318; }
 html[data-ao-theme="dark"] .om-ml-l.c-ok { color: #7BE3AE; }
@@ -729,3 +731,27 @@ html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-norm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--d-line); display: grid; gap: 6px; }
 .om-norm b { color: var(--d-ink); font-size: 13px; }
 .om-norm-warn { color: var(--d-err); font-weight: 700; }
+/* #1021 박스별 카드(메모함 · 정리 결과·고치기 카드의 주문 안내 줄 「n박스 · 박스별로」 단추 → 판) · 색 = 종전 토큰·알약 재사용(야간 저절로) */
+.om-lk .om-boxbtn { display: inline-flex; vertical-align: baseline; margin: 0 2px; padding: 0 10px; min-height: 30px; border-color: var(--d-accent); color: var(--d-accent); font-weight: 800; }
+.om-ordl .om-boxbtn { flex: none; min-height: 32px; padding: 0 10px; font-weight: 800; }
+.om-boxp:empty { display: none; }
+.om-boxes { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); display: grid; gap: 8px; }
+.om-boxes-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.om-boxes-h b { font-size: 14px; color: var(--d-ink); }
+.om-boxes-h span { flex: 1 1 auto; font-size: 12px; color: var(--d-sub); }
+.om-boxrow { margin: 0; padding: 8px 10px 10px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); min-width: 0; }
+.om-boxrow legend { padding: 0 4px; font-size: 13px; font-weight: 800; color: var(--d-ink); }
+.om-boxrow.off .om-bx-g { opacity: .45; }
+.om-bx-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin-bottom: 6px; }
+.om-bx-s { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.om-bx-s input { width: 18px; height: 18px; accent-color: var(--d-accent); }
+.om-bx-gwa { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.om-bx-gwa input { width: 56px; }
+.om-bx-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; }
+.om-bx-f { display: grid; gap: 2px; min-width: 0; font-size: 12px; color: var(--d-sub); }
+.om-bx-f input, .om-bx-gwa input { min-width: 0; width: 100%; box-sizing: border-box; min-height: 34px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; }
+.om-bx-gwa input { width: 56px; }
+.om-bx-f:has(input[data-k="a"]), .om-bx-f:has(input[data-k="m"]) { grid-column: 1 / -1; }
+.om-pill.k-box { background: var(--d-ch-sms-bg); color: var(--d-ch-sms-fg); }
+@media (max-width: 720px) { .om-bx-g { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .om-bx-f:has(input[data-k="n"]) { grid-column: 1 / -1; } }
+@media (max-width: 960px), (pointer: coarse) { .om-lk .om-boxbtn, .om-ordl .om-boxbtn, .om-bx-s, .om-bx-f input, .om-bx-gwa input, .om-boxes .om-seg-b { min-height: 44px; } .om-bx-f input, .om-bx-gwa input { font-size: 16px; } }

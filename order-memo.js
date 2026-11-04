@@ -96,6 +96,8 @@ function checkLine(r, today, keepRaw) {
     const out = { kind: 'line', key: s(r.key, 40).trim(), note: s(r.note, 200).replace(/[\t\n]+/g, ' ').trim(), plat: s(r.plat, 10).trim(), ship_date: isDay(r.ship_date) ? r.ship_date : null, src: r.src || 'edit' };
     const why = (r._bad || []).slice();
     const sm = shipMemoOf(r); if (sm) out.note = '배송메모 ' + sm;   // #955 글 안 낱말(「S사이즈로」·「10일」)을 규칙 줄로 읽지 않음
+    const bx = BOX_NOTE.test(out.note) && !!boxesOf(r);   // #1021 박스별 줄 = 요약 글은 파서가 안 읽음(배송메모 줄과 같게 · 안 그러면 「읽지 못하는 꼴」로 held 에 갇힘)
+    if (!sm && !bx && BOX_NOTE.test(out.note)) why.push('박스별 값이 없어요 — 줄을 다시 적어 주세요');   // #1021 교차 점검 ⓐ 박스 값 없는 「박스별 …」 글 = 메모 칸에 넣지 않음(요약 글 「보내는 분 바꿈)」을 최종발주가 보내는이 지정으로 읽음)
     const d = dg(out.key);
     const keyHole = !!d && (/^0+$/.test(d) || d === '01000000000');   // 틀 자리(000-0000-0000 · 선물하기 자리표시 010-0000-0000) = 번호 아님(워커3 제안)
     const keyBad = !out.key || keyHole || (d.length < 8 && !/\d{8,}/.test(out.key));
@@ -104,17 +106,17 @@ function checkLine(r, today, keepRaw) {
     // 원문 줄(규칙·AI 출처)은 지키되 칸과 어긋나면(화면에서 번호·날짜를 고침) 칸으로 다시 만들고 출처 = edit (#850 점검 e)
     const rawLine = keepRaw && r.line && !/\n/.test(r.line) ? s(r.line, 400).trim() : '';
     let rawOk = !!rawLine;
-    if (rawOk && V2) { const p = V2.parseLines(rawLine, 'naver', today)[0]; const nz = t => String(t || '').replace(/\s+/g, ' ').trim();
+    if (rawOk && V2 && !bx) { const p = V2.parseLines(rawLine, 'naver', today)[0]; const nz = t => String(t || '').replace(/\s+/g, ' ').trim();
         rawOk = !!p && !p.bad && dg(p.key) === d && (p.date || null) === out.ship_date && nz(p.note) === nz(out.note) && nz(p.plat || platOf(p.note)) === nz(out.plat); }   // 번호·날짜·비고·플랫폼 넷 다 같을 때만 원문 줄
     if (rawLine && !rawOk) out.src = 'edit';
     out.line = rawOk ? rawLine : buildLine(out);
-    if (V2 && !why.length && !sm) {
+    if (V2 && !why.length && !sm && !bx) {
         const p = V2.parseLines(out.line, 'naver', today)[0];
         if (!p || p.bad) why.push('메모 칸이 읽지 못하는 꼴이에요');
         else if (out.ship_date && p.date !== out.ship_date) why.push('날짜를 다시 확인해 주세요');
     }
-    const sz = sm ? { bad: [] } : core.sizeLines(out.line); sz.bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });
-    if (!sm && typeof core.gwaLines === 'function') core.gwaLines(core.sizeLines(out.line).text).bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });   // #883 과수 줄 못 읽음 = 「확인」
+    const sz = (sm || bx) ? { bad: [] } : core.sizeLines(out.line); sz.bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });
+    if (!sm && !bx && typeof core.gwaLines === 'function') core.gwaLines(core.sizeLines(out.line).text).bad.forEach(b => { if (!why.includes(b.why)) why.push(b.why); });   // #883 과수 줄 못 읽음 = 「확인」
     if (out.ship_date && out.ship_date < today) why.push('지난 날짜예요');
     out.sure = !why.length; out.check_why = why; out.missing = keyBad ? ['key'] : [];   // line 빈 칸 = 'key'(화면 빨강)
     return out;
@@ -156,7 +158,11 @@ function checkCash(r, today, catalog, origin) {
 const SHIP_NOTE = /^배송메모(?:\s|$)/;
 const cleanShipMemo = v => String(v == null ? '' : v).replace(/\s*[\t\r\n]+\s*/g, ' ').trim().slice(0, 200);
 const shipMemoOf = r => { const c = r && (r._checked || r.checked); return c && typeof c.ship_memo === 'string' ? cleanShipMemo(c.ship_memo) : ''; };
-const isIndivLine = r => !!r && r.kind === 'line' && !SHIP_NOTE.test(String(r.note || '')) && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8;
+// #1021(대표 11/5) 박스별 줄 = note 「박스별 …」 + boxes 배열(박스마다 꼬리·받는 분·배송메세지·보내는 분·안 보냄) · 글은 사람이 읽는 요약(파서가 안 읽음) · 최종발주는 for-ship box_rows 로 받음
+const BOX_NOTE = /^박스별(?:\s|$)/;
+const boxesOf = r => { const v = r && (r._boxes !== undefined ? r._boxes : r.boxes); return Array.isArray(v) && v.length >= 2 ? v : null; };
+const isBoxRow = r => !!r && r.kind === 'line' && BOX_NOTE.test(String(r.note || '')) && !!boxesOf(r);
+const isIndivLine = r => !!r && r.kind === 'line' && !SHIP_NOTE.test(String(r.note || '')) && !BOX_NOTE.test(String(r.note || '')) && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8;
 // #938 주문번호 줄(주문별 발송일)의 구매자 번호 = checked.buyer(저장 전 _checked) · 전화번호 줄 = key
 // #970 입력삭제 줄의 「일반발송」 주문(주문번호·상품주문번호 · checked.normal_orders)
 const normalOrdersOf = r => { const c = r && (r._checked || r.checked), a = c && Array.isArray(c.normal_orders) ? c.normal_orders : []; return a.map(x => String(x || '').trim()).filter(x => /^[\d-]{8,40}$/.test(x)).slice(0, 50); };
@@ -252,6 +258,15 @@ function lineBadge(r, orders, opt) {
     const o = opt || {}, cat = o.catalog instanceof Set ? o.catalog : null, q = v => Math.max(0, parseInt(v, 10) || 0);
     const B = (state, why, type) => ({ kind: 'line', state, t: state === 'ok' ? '매칭완료' : state === 'fail' ? '매칭실패' : '주문 확인 중', why: why || '', type });
     const note = String((r && r.note) || ''), sm = SHIP_NOTE.test(note) || !!shipMemoOf(r);
+    if (isBoxRow(r)) {   // #1021 박스별 줄 = 「박스별 n박스」 · 그 주문(checked.pno 있으면 그 주문만 · 없으면 그 번호·판매처 주문) 박스 수 == 박스 칸 수면 ok
+        const bxs = boxesOf(r), ch0 = BADGE_CH[String((r && r.plat) || '').trim()], pno = dg(r.checked && r.checked.pno);
+        const od0 = (orders || []).filter(x => x && (!ch0 || (x.channel || 'naver') === ch0) && (!pno || dg(x.product_order_no) === pno || dg(x.okey) === pno || dg(String(x.order_key || '').split('|')[0]) === pno));
+        const bt = (st, why) => Object.assign(B(st, why, 'box'), { t: st === 'ok' ? `박스별 ${bxs.length}박스` : st === 'fail' ? '매칭실패' : '주문 확인 중' });
+        if (!od0.length) return (o.pending || o.noTable) ? bt('unknown', o.noTable ? '주문 표를 못 읽었어요' : '주문을 찾는 중이에요') : bt('fail', pno ? '그 주문이 발송 전 주문에 없어요' : '발송 전 주문 없음');
+        if (pno && od0.length > 1) return bt('fail', '주문이 여러 줄이라 최종발주 카드에서');   // #1021 교차 점검 B-1 쿠팡·자사몰 한 주문 여러 줄 = 박스별은 주문 한 줄에만(최종발주 boxPlan 과 같게)
+        const m = od0.reduce((t, x) => t + q(x.qty), 0);
+        return m === bxs.length ? bt('ok', '') : bt('fail', `메모 ${bxs.length}박스 · 주문 ${m}박스`);
+    }
     const text = String((r && r.line) || [r && r.line_key, note].filter(Boolean).join(' '));
     // 줄 종류(배송메모 줄은 글 안 낱말을 읽지 않음 = checkLine 과 같게)
     let type = o.orderNo ? 'order' : 'other', sz = null, gw = null, bad = '';
@@ -344,13 +359,22 @@ function cleanChecked(v) {
     const t = Date.parse(String(v.at || '')); const at = Number.isFinite(t) && t > Date.parse('2026-01-01') && t < Date.now() + 86400e3 ? new Date(t).toISOString() : new Date().toISOString();
     const bd = dg(v.buyer); return Object.assign({ plat: v.plat, as: v.as, at }, /^0\d{8,11}$/.test(bd) ? { buyer: String(v.buyer).trim().slice(0, 20) } : {}, cleanShipMemo(v.ship_memo) ? { ship_memo: cleanShipMemo(v.ship_memo) } : {}, /^[\d-]{8,40}$/.test(String(v.pno || '').trim()) ? { pno: String(v.pno).trim() } : {});   // #958 pno = 번호 키 배송메모 줄의 고른 주문   // #938 buyer = 주문번호 줄(주문별 발송일로 나눠 저장)의 구매자 번호 → 주소 줄 짝·배지·추가 매칭은 이 번호로(K 는 늘 전화번호)
 }
+// #1021 박스별 값 거름(순수) = 배열 2~20 · 박스마다 아래 10칸만(전부 글자 · '' = 주문 그대로) · 탭·줄바꿈 → 빈칸 · s = '1'|'' · 번호 칸 = 숫자·하이픈만 · 바꾼 것 0(전부 빈 박스) = null
+const BOX_LIM = { t: 40, o: 120, n: 20, p: 14, p2: 14, a: 200, m: 300, s: 1, sn: 20, sp: 14 };
+function cleanBoxes(v) {
+    if (!Array.isArray(v) || v.length < 2 || v.length > 20) return null;
+    const out = v.map(b => { const o = {}; Object.keys(BOX_LIM).forEach(k => { let t = String(b && typeof b === 'object' && b[k] != null ? b[k] : '').replace(/[\t\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        if (k === 's') t = (t === '1' || t === 'true') ? '1' : ''; else if (k === 'p' || k === 'p2' || k === 'sp') t = t.replace(/[^\d-]/g, ''); o[k] = t.slice(0, BOX_LIM[k]); }); return o; });
+    return out.some(o => Object.values(o).some(Boolean)) ? out : null;
+}
 // ── 최종발주용 고르기(순수 · 검증이 그대로 부름) ──
 function pickForShip(rows, date) {
-    const lines = [], cash = [], waiting = [], held = [], shipMemos = [], shipWait = [], normalOrders = [];
+    const lines = [], cash = [], waiting = [], held = [], shipMemos = [], shipWait = [], normalOrders = [], boxRows = [], boxWait = [];
     for (const r of rows) {
         if (r.state !== 'open') continue;
         const sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null;
         if (!r.sure) { held.push({ id: r.id, kind: r.kind, why: r.check_why || [] }); continue; }
+        if (isBoxRow(r)) { if (sd && sd > date) boxWait.push({ id: r.id, ship_date: sd }); else if (sd && sd < date) held.push({ id: r.id, kind: 'line', why: ['지난 날짜예요'] }); else boxRows.push({ id: r.id, key: r.line_key, plat: r.plat, line: r.line, ship_date: sd, checked: r.checked || null, boxes: boxesOf(r) }); continue; }   // #1021 박스별 줄 = 메모 칸 밖(배송메모 줄과 같은 날짜 규칙)
         { const smt = r.kind === 'line' ? shipMemoOf(r) : '';   // #955 배송메모 줄 = 메모 칸 밖 · 뒤 날짜 = 그날까지 대기 · 지난 날짜 = 안 넣음
           if (smt) { if (sd && sd > date) shipWait.push({ id: r.id, ship_date: sd }); else if (sd && sd < date) held.push({ id: r.id, kind: 'line', why: ['지난 날짜예요'] }); else shipMemos.push({ id: r.id, key: r.line_key, plat: r.plat, text: smt, line: r.line, ship_date: sd, checked: r.checked || null }); continue; } }
         if (r.kind === 'line' && (!sd || sd === date)) { const nm = normalOrdersOf(r); if (nm.length) normalOrders.push({ id: r.id, key: r.line_key, plat: r.plat, line: r.line, buyer: lineDigits(r), orders: nm }); }   // #970
@@ -362,7 +386,7 @@ function pickForShip(rows, date) {
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
         cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
         cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
-        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, ids: lines.map(l => l.id).concat(cash.map(r => r.id), shipMemos.map(m => m.id)) };
+        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, ids: lines.map(l => l.id).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부
 function pickClear(rows, date, all) {
@@ -414,6 +438,7 @@ function mount(app, deps) {
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS service BOOLEAN NOT NULL DEFAULT false`);
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS pair_orig JSONB`);   // #949 입력삭제에 붙기 전 B·K(현금으로 변경 때 복원 · 양식·for-ship 무관)
         await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS exp_site BOOLEAN NOT NULL DEFAULT false`);   // #1003 체험장에서 받은 현금 줄(메모함 알약만 · 양식·for-ship·짝 무관)
+        await pool.query(`ALTER TABLE order_memo_rows ADD COLUMN IF NOT EXISTS boxes JSONB`);   // #1021 박스별 줄(cleanBoxes 꼴 · 그 밖 줄 = NULL)
         //   // #900 서비스(주문과 별개인 현금건 · A칸 「!」 꼴)   // #880-b 현금 줄 주소 「이대로 둘게요」 {raw, at, by_name} · raw = 그때 배송지 글(바뀌면 화면이 무효로 봄)
     })().catch(e => { ready = null; throw e; }));
     ensure().catch(e => console.error('[발주 메모함] 표 만들기 실패(다음 요청 때 다시):', e.message));
@@ -529,14 +554,14 @@ function mount(app, deps) {
         key: r.line_key, note: r.note, plat: r.plat, line: r.line, cells: r.cells, sure: r.sure, check_why: r.check_why || [], src: r.src,
         missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || /^0+$/.test(dg(r.line_key)) || dg(r.line_key) === '01000000000' || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
-        cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null,
+        cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null, boxes: r.kind === 'line' ? (Array.isArray(r.boxes) ? r.boxes : null) : undefined,   // #1021
         addr_ok: r.kind === 'cash' ? (r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : null) : undefined,   // #880-b 현금 줄만(파일·for-ship 엔 안 나감)
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,
         pair_orig: r.kind === 'cash' ? (r.pair_orig || null) : undefined,   // #949
         exp_site: r.kind === 'cash' ? !!r.exp_site : undefined,   // #1003 체험장 현금 줄(화면 알약 「현금 · 체험장」만)
         service: r.kind === 'cash' ? !!r.service : undefined,   // #900 서비스 줄(indiv = false · 화면 알약 「서비스」)   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
-    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, service, exp_site, pair_orig, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
+    const ROW_COLS = `id, entry_id, kind, to_char(ship_date, 'YYYY-MM-DD') AS ship_date, line_key, note, plat, line, cells, sure, check_why, src, checked, addr_ok, service, exp_site, pair_orig, boxes, to_char(used_on, 'YYYY-MM-DD') AS used_on, state, cleared_at, cleared_by, updated_at, updated_by`;
     const saveVals = (r) => [r.kind, r.ship_date, r.kind === 'line' ? r.key : null, r.kind === 'line' ? r.note : null, r.kind === 'line' ? r.plat : null, r.kind === 'line' ? r.line : null,
         r.kind === 'cash' ? JSON.stringify(r.cells) : null, r.sure, JSON.stringify(r.check_why), r.src];
     async function getRow(id) {
@@ -597,7 +622,7 @@ function mount(app, deps) {
         const ctx = await ctxOf();
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
             ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null,
-            service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true), pair_orig: r && r.kind === 'cash' ? cleanOrig(r.pair_orig) : null, exp_site: !!(r && r.kind === 'cash' && r.exp_site === true) })))).map(r => Object.assign(checkMarked(r, ctx), { checked: r._checked, service: r.service, exp_site: r.exp_site }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
+            service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true), pair_orig: r && r.kind === 'cash' ? cleanOrig(r.pair_orig) : null, exp_site: !!(r && r.kind === 'cash' && r.exp_site === true), _boxes: r && r.kind !== 'cash' ? cleanBoxes(r.boxes) : null })))).map(r => Object.assign(checkMarked(r, ctx), { checked: r._checked, service: r.service, exp_site: r.exp_site, boxes: r._boxes }));   // #1021 boxes = 메모 줄만   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
         { const ks = rows.filter(r => r && r.kind === 'line').map(r => dg(r.key)); if (ks.length) res.on('finish', () => { if (res.statusCode < 300) refreshIfMiss(ks).catch(() => {}); }); }   // #936 · #1022(대표 11/5 「번호 넣으면 바로 그 번호 확인」) 입력삭제 줄만 → 메모 줄 전부(주문 0 일 때만 · 현금 줄 X · 번호당 10분·시간당 20 종전 상한)
         const client = await pool.connect();
         try {
@@ -606,8 +631,8 @@ function mount(app, deps) {
                 [actorName(req), req.user.id || null, raw || '(줄만 저장)', tags, source])).rows[0];
             const saved = [];
             for (const r of rows) {
-                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked, service, pair_orig, exp_site)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null, !!r.service, r.pair_orig ? JSON.stringify(r.pair_orig) : null, r.kind === 'cash' && !!r.exp_site])).rows[0]);
+                saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked, service, pair_orig, exp_site, boxes)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING ${ROW_COLS}`, [e.id, ...saveVals(r), actorName(req), r.checked ? JSON.stringify(r.checked) : null, !!r.service, r.pair_orig ? JSON.stringify(r.pair_orig) : null, r.kind === 'cash' && !!r.exp_site, r.kind === 'line' && r.boxes ? JSON.stringify(r.boxes) : null])).rows[0]);
             }
             await client.query('COMMIT');
             await audit(req, 'create', e.id, { rows: rows.length, line: rows.filter(r => r.kind === 'line').length, cash: rows.filter(r => r.kind === 'cash').length, unsure: rows.filter(r => !r.sure).length, source: source.replace(/:\d+$/, '') });
@@ -665,13 +690,14 @@ function mount(app, deps) {
         if (curSm && !smNext) throw err(400, '배송 메모를 넣어 주세요');
         const next = cur.kind === 'cash'
             ? { kind: 'cash', cells: b.to_cash === true ? toCashCells(Array.isArray(b.cells) ? b.cells : cur.cells, (cur.cells || [])[10], cur.pair_orig) : b.to_indiv === true ? toIndivCells(Array.isArray(b.cells) ? b.cells : cur.cells) : (Array.isArray(b.cells) ? b.cells : cur.cells), ship_date: b.to_cash === true ? toCashDate('ship_date' in b ? b.ship_date : cur.ship_date, cur.pair_orig) : ('ship_date' in b ? b.ship_date : cur.ship_date), src: 'edit', indiv: svc !== !!cur.service ? !svc : b.to_cash === true ? false : b.to_indiv === true ? true : !/[!！]/.test(String((cur.cells || [])[0] || '')) }   // #900 서비스 켬 = 현금 꼴(「!」) · 끔 = 주소 줄 · #935 to_cash = 풀린 주소 줄 [현금으로](보낸 「!」를 살림)   // 고치기 = 주소 줄/현금 손님 구분 그대로
-            : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [], _checked: smNext ? { ship_memo: smNext } : null };
+            : { kind: 'line', key: 'key' in b ? b.key : cur.line_key, note: 'note' in b ? b.note : cur.note, plat: 'plat' in b ? b.plat : cur.plat, ship_date: 'ship_date' in b ? b.ship_date : cur.ship_date, src: 'edit', _bad: [], _checked: smNext ? { ship_memo: smNext } : null,
+                _boxes: 'boxes' in b ? cleanBoxes(b.boxes) : ((dg('key' in b ? b.key : cur.line_key) !== dg(cur.line_key) || String(('plat' in b ? b.plat : cur.plat) || '').trim() !== String(cur.plat || '').trim()) ? null : (Array.isArray(cur.boxes) ? cur.boxes : null)) };   // #1021 'boxes' 올 때만 바뀜(null = 지움) · 번호·판매처 바뀌면 비움(주문 열쇠가 달라짐 · checked 와 같이)
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
         let checked = null;   // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
         if (cur.kind === 'line') { const moved = dg(r.key) !== dg(cur.line_key) || String(r.plat || '') !== String(cur.plat || ''); checked = 'checked' in b ? cleanChecked(b.checked) : (moved ? null : (cur.checked || null)); if (smNext) { const cc = cur.checked || {}, keep = moved ? {} : Object.assign({}, cc.buyer ? { buyer: cc.buyer } : {}, cc.pno ? { pno: cc.pno } : {}); checked = Object.assign({}, checked || { plat: r.plat, as: 'order', at: new Date().toISOString() }, keep, checked && checked.buyer ? { buyer: checked.buyer } : {}, checked && checked.pno ? { pno: checked.pno } : {}, { ship_memo: smNext }); } const curNm = normalOrdersOf(cur); if (curNm.length && !moved) checked = Object.assign({}, checked || cur.checked, { normal_orders: curNm }); }   // #970 줄 고침 = 일반발송 유지(번호·판매처를 바꾸면 버림)   // #958 번호·판매처를 고치면 buyer·pno 버림(요청에 새 값이 오면 그것) · 글만 고치면 그대로
-        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14, pair_orig=$15, exp_site=$16
-            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc, (() => { if (cur.kind !== 'cash' || b.to_cash === true) return null; const o = b.to_indiv === true ? cleanOrig({ a: (cur.cells || [])[0], b: (cur.cells || [])[1], k: (cur.cells || [])[10], d: cur.ship_date, ab: r.cells[1], ad: r.ship_date || null }) : cur.pair_orig; return o ? JSON.stringify(o) : null; })(), expSite])).rows[0];
+        const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14, pair_orig=$15, exp_site=$16, boxes=$17
+            WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc, (() => { if (cur.kind !== 'cash' || b.to_cash === true) return null; const o = b.to_indiv === true ? cleanOrig({ a: (cur.cells || [])[0], b: (cur.cells || [])[1], k: (cur.cells || [])[10], d: cur.ship_date, ab: r.cells[1], ad: r.ship_date || null }) : cur.pair_orig; return o ? JSON.stringify(o) : null; })(), expSite, next.kind === 'line' && next._boxes ? JSON.stringify(next._boxes) : null])).rows[0];
         if (!row) throw err(409, '방금 다른 사람이 바꿨어요 — 새로 고쳐 주세요');
         let paired = 0, rekeyed = 0;
         // #867 입력삭제 줄 번호를 고치기로 바꿈(예: 받는 분 번호 → 구매자 번호) = 같은 묶음(entry) 열린 짝 주소 줄(「!」 없음 · K = 옛 번호)의 K 를 새 번호로
@@ -960,7 +986,7 @@ function mount(app, deps) {
         const date = String(req.query.date || '');
         if (!isDay(date)) throw err(400, '기준 발송일(date=YYYY-MM-DD)이 없어요');
         const rows = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' ORDER BY entry_id, id`)).rows;
-        if (req.query.sm !== '1') { const x = pickForShip(rows.filter(r => !shipMemoOf(r)), date); delete x.ship_memos; delete x.ship_memo_wait; delete x.normal_orders; return res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, x)); }   // #955 옛 화면·중간발주 = 배송메모 줄 모름(종전 응답 그대로 · 「오늘 씀」 안 찍힘)
+        if (req.query.sm !== '1') { const x = pickForShip(rows.filter(r => !shipMemoOf(r) && !isBoxRow(r)), date); delete x.ship_memos; delete x.ship_memo_wait; delete x.normal_orders; delete x.box_rows; delete x.box_wait; return res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, x)); }   // #955 옛 화면·중간발주 = 배송메모 줄 모름(종전 응답 그대로 · 「오늘 씀」 안 찍힘)
         res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, pickForShip(rows, date)));   // #905 keep_days = 화면 「n일 동안 되살림」 글
     }));
 
@@ -1009,4 +1035,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, lineBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { cleanBoxes, isBoxRow, BOX_NOTE, shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, lineBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
