@@ -163,7 +163,7 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 /* 상태 알약 */
 .om-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .om-pill.k-cash { background: var(--d-ch-inquiry-bg); color: var(--d-ch-inquiry-fg); }
-.om-pill.k-next { background: #D1FADF; color: #05603A; }
+.om-pill.k-next, .om-pill.k-today { background: #D1FADF; color: #05603A; }
 .om-pill.k-later { background: var(--d-ch-sms-bg); color: var(--d-ch-sms-fg); }
 .om-pill.k-check { background: #FEF0C7; color: #93370D; }
 .om-pill.k-used, .om-pill.k-gone { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
@@ -303,7 +303,7 @@ button.om-open:hover { background: color-mix(in srgb, var(--d-soft) 70%, transpa
 /* 야간 — 따로 고른 색만(나머지는 토큰) */
 html[data-ao-theme="dark"] .om-hpill { background: #4A3A12; color: #FBBF4A; }
 html[data-ao-theme="dark"] .om-hpill.ok { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
-html[data-ao-theme="dark"] .om-pill.k-next { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
+html[data-ao-theme="dark"] .om-pill.k-next, html[data-ao-theme="dark"] .om-pill.k-today { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
 html[data-ao-theme="dark"] .om-pill.k-check { background: #4A3A12; color: #FBBF4A; }
 html[data-ao-theme="dark"] .om-item.k-check { background: color-mix(in srgb, #FBBF4A 7%, var(--d-card)); box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .45); }
 html[data-ao-theme="dark"] .om-why, html[data-ao-theme="dark"] .om-sum em, html[data-ao-theme="dark"] .om-prev-held, html[data-ao-theme="dark"] .om-in-note[data-k="warn"], html[data-ao-theme="dark"] .om-combo em { color: #FBBF4A; }

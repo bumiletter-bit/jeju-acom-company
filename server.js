@@ -11331,6 +11331,19 @@ const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgG
     // #667 발주확인 전 주문도(네이버 NOT_YET · 쿠팡 ACCEPT) — 대표가 아침에 손으로 발주확인하기 전에 문자한 손님도 찾게. 이 줄에서만 켠다(행에 _x.placeOrderStatus · _status 가 실림)
     ordersBusy: () => _ordersBusy > 0,   // #667-b: 다른 곳이 주문을 조회 중이면 true(문자 수집 자신의 조회는 Core 직행이라 안 셈)
     fetchNaver: d => _naverFetchInvoiceOrdersCore(d, { extended: true, placeStatuses: ['OK', 'NOT_YET'] }), fetchCoupang: d => _coupangFetchInvoiceOrdersCore(d, { statuses: ['ACCEPT', 'INSTRUCT'] }), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
+// #1022(대표 11/5 「B 고」) 발송 전 주문 표의 수집 창 밖 줄 = 상품주문번호로 개별 상태 조회(읽기 · 상세조회 POST query · 300개씩 · 350ms 간격 · 429 백오프 = naverCallWithRetry) → PAYED = 'wait'(아직 배송준비 · 발주확인 전 포함) · 그 밖 = 'gone'
+//   네이버만(쿠팡 = 중계서버 허용 조회가 목록 2종뿐 · 자사몰 = 주문번호 조회 미연결) → null = 종전 동작 · 던지면 preorders.js 가 그 줄들을 유예
+try { require('./sms/preorders.js').setStatusFetcher(async (ch, keys) => {
+    if (ch !== 'naver') return null;
+    const out = {}, ids = (keys || []).map(String).filter(k => /^\d{10,}$/.test(k));
+    for (let i = 0; i < ids.length; i += 300) {
+        if (i > 0) await new Promise(r => setTimeout(r, 350));
+        const q = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: ids.slice(i, i + 300) } });
+        const b = (q && q.data) ? q.data : q, arr = (b && (b.data || b.list)) || (Array.isArray(b) ? b : []);
+        for (const it of (Array.isArray(arr) ? arr : [])) { const po = (it && ((it.content && it.content.productOrder) || it.productOrder)) || it || {}; if (po.productOrderId) out[String(po.productOrderId)] = String(po.productOrderStatus || '') === 'PAYED' ? 'wait' : 'gone'; }
+    }
+    return out;
+}); } catch (e) { console.error('[발송 전 주문] 개별 상태 조회 장착 실패(종전 동작):', e.message); }
 // ===== #610 회사폰 문자 반자동 응대 — 끝 =====
 
 // ===== #612 전체 가격 확인하기 — 시작 (대표 10/10 「직원이 가격을 고칠 때 자사몰·귤 페이지를 빼먹는 사고 방지」 · 모듈 price-check.js(워커4) · 카드 ao-desk.js(워커5)) =====

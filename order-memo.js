@@ -243,6 +243,37 @@ function indivBadge(line, rows, orders, base, opt) {
     else b.state = n + laterN < b.m ? 'short' : 'over';
     return b;
 }
+// #1019(대표 11/5) 메모 줄 배지(입력삭제 줄 밖 kind='line' 전부 · 순수) = 「매칭완료/매칭실패/주문 확인 중」 — 메모함 기준 미리보기(최종 판정 = 최종발주 카드 그대로)
+//   r = 메모 줄(line_key·note·plat·line·checked) · orders = order_memo_preorders 그 번호(구매자 번호 또는 주문번호) 줄 [{channel, option_text, qty}] · opt = { catalog(Set) · orderNo(주문번호 줄) · pending(즉시 조회 중 = unknown) · noTable(표 못 읽음 = unknown) }
+//   주문 고르기 = plat 적혀 있으면 그 채널만(없으면 전부) · 사이즈 = core.sizeLines(줄) · 과수 = core.gwaLines(사이즈 뗀 글) · 귤 로얄과 = final-order.js sizeItem 과 같은 판정 · 만감류 = gwaItem(황금향·한라봉·레드향·천혜향 · 카라향 X)
+const LB_ROYAL = o => { const t = String(o || ''); return /귤/.test(t) && /로얄과/.test(t) && !/선물용/.test(t); };
+const LB_GWA = (o, cat) => { const b = cat && core.stripTail ? core.stripTail(String(o || ''), n => cat.has(n)) : String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(b) && !/카라향/.test(b); };
+function lineBadge(r, orders, opt) {
+    const o = opt || {}, cat = o.catalog instanceof Set ? o.catalog : null, q = v => Math.max(0, parseInt(v, 10) || 0);
+    const B = (state, why, type) => ({ kind: 'line', state, t: state === 'ok' ? '매칭완료' : state === 'fail' ? '매칭실패' : '주문 확인 중', why: why || '', type });
+    const note = String((r && r.note) || ''), sm = SHIP_NOTE.test(note) || !!shipMemoOf(r);
+    const text = String((r && r.line) || [r && r.line_key, note].filter(Boolean).join(' '));
+    // 줄 종류(배송메모 줄은 글 안 낱말을 읽지 않음 = checkLine 과 같게)
+    let type = o.orderNo ? 'order' : 'other', sz = null, gw = null, bad = '';
+    if (!sm) {
+        const L = core.sizeLines(text);
+        if (L.bad.length) { bad = L.bad[0].why; type = L.bad[0].kind === 'size' ? 'size' : 'size_parts'; }
+        else if (L.sizes.length) { sz = L.sizes[0]; type = sz.parts ? 'size_parts' : 'size'; }
+        else if (L.ups.length) type = 'size';
+        else if (typeof core.gwaLines === 'function') { const G = core.gwaLines(L.text); if (G.bad.length) { bad = G.bad[0].why; type = 'gwa'; } else if (G.gwas.length) { gw = G.gwas[0]; type = 'gwa'; } }
+    }
+    if (bad) return B('fail', bad, type);   // 못 읽은 줄 = 주문과 무관하게 실패(이유 그대로)
+    const ch = BADGE_CH[String((r && r.plat) || '').trim()];
+    const od = (orders || []).filter(x => x && (!ch || (x.channel || 'naver') === ch));
+    if (!od.length) return (o.pending || o.noTable) ? B('unknown', o.noTable ? '주문 표를 못 읽었어요' : '주문을 찾는 중이에요', type) : B('fail', o.orderNo ? '그 주문이 발송 전 주문에 없어요' : '발송 전 주문 없음', type);
+    if (type === 'size' || type === 'size_parts') {
+        const roy = od.filter(x => LB_ROYAL(x.option_text)); if (!roy.length) return B('fail', '귤 로얄과 주문 없음', type);
+        if (sz && sz.parts) { const n = sz.parts.reduce((t, p) => t + q(p.n), 0), m = roy.reduce((t, x) => t + q(x.qty), 0); if (n !== m) return B('fail', `메모 ${n}건 · 주문 ${m}박스`, type); }
+        return B('ok', '', type);
+    }
+    if (type === 'gwa') return od.some(x => LB_GWA(x.option_text, cat)) ? B('ok', '', type) : B('fail', '만감류 주문 없음', type);
+    return B('ok', '', type);   // 보내는이·날짜 지정·메모 수정·배송메모·주문번호 줄 = 주문 있음
+}
 // #944(대표 11/1) 주소 줄 → 현금 손님 줄로 떼기 = A칸 「!」 다시 + B·K 복원은 아래 #949(순수 · PUT to_cash 길 · #935 [현금으로]도 같은 규칙)
 // #949 보관값 꼴 = 글자만 · K 없으면 없는 것(새로 적은 줄은 돌아갈 번호가 없음)
 function cleanOrig(v) {
@@ -355,6 +386,7 @@ const AI_SCHEMA = {
 const AI_SYSTEM = [
     '너는 제주아꼼이네(제주 과일 농장 직판) 발주 메모 정리 담당이다. 직원이 붙여 넣은 발주 메모를 두 가지로 나눈다.',
     '1) lines = 이미 들어온 온라인 주문에 대한 지시. key = 구매자 전화번호(하이픈 포함 그대로) 또는 상품주문번호. note = 「입력o삭제x」(개별발송·입력삭제) · 「S사이즈로」(2S·S·M 만) · 「보내는이 홍길동」 같은 짧은 지시. plat = 네이버·쿠팡·자사몰 중 적힌 것(없으면 ""). date = 지정 발송일 YYYY-MM-DD(없으면 "").',
+    '   한 번호에 사이즈가 둘 이상 + 건수(「S 1건 M 1건」 「1박스 S 1박스 M」 등) = 박스별 지시 · note 는 「S사이즈 1건 M사이즈 1건」 꼴로 적는다(어느 박스인지 묻지 않음 · unsure 로 돌리지 않음).',
     '2) cash = 주문이 없는 현금 손님(「현금」「계좌이체」「현금파일」 또는 이름·주소·품목이 다 적힌 손님). buyer = 주문한 분 · recv·phone1·addr = 받는 분 · option = 아래 「품목 이름 목록」 글자 그대로 하나(목록에 없으면 "") · qty = 박스 수(없으면 0) · memo = 기사님께 전할 말(문 앞·경비실 등만 · 우리에게 한 말은 넣지 않음) · sender/sender_phone/sender_addr = 보내는이를 바꿔 달라는 경우만 · 「입금 ○○으로 했어요」「○○ 이름으로 입금」처럼 입금자 이름이 있으면 현금건이니 sender = 그 이름(대표 확정) · 문자 대화에서 온 글이면 buyer_phone 은 "" 로 둔다(서버가 문자 온 손님 번호로 채움) · 받는 분·주소·연락처 중 하나라도 있으면 품목·수량이 없어도 cash 로 넣고 option ""·qty 0 으로 둔다(unsure 로 돌리지 않음 · 직원이 채움) · 할 일(사이즈·입력삭제·날짜·보내는이) 없는 lines 는 만들지 않는다.',
     '절대 지킬 것: 메모에 없는 이름·번호·주소·날짜를 지어내지 않는다(모르면 ""). 글자는 메모에 적힌 그대로 옮긴다. 품목은 목록 글자 그대로만. 애매하거나 둘 중 무엇인지 모르면 unsure 에 그 글과 이유를 넣는다.',
     '날짜: 우리 발송일은 shipDays 에 있는 날뿐(토요일·발송휴무일 없음). 「○일 발송/보내주세요」 = 그날. 「○일 도착/받고 싶다/까지」 = 도착 희망일 이틀 전(그날이 발송 없는 날이거나 지났으면 하루 전 · 둘 다 안 되면 unsure). 범위(「12~13일 도착」) = 첫 날짜 하루 전. 「○일 배송」처럼 발송인지 도착인지 모르는 말·지난 날짜·요일과 날짜가 안 맞음 = unsure.',
@@ -566,7 +598,7 @@ function mount(app, deps) {
         const rows = markIndiv((src.map(r => ({ kind: r && r.kind === 'cash' ? 'cash' : 'line', key: r && r.key, note: r && r.note, plat: r && r.plat, line: r && r.line, cells: r && r.cells,
             ship_date: r && r.ship_date, src: r && (r.src === 'rule' || r.src === 'ai') ? r.src : 'edit', _bad: [], _checked: r && r.kind !== 'cash' ? cleanChecked(r.checked) : null,
             service: !!(r && r.kind === 'cash' && r.service === true), no_indiv: !!(r && r.kind === 'cash' && r.no_indiv === true), pair_orig: r && r.kind === 'cash' ? cleanOrig(r.pair_orig) : null, exp_site: !!(r && r.kind === 'cash' && r.exp_site === true) })))).map(r => Object.assign(checkMarked(r, ctx), { checked: r._checked, service: r.service, exp_site: r.exp_site }));   // #900 service·no_indiv = markIndiv 건너뜀   // 같은 저장 묶음의 입력삭제 줄 ↔ 현금 줄 = 주소 줄 · 문자 번호 채우기는 미리보기 때만(워커3 점검) · checked = 판매처 확인 표시(#850-d)
-        { const ks = rows.filter(r => isIndivLine(r)).map(r => dg(r.key)); if (ks.length) res.on('finish', () => { if (res.statusCode < 300) refreshIfMiss(ks).catch(() => {}); }); }   // #936
+        { const ks = rows.filter(r => r && r.kind === 'line').map(r => dg(r.key)); if (ks.length) res.on('finish', () => { if (res.statusCode < 300) refreshIfMiss(ks).catch(() => {}); }); }   // #936 · #1022(대표 11/5 「번호 넣으면 바로 그 번호 확인」) 입력삭제 줄만 → 메모 줄 전부(주문 0 일 때만 · 현금 줄 X · 번호당 10분·시간당 20 종전 상한)
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -596,14 +628,21 @@ function mount(app, deps) {
         const base = next || today;
         const badges = new Map();   // #936 입력삭제 줄 배지(열린 목록만 · 실패하면 표시만 빠짐)
         if (state === 'open') { try {
-            const lines = rows.filter(r => r.kind === 'line' && isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key).length >= 8), keys = [...new Set(lines.map(r => dg(r.line_key)))];
+            const lines = rows.filter(r => r.kind === 'line' && isIndivLine({ kind: 'line', key: r.line_key, note: r.note, line: r.line }) && dg(r.line_key).length >= 8);
+            const lbs = rows.filter(r => r.kind === 'line' && !lines.includes(r) && dg(r.line_key).length >= 8);   // #1019 그 밖 메모 줄 전부(lineBadge)
+            const keys = [...new Set(lines.concat(lbs).map(r => dg(r.line_key)))];
             if (keys.length) {
-                const ords = [...new Set(lines.map(r => dg(r.line_key)).filter(k => !/^0/.test(k) && k.length >= 10))];   // #938 주문번호 줄(0 으로 안 시작 · 10자리↑)
-                let od = []; try { od = (await pool.query("SELECT channel, buyer_digits, product_order_no, split_part(order_key, '|', 1) AS okey, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND (buyer_digits = ANY($1::text[]) OR regexp_replace(COALESCE(product_order_no, ''), '\\D', '', 'g') = ANY($2::text[]) OR regexp_replace(split_part(order_key, '|', 1), '\\D', '', 'g') = ANY($2::text[]))", [keys, ords])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+                const ords = [...new Set(lines.concat(lbs).map(r => dg(r.line_key)).filter(k => !/^0/.test(k) && k.length >= 10))];   // #938 주문번호 줄(0 으로 안 시작 · 10자리↑)
+                let od = [], noTable = false; try { od = (await pool.query("SELECT channel, buyer_digits, product_order_no, split_part(order_key, '|', 1) AS okey, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND (buyer_digits = ANY($1::text[]) OR regexp_replace(COALESCE(product_order_no, ''), '\\D', '', 'g') = ANY($2::text[]) OR regexp_replace(split_part(order_key, '|', 1), '\\D', '', 'g') = ANY($2::text[]))", [keys, ords])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; noTable = true; }
                 const cat = await catalogSet(today).catch(() => null);
                 lines.forEach(r => { const k = dg(r.line_key), isOrd = ords.includes(k); if (!isOrd) return badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === k), base, { catalog: cat }));
                     const mine = od.filter(o => dg(o.product_order_no) === k || dg(o.okey) === k), buyer = lineDigits(r) !== k ? lineDigits(r) : (mine[0] ? mine[0].buyer_digits : '');   // #938 자사몰 「20261101-0001234」 꼴도 숫자로 · 한 주문 품목 여러 줄 = 합
                     badges.set(r.id, indivBadge(r, rows, mine, base, { catalog: cat, orderNo: k, buyer })); });
+                // #1019 메모 줄 배지 = 주문번호 줄은 그 주문 · 전화번호 줄은 구매자 번호 · 저장 1분 안 + 주문 0 = 「주문 확인 중」(입력삭제 즉시 조회와 같은 창)
+                const fresh = r => { const u = r.updated_at ? new Date(r.updated_at).getTime() : 0; return u > 0 && Date.now() - u < 60e3; };
+                lbs.forEach(r => { const k = dg(r.line_key), isOrd = ords.includes(k);
+                    const mine = isOrd ? od.filter(o => dg(o.product_order_no) === k || dg(o.okey) === k) : od.filter(o => o.buyer_digits === k);
+                    badges.set(r.id, lineBadge(r, mine, { catalog: cat, orderNo: isOrd, pending: fresh(r), noTable })); });
             }
         } catch (e) { console.error('[발주 메모함] 배지 계산 실패(표시만 빠짐):', e.message); } }
         rows.forEach(r => { const e = by.get(r.entry_id); if (e) { const o = rowOut(r); const bg = badges.get(r.id); if (bg) o.badge = bg; e.rows.push(o); } });
@@ -855,7 +894,7 @@ function mount(app, deps) {
     //   따로 수집·타이머 없음 · 문자 「발송 전 주문」 수집기(sms/preorders.js collect · 7일 · 60분 · #665 즉시 조회 포함)가 이미 받아 온 원본 행을 훅으로 받아 이 표에도 씀(추가 API 호출 0)
     //   sms_preorders 칸·「받아도 버린다」 원칙은 그대로 · 이 표에 한해 이름·주소를 둠(대표 결정) · 문자 쪽은 이 표를 안 읽음
     //   삭제 = 큰(merge 아닌) 수집에서 두 번 연속 안 보이면(sms 쪽 miss 규칙과 같게) · 7일 넘게 안 보인 줄도(수집이 멈춰도 손님 정보가 남지 않게) · 로그·감사엔 건수도 안 적음
-    //   🔵 청귤 예약 시즌(결제 뒤 수십 일 뒤 발송)엔 7일 밖이라 못 찾음 = 그때 기간 늘리기 후보(지금 코드 X)
+    //   #1022 청귤 예약처럼 결제 뒤 몇 주 뒤 발송 = 문자 수집기가 창 밖 줄을 주문번호로 개별 조회해 아직 배송준비면 keep 으로 넘김 → 이 표에서도 안 지움(찾기·배지는 결제일 거름 없이 miss=0 전부)
     const PRE_DDL = [
         `CREATE TABLE IF NOT EXISTS order_memo_preorders (id BIGSERIAL PRIMARY KEY, channel TEXT NOT NULL, order_key TEXT NOT NULL, product_order_no TEXT,
             buyer_name TEXT, buyer_digits TEXT NOT NULL DEFAULT '', recv_name TEXT, recv_digits TEXT NOT NULL DEFAULT '', addr TEXT, option_text TEXT, qty INTEGER,
@@ -907,7 +946,10 @@ function mount(app, deps) {
             const have = Number((await pool.query('SELECT count(*)::int AS n FROM order_memo_preorders WHERE channel = $1', [ch])).rows[0].n);
             if (have > 0 && !preEmptyOnce[ch]) { preEmptyOnce[ch] = true; return { rows: 0, grace: true }; }
         } else preEmptyOnce[ch] = false;
-        const missed = (await pool.query('UPDATE order_memo_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))', [ch, rows.map(x => x.k)])).rowCount;
+        // #1022 창 밖인데 아직 배송준비(keep) = 지움 없이 seen_at 갱신 · 개별 조회 실패(skip) = 이번엔 셈 안 함(sms 쪽 statusPass 와 같은 열쇠)
+        const keep = (info && Array.isArray(info.keep)) ? info.keep.map(String) : [], skip = (info && Array.isArray(info.skip)) ? info.skip.map(String) : [];
+        if (keep.length) await pool.query('UPDATE order_memo_preorders SET seen_at = NOW(), miss = 0 WHERE channel = $1 AND order_key = ANY($2::text[])', [ch, keep]);
+        const missed = (await pool.query('UPDATE order_memo_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))', [ch, rows.map(x => x.k).concat(keep, skip)])).rowCount;
         const removed = (await pool.query('DELETE FROM order_memo_preorders WHERE channel = $1 AND miss >= 2', [ch])).rowCount;
         await pool.query("DELETE FROM order_memo_preorders WHERE seen_at < NOW() - INTERVAL '7 days'");
         return { rows: rows.length, missed: missed - removed, removed };
@@ -967,4 +1009,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, lineBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

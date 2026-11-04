@@ -7,6 +7,7 @@
 //        deps.fetchCafe24(days)  = cafe24.fetchInvoiceOrders(days)                      ← 결제 시각 칸 없음(_paidAt 을 더하면 읽는다)
 //      셋 다 { rows: [...] } 를 돌려준다. 하나가 실패해도 나머지는 계속한다(실패한 채널은 「사라진 주문」 셈을 하지 않는다).
 //   보관: 한 번 조회에 안 보이면 miss+1 · 두 번 연속 안 보이면 삭제(= 발송됐거나 취소됨) · 마지막으로 본 지 7일 넘은 줄도 삭제(purge).
+//   #1022 창 밖 줄은 개별 상태 조회로 아직 배송준비면 그대로 둠(seen_at 갱신 = purge 에도 안 걸림) — statusPass
 'use strict';
 const { normalizePhone, lookupable } = require('./lookup.js');   // lookup.js 는 이 파일을 함수 안에서(늦게) 부른다 — 서로 물리지 않게
 
@@ -64,6 +65,27 @@ const CHANNELS = [['naver', 'fetchNaver'], ['coupang', 'fetchCoupang'], ['cafe24
 const _emptyOnce = {};   // 채널 → 직전 수집이 「0건 유예」였는가
 let _rowsHook = null;    // #850-e (채널, 원본 행, { merge }) → 발주 메모함 표 쓰기 · order-memo.js 가 setRowsHook 으로 건다
 function setRowsHook(fn) { _rowsHook = typeof fn === 'function' ? fn : null; }
+// #1022(대표 11/5 「B 고」) 수집 창(days) 밖 줄 = 창 조회로는 다시 못 보는 줄(청귤 예약처럼 결제 몇 주 뒤 발송) → miss 올리기 전에 주문번호로 개별 상태 조회
+//   _statusFetch(채널, 열쇠[]) → { 열쇠: 'wait' | 'gone' } (server.js 가 setStatusFetcher 로 건다 · 지금 네이버만) · 'wait' = 아직 배송준비(발주확인 전 포함) → seen_at = now · miss = 0 유지
+//   'gone'·답에 없는 열쇠 = 종전처럼 miss+1 · 조회가 던지면(오류·시간 넘김) 그 줄들은 건드리지 않음(유예) · 한 번에 STATUS_MAX 까지(오래된 결제 먼저 · 넘는 줄은 종전대로)
+//   창 밖 기준 = 결제(없으면 들어온) 시각이 days−1 일보다 앞(창 경계 하루는 넉넉히 조회 쪽으로) · merge(즉시 조회)·0건 유예 회차엔 안 함
+let _statusFetch = null; const STATUS_MAX = 300;
+function setStatusFetcher(fn) { _statusFetch = typeof fn === 'function' ? fn : null; }
+async function statusPass(db, deps, ch, seenKeys, days) {
+    const f = (deps && typeof deps.fetchStatus === 'function') ? deps.fetchStatus : _statusFetch;
+    const out = { keep: [], skip: [], checked: 0, over: 0 };
+    if (!f) return out;
+    const cand = (await db.query(`SELECT order_key FROM sms_preorders WHERE channel = $1 AND NOT (order_key = ANY($2::text[])) AND COALESCE(paid_at, created_at) < now() - make_interval(days => $3::int)
+        ORDER BY COALESCE(paid_at, created_at) LIMIT $4`, [ch, seenKeys, Math.max(0, days - 1), STATUS_MAX + 1])).rows.map(r => r.order_key);
+    if (cand.length > STATUS_MAX) { out.over = 1; cand.length = STATUS_MAX; }   // 넘는 줄 = 종전대로 miss 셈(over 1 = 「더 있음」 표시만)
+    if (!cand.length) return out;
+    let st;
+    try { st = await f(ch, cand); } catch (e) { out.skip = cand; out.error = String(e && (e.reason || e.message) || e).slice(0, 120); return out; }
+    if (st == null) return out;   // 이 채널은 개별 조회 길 없음 = 종전 그대로
+    const get = k => st instanceof Map ? st.get(k) : st[k];
+    out.checked = cand.length; out.keep = cand.filter(k => get(k) === 'wait');
+    return out;
+}
 // 부르는 꼴 둘 다 받는다: collect(db, deps, opts) · collect(deps, opts)  (뒤쪽이면 deps.pool 을 쓴다)
 const argsOf = (a, b, c) => (a && typeof a.query === 'function') ? [a, b || {}, c] : [a && (a.pool || a.db), a || {}, b];
 async function collect(a, b, c) {
@@ -80,19 +102,29 @@ async function collect(a, b, c) {
             upserted += (await db.query(SQL_UPSERT, [ch, p.map(x => x.order_key), p.map(x => x.buyer_digits), p.map(x => x.recipient_digits), p.map(x => x.recipient_initial),
                 p.map(x => x.option_text), p.map(x => x.qty), p.map(x => x.paid_at)])).rowCount;
         }
+        const merge = !!(opts && opts.merge === true);
+        // F4(R3 M4): 조회는 성공했는데 0건이고 표에는 이 채널 줄이 있으면 — 일시적인 빈 응답일 수 있어 한 회는 그대로 둔다(연속 두 번째 0건부터 평소대로 센다 · 셈은 메모리) · merge 는 이 셈을 안 건드림(#665)
+        //   #1022 이 판정을 훅 앞으로 옮김(표 읽기뿐 · 훅은 이 표를 안 바꿔 결과 같음) — 유예 회차엔 개별 조회도 안 함
+        let grace = false;
+        if (!merge) {
+            if (!rows.length) {
+                const have = (await db.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE channel = $1`, [ch])).rows[0].n;
+                if (have > 0 && !_emptyOnce[ch]) { _emptyOnce[ch] = true; grace = true; }
+            } else _emptyOnce[ch] = false;
+        }
+        const keys = rows.map(x => x.order_key);
+        const sp = (!merge && !grace) ? await statusPass(db, deps, ch, keys, days) : { keep: [], skip: [], checked: 0, over: 0 };   // #1022
         // #850-e 발주 메모함 훅(order-memo.js setRowsHook) — 받은 원본 행을 메모함 표에도(이름·주소는 그쪽 표에만 · 이 표·이 파일의 셈은 무변경) · 훅이 없으면 아무것도 안 함 · 실패해도 문자 수집은 계속
-        if (_rowsHook) { try { await _rowsHook(ch, raw, { merge: !!(opts && opts.merge === true) }); } catch (e) { console.warn('[발주 메모함] 발송 전 주문 쓰기 실패:', (e && e.code) || ''); } }   // 메모함 쓰기 실패 = 문자 수집 무관 · 글엔 오류 코드만(개인정보 0)
+        //   #1022 keep(창 밖인데 아직 배송준비) · skip(개별 조회 실패 = 유예) 열쇠도 같이 넘김 = 메모함 표도 같은 줄을 지움 없이 둠
+        if (_rowsHook) { try { await _rowsHook(ch, raw, { merge, keep: sp.keep, skip: sp.skip }); } catch (e) { console.warn('[발주 메모함] 발송 전 주문 쓰기 실패:', (e && e.code) || ''); } }   // 메모함 쓰기 실패 = 문자 수집 무관 · 글엔 오류 코드만(개인정보 0)
         // #665 merge(= 최근 며칠만 받아 얹기 · 문자가 왔는데 주문을 못 찾았을 때의 즉시 조회): 넣기만 하고 「안 보인 줄」 셈·삭제는 하지 않는다(짧은 창이라 옛 주문이 전부 안 보인 것으로 세어지면 안 된다 · 0건 유예 기억도 안 건드림)
-        if (opts && opts.merge === true) { out.channels[ch] = { rows: rows.length, upserted, merge: true }; continue; }
-        // F4(R3 M4): 조회는 성공했는데 0건이고 표에는 이 채널 줄이 있으면 — 일시적인 빈 응답일 수 있어 한 회는 그대로 둔다(연속 두 번째 0건부터 평소대로 센다 · 셈은 메모리)
-        if (!rows.length) {
-            const have = (await db.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE channel = $1`, [ch])).rows[0].n;
-            if (have > 0 && !_emptyOnce[ch]) { _emptyOnce[ch] = true; out.channels[ch] = { rows: 0, upserted: 0, missed: 0, removed: 0, grace: true }; continue; }
-        } else _emptyOnce[ch] = false;
-        const keys = rows.map(x => x.order_key);   // 이번에 안 보인 줄 = miss+1 · 두 번째면 삭제
-        const missed = (await db.query(`UPDATE sms_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))`, [ch, keys])).rowCount;
+        if (merge) { out.channels[ch] = { rows: rows.length, upserted, merge: true }; continue; }
+        if (grace) { out.channels[ch] = { rows: 0, upserted: 0, missed: 0, removed: 0, grace: true }; continue; }
+        if (sp.keep.length) await db.query(`UPDATE sms_preorders SET seen_at = now(), miss = 0 WHERE channel = $1 AND order_key = ANY($2::text[])`, [ch, sp.keep]);   // #1022 창 밖 · 아직 배송준비
+        const hold = keys.concat(sp.keep, sp.skip);   // 이번에 안 보인 줄 = miss+1 · 두 번째면 삭제(창 밖 배송준비·조회 실패 줄은 뺌)
+        const missed = (await db.query(`UPDATE sms_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))`, [ch, hold])).rowCount;
         const removed = (await db.query(`DELETE FROM sms_preorders WHERE channel = $1 AND miss >= 2`, [ch])).rowCount;
-        out.channels[ch] = { rows: rows.length, upserted, missed: missed - removed, removed };
+        out.channels[ch] = Object.assign({ rows: rows.length, upserted, missed: missed - removed, removed }, sp.checked || sp.skip.length ? { kept: sp.keep.length, checked: sp.checked, held: sp.skip.length } : {}, sp.over ? { over: true } : {}, sp.error ? { status_error: sp.error } : {});
     }
     out.total = (await db.query(`SELECT count(*)::int AS n FROM sms_preorders`)).rows[0].n;
     return out;
@@ -141,4 +173,4 @@ async function lookupPre(db, phone, opts) {
     return out;
 }
 
-module.exports = { DDL, initDB, mapRows, collect, purge, lookupPre, MAPPERS, setRowsHook, _resetGrace: () => { for (const k of Object.keys(_emptyOnce)) delete _emptyOnce[k]; } };
+module.exports = { DDL, initDB, mapRows, collect, purge, lookupPre, MAPPERS, setRowsHook, setStatusFetcher, STATUS_MAX, _resetGrace: () => { for (const k of Object.keys(_emptyOnce)) delete _emptyOnce[k]; } };

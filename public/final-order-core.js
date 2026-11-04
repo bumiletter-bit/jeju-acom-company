@@ -512,6 +512,24 @@
     // #601(대표 10/9 「1건 S · 1건 M」): 한 줄에 사이즈 낱말이 둘 이상이면 「사이즈 + 건수」 짝으로 읽는다(박스마다 다른 사이즈).
     //   짝 = 사이즈 바로 뒤 건수 또는 건수 바로 뒤 사이즈(군더더기 낱말은 건너뜀 · 번호·다른 낱말이 끼면 짝이 아니다). 왼쪽부터 차례로 짝짓는다.
     //   전부 짝이 맞으면 { parts, expect(합), text } · 하나라도 안 맞으면 { bad } — 그 줄은 sizes 에 넣지 않고 줄도 그대로 둔 채 반환의 bad[] 로 따로 알린다(사이즈를 하나도 붙이지 않는다). 사이즈 낱말이 하나뿐이면 null(종전 길 그대로).
+    // #1019(대표 11/5 「S사이즈 1박스, M사이즈 1박스」·「s사이즈1건m사이즈1건」): 박스별 짝의 건수 낱말 = 건·박스·상자·개(뒤 만·은·씩 · 끝 쉼표·가운뎃점·마침표 허용) — 이 넓은 꼴은 사이즈 둘 이상 줄(sizeParts)에서만 쓴다(단일 사이즈 줄·과수·업그레이드 줄은 종전 SIZE_CNT 그대로)
+    const SIZE_CNT_M = /^(\d{1,2})(?:건|박스|상자|개)(?:만|은|씩)?[,.·]*$/;
+    // #1019: 붙여 쓴 박스별 줄을 띄어 쓴 꼴로 — 「사이즈1건」→「사이즈 1건」 · 「1건m사이즈」→「1건 m사이즈」 · 「1박스,」→「1박스」 · 따로 선 쉼표·가운뎃점은 뺌. 빈칸만 바꾸고 탭은 그대로.
+    //   sizeLines 는 이 꼴을 원래 줄이 박스별로 안 읽히고 + 바꾼 줄에 사이즈 낱말이 둘 이상 + 박스별 짝이 다 맞을 때만 쓴다(단일 사이즈 줄은 원래 줄 그대로 = 바이트 동일)
+    function sizeMultiNorm(line) {
+        return line
+            .replace(/(사이즈|싸이즈|size)(으로|로)?(?=\d)/gi, '$1$2 ')
+            .replace(/(\d{1,2}(?:건|박스|상자|개)(?:만|은|씩)?)[,.·]+/g, '$1 ')
+            .replace(/(\d{1,2}(?:건|박스|상자|개)(?:만|은|씩)?)(?=[^ \t만은씩])/g, '$1 ')
+            .replace(/(^|[ ])[,·]+(?= |$)/g, '$1')
+            .replace(/ {2,}/g, ' ').replace(/ +\t/g, '\t').replace(/ +$/, '');
+    }
+    function sizeTokCount(s) { let n = 0; for (let g = 0; g < 12; g++) { const m = s.match(SIZE_TOK); if (!m) break; n++; s = s.slice(0, m.index) + (m[1] || '') + '\u0001' + s.slice(m.index + m[0].length); } return n; }
+    function sizeKeyOf(line) {
+        const m = line.match(SIZE_TOK); if (!m) return null;
+        const toks = (line.slice(0, m.index) + (m[1] || '') + line.slice(m.index + m[0].length)).split(/[ \t]+/).filter(Boolean);
+        return toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey) || null;
+    }
     function sizeParts(line, key) {
         let s = line; const found = [];
         for (let g = 0; g < 12; g++) {
@@ -525,8 +543,8 @@
             const z = t.match(/^\u0001(\d+)\u0001$/);
             if (z) { seq.push({ k: 'S', size: found[+z[1]] }); gone.push(t); return; }
             if (t === key && !keySeen) { keySeen = true; seq.push({ k: 'X' }); return; }
-            if (SIZE_CNT.test(t)) { seq.push({ k: 'C', n: parseInt(t.match(SIZE_CNT)[1], 10) }); gone.push(t); return; }
-            if (SIZE_FILLER.test(t)) { gone.push(t); return; }
+            if (SIZE_CNT_M.test(t)) { seq.push({ k: 'C', n: parseInt(t.match(SIZE_CNT_M)[1], 10) }); gone.push(t); return; }   // #1019 건·박스·상자·개
+            if (SIZE_FILLER.test(t) || /^[,·]+$/.test(t)) { gone.push(t); return; }   // #1019 따로 선 쉼표·가운뎃점 = 구분 기호
             if (PLAT_TOK.test(t)) return;   // #858 판매처 낱말 = 짝 판정에선 건너뛰고 줄 글엔 남김(날짜 있는 줄의 판매처를 지우지 않게)
             seq.push({ k: 'X' });
         });
@@ -562,15 +580,23 @@
     function sizeLines(text) {
         const lines = String(text == null ? '' : text).split('\n'), sizes = [], ups = [], bad = [];
         const out = lines.map((raw, srcLine) => {
-            const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK);
+            let line = raw.replace(/\r/g, ''); const line0 = line;
+            // #1019: 원래 줄이 박스별로 안 읽힐 때만 띄어 쓴 꼴(sizeMultiNorm)을 시험 — 사이즈 낱말 둘 이상 + 짝이 다 맞으면 그 꼴로 읽는다(아니면 원래 줄 그대로)
+            const nl = sizeMultiNorm(line);
+            if (nl !== line && sizeTokCount(nl) >= 2) {
+                const ok0 = (() => { const k0 = sizeKeyOf(line); const p0 = k0 && sizeParts(line, k0); return !!(p0 && p0.parts); })();
+                const k1 = sizeKeyOf(nl), p1 = !ok0 && k1 && sizeParts(nl, k1);
+                if (p1 && p1.parts) line = nl;
+            }
+            const m = line.match(SIZE_TOK);
             if (!m) { const u = upLine(line, srcLine); if (!u) return raw; ups.push(u.up); return u.text; }
             const rest = line.slice(0, m.index) + (m[1] || '') + line.slice(m.index + m[0].length);
             let toks = rest.split(/[ \t]+/).filter(Boolean);
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
             if (!key) return raw;
             const mp = sizeParts(line, key);   // #601: 사이즈 낱말이 둘 이상일 때만 값이 온다
-            if (mp && mp.parts && mp.parts.some(p => !ROYAL_SIZE.has(p.size))) { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: NOT_ROYAL, kind: 'size', size: mp.parts.filter(p => !ROYAL_SIZE.has(p.size)).map(p => p.size).join('·') }); return mp.text; }
-            if (mp && mp.parts) { sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: mp.first, expect: mp.expect, parts: mp.parts }); return mp.text; }
+            if (mp && mp.parts && mp.parts.some(p => !ROYAL_SIZE.has(p.size))) { bad.push({ srcLine, raw: line0.trim(), key, digits: dg(key), why: NOT_ROYAL, kind: 'size', size: mp.parts.filter(p => !ROYAL_SIZE.has(p.size)).map(p => p.size).join('·') }); return mp.text; }
+            if (mp && mp.parts) { sizes.push({ srcLine, raw: line0.trim(), key, digits: dg(key), size: mp.first, expect: mp.expect, parts: mp.parts }); return mp.text; }
             if (mp && mp.bad) { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: mp.bad }); return raw; }   // 짝이 안 맞으면 사이즈를 하나도 붙이지 않고 줄도 그대로(사람이 정한다)
             let expect = null, kept = rest;
             const drop = tok => { toks = toks.filter(t => t !== tok); kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); };

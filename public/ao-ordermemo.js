@@ -133,6 +133,10 @@
     function pillOf(r) {
         if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(설정 unsure_days 넘으면 · 대표 10/28 30→10일 서버가 지움)
         if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
+        // #1020(대표 11/5) 날짜 줄 = 발송일 기준 · 「11/5 발송」 줄이 11/4 발주에서 보류(used_on 11/4)돼도 「11/4 발주에 넣음」(나갔다는 뜻으로 읽힘) 대신
+        //   발송일 == 다음 발주 = 「오늘 발송」 · 발송일이 넣은 날보다 뒤 = 종전 「M/D 발송 · 대기」 · 「발주에 넣음」 = 발송일 없거나 발송일 ≤ 넣은 날일 때만
+        if (r.ship_date && OM.shipDate && r.ship_date === OM.shipDate) return { k: 'today', t: '오늘 발송' };
+        if (r.ship_date && r.used_on && r.ship_date > r.used_on && OM.shipDate && r.ship_date >= OM.shipDate) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
         // #873 다음 발주에 들어갈 줄 = 머리 줄과 같은 날짜 글 하나(「내일」은 자정 넘으면 틀림 · 그 발주를 미리 열어 used_on 이 찍혀도 같은 글)
         //   used_on 이 다음 발주와 다른 날 = 지난 발주에 넣고 안 비운 줄 → 그날 표시(for-ship 은 used_on 을 안 봐서 다음 발주에도 들어감)
         if (r.used_on && r.used_on !== OM.shipDate) return { k: 'used', t: md(r.used_on) + ' 발주에 넣음' };
@@ -634,7 +638,8 @@
     // #878(대표 A안 10/27) 왼쪽 「지금 메모」 = 메모 줄(kind line)만 · 현금 줄(현금 손님·입력삭제 주소 줄) = 오른쪽 「현금 줄」 표에서만
     const memoRows = () => (OM.list || []).filter(r => r.kind !== 'cash');
     const cashRows = () => (OM.list || []).filter(r => r.kind === 'cash');
-    const rankOf = r => OM.tab !== 'open' ? 0 : isCheck(r) ? 0 : isLater(r) ? 2 : r.used_on && r.used_on !== OM.shipDate ? 3 : 1;   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
+    const RANK_K = { check: 0, next: 1, today: 1, later: 2, used: 3 };   // #1020 pillOf 와 같은 판정(오늘 발송 = 다음 발주 무리 · 보류됐다 뒤 날짜 = 날짜 대기 무리)
+    const rankOf = r => OM.tab !== 'open' ? 0 : (RANK_K[pillOf(r).k] ?? 1);   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
     const byRank = rows => rows.slice().sort((a, b) => rankOf(a) - rankOf(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
     // #879(대표 10/27 · #878 다시) 왼쪽 = 「다음 발주에 들어갈 것」 메모 칸 꼴 상자(고정폭 글 한 줄씩 · 줄마다 체크·× · 누르면 고치기) · 비운 것(keep_days일) 탭은 종전 카드
     const badgeOf = r => { const p = pillOf(r); return p.k === 'next' ? null : p; };   // 다음 발주에 그냥 들어가는 줄 = 표시 없음 · 확인·날짜 대기·지난 발주 줄만 작은 표시(#873 배지 뜻)
@@ -694,13 +699,20 @@
         return tail ? main + ' ' + tail : main;
     }
     const badgeK = b => (b.unsure > 0 && !['over', 'personal', 'unknown'].includes(b.state)) ? 'short' : (BADGE_K[b.state] || 'unk');   // #936-b 확인 줄 있으면 호박(완료 아님 · 발송됨도 = 실제 안 나간 줄) · 초과는 빨강 그대로
-    const badgeHtml = r => r.badge ? `<button type="button" class="om-pill om-badge k-${badgeK(r.badge)}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(lineShow(r) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
+    // #1020(대표 11/5) 일반 메모 줄(사이즈·보내는이 등) 매칭 배지 = 서버 badge {kind:'line', state ok|fail|unknown, t, why} · 입력삭제 n/m 배지(kind 없음)와 따로
+    const lineBadge = r => r.badge && r.badge.kind === 'line' ? r.badge : null;
+    const indivBadge = r => r.badge && r.badge.kind !== 'line' ? r.badge : null;
+    const LB_K = { ok: 'ok', fail: 'over', unknown: 'unk' }, LB_T = { ok: '매칭완료', fail: '매칭실패', unknown: '주문 확인 중' };
+    const lbHtml = lb => lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(lb.t || LB_T[lb.state] || LB_T.unknown)}</span>` : '';
+    const badgeHtml = r => indivBadge(r) ? `<button type="button" class="om-pill om-badge k-${badgeK(r.badge)}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(lineShow(r) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
     function memoLineHtml(r) {
-        const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r);
+        const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r), lb = lineBadge(r), ib = indivBadge(r);
+        const bH = b ? `<span class="om-pill k-${b.k}">${esc(b.t)}</span>` : '', lH = lbHtml(lb);
+        const lbAria = lb ? ' · ' + (lb.t || LB_T[lb.state] || LB_T.unknown) + (lb.why ? ' · ' + lb.why : '') : '';
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>
-            <button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + ' 열어 고치기')}"><span class="om-ml-l">${esc(lineView(r.line) || '(빈 줄)')}</span>${b ? `<span class="om-pill k-${b.k}">${esc(b.t)}</span>` : ''}${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button>
-            ${isIndivText(r) && isPhoneKey(lineD(r)) ? (r.badge ? badgeHtml(r) : `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(lineShow(r) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>`) : (r.badge && !isPhoneKey(lineD(r)) ? `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(badgeText(r.badge))}</span>` : '')}
+            <button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + lbAria + (lb ? ' · ' : ' ') + '열어 고치기')}"><span class="om-ml-l">${esc(lineView(r.line) || '(빈 줄)')}</span>${lb && lb.state === 'fail' ? lH + bH : bH + lH}${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button>
+            ${isIndivText(r) && isPhoneKey(lineD(r)) ? (ib ? badgeHtml(r) : `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(lineShow(r) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>`) : (ib && !isPhoneKey(lineD(r)) ? `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(badgeText(r.badge))}</span>` : '')}
             <button type="button" class="om-x" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></li>`;
     }
     function rowHtml(r, isOpen, sel) {
