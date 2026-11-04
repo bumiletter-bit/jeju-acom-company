@@ -184,11 +184,14 @@ function jsShopPage(keyword, pageNo) {
     // pageNo 1 = 새로 열기 · 2~ = 쪽 번호 단추 누르기(주소 직접 치면 차단 화면)
     return `
 var KR_q = ${JSON.stringify(keyword)};
-if (typeof KR_shop === 'undefined' || !KR_shop) { globalThis.KR_shop = await openTab('about:blank'); }
+// #1014: 빈 탭 + goto 는 네이버 보안 확인(영수증)에 걸림(11/4 실측) → 1쪽은 키워드마다 주소로 바로 새 탭 · 2쪽~는 그 탭에서 단추
+if (${pageNo} === 1) { if (typeof KR_shop !== 'undefined' && KR_shop) { try { await closeTab(KR_shop); } catch (e) {} globalThis.KR_shop = null; } }
 var KR_out = {};
 try {
   if (${pageNo} === 1) {
-    await KR_shop.goto('https://msearch.shopping.naver.com/search/all?query=' + encodeURIComponent(KR_q), { waitUntil: 'domcontentloaded', timeout: 40000 });
+    globalThis.KR_shop = await openTab('https://msearch.shopping.naver.com/search/all?query=' + encodeURIComponent(KR_q));
+  } else if (typeof KR_shop === 'undefined' || !KR_shop) {
+    KR_out = { items: [], noPage: 'notab' };
   } else {
     var KR_clicked = await KR_shop.evaluate((n) => { const pg = document.querySelector('[class*="paginator_"]'); if (!pg) return 'nopg'; const a = [...pg.querySelectorAll('a')].find(x => x.textContent.trim() === String(n)); if (!a) return 'nolink'; a.click(); return 'ok'; }, ${pageNo});
     if (KR_clicked !== 'ok') { KR_out = { items: [], noPage: KR_clicked }; }
@@ -235,10 +238,11 @@ function jsPowerlink(keyword, which) {
         : `(() => { const sec = document.querySelector('section._pwl_video_container, section[class*="_pwl"]'); if (!sec) return { ads: [], noSection: true }; const li = [...sec.querySelectorAll('li.bx')]; const more = sec.querySelector('a.group_more, [class*="group_more"]'); return { ads: li.map(l => l.innerText.replace(/\\s+/g, ' ').trim().slice(0, 120)), total: li.length, more: more ? (more.href || '').slice(0, 200) : null }; })()`;
     return `
 var KR_q = ${JSON.stringify(keyword)};
-if (typeof ${tabVar} === 'undefined' || !${tabVar}) { globalThis.${tabVar} = await openTab('about:blank'); }
+// #1014: 빈 탭 + goto 대신 키워드마다 주소로 바로 새 탭
+if (typeof ${tabVar} !== 'undefined' && ${tabVar}) { try { await closeTab(${tabVar}); } catch (e) {} globalThis.${tabVar} = null; }
 var KR_out = {};
 try {
-  await ${tabVar}.goto(${url}, { waitUntil: 'domcontentloaded', timeout: 40000 });
+  globalThis.${tabVar} = await openTab(${url});
   var KR_t0 = Date.now(), KR_blk = '', KR_got = false;
   while (Date.now() - KR_t0 < 15000) {
     KR_blk = await ${tabVar}.evaluate(() => ${JS_BLOCK_CHECK});
