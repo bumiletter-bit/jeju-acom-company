@@ -672,6 +672,18 @@ html[data-ao-theme="dark"] .om-pill.k-ok { background: rgba(61, 214, 140, .16); 
 html[data-ao-theme="dark"] .om-pill.k-short { background: #4A3A12; color: #FBBF4A; }
 html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18); color: #FDA29B; }
 @media (max-width: 960px), (pointer: coarse) { .om-ml .om-badge { min-height: 44px; } }
+/* #1023 메모 줄 = 상태 글(매칭·입력삭제 n/m·날짜) 줄 글 위 작게 한 줄 · 줄 글 색 = 매칭완료 초록 · 확인필요 빨강(색 = k-ok·k-over 와 같은 값 · 야간 아래) */
+.om-ml-b { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.om-ml-b > .om-ml-t { flex: 1 1 auto; }
+.om-ml-h { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 7px 4px 0; }
+.om-ml-h + .om-ml-t { padding-top: 2px; }
+.om-ml .om-ml-h .om-pill { min-height: 18px; padding: 0 6px; font-size: 11px; line-height: 1.35; cursor: pointer; }
+.om-ml .om-ml-h .om-badge { margin: 0; max-width: 100%; align-self: auto; font-size: 11px; white-space: normal; }
+@media (max-width: 960px), (pointer: coarse) { .om-ml .om-ml-h .om-badge { min-height: 28px; } .om-ml .om-ml-h button.om-badge { position: relative; } .om-ml .om-ml-h button.om-badge::before { content: ""; position: absolute; inset: -8px 0; } }   /* #1023-b 보이는 28 · 누르는 곳 44(위아래 8 · 화면 높이 그대로) */
+.om-ml-l.c-ok { color: #05603A; }
+.om-ml-l.c-bad { color: #B42318; }
+html[data-ao-theme="dark"] .om-ml-l.c-ok { color: #7BE3AE; }
+html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-px-paired li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
 .om-px-paired li > span { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .om-px-paired .om-px-svc { flex: none; gap: 6px; }
