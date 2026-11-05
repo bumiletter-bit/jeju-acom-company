@@ -710,15 +710,19 @@
     const lineTone = (lb, ib) => lb ? (lb.state === 'ok' ? 'ok' : lb.state === 'fail' ? 'bad' : '') : ib ? ({ ok: 'ok', over: 'bad', short: 'bad' }[badgeK(ib)] || '') : '';
     function memoLineHtml(r) {
         const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r), lb = lineBadge(r), ib = indivBadge(r);
-        const bH = b ? `<span class="om-pill k-${b.k}" data-act="edit">${esc(b.t)}</span>` : '', lH = lbHtml(lb);
+        const bH = b ? `<span class="om-pill k-${b.k}" data-act="edit">${esc(b.t)}</span>` : '';
         const pxRow = isIndivText(r) && isPhoneKey(lineD(r));
-        const iH = ib ? (pxRow ? badgeHtml(r) : `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(badgeText(r.badge))}</span>`) : '';
-        const xH = !lb && Array.isArray(r.boxes) && r.boxes.length ? `<span class="om-pill k-box" data-act="edit">박스별 ${r.boxes.length}박스</span>` : '';   // #1021 서버 배지(type box · t 「박스별 n박스」)가 없을 때만
+        // #1024(대표 11/5 PC) 상태 글 앞에 판매처(「네이버 매칭완료」) · 그 대신 아래 줄 글에서 판매처 낱말을 뺌(표시만 · 저장 line 무변경)
+        const pl = String(r.plat || '').trim(), pp = t => (pl ? pl + ' ' : '') + t;
+        const iH = ib ? (pxRow ? badgeHtml(r).replace(/>([^<]*)<\/button>$/, (m0, t) => '>' + (pl ? esc(pl) + ' ' : '') + t + '</button>') : `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(pp(badgeText(r.badge)))}</span>`) : '';
+        const lH = lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(pp(lbText(lb)))}</span>` : '';
+        const xH = !lb && Array.isArray(r.boxes) && r.boxes.length ? `<span class="om-pill k-box" data-act="edit">${esc(pp('박스별 ' + r.boxes.length + '박스'))}</span>` : '';   // #1021 서버 배지(type box · t 「박스별 n박스」)가 없을 때만
         const head = iH + lH + xH + bH, tone = lineTone(lb, ib);
+        const lineT = (iH || lH || xH) && pl ? (() => { const a = String(r.line || '').split('\t'); if (a.length > 1 && a[a.length - 1].trim() === pl) a.pop(); return lineView(a.join('\t')); })() : lineView(r.line);
         const lbAria = lb ? ' · ' + lbText(lb) + (lb.why ? ' · ' + lb.why : '') : '';
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>
-            <div class="om-ml-b">${head ? `<div class="om-ml-h">${head}</div>` : ''}<button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + lbAria + (lb ? ' · ' : ' ') + '열어 고치기')}"><span class="om-ml-l${tone ? ' c-' + tone : ''}">${esc(lineView(r.line) || '(빈 줄)')}</span>${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button></div>
+            <div class="om-ml-b">${head ? `<div class="om-ml-h">${head}</div>` : ''}<button type="button" class="om-ml-t" data-act="edit" aria-label="${esc(lineView(r.line) + lbAria + (lb ? ' · ' : ' ') + '열어 고치기')}"><span class="om-ml-l${tone ? ' c-' + tone : ''}">${esc(lineT || '(빈 줄)')}</span>${isCheck(r) ? `<span class="om-ml-why">${esc(whyOf(r))}</span>` : ''}</button></div>
             ${pxRow && !ib ? `<button type="button" class="om-btn sm om-ml-px" data-act="pairx" aria-label="${esc(lineShow(r) + ' 입력삭제 주문에 현금 줄 추가 매칭')}">추가 매칭</button>` : ''}
             <button type="button" class="om-x" data-act="del" aria-label="${esc(w + ' 지우기')}" title="지우기">${ICON_X}</button></li>`;
     }
