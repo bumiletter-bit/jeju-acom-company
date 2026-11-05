@@ -41,13 +41,13 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
         const ctx = await br.newContext({ viewport: vp, colorScheme: 'light' }); const pg = await ctx.newPage(); pg.on('pageerror', e => errs.push(e.message));
         await pg.goto(BASE + '/page'); await pg.waitForFunction(() => !!window.AkmOrderMemo);
         if (dark) await pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); });
-        await pg.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await pg.waitForSelector('.om-tag[data-tag="smemo"]'); await pg.waitForTimeout(300); return pg;
+        await pg.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await pg.waitForSelector('.om-tag[data-tag="cedit"]'); /* #1027 칩 4개(메모 수정 칩 뺌) */ await pg.waitForTimeout(300); return pg;
     }
     try {
         console.log('Ⅰ 꼬리표');
         let pg = await open({ width: 1280, height: 900 });
         const tags = await pg.$$eval('.om-tag', b => b.map(x => x.textContent));
-        ok(JSON.stringify(tags) === JSON.stringify(['주문입력', '입력삭제', '사이즈·과수', '날짜 지정', '보내는이', '메모 수정']), '꼬리표 = 기존 5 + 메모 수정(맨 뒤)', tags);
+        ok(JSON.stringify(tags) === JSON.stringify(['주문입력', '입력삭제', '사이즈·과수', '고객정보수정']), '꼬리표 = 칩 4개(#1027 · 날짜 지정·보내는이·메모 수정 뺌)', tags);
         // 기존 꼬리표: 날짜 지정·보내는이 무변경
         await pg.click('.om-tag[data-tag="sender"]'); ok(await pg.textContent('#om-tp-go') === '넣기' && await pg.isVisible('#om-tp-name'), '보내는이 = 종전 입력판 · [넣기]');
         await pg.fill('#om-tp-tel', fmt(ONE)); await pg.fill('#om-tp-name', '홍길동'); await pg.click('#om-tp-go');

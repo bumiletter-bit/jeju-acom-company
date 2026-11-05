@@ -764,3 +764,12 @@ html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-bx-g .om-bx-o { grid-column: 1 / -1; }
 .om-bx-o .om-combo { width: 100%; min-height: 34px; }
 @media (max-width: 960px), (pointer: coarse) { .om-bx-o .om-combo { min-height: 44px; } }
+/* #1027 고객정보수정 카드 = 주문별 줄([고치기]) + 판(발송일 칸 1개) · 토큰만 */
+.om-cebox .om-ce-o { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.om-ce-t { flex: 1 1 220px; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.om-cebox .om-ce-o > .om-boxes { flex: 1 1 100%; }
+.om-bx-date { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--d-sub); }
+.om-bx-date input { width: 150px; min-height: 34px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; box-sizing: border-box; }
+.om-bx-date input[aria-invalid="true"] { border-color: var(--d-err); }
+@media (max-width: 960px), (pointer: coarse) { .om-bx-date input, .om-cebox .om-boxbtn { min-height: 44px; } .om-bx-date input { font-size: 16px; } }
+.om-bx-hint { font-size: 12px; color: var(--d-sub); }   /* #1027-b 1박스 판 = 「안 보냄」 대신 발송일 안내 */

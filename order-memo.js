@@ -160,7 +160,7 @@ const cleanShipMemo = v => String(v == null ? '' : v).replace(/\s*[\t\r\n]+\s*/g
 const shipMemoOf = r => { const c = r && (r._checked || r.checked); return c && typeof c.ship_memo === 'string' ? cleanShipMemo(c.ship_memo) : ''; };
 // #1021(대표 11/5) 박스별 줄 = note 「박스별 …」 + boxes 배열(박스마다 꼬리·받는 분·배송메세지·보내는 분·안 보냄) · 글은 사람이 읽는 요약(파서가 안 읽음) · 최종발주는 for-ship box_rows 로 받음
 const BOX_NOTE = /^박스별(?:\s|$)/;
-const boxesOf = r => { const v = r && (r._boxes !== undefined ? r._boxes : r.boxes); return Array.isArray(v) && v.length >= 2 ? v : null; };
+const boxesOf = r => { const v = r && (r._boxes !== undefined ? r._boxes : r.boxes); return Array.isArray(v) && v.length >= 1 ? v : null; };   // #1027 1박스 주문도(고객정보수정)
 const isBoxRow = r => !!r && r.kind === 'line' && BOX_NOTE.test(String(r.note || '')) && !!boxesOf(r);
 const isIndivLine = r => !!r && r.kind === 'line' && !SHIP_NOTE.test(String(r.note || '')) && !BOX_NOTE.test(String(r.note || '')) && INDIV.test(String(r.note || '') + ' ' + String(r.line || '')) && dg(r.key).length >= 8;
 // #938 주문번호 줄(주문별 발송일)의 구매자 번호 = checked.buyer(저장 전 _checked) · 전화번호 줄 = key
@@ -258,10 +258,10 @@ function lineBadge(r, orders, opt) {
     const o = opt || {}, cat = o.catalog instanceof Set ? o.catalog : null, q = v => Math.max(0, parseInt(v, 10) || 0);
     const B = (state, why, type) => ({ kind: 'line', state, t: state === 'ok' ? '매칭완료' : state === 'fail' ? '매칭실패' : '주문 확인 중', why: why || '', type });
     const note = String((r && r.note) || ''), sm = SHIP_NOTE.test(note) || !!shipMemoOf(r);
-    if (isBoxRow(r)) {   // #1021 박스별 줄 = 「박스별 n박스」 · 그 주문(checked.pno 있으면 그 주문만 · 없으면 그 번호·판매처 주문) 박스 수 == 박스 칸 수면 ok
+    if (isBoxRow(r)) {   // #1021 박스별 줄 = 「주문수정 n박스」(#1027 · 종전 「박스별 n박스」) · 그 주문(checked.pno 있으면 그 주문만 · 없으면 그 번호·판매처 주문) 박스 수 == 박스 칸 수면 ok
         const bxs = boxesOf(r), ch0 = BADGE_CH[String((r && r.plat) || '').trim()], pno = dg(r.checked && r.checked.pno);
         const od0 = (orders || []).filter(x => x && (!ch0 || (x.channel || 'naver') === ch0) && (!pno || dg(x.product_order_no) === pno || dg(x.okey) === pno || dg(String(x.order_key || '').split('|')[0]) === pno));
-        const bt = (st, why) => Object.assign(B(st, why, 'box'), { t: st === 'ok' ? `박스별 ${bxs.length}박스` : st === 'fail' ? '매칭실패' : '주문 확인 중' });
+        const bt = (st, why) => Object.assign(B(st, why, 'box'), { t: st === 'ok' ? `주문수정 ${bxs.length}박스` : st === 'fail' ? '매칭실패' : '주문 확인 중' });
         if (!od0.length) return (o.pending || o.noTable) ? bt('unknown', o.noTable ? '주문 표를 못 읽었어요' : '주문을 찾는 중이에요') : bt('fail', pno ? '그 주문이 발송 전 주문에 없어요' : '발송 전 주문 없음');
         if (pno && od0.length > 1) return bt('fail', '주문이 여러 줄이라 최종발주 카드에서');   // #1021 교차 점검 B-1 쿠팡·자사몰 한 주문 여러 줄 = 박스별은 주문 한 줄에만(최종발주 boxPlan 과 같게)
         const m = od0.reduce((t, x) => t + q(x.qty), 0);
@@ -359,10 +359,10 @@ function cleanChecked(v) {
     const t = Date.parse(String(v.at || '')); const at = Number.isFinite(t) && t > Date.parse('2026-01-01') && t < Date.now() + 86400e3 ? new Date(t).toISOString() : new Date().toISOString();
     const bd = dg(v.buyer); return Object.assign({ plat: v.plat, as: v.as, at }, /^0\d{8,11}$/.test(bd) ? { buyer: String(v.buyer).trim().slice(0, 20) } : {}, cleanShipMemo(v.ship_memo) ? { ship_memo: cleanShipMemo(v.ship_memo) } : {}, /^[\d-]{8,40}$/.test(String(v.pno || '').trim()) ? { pno: String(v.pno).trim() } : {});   // #958 pno = 번호 키 배송메모 줄의 고른 주문   // #938 buyer = 주문번호 줄(주문별 발송일로 나눠 저장)의 구매자 번호 → 주소 줄 짝·배지·추가 매칭은 이 번호로(K 는 늘 전화번호)
 }
-// #1021 박스별 값 거름(순수) = 배열 2~20 · 박스마다 아래 10칸만(전부 글자 · '' = 주문 그대로) · 탭·줄바꿈 → 빈칸 · s = '1'|'' · 번호 칸 = 숫자·하이픈만 · 바꾼 것 0(전부 빈 박스) = null
+// #1021 박스별 값 거름(순수) = 배열 1~20(#1027 1박스 주문도 · 종전 2~20) · 박스마다 아래 10칸만(전부 글자 · '' = 주문 그대로) · 탭·줄바꿈 → 빈칸 · s = '1'|'' · 번호 칸 = 숫자·하이픈만 · 바꾼 것 0(전부 빈 박스) = null
 const BOX_LIM = { t: 40, o: 120, n: 20, p: 14, p2: 14, a: 200, m: 300, s: 1, sn: 20, sp: 14 };
 function cleanBoxes(v) {
-    if (!Array.isArray(v) || v.length < 2 || v.length > 20) return null;
+    if (!Array.isArray(v) || v.length < 1 || v.length > 20) return null;
     const out = v.map(b => { const o = {}; Object.keys(BOX_LIM).forEach(k => { let t = String(b && typeof b === 'object' && b[k] != null ? b[k] : '').replace(/[\t\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
         if (k === 's') t = (t === '1' || t === 'true') ? '1' : ''; else if (k === 'p' || k === 'p2' || k === 'sp') t = t.replace(/[^\d-]/g, ''); o[k] = t.slice(0, BOX_LIM[k]); }); return o; });
     return out.some(o => Object.values(o).some(Boolean)) ? out : null;

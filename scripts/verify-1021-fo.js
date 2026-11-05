@@ -154,6 +154,23 @@ const fixOpen = async (pg, who) => {   // 참고 줄 「메모함 박스별 … 
         ok(w11.length === 2 && (royal ? ['S사이즈로!', 'M사이즈로!'].every(z => w11.some(r => r[4].endsWith(z))) : w11.some(r => r[3] === '사람받는')), '사람이 바꾼 박스2 값이 파일에(줄 순서 = 옵션 글자순 종전)', w11.map(r => [r[3], r[4]]));
         ok(R4.after.info.some(t => t.includes('박스별') && t.includes('(사람)') && t.includes('시험구매11')), '참고 줄 「박스별 …(사람)」', R4.after.info.filter(t => t.includes('받는11')));
 
+        console.log('\nⅤ #1027 고객정보수정 = 1박스 판 · 발송일만 줄(날짜 줄 보류) · 1박스 전부 안 보냄');
+        { const o3 = by(fx, '받는03'), o4 = by(fx, '받는04'); if (royal) o3['옵션정보'] = royal;
+          const B3 = [bx({ t: T[0], n: '한박스받는', m: '한박스메모', sn: '한박스보냄', sp: '010-9999-0003' })];
+          const mdL = later ? (+later.slice(5, 7)) + '/' + (+later.slice(8, 10)) : '';
+          let F3 = null;
+          const R5 = await run(br, fx, { forShip: { box_rows: [br1(731, o3['구매자연락처'], B3, { pno: o3._pid }), br1(732, o4['구매자연락처'], [bx({ s: '1' })], { pno: o4._pid, tag: '안보냄' })], ids: [731, 732] },
+              memo: later ? `${mdL}\t${by(fx, '받는06')._pid}\t${mdL} 발송\t네이버` : '', afterJudge: async pg => { F3 = await fixOpen(pg, o3['구매자연락처']); }, choose: { 'boxq:732': 'skip' } });
+          ok(R5.errs.length === 0, '오류 0', R5.errs);
+          ok(F3 && F3.boxes && F3.boxes.length === 1 && F3.rows.length === 1 && F3.rows[0].n === '한박스받는' && F3.rows[0].sn === '한박스보냄' && F3.rows[0].sp === '010-9999-0003' && (!royal || F3.rows[0].on.includes(T[0])), '1박스 주문 = 직접 고치기 카드에 박스 줄 1개 미리 채움(받는 분·보내는 분·사이즈)', F3);
+          const w3 = rowsOf(R5, '한박스받는');
+          ok(w3.length === 1 && w3[0][5] === '1' && w3[0][0] === '한박스보냄 드림' && w3[0][1] === '010-9999-0003' && w3[0][9] === '한박스메모' && (!royal || w3[0][4].endsWith(T[0])) && rowsOf(R5, '받는03').length === 0, '양식 1줄 = 받는 분·보내는사람·연락처·배송메세지·꼬리 바뀐 값', w3);
+          ok(!later || (rowsOf(R5, '받는06').length === 0 && R5.before.cards.concat(R5.after.cards).length >= 0), '발송일만 바꾼 주문(옛 날짜 줄 · 주문번호 키) = 오늘 양식에 안 나감(보류 종전)', rowsOf(R5, '받는06'));
+          ok(R5.before.cards.some(c => c.id === 'boxq:732') && rowsOf(R5, '받는04').length === 1 && rowsOf(R5, '받는04')[0][5] === '1', '1박스 전부 「안 보냄」 = 확인 카드 + 양식 종전 한 줄', rowsOf(R5, '받는04'));
+          { const base = JSON.parse(allRows(r1)), now = JSON.parse(allRows(R5)); let diff = 0; base.forEach((b, i) => { const S0 = (b[1].Sheet1 || []).filter(r => !['받는03', '받는06'].includes(String(r[3]))), S1 = (((now[i] || [])[1] || {}).Sheet1 || []).filter(r => !['한박스받는', '받는06'].includes(String(r[3]))); if (JSON.stringify(S0) !== JSON.stringify(S1)) diff++; });
+            ok(diff === 0, '다른 줄 전 칸 변화 0', diff); }
+        }
+
         code = fail ? 1 : 0;
     } catch (e) { console.log('  ❌ 실행 오류 ' + (e && e.stack || e) + '\n  서버 꼬리: ' + tail); code = 1; }
     finally { if (br) await br.close(); srv.kill(); }

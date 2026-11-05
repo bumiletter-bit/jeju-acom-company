@@ -66,7 +66,7 @@
     //   틀 꼴 = 서버 규칙 줄(order-memo.js · invoice-v2 parseLines · sizeLines)이 그대로 읽는 「번호 + 지시」 꼴
     const TEL_PH = '000-0000-0000';
     const TAGS = [['cash', '주문입력', '현금 손님'],   // #895 칩 이름 = 주문입력(누르면 빈 주문 입력 카드 · 틀 글은 안 씀)
- ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈·과수', TEL_PH + ' S사이즈로'], ['date', '날짜 지정', TEL_PH + ' 00일 발송'], ['sender', '보내는이', TEL_PH + ' 보내는이 홍길동'], ['smemo', '메모 수정', TEL_PH + ' 배송메모']];
+ ['indiv', '입력삭제', TEL_PH + ' 입력o삭제x'], ['size', '사이즈·과수', TEL_PH + ' S사이즈로'], ['cedit', '고객정보수정', TEL_PH]];   // #1027(대표 11/5) 날짜 지정·보내는이·메모 수정 칩 뺌 → 고객정보수정 하나(손님 글이 만드는 날짜·보내는이·배송메모 줄·옛 줄은 종전 그대로 읽힘)
     // 틀 자리를 안 고친 채 [입력하기] = 막고 그 자리를 골라 줌
     const TPL_HOLES = [[TEL_PH, '번호를 넣어 주세요 — 000-0000-0000 자리에 손님 번호를 써 주세요'], [/(^|[^0-9])00일/, '발송 날짜를 넣어 주세요 — 00일 자리에 날짜를 써 주세요'], ['보내는이 홍길동', '보내는 분 이름을 넣어 주세요 — 홍길동 자리를 바꿔 주세요']];
     const PLATS = ['네이버', '쿠팡', '자사몰'];
@@ -122,7 +122,7 @@
     // ── 줄 판정(화면 표시) ────────────────────────────────
     const valOf = (r, f) => r.kind === 'cash' ? (r.cells[f.i] || '') : (r[f.k] || '');
     // #850-c 새로 더한 빈 줄(_new)은 손대기 전엔 빨간 글·빈칸 셈 없음(저장 때 그냥 버림) — 대표 「+ 메모 줄을 확인 단추로 착각」
-    const blanksOf = (r, inCard) => r._new ? [] : (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.need && (inCard || !f.cardOnly) && !String(valOf(r, f)).trim());
+    const blanksOf = (r, inCard) => r._new || r._ce ? [] : (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.need && (inCard || !f.cardOnly) && !String(valOf(r, f)).trim());
     const isLater = r => !!(r.ship_date && OM.shipDate && r.ship_date > OM.shipDate);
     const isCheck = r => !r.sure || blanksOf(r).length > 0;
     const whyOf = r => r.check_why.length ? r.check_why.join(' · ') : blanksOf(r).map(f => f.why).join(' · ');
@@ -355,7 +355,7 @@
     // #862 줄 입력판 — 꼬리표를 누르면 입력 칸에 틀을 넣지 않고 [번호 칸 + 꼬리표 칸 + 넣기] · [넣기]·Enter = 입력 칸 끝에 서버 규칙 줄 꼴 한 줄
     //   입력삭제 「010-1234-5678 입력o삭제x」 · 사이즈 「… S사이즈로」 · 날짜 「… 10/27 발송」(해 넘김 = 「1/3/27 … 발송」) · 보내는이 「… 보내는이 홍길동」 (ruleLine · invoice-v2 parseLines · sizeLines 가 읽는 꼴)
     //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
-    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'], smemo: ['메모 수정', '우리 택배 양식의 배송메시지만 바꿔요 · 판매처 주문 원본은 그대로'] };
+    const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'], smemo: ['메모 수정', '우리 택배 양식의 배송메시지만 바꿔요 · 판매처 주문 원본은 그대로'], cedit: ['고객정보수정', '이 번호 발송 전 주문을 주문마다 고쳐요 · 품목·사이즈·과수·받는 분·배송메세지·보내는 분·발송일 · 판매처 주문 원본은 그대로'] };
     const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
@@ -370,7 +370,7 @@
         $('om-tp-k').innerHTML = k === 'size' ? `<div class="om-seg om-tp-sz" role="radiogroup" aria-label="사이즈">${['2S', 'S', 'M'].map(z => `<button type="button" role="radio" class="om-seg-b" data-tpsz="${z}" aria-checked="false">${z}</button>`).join('')}</div><label class="om-tp-gw"><input id="om-tp-gw" inputmode="numeric" autocomplete="off" maxlength="3" placeholder="과수" aria-label="과수(만감류 선물용 · 숫자만 · 예 13)"><span aria-hidden="true">과</span></label>`
             : k === 'date' ? '<input id="om-tp-date" class="akm-date om-tp-date" readonly autocomplete="off" placeholder="발송 날짜 고르기" aria-label="발송 날짜">'
             : k === 'sender' ? '<input id="om-tp-name" class="om-tp-name" autocomplete="off" maxlength="20" placeholder="보내는 분 이름" aria-label="보내는 분 이름">' : '';
-        tp.dataset.k = k; tpNote(''); smReset(); $('om-tp-go').textContent = k === 'smemo' ? '주문 찾기' : '넣기';
+        tp.dataset.k = k; tpNote(''); smReset(); $('om-tp-go').textContent = k === 'smemo' || k === 'cedit' ? '주문 찾기' : '넣기';
         if (!was) { tp.hidden = false; tel.value = tpLastTel(); }
         else if (!tel.value.trim()) tel.value = tpLastTel();
         tel.focus({ preventScroll: true }); try { tel.select(); } catch (e) { /* 그대로 */ }
@@ -449,6 +449,7 @@
     function tpGo() {
         const x = OM.tp; if (!x) return;
         if (x.k === 'smemo') { smFind(); return; }
+        if (x.k === 'cedit') { ceGo(); return; }   // #1027
         const te = $('om-tp-tel'), d = digits(te.value);
         if (!(isPhoneish(te.value) && d.length >= 9)) { tpNote('손님 번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
         te.value = fmtTel(te.value); const tel = lineTel(te.value);
@@ -716,7 +717,7 @@
         const pl = String(r.plat || '').trim(), pp = t => (pl ? pl + ' ' : '') + t;
         const iH = ib ? (pxRow ? badgeHtml(r).replace(/>([^<]*)<\/button>$/, (m0, t) => '>' + (pl ? esc(pl) + ' ' : '') + t + '</button>') : `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(pp(badgeText(r.badge)))}</span>`) : '';
         const lH = lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(pp(lbText(lb)))}</span>` : '';
-        const xH = !lb && Array.isArray(r.boxes) && r.boxes.length ? `<span class="om-pill k-box" data-act="edit">${esc(pp('박스별 ' + r.boxes.length + '박스'))}</span>` : '';   // #1021 서버 배지(type box · t 「박스별 n박스」)가 없을 때만
+        const xH = !lb && Array.isArray(r.boxes) && r.boxes.length ? `<span class="om-pill k-box" data-act="edit">${esc(pp('주문수정 ' + r.boxes.length + '박스'))}</span>` : '';   // #1021 서버 배지(type box · t 「박스별 n박스」)가 없을 때만
         const head = iH + lH + xH + bH, tone = lineTone(lb, ib);
         const lineT = (iH || lH || xH) && pl ? (() => { const a = String(r.line || '').split('\t'); if (a.length > 1 && a[a.length - 1].trim() === pl) a.pop(); return lineView(a.join('\t')); })() : lineView(r.line);
         const lbAria = lb ? ' · ' + lbText(lb) + (lb.why ? ' · ' + lb.why : '') : '';
@@ -1121,7 +1122,7 @@
         card.innerHTML = `
           <header class="om-card-h">
             <button type="button" class="om-back" data-cact="cancel" aria-label="닫기"><span aria-hidden="true">×</span></button>
-            <h3 id="om-card-t">${c.mode === 'edit' ? '메모 고치기' : c.cash ? '주문 입력' : '정리 결과 확인'}${c.aseq ? ` <small class="om-aseq">주소 확인 ${c.aseq.at}/${c.aseq.n}</small>` : ''}</h3>
+            <h3 id="om-card-t">${c.mode === 'edit' ? '메모 고치기' : c.cedit ? '고객정보수정' : c.cash ? '주문 입력' : '정리 결과 확인'}${c.aseq ? ` <small class="om-aseq">주소 확인 ${c.aseq.at}/${c.aseq.n}</small>` : ''}</h3>
             <button type="button" class="om-btn sm om-reset" data-cact="reset"${c.dirty ? '' : ' hidden'}>${ICON_UNDO}처음으로</button>
             <span class="om-hpill${n ? '' : ' ok'}" id="om-card-n">${n ? '빈칸 ' + n : '빈칸 없음'}</span>
           </header>
@@ -1132,7 +1133,7 @@
             ${cashBarHtml(c)}${jumpHtml(c)}
             ${tags.length ? `<div class="om-card-tags">${tags.join('')}</div>` : ''}
             ${pairHtml(c)}
-            ${(cardBig(c) ? c.rows.slice(0, cardShownN(c)) : c.rows).map((r, ri) => `
+            ${(cardBig(c) ? c.rows.slice(0, cardShownN(c)) : c.rows).map((r, ri) => r._ce ? ceSecHtml(r, ri) : `
               <section class="om-rowcard" aria-labelledby="om-rc-${ri}">
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
@@ -1181,7 +1182,8 @@
     }
     function onCardLeave(e) {   // #862 보내는 분 칸을 떠날 때 「드림」(치는 중엔 안 바꿈)
         const t = e.target;
-        if (t && t.dataset && t.dataset.cact === 'orddate' && OM.card) { ordDateCommit(t); return; }   // #938 주문별 발송일 = 칸을 떠날 때
+        if (t && t.dataset && t.dataset.cact === 'orddate' && OM.card) { ordDateCommit(t); return; }
+        if (t && t.dataset && t.dataset.cact === 'cedate' && OM.card) { ceDateCommit(t); return; }   // #1027   // #938 주문별 발송일 = 칸을 떠날 때
         if (t && t.id === 'om-ind-key') { indCommit(t); return; }   // #895
         if (!t || !t.dataset || !t.dataset.fs || !OM.card) return;
         const ri = Number(t.dataset.ri), r = OM.card.rows[ri]; if (!r) return;
@@ -1656,14 +1658,63 @@
             : kOf(b) === 'gwa' ? `<label class="om-bx-gwa">과수 <input data-cact="bxf" data-ri="${ri}"${X} data-bi="${i}" data-k="gwa" inputmode="numeric" maxlength="2" value="${esc(String(b.t || '').replace(/과로!$/, ''))}" placeholder="그대로"> 과</label>` : '';
         const f = (b, i, k, label, ph, more) => `<label class="om-bx-f" for="${id(i, k)}"><span>${label}</span><input id="${id(i, k)}" data-cact="bxf" data-ri="${ri}"${X} data-bi="${i}" data-k="${k}" value="${esc(b[k])}" placeholder="${esc(ph)}"${more || ''}></label>`;
         return `<div class="om-boxes" role="group" aria-label="박스별 카드 · ${bx.qty}박스">
-            <div class="om-boxes-h"><b>${x ? esc(optBrief(bx.option)) + ' ' : ''}박스별 ${bx.qty}박스</b><span>빈칸 = 주문 그대로</span><button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}"${X}>전부 박스 1과 같게</button><button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}"${X}>박스별 안 함</button></div>
-            ${x ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
+            <div class="om-boxes-h"><b>${x ? esc(optBrief(bx.option)) + ' ' : ''}${bx.ce ? bx.qty + '박스 고치기' : '박스별 ' + bx.qty + '박스'}</b><span>빈칸 = 주문 그대로</span>${bx.qty > 1 ? `<button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}"${X}>전부 박스 1과 같게</button>` : ''}<button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}"${X}>${bx.ce ? '고치기 닫기' : '박스별 안 함'}</button></div>
+            ${bx.ce ? `<label class="om-bx-date"><span>발송일</span><input data-cact="cedate" data-ri="${ri}"${X} value="${esc(bx.date ? md(bx.date) : '')}" placeholder="그대로 · 예) 11/8" inputmode="numeric" aria-label="이 주문 발송일"></label>` : ''}
+            ${x && !bx.ce ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
             ${bx.arr.map((b, i) => `<fieldset class="om-boxrow${b.s ? ' off' : ''}"><legend>박스 ${i + 1}</legend>
-              <div class="om-bx-top">${tailH(b, i)}<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}"${X} data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label></div>
+              <div class="om-bx-top">${tailH(b, i)}${bx.qty === 1 ? '<span class="om-bx-hint">안 보내려면 발송일을 뒤로 넣어 주세요</span>' : `<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}"${X} data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label>`}</div>
               <div class="om-bx-g"><div class="om-bx-f om-bx-o"><span id="${id(i, 'o')}-l">품목</span><button type="button" class="om-combo" data-cact="bxopt" data-ri="${ri}"${X} data-bi="${i}" aria-labelledby="${id(i, 'o')}-l" aria-haspopup="dialog"><span>${b.o ? esc(shortOpt(b.o)) : '<i>주문 그대로</i>'}</span>${ICON_DOWN}</button></div>${f(b, i, 'n', '받는 분', bx.recv || '주문 그대로', ' maxlength="20"')}${f(b, i, 'p', '받는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'p2', '번호2', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'a', '주소', bx.addr || '주문 그대로', ' maxlength="200"')}${f(b, i, 'm', '배송메세지', '주문 그대로', ' maxlength="300"')}${f(b, i, 'sn', '보내는 분', '주문 그대로', ' maxlength="20"')}${f(b, i, 'sp', '보내는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}</div></fieldset>`).join('')}
-            <div class="om-acts"><button type="button" class="om-btn primary sm" data-cact="bxsave" data-ri="${ri}"${X}>박스별로 저장</button><span>카드 [저장]을 눌러도 같이 저장돼요</span></div></div>`;
+            <div class="om-acts"><button type="button" class="om-btn primary sm" data-cact="bxsave" data-ri="${ri}"${X}>${bx.ce ? '고친 대로 저장' : '박스별로 저장'}</button><span>카드 [저장]을 눌러도 같이 저장돼요</span></div></div>`;
     }
-    function boxRefresh(ri) { const r = OM.card && OM.card.rows[ri], card = $('om-card'), el = card.querySelector('#om-box-' + ri), xe = card.querySelector('#om-xbox-' + ri); if (r && el) el.innerHTML = boxPanelHtml(r, ri); if (r && xe) xe.innerHTML = xboxPanelHtml(r, ri); }
+    function boxRefresh(ri) { const r = OM.card && OM.card.rows[ri], card = $('om-card'), el = card.querySelector('#om-box-' + ri), xe = card.querySelector('#om-xbox-' + ri), ce = card.querySelector('#om-ce-' + ri); if (r && el) el.innerHTML = boxPanelHtml(r, ri); if (r && xe) xe.innerHTML = xboxPanelHtml(r, ri); if (r && r._ce && ce) ce.innerHTML = ceListHtml(r, ri); }
+    // ── #1027(대표 11/5) 「고객정보수정」 꼬리표 = 번호 → 정리 결과 카드에 그 번호 발송 전 주문 전부(1박스 포함) · 주문마다 [고치기] → 판(박스마다 품목·사이즈/과수·받는 분·배송메세지·보내는 분·안 보냄 + 발송일 1칸)
+    //   저장 = 바꾼 주문마다 「주문수정 …」 줄 1개(boxes ≥1 · ship_date = 발송일 · checked.pno) · 발송일만 = 「M/D 발송」 날짜 줄(checked.pno) · 안 바꾼 주문 = 저장 0 · 카드의 「고객정보수정」 줄 자체는 저장 안 함
+    // note 꼴 = 계약 docs/1027-customer-edit.md §2(ⓐ 「M/D 발송」 · ⓑ 「박스별 …」)
+    function ceOrders(r) {
+        if (!r || !r._lk || r._lk.state !== 'done') return [];
+        const m = new Map(); ((r._lk && r._lk.matches) || []).filter(x => x.pno || x.order_no).forEach(x => { const id = String(x.pno || x.order_no), o = m.get(id); if (!o) m.set(id, { id, qty: Number(x.qty) || 0, option: x.option || '', recv: x.recv_name || '', addr: x.addr || '', n: 1, x }); else { o.n++; o.qty += Number(x.qty) || 0; } });
+        return [...m.values()].map(o => Object.assign(o, { one: o.n === 1 }));
+    }
+    function ceFix(r, oid) {
+        const o = ceOrders(r).find(x => x.id === String(oid)); if (!o || !o.one) return false;
+        const xo = xoOf(r, o.id, itemK(o.option), o.qty), q = Math.max(1, Math.min(o.qty || 1, BOX_MAX));
+        if (!xo.bx) xo.bx = { o: o.id, qty: q, over: o.qty > BOX_MAX, option: o.option, recv: o.recv, addr: o.addr, plat: o.x.plat || '', t0: '', ce: true, date: '', key: o.x.as === 'buyer' ? r.key : (telShow(o.x.buyer_phone || '') || r.key), arr: Array.from({ length: q }, () => BOX_K.reduce((a, k) => (a[k] = '', a), {})) };
+        return true;
+    }
+    function ceListHtml(r, ri) {
+        const L = r._lk;
+        if (!L || L.state === 'busy') return '<p class="om-lk" role="status" data-k="busy">주문 찾는 중…</p>';
+        if (L.state === 'err') return '<p class="om-lk" role="alert" data-k="warn">주문을 찾지 못했어요(연결 오류) · 카드를 닫고 다시 해 주세요</p>';
+        const os = ceOrders(r); if (!os.length) return '<p class="om-lk" role="status" data-k="warn">이 번호의 발송 전 주문을 못 찾았어요 — 7일 지난 주문·예약 주문은 여기서 안 보여요</p>';
+        return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b><ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); return `<li class="om-ce-o"><span class="om-ce-t">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스 · ${esc(o.id)}${o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : ''}</span>${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
+    }
+    function ceGo() {   // 꼬리표 번호 → 그 번호 고객정보수정 카드(줄 하나 = 찾기 열쇠 · 저장 안 함)
+        const te = $('om-tp-tel'), d = digits(te.value);
+        if (!(isPhoneish(te.value) && d.length >= 9)) { tpNote('손님 번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
+        te.value = fmtTel(te.value); const tel = lineTel(te.value); OM.tpLast = te.value; tpNote('');
+        cardOpen({ mode: 'new', cedit: true, raw: '', tags: [], source: 'manual', rows: [{ kind: 'line', id: null, key: tel, note: '고객정보수정', plat: '', ship_date: null, sure: true, check_why: [], src: 'edit', state: 'open', line: ['', tel, '고객정보수정', ''].join('\t'), entry: {}, _ce: true }], leftover: '', ask: '', from: null });
+    }
+    const ceSecHtml = (r, ri) => `<section class="om-rowcard om-ce" aria-labelledby="om-rc-${ri}"><h4 id="om-rc-${ri}">고객정보수정 · ${esc(telShow(r.key))}</h4><p class="om-ordn">판매처 주문 원본은 그대로 · 다음 최종발주 양식만 바뀌어요 · 빈칸 = 주문 그대로</p><div id="om-ce-${ri}">${ceListHtml(r, ri)}</div></section>`;
+    function ceDateCommit(t) {
+        const r = OM.card && OM.card.rows[Number(t.dataset.ri)], bx = bxGet(r, t.dataset.x); if (!bx) return;
+        const v = String(t.value || '').trim(); t.removeAttribute('aria-invalid');
+        if (!v) { bx.date = ''; return; }
+        const iso = toIso(v); if (!iso) { t.setAttribute('aria-invalid', 'true'); toast('날짜를 못 읽었어요 · 예) 11/8'); return; }
+        if (iso < todayStr()) { t.setAttribute('aria-invalid', 'true'); toast('지난 날짜예요 · 오늘 이후 날짜를 넣어 주세요'); return; }
+        bx.date = iso; t.value = md(iso);
+    }
+    function ceRows(r) {   // 카드 저장 = 바꾼 주문마다 줄 하나
+        const out = [];
+        Object.keys(r._xo || {}).forEach(oid => {
+            const bx = r._xo[oid].bx; if (!bx || !bx.ce) return;
+            const arr = boxClean(bx), changed = arr.some(b => b.s || b.t || ['o', 'n', 'p', 'p2', 'a', 'm', 'sn', 'sp'].some(k => b[k])), d = bx.date || null;
+            if (!changed && !d) return;
+            const at = new Date().toISOString(), tel = bx.key || r.key, sd = d ? md(d) : '';   // 계약 docs/1027-customer-edit.md §2 = ⓐ 발송일 날짜 줄(주문번호 키 · #938 꼴) · ⓑ 값 = 박스별 줄(구매자 번호 키 · 1박스도) · 둘 다 = ⓐ+ⓑ
+            if (d) out.push({ kind: 'line', key: oid, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note: sd + ' 발송', line: [sd, oid, sd + ' 발송', bx.plat].join('\t'), checked: { plat: bx.plat, as: 'order', at, buyer: telShow(tel), pno: oid }, _ceK: 'date' });
+            if (changed) { const note = '박스별 ' + boxSummary(arr); out.push({ kind: 'line', key: tel, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note, boxes: arr, line: [sd, tel, note, bx.plat].join('\t'), checked: { plat: bx.plat, as: 'buyer', at, buyer: telShow(tel), pno: oid }, _ceK: 'box' }); }
+        });
+        return out;
+    }
     // #1025(대표 11/5) 같은 번호에 다른 품목 주문(사이즈 줄인데 만감류 주문 · 과수 줄인데 귤 로얄과 주문)이 #938 주문별 줄에 보이면 그 주문 줄에 과수 칸(또는 사이즈 칩) · 2박스↑ = 「n박스 · 박스별로」 판
     //   채우면 [저장] 때 그 주문 줄(「번호 13과로」 · checked.pno = 그 주문) 또는 박스별 줄을 같은 묶음 두 번째 줄로 같이 저장 · 안 채우면 종전 한 줄
     const rowTail = r => { const n = String(r.note || ''); if (isBoxRow(r)) { const t = (r.boxes || []).map(b => b.t).find(Boolean) || ''; return /사이즈로!$/.test(t) ? 'size' : /과로!$/.test(t) ? 'gwa' : ''; } return TAG_RE.size.test(n) ? 'size' : /\d{1,2}\s*과(?:수)?\s*로/.test(n) ? 'gwa' : ''; };
@@ -1762,6 +1813,7 @@
     function lkCheck(r) { const m = r.plat && r._lk && r._lk.state === 'done' ? lkIn(r) : [], b = !isPhoneKey(r.key) && r.checked && r.checked.buyer && isPhoneKey(r.checked.buyer) ? r.checked.buyer : null; r.checked = m.length ? Object.assign({ plat: r.plat, as: m[0].as, at: new Date().toISOString() }, b ? { buyer: b } : {}) : (b ? Object.assign({}, r.checked, { buyer: b }) : null); }   // #938 주문번호 줄의 구매자 번호(checked.buyer)는 찾기 결과가 와도 보존
     function lkPaint(ri) {   // 판매처 단추·결과 글·빈칸 숫자만 다시 칠함(다시 그리지 않음 — 초점·자판 유지)
         const c = OM.card, r = c && c.rows[ri]; if (!r) return;
+        if (r._ce) { const ce = $('om-card').querySelector('#om-ce-' + ri); if (ce && !ce.contains(document.activeElement)) ce.innerHTML = ceListHtml(r, ri); return; }   // #1027
         const card = $('om-card'), p = card && card.querySelector('#om-lk-' + ri); if (!p) return;
         p.innerHTML = lkHtml(r, ri); p.dataset.k = lkKind(r); const ob = card.querySelector('#om-ord-' + ri); if (ob) ob.innerHTML = ordHtml(r, ri);   // #938
         if (r._bx && r._bx.o && r._lk && r._lk.state === 'done' && !Array.isArray(r.boxes) && !boxOrders(r).some(x => x.id === r._bx.o && boxOk(x))) r._bx = null;   // #1021 고른 주문이 사라짐(판매처 바꿈) = 판 닫음(저장된 박스별 줄 고치기는 그대로)
@@ -2003,6 +2055,7 @@
         }
         if (a === 'save') return cardSave(b);
         // #1021 박스별 카드
+        if (a === 'cefix' && r) { const xo = r._xo && r._xo[b.dataset.o]; if (!(xo && xo.bx) && !ceFix(r, b.dataset.o)) { toast('이 주문은 여기서 못 고쳐요(여러 줄 주문)'); return; } boxRefresh(ri); const f0 = $('om-card').querySelector(`#om-ce-${ri} [data-x="${b.dataset.o}"][data-cact="cedate"]`); if (f0) { f0.scrollIntoView({ block: 'nearest' }); f0.focus({ preventScroll: true }); } return; }   // #1027
         if (a === 'boxcard' && r && b.dataset.x) { if (!boxOpenX(r, b.dataset.o)) { toast('이 주문은 박스별로 못 나눠요(1박스·여러 줄 주문)'); return; } boxRefresh(ri); const f0 = $('om-card').querySelector(`#om-xbox-${ri} [data-x="${b.dataset.o}"]`); if (f0) { f0.scrollIntoView({ block: 'nearest' }); f0.focus({ preventScroll: true }); } return; }
         if (a === 'xot' && r) { const xo = xoOf(r, b.dataset.o, 'size', 1); xo.v = b.dataset.v; b.parentNode.querySelectorAll('.om-seg-b').forEach(y => y.setAttribute('aria-checked', y === b ? 'true' : 'false')); return; }   // #1025 1박스 귤 주문 사이즈
         if (a === 'boxcard' && r) { if (!boxOpen(r, b.dataset.o)) { toast('이 주문은 박스별로 못 나눠요(1박스·여러 줄 주문)'); return; } r._bxOff = false; boxRefresh(ri); const f0 = $('om-card').querySelector(`#om-box-${ri} .om-boxrow input, #om-box-${ri} .om-seg-b`); if (f0) { f0.scrollIntoView({ block: 'nearest' }); f0.focus({ preventScroll: true }); } return; }
@@ -2057,6 +2110,20 @@
         const c = OM.card; if (!c || btn.disabled || c.wait) return;
         c._saving = true;   // #935 저장 중 = 재조회 끝나도 카드 다시 안 그림(단추가 되살아나 이중 저장·못 본 줄 체크 막기 · 실패 분기에서 false)
         let rows = c.rows.filter(r => !r._new);   // #850-c 더하고 손대지 않은 빈 줄은 그냥 버림
+        if (c.cedit) {   // #1027 고객정보수정 = 바꾼 주문마다 ⓐ 날짜 줄 · ⓑ 박스별 줄 · 같은 번호·같은 주문 열린 줄이 있으면 그 줄 PUT · 없으면 한 묶음 POST
+            const act = document.activeElement; if (act && act.dataset && act.dataset.cact === 'cedate') ceDateCommit(act);
+            const ce = c.rows.find(r => r._ce), out = ce ? ceRows(ce) : [];
+            if (!out.length) { c._saving = false; toast('바꾼 것이 없어요 · 저장하지 않았어요'); return; }
+            const keep0 = btn.innerHTML; btn.disabled = true; btn.textContent = '저장하는 중…';
+            const open0 = (OM.list || []).filter(o => o.kind === 'line' && o.state === 'open' && o.checked && o.id != null);
+            const same = x => open0.find(o => digits(o.key) === digits(x.key) && String(o.checked.pno || '') === String(x.checked.pno) && (x._ceK === 'box' ? isBoxRow(o) : !isBoxRow(o) && /발송$/.test(String(o.note || ''))));
+            let nPut = 0, bad = null; const posts = [];
+            for (const x of out) { const o = same(x); if (o) { const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
+            if (!bad && posts.length) { const res = await API.save({ raw: '', tags: [], source: 'manual', rows: posts.map(outRow) }); if (!res.ok) bad = res; }
+            if (OM.card !== c) return;
+            if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+            cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}`); load(); return;
+        }
         { const bxr = rows.filter(r => r.kind === 'line' && r._bx).map(boxApply); if (bxr.includes('none')) toast('박스마다 다른 것이 없어 사이즈 줄로 저장해요'); if (bxr.includes('box')) c.dupOk = c.dupOk || null; }   // #1021 열린 박스별 판 = 저장 단추가 같이 실행(메모리 feedback-save-button-does-pending-action)
         const xHas = x => (OM.list || []).some(o => o.kind === 'line' && o.state === 'open' && o.id !== (rows[0] && rows[0].id) && digits(o.key) === digits(x.key) && o.checked && x.checked && String(o.checked.pno || '') === String(x.checked.pno || ''));   // #1025-b 같은 번호·같은 주문 줄이 이미 열려 있으면 다시 안 넣음(고치기 두 번 저장 중복)
         const xExtra = c.mode === 'edit' && rows[0] && rows[0].kind === 'line' ? xoRows(rows[0]).filter(x => !xHas(x)) : [];   // #1025 고치기 = 이 줄 PUT 뒤 다른 품목 주문 줄은 새로 POST
@@ -2344,7 +2411,7 @@
         const p1 = $('om-card').querySelector('[data-cact="p1go"]'); if (p1) p1.closest('.om-pair').hidden = indKeyOk(c);   // 켜고 번호 = #874 ① 묻기 숨김(다음 그리기 때 pairHtml 이 안 그림)
         const sv = $('om-card-save'); if (sv && !c.wait) { sv.innerHTML = saveLabel(blankN()); saveSync(sv); }
     }
-    function onCardKey(e) { if (e.target && e.target.id === 'om-ind-key' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); indCommit(e.target); } if (e.target && e.target.dataset && e.target.dataset.cact === 'orddate' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); e.target.blur(); } }   // #938
+    function onCardKey(e) { if (e.target && e.target.id === 'om-ind-key' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); indCommit(e.target); } if (e.target && e.target.dataset && (e.target.dataset.cact === 'orddate' || e.target.dataset.cact === 'cedate') && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); e.target.blur(); } }   // #938
     function onCardChange(e) {
         const t = e.target; if (!t || t.id !== 'om-file') return;
         const f = t.files && t.files[0]; t.value = ''; if (f && OM.card) fileLoad(OM.card, f);

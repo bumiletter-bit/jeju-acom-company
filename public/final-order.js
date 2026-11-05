@@ -342,7 +342,7 @@
         const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
         OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
         OMF.shipMemos = Array.isArray(r.ship_memos) ? r.ship_memos : [];   // #955
-        OMF.boxRows = Array.isArray(r.box_rows) ? r.box_rows.filter(m => m && Array.isArray(m.boxes) && m.boxes.length >= 2) : [];   // #1021 메모함 박스별 줄(옛 서버 = 없음 = 아무 일 없음)
+        OMF.boxRows = Array.isArray(r.box_rows) ? r.box_rows.filter(m => m && Array.isArray(m.boxes) && m.boxes.length >= 1) : [];   // #1021 메모함 박스별 줄(옛 서버 = 없음 = 아무 일 없음) · #1027 1박스 판도
         OMF.normal = Array.isArray(r.normal_orders) ? r.normal_orders : []; st.omNormOff = new Set();   // #970
         { const smIds = new Set(OMF.shipMemos.map(m => String(m.id))); OMF.ids = Array.isArray(r.ids) ? r.ids.filter(id => !smIds.has(String(id))) : []; }   // 배송메모 줄 「오늘 씀」 = 파일 만들 때 들어간 줄만(omMarkShip)
         const pastN = Array.isArray(r.held) ? r.held.filter(h => (h.why || []).includes('지난 날짜예요')).length : 0;   // #905 날짜 지정 현금 줄이 발주일보다 지남 = 「확인 안 된」과 따로(넣지 않음 = 종전)
@@ -1691,10 +1691,11 @@
         const optSel = fd.vals && fd.vals.opt != null ? fd.vals.opt : F.cur.opt;
         const dis = F.sameOpt ? '' : ' disabled', optDis = F.sameOpt && !cd.tailOnly ? '' : ' disabled', tv = fd.vals && fd.vals.tail != null ? fd.vals.tail : F.cur.tail;
         // #601: 주문 한 건 · 2박스 이상이면 「박스별로 다르게」 — 값은 숨은 칸(data-x="boxes" · 박스 수만큼의 꼬리 배열 JSON · 빈 글 = 끔)에 둔다(다시 그려도 적던 것이 남게)
-        const e1 = F.es.length === 1 && F.sameOpt ? F.es[0] : null, boxQ = e1 && qtyNow(e1) >= 2 && qtyNow(e1) <= 20 ? qtyNow(e1) : 0, bxCur = e1 ? boxesOf(e1) : null;
+        const e1 = F.es.length === 1 && F.sameOpt ? F.es[0] : null, pz1 = e1 ? (st.patch.get(keyOf(e1)) || {}) : {}, om1 = e1 && !pz1.boxes && pz1.tail == null && st.omBoxes && st.omBoxes.get(keyOf(e1)) || null;   // #1027 메모함 고객정보수정 값이 있는 1박스 주문도 박스 줄 UI 로(미리 채움)
+        const boxQ = e1 && (qtyNow(e1) >= 2 || (om1 && qtyNow(e1) === 1 && !e1.individual && !cd.tailOnly)) && qtyNow(e1) <= 20 ? qtyNow(e1) : 0, bxCur = e1 ? boxesOf(e1) : null;
         // #611: 2박스 이상이면 처음부터 박스마다 줄(토글 없음) · 받는 분 칸은 주문 주소로 나가는 주문에만(입력삭제 = 현금파일 줄이 나가므로 꼬리만)
         const rc1 = e1 && !e1.individual && !cd.tailOnly ? rcptOf(e1) : null;
-        const omx = e1 && boxQ && !((st.patch.get(keyOf(e1)) || {}).boxes) && !((st.patch.get(keyOf(e1)) || {}).tail != null) && st.omBoxes && st.omBoxes.get(keyOf(e1)) || null;   // #1021 메모함 박스별 = 저장된 박스 순서 그대로(묶음으로 펴면 순서가 바뀜)
+        const omx = boxQ ? om1 : null;   // #1021 메모함 박스별 = 저장된 박스 순서 그대로(묶음으로 펴면 순서가 바뀜)
         const bv = !boxQ ? '' : fd.vals && fd.vals.boxes != null && boxArr(fd.vals.boxes, boxQ) ? fd.vals.boxes : JSON.stringify(omx && omx.arr.length === boxQ ? omx.arr : bxCur ? boxExpand(bxCur) : Array(boxQ).fill(0).map(() => ({ t: tv })));
         const sdName = e1 ? String(((st.patch.get(keyOf(e1)) || {}).sender || {}).name || (e1.sender && !e1.sender.ambiguous && e1.sender.name) || buyerName(e1) || '') : '';   // #1021 박스별 보내는 분 칸 자리 글 = 지금 보내는 분
         const rcMain = rc1 && !boxQ ? `<div class="fo-rcbox" data-rcbox><p class="fo-boxhead">받는 분 — 택배사 양식에 그대로 나가요(안 바꾼 칸은 주문 그대로)</p><div class="fo-boxrc">${BOX_RC.filter(x => x[0] !== 'm').map(([f, lab, max, cls]) => { const x = { n: 'rname', p: 'rtel', p2: 'rtel2', a: 'raddr' }[f]; return `<label${cls ? ' class="wide"' : ''}>${lab}<input type="text" data-x="${x}" value="${esc(fd.vals && fd.vals[x] != null ? fd.vals[x] : rc1[f] || '')}" maxlength="${max}"${f === 'p' || f === 'p2' ? ' inputmode="tel"' : ''} autocomplete="off"></label>`; }).join('')}</div></div>` : '';
