@@ -52,7 +52,9 @@ body.xp-open { overflow: hidden; }
 .xp-sms { font-style: normal; font-size: 12px; }
 .xp-sms.ok { color: var(--x-ok); }
 .xp-sms.err { color: var(--x-err); }
-.xp-memo { color: var(--x-ink); }
+.xp-memo { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; padding: 4px 8px; border-radius: 6px; background: var(--x-acc-soft); color: var(--x-ink); font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; word-break: keep-all; }   /* #1037 손님 메모 = 눈에 띄게 한 줄 · 폰에서 잘림 없이 줄바꿈 */
+.xp-memo b { flex: none; color: var(--x-acc); font-size: 12px; font-weight: 700; }
+.xp-memo span { min-width: 0; }
 .xp-acts { display: flex; gap: 6px; }
 .xp-visit.on { background: var(--x-acc-soft); border-color: var(--x-acc); color: var(--x-acc); }
 .xp-edit { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; padding: 12px; border-radius: 12px; background: var(--x-soft); border: 1px solid var(--x-line); }
@@ -305,3 +307,15 @@ html[data-ao-theme="dark"] .xp-sale-line { background: rgba(255, 146, 43, .10); 
     .xp-note-txt { display: block; width: 100%; white-space: nowrap; text-overflow: ellipsis; word-break: normal; }
 }
 @media (max-width: 720px) { .xp-note-txt { font-size: 10px; line-height: 13px; } }
+
+/* #1037 손님 한 분 메모 칸([메모] 단추 → 줄 아래 · 토큰만 = 야간 저절로) */
+.xp-memobtn.has { border-color: var(--x-acc); color: var(--x-acc); background: var(--x-acc-soft); }
+.xp-memo-edit { flex-direction: column; flex-wrap: nowrap; }
+.xp-memo-edit.dirty { border-color: var(--x-acc); }
+.xp-memo-edit label { font-weight: 700; color: var(--x-ink); font-size: 13px; }
+.xp-memo-edit label small { font-weight: 500; color: var(--x-sub); font-size: 12px; margin-left: 4px; }
+.xp-memo-edit textarea { display: block; width: 100%; min-height: 64px; max-height: 40vh; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-card); color: var(--x-ink); font: inherit; font-size: 14px; line-height: 1.5; resize: none; overflow-y: auto; overflow-wrap: anywhere; }
+.xp-memo-edit textarea:focus-visible { outline: 2px solid var(--x-acc); outline-offset: 1px; }
+.xp-memo-edit .xp-edit-acts { align-items: center; justify-content: flex-end; }
+.xp-m-who { flex: 1 1 auto; min-width: 0; color: var(--x-acc); font-size: 12px; font-weight: 700; }
+@media (max-width: 720px) { .xp-acts { flex-wrap: wrap; } }

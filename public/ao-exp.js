@@ -111,6 +111,7 @@
     const saleMonth = ym => { const l = ((X.data && X.data.sales) || []).filter(s => s.day.startsWith(ym + '-') && Number(s.amount) > 0); return { sum: l.reduce((a, s) => a + Number(s.amount), 0), days: l.length }; };
     // #822-b(대표 10/22 라이브 「늘 펼쳐진 칸 빼고 [추가] 를 누르도록 · 삭제도」): 값 없음 = 아무것도 안 그림(판 머리 [+ 현장 판매] 단추) · 값 있음 = 한 줄 요약 + [수정]·[삭제] · 적는 중(X.saleEdit) = 금액·메모 칸 + [저장]·[취소]
     // #940(대표 11/1) 날마다 특이사항 메모(알바 휴무 등) = 날짜 판 늘 펼친 칸 · 치는 중엔 값·판을 안 건드림(#857 · 1분 새로고침도 쉼) · 저장 안 한 글 = X.noteDraft 에 날짜별로(판을 다시 그려도 남음)
+    //   #1037(대표 11/5) 화면 이름 = 「공지사항」(날짜 공지 · 알바 휴무 등) · 손님 한 분 메모는 예약 줄 [메모](memoHtml) · 표·API 이름은 그대로(notes)
     const noteOf = day => ((X.data && X.data.notes) || []).find(n => n.day === day) || null;
     const noteReadOnly = () => { try { return JSON.parse(localStorage.getItem('jwt_user') || '{}').role === 'accountant'; } catch (e) { return false; } };
     const noteDraft = () => X.noteDraft || (X.noteDraft = {});
@@ -119,12 +120,25 @@
         const n = noteOf(day), saved = n ? n.note : '', d = noteDraft()[day], dirty = d != null && d.trim() !== saved;
         return { dirty, line: dirty ? '저장 안 됨' : n ? `${n.updated_by || ''} · ${n.updated_at || ''}` : '' };
     }
-    const noteWarn = () => { if (X.day && /^\d{4}-\d{2}-\d{2}$/.test(X.day) && X.data && noteState(X.day).dirty) toast('저장 안 한 메모가 있어요 · 저장하거나 지우세요'); };   // 판을 떠날 때 한 줄(막지는 않음 · 글은 남음)
+    const noteWarn = () => {   // 판을 떠날 때 한 줄(막지는 않음 · 글은 남음)
+        if (X.day && /^\d{4}-\d{2}-\d{2}$/.test(X.day) && X.data && noteState(X.day).dirty) toast('저장 안 한 공지사항이 있어요 · 저장하거나 지우세요');
+        else if (X.memoOpen && memoDirty(X.memoOpen)) toast('저장 안 한 손님 메모가 있어요 · [메모]를 눌러 저장하세요');   // #1037
+    };
+    // #1037(대표 11/5) 손님(예약) 한 분 메모 = 줄 [메모] → 그 줄 아래 작은 칸 → PATCH {memo} 만(다른 칸·알림톡·문자 0 · 수정 판 「메모」와 같은 칸) · 칸이 열려 있으면 1분 새로고침 쉼 · 저장 안 한 글 = X.memoDraft 에 예약별로(판을 다시 그려도 남음)
+    const memoDraft = () => X.memoDraft || (X.memoDraft = {});
+    const memoItem = id => ((X.data && X.data.items) || []).find(x => x.id === id) || null;
+    const memoDirty = id => { const d = memoDraft()[id], b = memoItem(id); return d != null && d.trim() !== String((b && b.memo) || '').trim(); };
+    function memoHtml(b) {
+        const d = memoDraft()[b.id], v = d != null ? d : (b.memo || ''), dirty = memoDirty(b.id);
+        return `<div class="xp-edit xp-memo-edit${dirty ? ' dirty' : ''}" data-id="${b.id}"><label for="xp-m-${b.id}">${esc(b.name || '손님')} 메모 <small>이 손님만 · 손님께는 안 나가요</small></label>
+            <textarea id="xp-m-${b.id}" class="xp-m-ta" rows="2" maxlength="500" placeholder="예: 체험2 입장1로 수정 예정 · 현장 8천원 추가결제" autocomplete="off">${esc(v)}</textarea>
+            <div class="xp-edit-acts"><small class="xp-m-who" id="xp-m-who-${b.id}">${dirty ? '저장 안 됨' : ''}</small><button type="button" class="xp-btn pri" data-act="memo-save">저장</button><button type="button" class="xp-btn" data-act="memo-close">닫기</button></div></div>`;
+    }
     function noteHtml(day) {
         const n = noteOf(day), d = noteDraft()[day], v = d != null ? d : (n ? n.note : ''), st = noteState(day), ro = noteReadOnly();
         if (ro && !v) return '';
-        return `<div class="xp-note-box${st.dirty ? ' dirty' : ''}" id="xp-note-box" data-day="${day}"><label for="xp-note">특이사항 메모</label>
-            <textarea id="xp-note" rows="1" maxlength="2000" placeholder="특이사항은 여기 메모해주세요"${ro ? ' readonly' : ''} autocomplete="off">${esc(v)}</textarea>
+        return `<div class="xp-note-box${st.dirty ? ' dirty' : ''}" id="xp-note-box" data-day="${day}"><label for="xp-note">공지사항</label>
+            <textarea id="xp-note" rows="1" maxlength="2000" placeholder="공지사항은 여기 적어주세요"${ro ? ' readonly' : ''} autocomplete="off">${esc(v)}</textarea>
             <div class="xp-note-f"><small id="xp-note-who">${esc(st.line)}</small>${ro ? '' : `<button type="button" class="xp-btn pri" id="xp-note-save" data-act="note-save"${st.dirty ? '' : ' disabled'}>저장</button>`}</div></div>`;
     }
     function saleHtml(day) {
@@ -145,13 +159,13 @@
         const cf = b.confirm_state === 'failed' ? `<i class="xp-sms err" title="${esc(b.confirm_error || '')}">발주확인 실패</i>` : b.confirm_state === 'skipped_claim' ? `<i class="xp-sms err" title="${esc(b.confirm_error || '')}">자동 안 함 · 클레임 이력 — 센터에서 발주확인</i>`
             : b.confirm_state === 'dispatch_failed' ? `<i class="xp-sms err" title="${esc(b.dispatch_error || '')}">발송처리 실패 — 센터에서 발송처리</i>` : b.confirm_state === 'dispatched' ? '<i class="xp-sms ok" title="발주확인·발송처리(배송 없음) 끝">발송처리✓</i>' : '';   // #782   // #780 3번 실패 = 센터에서 직접
         const sms = noPhone(b) ? '<i class="xp-sms err">번호 미입력</i>' : (b.source !== 'store' && !b.contact_at && !b.sms_recv_at) ? '' : b.sms_skip === 'refused' ? '<i class="xp-sms err" title="문자봇 수신거부 기억 — 문자 안 보냄">수신거부</i>' : smsFail ? `<i class="xp-sms err" title="${esc(b.sms_error || '')}">문자 실패</i>` : viaBadge(b);   // #808 나간 길
-        const editing = X.edit === b.id;
+        const editing = X.edit === b.id, memoing = !editing && X.memoOpen === b.id;   // #1037
         return `<li class="xp-row${srcCls(b)}${off ? ' off' : ''}${vis ? ' vis' : ''}" data-id="${b.id}">
             <span class="xp-time">${whenHtml(b)}</span>
             <div class="xp-main"><div class="xp-l1">${badge}<b class="xp-name">${esc(b.name || '(이름 없음)')}</b>${b.order_no ? `<span class="xp-ono" title="${srcOf(b)[3]}"><i>${srcOf(b)[2]}</i>${esc(b.order_no)}</span>` : ''}${telLink(b.phone)}${chk}</div>
-                <div class="xp-l2"><span>${esc(people(b))}</span>${b.amount ? `<span>${Number(b.amount).toLocaleString('ko-KR')}원</span>` : ''}<span class="xp-st s-${esc(b.status)}">${ST[b.status] || esc(b.status)}</span>${cf}${sms}${b.memo ? `<span class="xp-memo">${esc(b.memo)}</span>` : ''}</div></div>
-            <div class="xp-acts">${off || b.status === 'unknown' ? '' : `<button type="button" class="xp-btn xp-visit${vis ? ' on' : ''}" data-act="visit" aria-pressed="${vis}">${vis ? '방문함' : '방문'}</button>`}<button type="button" class="xp-btn" data-act="edit" aria-expanded="${editing}">수정</button></div>
-            ${editing ? editHtml(b) : X.day === 'nophone' && noPhone(b) ? quickHtml(b) : ''}</li>`;
+                <div class="xp-l2"><span>${esc(people(b))}</span>${b.amount ? `<span>${Number(b.amount).toLocaleString('ko-KR')}원</span>` : ''}<span class="xp-st s-${esc(b.status)}">${ST[b.status] || esc(b.status)}</span>${cf}${sms}</div>${b.memo ? `<div class="xp-memo"><b>메모</b><span>${esc(b.memo)}</span></div>` : ''}</div>
+            <div class="xp-acts">${off || b.status === 'unknown' ? '' : `<button type="button" class="xp-btn xp-visit${vis ? ' on' : ''}" data-act="visit" aria-pressed="${vis}">${vis ? '방문함' : '방문'}</button>`}<button type="button" class="xp-btn xp-memobtn${b.memo ? ' has' : ''}" data-act="memo" aria-expanded="${memoing}" aria-label="${esc((b.name || '손님') + ' 메모' + (b.memo ? ' 있음 · 고치기' : ' 적기'))}">${b.memo ? '메모 ✓' : '메모'}</button><button type="button" class="xp-btn" data-act="edit" aria-expanded="${editing}">수정</button></div>
+            ${editing ? editHtml(b) : memoing ? memoHtml(b) : X.day === 'nophone' && noPhone(b) ? quickHtml(b) : ''}</li>`;
     }
     // #804 번호 미입력 판 = 줄마다 바로 넣기(수정을 안 열어도)
     function quickHtml(b) {
@@ -217,7 +231,7 @@
         if (X.jumpFrom) html += `<div class="xp-jump">${+X.jumpFrom.slice(5)}월엔 남은 예약이 없어 ${+X.ym.slice(5)}월을 보여 드려요 · <button type="button" class="xp-link" data-nav="0">‹ 이번 달</button></div>`;
         if (need.length) html += `<button type="button" class="xp-needbar" data-day="need"><b>날짜 확인 필요 ${need.length}건</b><span>${esc(need.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${need.length > 3 ? ' 외' : ''} — 눌러서 날짜·시간 넣기</span></button>`;
         if (offNoDate.length) html += `<button type="button" class="xp-needbar off" data-day="offnodate"><b>날짜 없는 취소·반품 ${offNoDate.length}건</b><span>${esc(offNoDate.slice(0, 3).map(b => b.name || '(이름 없음)').join(' · '))}${offNoDate.length > 3 ? ' 외' : ''} — 눌러서 보기</span></button>`;
-        { const nd = ((X.data && X.data.notes) || []).filter(n => n.day.startsWith(X.ym + '-')).length; if (nd) html += `<div class="xp-notes-sum" id="xp-notes-sum"><b>이달 특이사항 메모</b><span>${nd}일</span><em>· 메모 있는 날짜를 눌러 봐요</em></div>`; }   // #940
+        { const nd = ((X.data && X.data.notes) || []).filter(n => n.day.startsWith(X.ym + '-')).length; if (nd) html += `<div class="xp-notes-sum" id="xp-notes-sum"><b>이달 공지사항</b><span>${nd}일</span><em>· 공지 있는 날짜를 눌러 봐요</em></div>`; }   // #940
         const sm = saleMonth(X.ym);   // #822 이달 현장 판매 합계(0이면 안 보임)
         if (sm.sum) html += `<div class="xp-sales-sum" id="xp-sales-sum"><b>이달 현장 판매(귤)</b><span>${won(sm.sum)}원</span><em>· ${sm.days}일 · 날짜 칸을 눌러 적어요</em></div>`;
         html += '<div class="xp-cal" role="grid" aria-label="체험 예약 달력"><div class="xp-cal-h" role="row">' + [...DOW].map((w, i) => `<span role="columnheader" class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + '</div><div class="xp-cal-g">';
@@ -232,7 +246,7 @@
             const more = list.length > 3 ? `<span class="xp-more">+${list.length - 3} 더보기</span>` : '';
             const sl = saleOf(ds), sale = sl && Number(sl.amount) > 0 ? `<span class="xp-sale" title="현장 판매(귤) ${won(sl.amount)}원"><i>₩</i><em>현장 ${won(sl.amount)}</em></span>` : '';   // #822
             const nt = noteOf(ds), noteTag = nt ? `<span class="xp-note-txt" title="${esc(nt.note)}">${esc(String(nt.note).split('\n')[0])}</span>` : '';   // #940 · #946 표식 대신 메모 첫 줄 글(전문 = title·날짜 판)
-            const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}${sale ? ` · 현장 판매 ${won(sl.amount)}원` : ''}${nt ? ' · 특이사항 메모 있음' : ''}`;
+            const aria = `${+ds.slice(5, 7)}월 ${day}일 ${DOW[dow]}요일${live.length ? ` · ${live.length}팀 ${ppl}명` : ' · 예약 없음'}${sale ? ` · 현장 판매 ${won(sl.amount)}원` : ''}${nt ? ' · 공지사항 있음' : ''}`;
             html += `<button type="button" class="${cls}" data-day="${ds}" aria-label="${esc(aria)}"><span class="xp-dn">${ds === t ? '오늘' : day}</span>${live.length ? `<span class="xp-cnt"><b>${live.length}팀</b><em> · ${ppl}명</em></span>` : (list.length ? '<span class="xp-cnt off">취소만</span>' : '')}<span class="xp-nms">${names}${more}</span>${live.length ? `<span class="xp-dots" aria-hidden="true">${live.slice(0, 5).map(b => `<i class="xp-dot${srcCls(b)}"></i>`).join('')}</span>` : ''}${sale}${noteTag}</button>`;
         }
         const tail = (7 - (lead + mr.last) % 7) % 7;
@@ -261,14 +275,15 @@
         p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>${!saleOf(X.day) && X.saleEdit !== X.day ? '<button type="button" class="xp-btn xp-salebtn" data-act="sale-edit" aria-expanded="false">+ 현장 판매</button>' : ''}` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
             <div class="xp-panel-b">${isDay ? noteHtml(X.day) + saleHtml(X.day) : ''}${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
         noteFit($('xp-note'));   // #940 글 길이만큼
+        if (X.memoOpen) noteFit($('xp-m-' + X.memoOpen));   // #1037
         X.saleDirty = false;   // #822 판을 새로 그리면 적던 값은 없어진 것
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
     }
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시
     function pushDayHist() { if (X.dayPushed || !X.pushed) return; try { history.pushState(Object.assign({}, history.state || {}, { xpDay: 1 }), ''); X.dayPushed = true; } catch (e) { X.dayPushed = false; } }
     function dropDayHist() { if (!X.dayPushed) return; X.dayPushed = false; X.ignorePop = true; try { history.back(); } catch (e) { X.ignorePop = false; } }
-    function openDay(day) { if (day !== X.day) noteWarn(); X.day = day; X.edit = 0; X.adding = null; X.saleEdit = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
-    function closeDay(fromPop) { noteWarn(); const was = X.day; X.day = null; X.edit = 0; X.adding = null; X.saleEdit = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
+    function openDay(day) { if (day !== X.day) noteWarn(); X.day = day; X.edit = 0; X.memoOpen = 0; X.adding = null; X.saleEdit = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
+    function closeDay(fromPop) { noteWarn(); const was = X.day; X.day = null; X.edit = 0; X.memoOpen = 0; X.adding = null; X.saleEdit = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
     // #808 번호 = 치는 대로 하이픈(숫자만 남겨 3-4-4 · 10자리 3-3-4) · 커서는 끝 · 수기 금액 = 인원으로 셈(금액을 손으로 고치면 그 뒤론 안 셈)
     function onInput(e) {
         const t = e.target;
@@ -276,6 +291,11 @@
             const box = t.closest('#xp-note-box'), day = box && box.dataset.day; if (!day) return;
             noteDraft()[day] = t.value; noteFit(t); const st = noteState(day), b = $('xp-note-save'), w = $('xp-note-who');
             if (b) b.disabled = !st.dirty; if (w) w.textContent = st.line; box.classList.toggle('dirty', st.dirty); return;
+        }
+        if (t.classList.contains('xp-m-ta')) {   // #1037 손님 메모 = 값은 안 바꿈(#857) · 높이·「저장 안 됨」만
+            const box = t.closest('.xp-memo-edit'), id = box && +box.dataset.id; if (!id) return;
+            memoDraft()[id] = t.value; noteFit(t); const dirty = memoDirty(id), w = $('xp-m-who-' + id);
+            if (w) w.textContent = dirty ? '저장 안 됨' : ''; box.classList.toggle('dirty', dirty); return;
         }
         if (t.classList.contains('xp-ph')) {
             if (e.isComposing) return;   // 한글 조합 중엔 안 건드림
@@ -299,9 +319,9 @@
     async function onClick(e) {
         if (e.target.closest('#xp-close')) return close();
         const nav = e.target.closest('[data-nav]');
-        if (nav) { noteWarn(); const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.auto = false; X.jumpFrom = null; X.edit = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        if (nav) { noteWarn(); const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
         const goym = e.target.closest('[data-goym]');   // #786 빈 달의 「n월 n팀 ›」
-        if (goym) { noteWarn(); X.ym = goym.dataset.goym; X.auto = false; X.jumpFrom = null; X.edit = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        if (goym) { noteWarn(); X.ym = goym.dataset.goym; X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
         const cell = e.target.closest('[data-day]'); if (cell && !e.target.closest('#xp-panel')) return openDay(cell.dataset.day);
         if (e.target.closest('#xp-xlsx')) return xlsx();
         if (e.target.closest('#xp-set-btn')) return toggleSet();
@@ -325,7 +345,7 @@
             btn.disabled = true; const r = await call(`/api/agent-office/experience/notes/${day}`, 'PUT', { note: t.value });
             if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
             const list = (X.data.notes = ((X.data && X.data.notes) || []).filter(n => n.day !== day)); if (r.body.item) list.push(r.body.item);
-            delete noteDraft()[day]; toast(r.body.item ? '특이사항 메모를 저장했어요' : '특이사항 메모를 지웠어요');
+            delete noteDraft()[day]; toast(r.body.item ? '공지사항을 저장했어요' : '공지사항을 지웠어요');
             render(); return;
         }
         if (act === 'sale-save') {   // #822 현장 판매(귤) 저장 — 날짜당 한 줄 덮어쓰기 · 0·빈 메모 = 지움
@@ -355,7 +375,22 @@
             return load(true);
         }
         const li = btn.closest('[data-id]'); const id = li ? +li.dataset.id : 0; const b = (X.data.items || []).find(x => x.id === id);
-        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; X.adding = null; return renderPanel(); }
+        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; X.memoOpen = 0; X.adding = null; return renderPanel(); }
+        if (act === 'memo') {   // #1037 열기·닫기(같은 단추) · 수정 판은 닫음(같은 칸 둘이 같이 열리지 않게) · 닫아도 안 저장한 글은 남음
+            if (X.memoOpen === id) { X.memoOpen = 0; return renderPanel(); }
+            X.memoOpen = id; X.edit = 0; renderPanel();
+            const ta = $('xp-m-' + id); if (ta) { ta.focus({ preventScroll: false }); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) { } }
+            return;
+        }
+        if (act === 'memo-close') { X.memoOpen = 0; renderPanel(); const mb = X.layer && X.layer.querySelector(`#xp-panel .xp-row[data-id="${id}"] [data-act="memo"]`); if (mb) mb.focus({ preventScroll: true }); return; }   // 닫기 = 칸만 닫음(적던 글은 X.memoDraft 에 남음 · [메모]·Esc 와 같게 · 버리기 = 빈 글로 [저장])
+        if (act === 'memo-save') {   // PATCH memo 만 · 빈 글 = 지움(서버 null) · 실패 = 글 그대로
+            if (!b) return; const ta = $('xp-m-' + id), memo = String((ta && ta.value) || '').trim();
+            if (memo === String(b.memo || '').trim()) { delete memoDraft()[id]; X.memoOpen = 0; return renderPanel(); }
+            btn.disabled = true; const r = await call(`/api/agent-office/experience/${id}`, 'PATCH', { memo });
+            if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
+            Object.assign(b, r.body.item); delete memoDraft()[id]; X.memoOpen = 0; toast(memo ? '손님 메모를 저장했어요' : '손님 메모를 지웠어요');
+            render(); const mb = X.layer && X.layer.querySelector(`#xp-panel .xp-row[data-id="${id}"] [data-act="memo"]`); if (mb) mb.focus({ preventScroll: true }); return;
+        }
         if (act === 'del' || act === 'undel') {   // #808 수기 건만 · 지우기 = 취소 표시(되돌리기 가능) · 한 번 더 눌러 확인
             if (act === 'del' && btn.dataset.ask !== '1') { btn.dataset.ask = '1'; btn.textContent = '정말 삭제(한 번 더)'; return; }
             btn.disabled = true; const r = await call(`/api/agent-office/experience/${id}`, 'PATCH', { status: act === 'del' ? 'canceled' : 'confirmed' });
@@ -392,7 +427,7 @@
             if (act === 'qsave' && !Object.keys(body).length) { toast('바뀐 것이 없어요'); return; }
             btn.disabled = true; const r = await call(`/api/agent-office/experience/${id}`, 'PATCH', body);
             if (!r.ok) { toast(r.body.error || '저장하지 못했어요'); btn.disabled = false; return; }
-            Object.assign(b, r.body.item); X.edit = 0; toast(sentMsg(r.body.sent));
+            Object.assign(b, r.body.item); X.edit = 0; if ('memo' in body) delete memoDraft()[id]; toast(sentMsg(r.body.sent));   // #1037 수정 판에서 메모를 고쳤으면 [메모] 칸의 옛 글도 버림
             if (body.visit_date) X.day = body.visit_date;   // 날짜를 넣거나 옮기면 판도 그 날로(확인 필요 묶음에서 넣은 경우 포함)
             if (body.visit_date && ymOf(body.visit_date) !== X.ym) { X.ym = ymOf(body.visit_date); X.jumpFrom = null; }
             return load(true);
@@ -447,15 +482,15 @@
     function onKey(e) {
         if (e.key !== 'Escape' || !X.layer) return; e.preventDefault(); e.stopPropagation();
         const cal = document.querySelector('.akm-cal'); if (cal && cal.style.display !== 'none') { if (typeof AkmCal !== 'undefined' && AkmCal.close) AkmCal.close(); else cal.style.display = 'none'; return; }   // #808 달력부터
-        if (X.saleEdit) { X.saleEdit = null; X.saleDirty = false; renderPanel(); } else if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
+        if (X.saleEdit) { X.saleEdit = null; X.saleDirty = false; renderPanel(); } else if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.memoOpen) { X.memoOpen = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
     }
     function open() {
         if (X.layer) { load(); return; }
         X.layer = shell(); document.body.classList.add('xp-open'); document.addEventListener('keydown', onKey, true);
         // 뒤로가기 칸 = 지금 기록(ao-desk 의 aoDesk 깊이 값 포함) 위에 한 칸 — 깊이 값을 이어 붙여야 ao-desk 가 제 칸을 잘못 닫지 않는다
         try { history.pushState(Object.assign({}, history.state || {}, { xpExp: 1 }), ''); X.pushed = true; window.addEventListener('popstate', onPop); } catch (e) { X.pushed = false; }
-        X.ym = ymOf(today()); X.day = null; X.edit = 0; X.auto = true; X.jumpFrom = null; load();
-        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도
+        X.ym = ymOf(today()); X.day = null; X.edit = 0; X.memoOpen = 0; X.auto = true; X.jumpFrom = null; load();
+        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.memoOpen && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도
         setTimeout(() => { const c = $('xp-close'); if (c) c.focus({ preventScroll: true }); }, 0);
     }
     function close(fromPop) {

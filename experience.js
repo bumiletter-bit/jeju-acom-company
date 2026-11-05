@@ -92,9 +92,9 @@ function buildXlsx(rows, sales, from, to, notes) {
     const t2 = w2.addRow({ d: '합계', w: '', a: sum, m: `${(sales || []).length}일 · ${from} ~ ${to}`, by: '', at: '' });
     body(t2, 6, (c, i) => { c.fill = fill(XL.sum); c.font = { bold: true }; c.border = Object.assign({}, border, { top: { style: 'double', color: { argb: XL.line } } }); if (i === 1) c.alignment = { vertical: 'middle', horizontal: 'center' }; if (i === 3) { c.numFmt = '#,##0'; c.alignment = { vertical: 'middle', horizontal: 'right' }; } });
     head(ws, N, lastWs); head(w2, 6, lastW2);
-    if (notes && notes.length) {   // #940 ③ 특이사항 메모(그 기간에 있을 때만 · 없으면 시트 없음 = 종전 파일 그대로)
-        const w3 = wb.addWorksheet('특이사항', { properties: { defaultRowHeight: 20 } });
-        w3.columns = [{ header: '날짜', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '특이사항', key: 'n', width: 70 }, { header: '적은 사람', key: 'by', width: 11 }, { header: '적은 때', key: 'at', width: 17 }];
+    if (notes && notes.length) {   // #940 ③ 특이사항 메모(#1037 화면 이름 = 공지사항 · 시트·머리글도 · 그 기간에 있을 때만 · 없으면 시트 없음 = 종전 파일 그대로)
+        const w3 = wb.addWorksheet('공지사항', { properties: { defaultRowHeight: 20 } });
+        w3.columns = [{ header: '날짜', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '공지사항', key: 'n', width: 70 }, { header: '적은 사람', key: 'by', width: 11 }, { header: '적은 때', key: 'at', width: 17 }];
         for (const x of notes) { const row = w3.addRow({ d: x.day, w: dowOf(x.day), n: x.note || '', by: x.updated_by || '', at: x.updated_at || '' }); body(row, 5, (c, i) => { c.alignment = i === 3 ? { vertical: 'top', wrapText: true } : { vertical: 'middle', horizontal: 'center' }; }); row.height = Math.min(409, Math.max(20, 16 * String(x.note || '').split('\n').reduce((a, l) => a + Math.max(1, Math.ceil(l.length / 40)), 0) + 4)); }
         head(w3, 5, w3.rowCount);
     }
