@@ -773,3 +773,8 @@ html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-bx-date input[aria-invalid="true"] { border-color: var(--d-err); }
 @media (max-width: 960px), (pointer: coarse) { .om-bx-date input, .om-cebox .om-boxbtn { min-height: 44px; } .om-bx-date input { font-size: 16px; } }
 .om-bx-hint { font-size: 12px; color: var(--d-sub); }   /* #1027-b 1박스 판 = 「안 보냄」 대신 발송일 안내 */
+/* #1030(대표 11/5) 꼬리표 칩 = 윗줄 3개 · 아랫줄 고객정보수정 1개 고정(자동 줄바꿈 말고) · 칸 안 글 줄임 없음 */
+.om-tags { display: grid; grid-template-columns: repeat(3, minmax(0, max-content)); justify-content: start; }
+.om-tag { white-space: nowrap; }
+.om-tag[data-tag="cedit"] { grid-column: 1 / -1; justify-self: start; }
+@media (max-width: 420px) { .om-tags { grid-template-columns: repeat(3, minmax(0, 1fr)); } .om-tag { padding: 0 8px; } .om-tag[data-tag="cedit"] { justify-self: stretch; } }

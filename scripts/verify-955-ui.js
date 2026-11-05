@@ -47,7 +47,7 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
         console.log('Ⅰ 꼬리표');
         let pg = await open({ width: 1280, height: 900 });
         const tags = await pg.$$eval('.om-tag', b => b.map(x => x.textContent));
-        ok(JSON.stringify(tags) === JSON.stringify(['주문입력', '입력삭제', '사이즈·과수', '고객정보수정']), '꼬리표 = 칩 4개(#1027 · 날짜 지정·보내는이·메모 수정 뺌)', tags);
+        ok(JSON.stringify(tags) === JSON.stringify(['주문입력', '입력삭제', '사이즈·과수', '고객정보수정(날짜,보내는이,메모수정)']), '꼬리표 = 칩 4개(#1027 · 날짜 지정·보내는이·메모 수정 뺌)', tags);
         // 기존 꼬리표: 날짜 지정·보내는이 무변경
         await pg.click('.om-tag[data-tag="sender"]'); ok(await pg.textContent('#om-tp-go') === '넣기' && await pg.isVisible('#om-tp-name'), '보내는이 = 종전 입력판 · [넣기]');
         await pg.fill('#om-tp-tel', fmt(ONE)); await pg.fill('#om-tp-name', '홍길동'); await pg.click('#om-tp-go');
