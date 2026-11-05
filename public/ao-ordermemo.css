@@ -755,3 +755,12 @@ html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-pill.k-box { background: var(--d-ch-sms-bg); color: var(--d-ch-sms-fg); }
 @media (max-width: 720px) { .om-bx-g { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .om-bx-f:has(input[data-k="n"]) { grid-column: 1 / -1; } }
 @media (max-width: 960px), (pointer: coarse) { .om-lk .om-boxbtn, .om-ordl .om-boxbtn, .om-bx-s, .om-bx-f input, .om-bx-gwa input, .om-boxes .om-seg-b { min-height: 44px; } .om-bx-f input, .om-bx-gwa input { font-size: 16px; } }
+/* #1025 주문별 줄 = 다른 품목 주문의 과수 칸·사이즈 칩 */
+.om-ordl .om-xo { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 13px; }
+.om-ordl label.om-xo input { width: 64px; min-height: 34px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; box-sizing: border-box; }
+.om-ordl label.om-xo input::placeholder { font-size: 11px; }
+@media (max-width: 960px), (pointer: coarse) { .om-ordl label.om-xo input, .om-ordl .om-xo .om-seg-b { min-height: 44px; } .om-ordl label.om-xo input { font-size: 16px; } }
+/* #1026 박스별 판 박스마다 품목(옵션명) 콤보 = 한 줄 전체 · 종전 .om-combo 꼴 */
+.om-bx-g .om-bx-o { grid-column: 1 / -1; }
+.om-bx-o .om-combo { width: 100%; min-height: 34px; }
+@media (max-width: 960px), (pointer: coarse) { .om-bx-o .om-combo { min-height: 44px; } }

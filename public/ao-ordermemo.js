@@ -1051,7 +1051,7 @@
         } else if (f.kind === 'area') {
             input = `<textarea id="${id}" rows="2" data-ri="${ri}" data-fi="${f.i}"${aria}>${esc(v)}</textarea>` + (r.kind === 'cash' && f.i === 8 ? `<p class="om-addr" id="om-addr-${ri}" role="status" aria-live="polite" data-k="${addrKind(r)}">${addrHtml(r, ri)}</p>` : '');
         } else if (f.kind === 'platform') {
-            input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(OM.card && OM.card.mode === 'edit' ? [] : [CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${lkHtml(r, ri)}</p><div class="om-orders" id="om-ord-${ri}">${ordHtml(r, ri)}</div><div class="om-boxp" id="om-box-${ri}">${r.kind === 'line' ? boxPanelHtml(r, ri) : ''}</div>`;
+            input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(OM.card && OM.card.mode === 'edit' ? [] : [CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${lkHtml(r, ri)}</p><div class="om-orders" id="om-ord-${ri}">${ordHtml(r, ri)}</div><div class="om-boxp" id="om-box-${ri}">${r.kind === 'line' ? boxPanelHtml(r, ri) : ''}</div><div class="om-boxp" id="om-xbox-${ri}">${r.kind === 'line' ? xboxPanelHtml(r, ri) : ''}</div>`;
         } else {
             const at = f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
             input = `<input id="${id}" ${f.kind === 'tel' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
@@ -1158,8 +1158,9 @@
         const t = e.target, ri = t.dataset ? Number(t.dataset.ri) : NaN;
         if (t && t.dataset && t.dataset.cact === 'pxq' && OM.card) { pxState(OM.card, t.dataset.k).q = t.value; pxRefresh(OM.card, t.dataset.k); return; }   // #934 추가 매칭 찾기 = 목록만 다시(입력 칸 그대로)
         if (t && t.id === 'om-ind-key' && OM.card && OM.card.ind) { OM.card.ind.draft = t.value; return; }
+        if (t && t.dataset && t.dataset.cact === 'xov' && OM.card) { if (e.isComposing) return; const r = OM.card.rows[Number(t.dataset.ri)]; if (!r) return; const d = digits(t.value).slice(0, 2); if (d !== t.value) t.value = d; xoOf(r, t.dataset.o, 'gwa', 1).v = d && Number(d) > 0 && Number(d) <= 40 ? Number(d) + '과로!' : ''; return; }   // #1025 1박스 만감류 주문 과수(1~40)
         if (t && t.dataset && t.dataset.cact === 'bxf' && OM.card) {   // #1021 박스 칸 = 치는 대로 판 값만(다시 그리지 않음 · 번호 정리는 저장 때)
-            const r = OM.card.rows[Number(t.dataset.ri)], x = r && r._bx && r._bx.arr[Number(t.dataset.bi)]; if (!x) return;
+            const r = OM.card.rows[Number(t.dataset.ri)], bq = bxGet(r, t.dataset.x), x = bq && bq.arr[Number(t.dataset.bi)]; if (!x) return;
             if (t.dataset.k === 'gwa') { if (e.isComposing) return; const d = digits(t.value).slice(0, 2); x.t = d && Number(d) > 0 ? Number(d) + '과로!' : ''; } else x[t.dataset.k] = t.value;
             return;
         }   // #895 주문자 번호 = 치는 동안은 그대로 두고 떠날 때·Enter 때 줄에 넣음(#857)
@@ -1559,7 +1560,7 @@
         c.dirty = true; if (!cardReveal(c, ri)) renderCard(); if (c.rows[ri].kind === 'line') lkRun(ri);   // #900 2-B 안 그린 줄이면 그 쪽까지 펼침
         const fx = $('om-card').querySelectorAll('.om-rowcard')[ri]; const t2 = fx && (fx.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || fx.querySelector('.om-seg-b[aria-checked="true"]')); if (t2) t2.focus({ preventScroll: true });
     }
-    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; delete o._ik; delete o._ik0; delete o._ib0; delete o._k10typed; delete o._pairSaved; delete o._svcTouched; delete o._expTouched; delete o._noIndiv; delete o._ord; delete o._splitFrom; delete o._bx; delete o._bxOff; delete o._bxTouched; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
+    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; delete o._ik; delete o._ik0; delete o._ib0; delete o._k10typed; delete o._pairSaved; delete o._svcTouched; delete o._expTouched; delete o._noIndiv; delete o._ord; delete o._splitFrom; delete o._bx; delete o._bxOff; delete o._bxTouched; delete o._xo; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
     // ── #850-c 판매처 확인 — 번호(또는 주문번호)로 발송 전 주문 찾기(계약 §7 · 7일) · 찾은 판매처 하나면 미리 고름 · 판매처 누르면 그 곳 결과로
     //   r._lk = { state: busy|done|err, key(숫자), matches } · r.checked = 고른 판매처에서 찾았을 때만 { plat, as, at }(§8 · 최종발주 「취소됐을 수 있어요」 근거)
     // ── #938(대표 11/1) 같은 구매자 주문이 둘 이상(A 4박스 · B 8박스)이면 주문별로 발송일 다르게 — 「이 주문」 체크 + 발송일 칸 → 저장 때 주문별 발송일이 하나라도 다르거나 일부만 체크면 **주문번호 키 줄로 나눠 저장**(A·B 둘 다 · note·plat 그대로 · 각자 발송일 · 전화번호 줄은 안 남김 · checked.buyer = 전화번호) · 전부 같으면 종전 전화번호 줄 1개(바이트 동일)
@@ -1583,9 +1584,9 @@
         const L = ordList(r); if (L.length < 2) return '';
         if (!r._ord) ordInit(r); const o = r._ord, sp = ordSplit(r);
         const dated = sp ? sp.filter(z => ordDate(r, z.e)) : [];
-        const bos = boxOrders(r), bOf = x => bos.find(y => String(y.x.order_no) === String(x.order_no) && boxOk(y));   // #1021 주문마다 박스별 단추(한 줄 주문 · 2박스↑만)
+        const bos = boxOrders(r), bOf = x => bos.find(y => String(y.x.order_no) === String(x.order_no) && boxOk(y) && (!crossK(r) || itemK(y.option) !== crossK(r))), yOf = x => bos.find(y => String(y.x.order_no) === String(x.order_no));   // #1025 다른 품목 주문 = 과수 칸·사이즈 칩(xoHtml)   // #1021 주문마다 박스별 단추(한 줄 주문 · 2박스↑만)
         return `<div class="om-ordbox" role="group" aria-label="주문별 발송일"><b>이 번호 주문 ${L.length}건 · 주문마다 발송일을 다르게 하려면 여기서</b>
-            <ul class="om-ordl">${L.map(x => { const e = o.by[x.order_no], dt = ordDate(r, e), bo = bOf(x); return `<li><label class="om-ordck"><input type="checkbox" data-cact="ordchk" data-ri="${ri}" data-o="${esc(x.order_no)}"${e.on ? ' checked' : ''}> <span>${esc(optBrief(x.option))}${x.qty ? ` ${x.qty}박스` : ''} · ${esc(x.order_no)}${x.paid_at ? ` · ${esc(md(x.paid_at))} 결제` : ''}</span></label>${bo ? boxBtn(ri, bo) : ''}<label class="om-orddt"><span>발송일</span><input data-cact="orddate" data-ri="${ri}" data-o="${esc(x.order_no)}" value="${esc(dt ? md(dt) : '')}" placeholder="비우면 줄 발송일" inputmode="numeric"${e.on ? '' : ' disabled'}></label></li>`; }).join('')}</ul>
+            <ul class="om-ordl">${L.map(x => { const e = o.by[x.order_no], dt = ordDate(r, e), bo = bOf(x); return `<li><label class="om-ordck"><input type="checkbox" data-cact="ordchk" data-ri="${ri}" data-o="${esc(x.order_no)}"${e.on ? ' checked' : ''}> <span>${esc(optBrief(x.option))}${x.qty ? ` ${x.qty}박스` : ''} · ${esc(x.order_no)}${x.paid_at ? ` · ${esc(md(x.paid_at))} 결제` : ''}</span></label>${bo ? boxBtn(ri, bo) : xoHtml(r, ri, yOf(x))}<label class="om-orddt"><span>발송일</span><input data-cact="orddate" data-ri="${ri}" data-o="${esc(x.order_no)}" value="${esc(dt ? md(dt) : '')}" placeholder="비우면 줄 발송일" inputmode="numeric"${e.on ? '' : ' disabled'}></label></li>`; }).join('')}</ul>
             <p class="om-ordn">${sp ? `저장하면 주문번호 줄 ${sp.length}개로 나뉘어 저장돼요(전화번호 줄은 안 남아요)${dated.length ? ` · ${dated.map(z => `${md(ordDate(r, z.e))} 주문(${z.x.qty || '?'}박스)의 주소 줄 ${z.x.qty || ''}개에는 발송일 칸에 ${md(ordDate(r, z.e))}를 직접 넣어 주세요`).join(' · ')}` : ''}` : '주문별 발송일이 다르면 주문번호 줄로 나뉘어 저장돼요 · 지금은 전부 같아 전화번호 줄 하나로 저장돼요'}</p></div>`;
     }
     const ordSibs = r => (OM.list || []).filter(x => x.kind === 'line' && !isShipRow(x) && x.state === 'open' && x.id != null && x.id !== r.id && !isPhoneKey(x.key) && lineD(x) === lineD(r) && String(x.plat || '') === String(r.plat || '') && String(x.note || '').replace(/\s+/g, '') === String(r.note || '').replace(/\s+/g, ''));
@@ -1631,7 +1632,8 @@
         return bx.arr.map(b => { const o = {}; BOX_K.forEach(k => { o[k] = String(b[k] == null ? '' : b[k]).replace(/[\t\r\n]+/g, ' ').trim(); }); ['p', 'p2', 'sp'].forEach(k => { o[k] = telClean(o[k]); }); o.s = o.s ? '1' : ''; o.n = o.n.slice(0, 20); o.sn = o.sn.slice(0, 20); o.a = o.a.slice(0, 200); o.m = o.m.slice(0, 300); o.t = o.t.slice(0, 40); o.o = o.o.slice(0, 120); return o; });
     }
     function boxSummary(arr) {
-        return arr.length + '박스 · ' + arr.map((b, i) => { const w = [...new Set(['n', 'p', 'p2', 'a', 'm', 'sn', 'sp'].filter(k => b[k]).map(k => BOX_W[k]))]; return `박스${i + 1}=` + (b.s ? '안 보냄' : (boxShortT(b.t) || '그대로')) + (w.length && !b.s ? `(${w.join('·')} 바꿈)` : ''); }).join(' · ');
+        return arr.length + '박스 · ' + arr.map((b, i) => { const w = [...new Set(['n', 'p', 'p2', 'a', 'm', 'sn', 'sp'].filter(k => b[k]).map(k => BOX_W[k]))]; if (b.o) { const kg = String(b.o).match(/(\d+(?:\.\d+)?\s*kg)/i); w.unshift(kg ? kg[1].replace(/\s+/g, '') + ' 로' : '품목'); }   // #1026 「박스2=그대로(5kg 로 바꿈)」
+            return `박스${i + 1}=` + (b.s ? '안 보냄' : (boxShortT(b.t) || '그대로')) + (w.length && !b.s ? `(${w.join('·')} 바꿈)` : ''); }).join(' · ');
     }
     function boxApply(r) {   // 카드 저장 때 · 'box' = 박스별 줄로 바꿈 · 'none' = 바꾼 것 없음(종전 줄 그대로) · '' = 판 없음
         const bx = r._bx; if (!bx) return '';
@@ -1643,22 +1645,55 @@
         r.checked = Object.assign({ plat: r.plat || bx.plat, as: 'buyer', at: new Date().toISOString() }, bx.o ? { pno: bx.o } : {});
         return 'box';
     }
-    function boxPanelHtml(r, ri) {
-        boxEditInit(r);
-        const bx = r._bx; if (!bx) return '';
-        const kind = boxKindOf(bx), id = (i, k) => `om-bx-${ri}-${i}-${k}`;
-        const tailH = (b, i) => kind === 'size' ? `<div class="om-seg om-bx-seg" role="radiogroup" aria-label="박스 ${i + 1} 사이즈">${[['2S사이즈로!', '2S'], ['S사이즈로!', 'S'], ['M사이즈로!', 'M'], ['', '없음']].map(([v, l]) => `<button type="button" role="radio" class="om-seg-b" data-cact="bxt" data-ri="${ri}" data-bi="${i}" data-v="${esc(v)}" aria-checked="${b.t === v ? 'true' : 'false'}">${l}</button>`).join('')}</div>`
-            : kind === 'gwa' ? `<label class="om-bx-gwa">과수 <input data-cact="bxf" data-ri="${ri}" data-bi="${i}" data-k="gwa" inputmode="numeric" maxlength="2" value="${esc(String(b.t || '').replace(/과로!$/, ''))}" placeholder="그대로"> 과</label>` : '';
-        const f = (b, i, k, label, ph, more) => `<label class="om-bx-f" for="${id(i, k)}"><span>${label}</span><input id="${id(i, k)}" data-cact="bxf" data-ri="${ri}" data-bi="${i}" data-k="${k}" value="${esc(b[k])}" placeholder="${esc(ph)}"${more || ''}></label>`;
+    // #1025 판 그리기 = 줄 본판(r._bx · x '') + 다른 품목 주문 판(r._xo[주문].bx · x = 주문번호) 같은 꼴 · data-x 로 구분
+    const bxGet = (r, x) => !r ? null : x ? (r._xo && r._xo[x] && r._xo[x].bx) || null : r._bx;
+    function boxPanelHtml(r, ri) { boxEditInit(r); return r._bx ? bxPanel(r._bx, ri, '') : ''; }
+    const xboxPanelHtml = (r, ri) => Object.keys(r._xo || {}).map(o => r._xo[o].bx ? bxPanel(r._xo[o].bx, ri, o) : '').join('');
+    function bxPanel(bx, ri, x) {
+        const kind = boxKindOf(bx), X = x ? ` data-x="${esc(x)}"` : '', id = (i, k) => `om-bx-${ri}${x ? 'x' + digits(x).slice(-8) : ''}-${i}-${k}`;
+        const kOf = b => b.o ? itemK(b.o) : kind;   // #1026 박스 품목을 바꾸면 그 박스 칩 종류도 따라감
+        const tailH = (b, i) => kOf(b) === 'size' ? `<div class="om-seg om-bx-seg" role="radiogroup" aria-label="박스 ${i + 1} 사이즈">${[['2S사이즈로!', '2S'], ['S사이즈로!', 'S'], ['M사이즈로!', 'M'], ['', '없음']].map(([v, l]) => `<button type="button" role="radio" class="om-seg-b" data-cact="bxt" data-ri="${ri}"${X} data-bi="${i}" data-v="${esc(v)}" aria-checked="${b.t === v ? 'true' : 'false'}">${l}</button>`).join('')}</div>`
+            : kOf(b) === 'gwa' ? `<label class="om-bx-gwa">과수 <input data-cact="bxf" data-ri="${ri}"${X} data-bi="${i}" data-k="gwa" inputmode="numeric" maxlength="2" value="${esc(String(b.t || '').replace(/과로!$/, ''))}" placeholder="그대로"> 과</label>` : '';
+        const f = (b, i, k, label, ph, more) => `<label class="om-bx-f" for="${id(i, k)}"><span>${label}</span><input id="${id(i, k)}" data-cact="bxf" data-ri="${ri}"${X} data-bi="${i}" data-k="${k}" value="${esc(b[k])}" placeholder="${esc(ph)}"${more || ''}></label>`;
         return `<div class="om-boxes" role="group" aria-label="박스별 카드 · ${bx.qty}박스">
-            <div class="om-boxes-h"><b>박스별 ${bx.qty}박스</b><span>빈칸 = 주문 그대로</span><button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}">전부 박스 1과 같게</button><button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}">박스별 안 함</button></div>
-            ${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
+            <div class="om-boxes-h"><b>${x ? esc(optBrief(bx.option)) + ' ' : ''}박스별 ${bx.qty}박스</b><span>빈칸 = 주문 그대로</span><button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}"${X}>전부 박스 1과 같게</button><button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}"${X}>박스별 안 함</button></div>
+            ${x ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
             ${bx.arr.map((b, i) => `<fieldset class="om-boxrow${b.s ? ' off' : ''}"><legend>박스 ${i + 1}</legend>
-              <div class="om-bx-top">${tailH(b, i)}<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}" data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label></div>
-              <div class="om-bx-g">${f(b, i, 'n', '받는 분', bx.recv || '주문 그대로', ' maxlength="20"')}${f(b, i, 'p', '받는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'p2', '번호2', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'a', '주소', bx.addr || '주문 그대로', ' maxlength="200"')}${f(b, i, 'm', '배송메세지', '주문 그대로', ' maxlength="300"')}${f(b, i, 'sn', '보내는 분', '주문 그대로', ' maxlength="20"')}${f(b, i, 'sp', '보내는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}</div></fieldset>`).join('')}
-            <div class="om-acts"><button type="button" class="om-btn primary sm" data-cact="bxsave" data-ri="${ri}">박스별로 저장</button><span>카드 [저장]을 눌러도 같이 저장돼요</span></div></div>`;
+              <div class="om-bx-top">${tailH(b, i)}<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}"${X} data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label></div>
+              <div class="om-bx-g"><div class="om-bx-f om-bx-o"><span id="${id(i, 'o')}-l">품목</span><button type="button" class="om-combo" data-cact="bxopt" data-ri="${ri}"${X} data-bi="${i}" aria-labelledby="${id(i, 'o')}-l" aria-haspopup="dialog"><span>${b.o ? esc(shortOpt(b.o)) : '<i>주문 그대로</i>'}</span>${ICON_DOWN}</button></div>${f(b, i, 'n', '받는 분', bx.recv || '주문 그대로', ' maxlength="20"')}${f(b, i, 'p', '받는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'p2', '번호2', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'a', '주소', bx.addr || '주문 그대로', ' maxlength="200"')}${f(b, i, 'm', '배송메세지', '주문 그대로', ' maxlength="300"')}${f(b, i, 'sn', '보내는 분', '주문 그대로', ' maxlength="20"')}${f(b, i, 'sp', '보내는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}</div></fieldset>`).join('')}
+            <div class="om-acts"><button type="button" class="om-btn primary sm" data-cact="bxsave" data-ri="${ri}"${X}>박스별로 저장</button><span>카드 [저장]을 눌러도 같이 저장돼요</span></div></div>`;
     }
-    function boxRefresh(ri) { const r = OM.card && OM.card.rows[ri], el = $('om-card').querySelector('#om-box-' + ri); if (r && el) el.innerHTML = boxPanelHtml(r, ri); }
+    function boxRefresh(ri) { const r = OM.card && OM.card.rows[ri], card = $('om-card'), el = card.querySelector('#om-box-' + ri), xe = card.querySelector('#om-xbox-' + ri); if (r && el) el.innerHTML = boxPanelHtml(r, ri); if (r && xe) xe.innerHTML = xboxPanelHtml(r, ri); }
+    // #1025(대표 11/5) 같은 번호에 다른 품목 주문(사이즈 줄인데 만감류 주문 · 과수 줄인데 귤 로얄과 주문)이 #938 주문별 줄에 보이면 그 주문 줄에 과수 칸(또는 사이즈 칩) · 2박스↑ = 「n박스 · 박스별로」 판
+    //   채우면 [저장] 때 그 주문 줄(「번호 13과로」 · checked.pno = 그 주문) 또는 박스별 줄을 같은 묶음 두 번째 줄로 같이 저장 · 안 채우면 종전 한 줄
+    const rowTail = r => { const n = String(r.note || ''); if (isBoxRow(r)) { const t = (r.boxes || []).map(b => b.t).find(Boolean) || ''; return /사이즈로!$/.test(t) ? 'size' : /과로!$/.test(t) ? 'gwa' : ''; } return TAG_RE.size.test(n) ? 'size' : /\d{1,2}\s*과(?:수)?\s*로/.test(n) ? 'gwa' : ''; };
+    const itemK = opt => sizeItem(opt || '') ? 'size' : gwaItem(opt || '') ? 'gwa' : '';
+    const crossK = r => ({ size: 'gwa', gwa: 'size' })[rowTail(r)] || '';
+    const xoOf = (r, oid, kind, qty) => { r._xo = r._xo || {}; return r._xo[oid] || (r._xo[oid] = { kind, qty, v: '', bx: null }); };
+    function xoHtml(r, ri, y) {   // 주문 줄 끝 = 1박스 과수 칸/사이즈 칩 · 2박스↑ 단추
+        const ck = crossK(r); if (!ck || !y || !y.one || itemK(y.option) !== ck) return '';
+        if (y.qty >= 2) return `<button type="button" class="om-btn sm om-boxbtn" data-cact="boxcard" data-x="1" data-ri="${ri}" data-o="${esc(y.id)}" aria-label="${esc(optBrief(y.option) + ' ' + y.qty + '박스 박스마다 ' + (ck === 'gwa' ? '과수' : '사이즈'))}">${y.qty}박스 · 박스별로</button>`;
+        const xo = (r._xo && r._xo[y.id]) || { v: '' };
+        if (ck === 'gwa') return `<label class="om-xo"><span>과수</span><input data-cact="xov" data-ri="${ri}" data-o="${esc(y.id)}" inputmode="numeric" pattern="[0-9]*" maxlength="2" value="${esc(String(xo.v || '').replace(/과로!$/, ''))}" placeholder="예) 13" aria-label="${esc(optBrief(y.option) + ' 과수')}"><span>과로</span></label>`;
+        return `<div class="om-seg om-xo" role="radiogroup" aria-label="${esc(optBrief(y.option) + ' 사이즈')}">${[['2S사이즈로!', '2S'], ['S사이즈로!', 'S'], ['M사이즈로!', 'M'], ['', '안 넣음']].map(([v, l]) => `<button type="button" role="radio" class="om-seg-b" data-cact="xot" data-ri="${ri}" data-o="${esc(y.id)}" data-v="${esc(v)}" aria-checked="${(xo.v || '') === v ? 'true' : 'false'}">${l}</button>`).join('')}</div>`;
+    }
+    function boxOpenX(r, oid) {
+        const o = boxOrders(r).find(x => x.id === String(oid)); if (!boxOk(o)) return false;
+        const xo = xoOf(r, o.id, itemK(o.option), o.qty), q = Math.min(o.qty, BOX_MAX);
+        if (!xo.bx) xo.bx = { o: o.id, qty: q, over: o.qty > BOX_MAX, option: o.option, recv: o.recv, addr: o.addr, plat: o.x.plat || r.plat, t0: '', arr: Array.from({ length: q }, () => BOX_K.reduce((a, k) => (a[k] = '', a), {})) };
+        return true;
+    }
+    function xoRows(r) {   // 저장 때 더 들어갈 줄(같은 묶음 두 번째 줄부터)
+        const out = [], live = new Set(boxOrders(r).map(x => x.id));
+        Object.keys(r._xo || {}).forEach(oid => {
+            const xo = r._xo[oid]; if (!live.has(oid) && r._lk && r._lk.state === 'done') return;
+            const base = { kind: 'line', key: r.key, plat: r.plat, ship_date: r.ship_date || null, sure: true, check_why: [], src: 'edit', checked: { plat: r.plat, as: 'buyer', at: new Date().toISOString(), pno: oid } };
+            if (xo.bx) { const arr = boxClean(xo.bx); if (arr.every(b => !b.s && !b.t && !['o', 'n', 'p', 'p2', 'a', 'm', 'sn', 'sp'].some(k => b[k]))) return; const note = '박스별 ' + boxSummary(arr); out.push(Object.assign(base, { note, boxes: arr, line: [base.ship_date ? md(base.ship_date) : '', r.key, note, r.plat].join('\t') })); return; }
+            if (!xo.v) return;
+            const note = String(xo.v).replace(/!$/, ''); out.push(Object.assign(base, { note, line: [base.ship_date ? md(base.ship_date) : '', r.key, note, r.plat].join('\t') }));
+        });
+        return out;
+    }
     function ordDateCommit(t) {
         const c = OM.card, ri = Number(t.dataset.ri), r = c && c.rows[ri], e = r && r._ord && r._ord.by[t.dataset.o]; if (!e) return;
         const v = t.value.trim(); if (!v) { e.touched = false; e.date = null; }
@@ -1731,6 +1766,7 @@
         p.innerHTML = lkHtml(r, ri); p.dataset.k = lkKind(r); const ob = card.querySelector('#om-ord-' + ri); if (ob) ob.innerHTML = ordHtml(r, ri);   // #938
         if (r._bx && r._bx.o && r._lk && r._lk.state === 'done' && !Array.isArray(r.boxes) && !boxOrders(r).some(x => x.id === r._bx.o && boxOk(x))) r._bx = null;   // #1021 고른 주문이 사라짐(판매처 바꿈) = 판 닫음(저장된 박스별 줄 고치기는 그대로)
         const bp = card.querySelector('#om-box-' + ri); if (bp && !bp.contains(document.activeElement)) bp.innerHTML = boxPanelHtml(r, ri);
+        const xp = card.querySelector('#om-xbox-' + ri); if (xp && !xp.contains(document.activeElement)) xp.innerHTML = xboxPanelHtml(r, ri);
         const seg = p.parentNode.querySelector('.om-seg'); if (seg) seg.querySelectorAll('.om-seg-b').forEach(x => x.setAttribute('aria-checked', x.dataset.v === r.plat ? 'true' : 'false'));
         touched(ri, LINE_FIELDS.find(x => x.k === 'plat'));
     }
@@ -1940,6 +1976,7 @@
         if (a === 'plat' && (b.dataset.v === CASH_PLAT || r.kind === 'cash')) { toCashOrBack(ri, b.dataset.v); return; }   // #850-f 「현금」 = 현금 손님 칸으로 · 현금 줄에서 다른 판매처 = 메모 줄로 되돌림
         if (a === 'plat') { const f = LINE_FIELDS.find(x => x.k === 'plat'); setV(r, f, b.dataset.v); if (canLook(r.key) && (!r._lk || r._lk.key !== digits(r.key))) { lkRun(ri); return; } lkCheck(r); lkPaint(ri); return; }   // #850-c 받아 둔 결과로 거름(호출 0) · 번호가 바뀌었으면 다시 찾기
         if (a === 'opt') { optOpen(ri, b); return; }
+        if (a === 'bxopt' && bxGet(r, b.dataset.x)) { optOpen(ri, b, { x: b.dataset.x || '', bi: Number(b.dataset.bi) }); return; }   // #1026 박스 품목
         if (a === 'tail' && r && r.kind === 'cash') {   // #856 사이즈 고르기(누른 것 다시 누르면 그대로 · 「없음」 = 꼬리 뗌)
             const f = CASH_FIELDS.find(x => x.i === 4); setV(r, f, withOptTail(r.cells[4], b.dataset.v || '')); touched(ri, f);
             b.parentNode.querySelectorAll('.om-seg-b').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
@@ -1966,10 +2003,13 @@
         }
         if (a === 'save') return cardSave(b);
         // #1021 박스별 카드
+        if (a === 'boxcard' && r && b.dataset.x) { if (!boxOpenX(r, b.dataset.o)) { toast('이 주문은 박스별로 못 나눠요(1박스·여러 줄 주문)'); return; } boxRefresh(ri); const f0 = $('om-card').querySelector(`#om-xbox-${ri} [data-x="${b.dataset.o}"]`); if (f0) { f0.scrollIntoView({ block: 'nearest' }); f0.focus({ preventScroll: true }); } return; }
+        if (a === 'xot' && r) { const xo = xoOf(r, b.dataset.o, 'size', 1); xo.v = b.dataset.v; b.parentNode.querySelectorAll('.om-seg-b').forEach(y => y.setAttribute('aria-checked', y === b ? 'true' : 'false')); return; }   // #1025 1박스 귤 주문 사이즈
         if (a === 'boxcard' && r) { if (!boxOpen(r, b.dataset.o)) { toast('이 주문은 박스별로 못 나눠요(1박스·여러 줄 주문)'); return; } r._bxOff = false; boxRefresh(ri); const f0 = $('om-card').querySelector(`#om-box-${ri} .om-boxrow input, #om-box-${ri} .om-seg-b`); if (f0) { f0.scrollIntoView({ block: 'nearest' }); f0.focus({ preventScroll: true }); } return; }
-        if (a === 'bxt' && r && r._bx) { const bi = Number(b.dataset.bi); if (r._bx.arr[bi]) { r._bx.arr[bi].t = b.dataset.v; boxRefresh(ri); const back = $('om-card').querySelector(`#om-box-${ri} [data-cact="bxt"][data-bi="${bi}"][data-v="${b.dataset.v}"]`); if (back) back.focus({ preventScroll: true }); } return; }
-        if (a === 'bxs' && r && r._bx) { const bi = Number(b.dataset.bi); if (r._bx.arr[bi]) { r._bx.arr[bi].s = b.checked ? '1' : ''; const fs = b.closest('.om-boxrow'); if (fs) fs.classList.toggle('off', !!b.checked); } return; }
-        if (a === 'bxsame' && r && r._bx) { const b0 = r._bx.arr[0]; r._bx.arr = r._bx.arr.map((x, i) => i ? Object.assign({}, b0) : x); boxRefresh(ri); toast(`박스 ${r._bx.arr.length}개 전부 박스 1과 같게 했어요`); return; }
+        if (a === 'bxt' && bxGet(r, b.dataset.x)) { const bq = bxGet(r, b.dataset.x), bi = Number(b.dataset.bi); if (bq.arr[bi]) { bq.arr[bi].t = b.dataset.v; boxRefresh(ri); const back = $('om-card').querySelector(`[data-cact="bxt"][data-ri="${ri}"]${b.dataset.x ? `[data-x="${b.dataset.x}"]` : ':not([data-x])'}[data-bi="${bi}"][data-v="${b.dataset.v}"]`); if (back) back.focus({ preventScroll: true }); } return; }
+        if (a === 'bxs' && bxGet(r, b.dataset.x)) { const bq = bxGet(r, b.dataset.x), bi = Number(b.dataset.bi); if (bq.arr[bi]) { bq.arr[bi].s = b.checked ? '1' : ''; const fs = b.closest('.om-boxrow'); if (fs) fs.classList.toggle('off', !!b.checked); } return; }
+        if (a === 'bxsame' && bxGet(r, b.dataset.x)) { const bq = bxGet(r, b.dataset.x), b0 = bq.arr[0]; bq.arr = bq.arr.map((x, i) => i ? Object.assign({}, b0) : x); boxRefresh(ri); toast(`박스 ${bq.arr.length}개 전부 박스 1과 같게 했어요`); return; }
+        if (a === 'bxclose' && r && b.dataset.x) { if (r._xo && r._xo[b.dataset.x]) r._xo[b.dataset.x].bx = null; boxRefresh(ri); return; }
         if (a === 'bxclose' && r) { r._bx = null; r._bxOff = true; if (isBoxRow(r) && Array.isArray(r.boxes)) toast('저장된 박스별 값은 그대로예요 · 지우려면 이 줄을 지우고 다시 넣어 주세요'); boxRefresh(ri); return; }
         if (a === 'bxsave') { const sv = $('om-card-save'); if (sv) return cardSave(sv); return; }
         if (a === 'addrset' || a === 'addrkeep') {   // #850-g 도로명 고르기 · 적은 그대로
@@ -2018,6 +2058,9 @@
         c._saving = true;   // #935 저장 중 = 재조회 끝나도 카드 다시 안 그림(단추가 되살아나 이중 저장·못 본 줄 체크 막기 · 실패 분기에서 false)
         let rows = c.rows.filter(r => !r._new);   // #850-c 더하고 손대지 않은 빈 줄은 그냥 버림
         { const bxr = rows.filter(r => r.kind === 'line' && r._bx).map(boxApply); if (bxr.includes('none')) toast('박스마다 다른 것이 없어 사이즈 줄로 저장해요'); if (bxr.includes('box')) c.dupOk = c.dupOk || null; }   // #1021 열린 박스별 판 = 저장 단추가 같이 실행(메모리 feedback-save-button-does-pending-action)
+        const xHas = x => (OM.list || []).some(o => o.kind === 'line' && o.state === 'open' && o.id !== (rows[0] && rows[0].id) && digits(o.key) === digits(x.key) && o.checked && x.checked && String(o.checked.pno || '') === String(x.checked.pno || ''));   // #1025-b 같은 번호·같은 주문 줄이 이미 열려 있으면 다시 안 넣음(고치기 두 번 저장 중복)
+        const xExtra = c.mode === 'edit' && rows[0] && rows[0].kind === 'line' ? xoRows(rows[0]).filter(x => !xHas(x)) : [];   // #1025 고치기 = 이 줄 PUT 뒤 다른 품목 주문 줄은 새로 POST
+        if (c.mode !== 'edit') rows = rows.flatMap(r => r.kind === 'line' ? [r].concat(xoRows(r)) : [r]);   // #1025 다른 품목 주문 과수·사이즈 = 같은 묶음 두 번째 줄
         if (c.mode !== 'edit') rows = expandOrders(rows);   // #938 주문별 발송일이 다르면 주문번호 줄들로
         if (c.pair1 && c.pair1.seen && !indKeyOk(c)) c.rows.forEach(r => { if (r.kind === 'cash') r._noIndiv = c.pair1.seen.has(r) && !c.pair1.sel.has(r) && !r.indiv; });   // #900 1-H ① 묻기에서 체크를 끈 줄 = 같은 묶음에 그 번호 입력삭제 줄이 있어도 서버 markIndiv 가 짝짓지 않게(no_indiv)
         if (!rows.length) { cardClose(true); return; }
@@ -2046,6 +2089,7 @@
             const ex = rows[0].kind === 'line' ? expandOrders([rows[0]]) : [rows[0]];
             if (ex[0] !== rows[0]) Object.assign(rows[0], { key: ex[0].key, ship_date: ex[0].ship_date, plat: ex[0].plat, line: ex[0].line, checked: ex[0].checked, _lk: ex[0]._lk });
             res = await API.update(rows[0].id, putBody(rows[0]));
+            if (res.ok && xExtra.length) { const r3 = await API.save({ raw: c.raw || '', tags: c.tags || [], source: 'manual', rows: xExtra.map(outRow) }); toast(r3.ok ? `다른 품목 주문 줄 ${xExtra.length}개도 저장했어요` : errText(r3, '다른 품목 주문 줄을 못 저장했어요') + ' · 이 줄만 바뀌었어요'); }
             if (res.ok && ex.length > 1) { const r2 = await API.save({ raw: c.raw || '', tags: c.tags || [], source: 'manual', rows: ex.slice(1).map(outRow) }); if (!r2.ok) toast(errText(r2, '나머지 주문 줄을 못 저장했어요') + ' · 이 줄만 바뀌었어요'); else toast(`주문번호 줄 ${ex.length}개로 나눴어요`); }
         }
         else res = await saveRows(c, rows);   // #895 60줄 넘으면 나눠 저장
@@ -2078,8 +2122,8 @@
     }
 
     // ── 옵션정보 고르기(찾기 · 최근 고른 것 위) ─────────────
-    function optOpen(ri, btn) {
-        OM.opt = { ri, btn, at: -1 };
+    function optOpen(ri, btn, box) {
+        OM.opt = { ri, btn, at: -1, box: box || null };
         const pop = $('om-optpop'), q = $('om-opt-q'); q.value = '';
         optRender(); pop.hidden = false; OM.el.classList.add('opt-open');
         if (!phoneW()) { const r = btn.getBoundingClientRect(), w = Math.max(r.width, 320); pop.style.left = Math.min(r.left, window.innerWidth - w - 12) + 'px'; pop.style.top = Math.min(r.bottom + 6, window.innerHeight - 340) + 'px'; pop.style.width = w + 'px'; }
@@ -2096,7 +2140,8 @@
     function optRender() {
         if (!OM.opt) return;
         const ul = $('om-opt-list'), qs = $('om-opt-q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);   // 띄어 쓴 낱말이 전부 든 품목(「타이벡 10」 = 타이벡 … 10kg)
-        const cur = OM.card && OM.card.rows[OM.opt.ri] ? OM.card.rows[OM.opt.ri].cells[4] : '';
+        const r0 = OM.card && OM.card.rows[OM.opt.ri], bxo = OM.opt.box && r0 ? bxGet(r0, OM.opt.box.x) : null;
+        const cur = OM.opt.box ? (bxo && bxo.arr[OM.opt.box.bi] ? bxo.arr[OM.opt.box.bi].o : '') : r0 && r0.cells ? r0.cells[4] : '';
         if (!OM.catalog) { ul.innerHTML = '<li class="om-opt-empty">품목 목록을 불러오는 중…</li>'; return; }
         const hit = s => { const t = String(s).replace(/\s+/g, '').toLowerCase(); return qs.every(w => t.includes(w)); };
         const rec = recentGet().filter(x => OM.catalog.includes(x) && hit(x));
@@ -2105,6 +2150,7 @@
         let i = 0, html = '';
         if (rec.length) html += `<li class="om-opt-g" role="presentation">최근 고른 것</li>` + rec.map(v => li(v, i++)).join('');
         if (rest.length) html += (rec.length ? `<li class="om-opt-g" role="presentation">전체</li>` : '') + rest.map(v => li(v, i++)).join('');
+        if (OM.opt.box) html = `<li role="option" id="om-opt-${i++}" data-v="" aria-selected="${cur ? 'false' : 'true'}"><span>주문 그대로(안 바꿈)</span>${cur ? '' : '<b aria-hidden="true">✓</b>'}</li>` + html;   // #1026
         ul.innerHTML = html || `<li class="om-opt-empty">「${esc($('om-opt-q').value)}」가 든 품목이 없어요 · 그날 단가표 이름만 고를 수 있어요</li>`;
         OM.opt.at = -1;
     }
@@ -2115,6 +2161,13 @@
     }
     function optPick(v) {
         if (!OM.opt || !OM.card) return;
+        if (OM.opt.box) {   // #1026 박스 품목 = boxes[].o(단가표 이름 · '' = 주문 그대로) · 꼬리가 새 품목에 안 맞으면 뗌
+            const ri = OM.opt.ri, bx0 = OM.opt.box, r = OM.card.rows[ri], bq = bxGet(r, bx0.x), b = bq && bq.arr[bx0.bi]; optClose(true); if (!b) return;
+            b.o = optBase(v) || ''; const kb = b.o ? itemK(b.o) : boxKindOf(Object.assign({}, bq, { arr: bq.arr.map(y => Object.assign({}, y, { o: '' })) }));
+            if (b.t && !((/사이즈로!$/.test(b.t) && kb === 'size') || (/과로!$/.test(b.t) && kb === 'gwa'))) b.t = '';
+            boxRefresh(ri); const back = $('om-card').querySelector(`[data-cact="bxopt"][data-ri="${ri}"]${bx0.x ? `[data-x="${bx0.x}"]` : ':not([data-x])'}[data-bi="${bx0.bi}"]`); if (back) back.focus({ preventScroll: true });
+            return;
+        }
         const ri = OM.opt.ri, r = OM.card.rows[ri], f = CASH_FIELDS.find(x => x.i === 4);
         const t0 = optTail(r.cells[4]);   // #856 고른 꼬리는 새 품목에도 맞으면 그대로(안 맞으면 뗌)
         setV(r, f, tailFits(v, t0) ? withOptTail(v, t0) : v); optClose(true);
