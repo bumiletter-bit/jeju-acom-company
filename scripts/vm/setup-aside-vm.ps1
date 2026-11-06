@@ -1,11 +1,11 @@
 ﻿# #1039-B 나스 윈도우 VM(어사이드 전용 PC) 1회 세팅 — 절차서 docs/1039-nas-aside-vm.md
 #   VM(윈도우 11 · 로컬 계정 akkome)에서 「관리자 PowerShell」로:
 #     powershell -NoProfile -ExecutionPolicy Bypass -File setup-aside-vm.ps1 -KeyDir E:\akm-vm            (첫 회 · 작업 등록 안 함 = 권장)
-#     powershell -NoProfile -ExecutionPolicy Bypass -File setup-aside-vm.ps1 -Register                    (전환 날 · 09:30 작업 등록)
+#     powershell -NoProfile -ExecutionPolicy Bypass -File setup-aside-vm.ps1 -Register                    (전환 날 · 작업 2개 = 키워드 순위 09:30 + 체험 번호 자동 10분)
 #   미리 보기(설치·복사·등록 0):  ... -File setup-aside-vm.ps1 -DryRun   (또는 -WhatIf · 노트북에서 -Root <리포> 로 점검표만 볼 수 있음)
 #   다시 돌려도 안전(멱등): 있는 것은 건너뛰고 · 리포는 git pull --ff-only · .env 는 없을 때만 복사(-ForceEnv 로 덮음) · 작업은 /F 로 같은 이름 덮어 등록.
 # 하는 일: ①사용자·관리자 확인 ②Node LTS·git(없으면 winget) ③리포 clone/pull ④npm ci(pg·dotenv 없을 때만) ⑤.env(USB 꾸러미에서) + 권한 좁힘
-#          ⑥aside.exe 찾기(기본 자리 아니면 사용자 환경 변수 ASIDE_EXE) ⑦전원(절전·화면·디스크·최대 절전 끄기 없음) ⑧-Register 면 install-keyword-rank.js --install ⑨점검표
+#          ⑥aside.exe 찾기(기본 자리 아니면 사용자 환경 변수 ASIDE_EXE) ⑦전원(절전·화면·디스크·최대 절전 끄기 없음) ⑧-Register 면 install-keyword-rank.js --install + scripts/vm/install-exp-phone-auto.js --install(#1040) ⑨점검표
 # 🔴 등록하지 않는 것(이 VM 에서 금지): install-notebook-alive.js(노트북 켜짐 신호 · VM 이 보내면 나스 터미널 켜기 판정이 꼬임) ·
 #     install-ship-upload.js(송장 올리기 = 나스 컨테이너 몫) · install-launcher.js(창구 = 나스 컨테이너 몫). 있으면 점검표가 빨갛게 알림.
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -124,13 +124,37 @@ foreach ($k in @('standby-timeout-ac', 'standby-timeout-dc', 'monitor-timeout-ac
     Act ('powercfg /change ' + $k + ' 0') { & powercfg.exe /change $k 0 | Out-Null }
 }
 
-# ⑧ 09:30 작업 등록 — -Register 일 때만(전환 날 · 절차서 5절 순서)
-Say '8) 키워드 순위 작업'
+# .env 칸 확인(값 0 · make-vm-env.js --check) — ⑧ 등록 판단과 ⑨ 점검표가 같이 씀
+function Env-Check {
+    $r = [pscustomobject]@{ ok = $false; exp_ok = $false; text = '없음'; exp = '없음' }
+    if (-not (Test-Path $envPath) -or -not (Has-Cmd 'node') -or -not (Test-Path (Join-Path $Root 'scripts\vm\make-vm-env.js'))) { return $r }
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $chk = & node (Join-Path $Root 'scripts\vm\make-vm-env.js') --check $envPath
+    $ErrorActionPreference = $old
+    try {
+        $j = $chk | ConvertFrom-Json
+        $r.ok = [bool]$j.ok; $r.exp_ok = [bool]$j.exp_ok
+        $r.text = 'ok ' + $j.ok + ' · 칸 ' + ($j.keys.Count) + '개 · 없음 ' + (($j.missing) -join ',')
+        $r.exp = 'EXP_AUTO_API ' + $j.exp.EXP_AUTO_API + ' · EXP_AUTO_TOKEN ' + $j.exp.EXP_AUTO_TOKEN
+    } catch { $r.text = '읽기 실패' }
+    return $r
+}
+
+# ⑧ 작업 2개 등록 — -Register 일 때만(전환 날 · 절차서 5절 순서)
+Say '8) 작업 등록(키워드 순위 · 체험 번호 자동)'
 $inst = Join-Path $Root 'scripts\desk\install-keyword-rank.js'
+$instExp = Join-Path $Root 'scripts\vm\install-exp-phone-auto.js'
+$expScript = Join-Path $Root 'scripts\vm\exp-phone-auto.js'
 if ($Register) {
+    $ec = Env-Check
     if (-not $aside -and -not $ForceRegister) { Bad 'aside.exe 없이 등록 안 함 — 09:30 에 전부 오류로 keyword_rank_last 를 덮음(-ForceRegister 로 강제)' }
     elseif (-not (Test-Path $envPath) -and -not $Dry) { Bad '.env 없이 등록 안 함' }
-    else { Act 'node install-keyword-rank.js --install' { Push-Location $Root; try { Run-Native 'node' @($inst, '--install') | Out-Null } finally { Pop-Location } } }
+    else {
+        Act 'node install-keyword-rank.js --install' { Push-Location $Root; try { Run-Native 'node' @($inst, '--install') | Out-Null } finally { Pop-Location } }
+        if (-not (Test-Path $expScript) -and -not $Dry) { Bad 'scripts\vm\exp-phone-auto.js 없음 — 체험 번호 자동은 등록 안 함(리포 pull 뒤 -Register 다시)' }
+        elseif (-not $ec.exp_ok -and -not $ForceRegister -and -not $Dry) { Bad ('.env 체험 칸 부족(' + $ec.exp + ') — 체험 번호 자동은 등록 안 함(채운 뒤 -Register 다시 · -ForceRegister 로 강제)') }
+        else { Act 'node install-exp-phone-auto.js --install' { Push-Location $Root; try { Run-Native 'node' @($instExp, '--install') | Out-Null } finally { Pop-Location } } }
+    }
 } else { Say '  -Register 없음 — 등록 안 함(전환 날 -Register 로 다시)' }
 
 # ⑨ 점검표
@@ -145,20 +169,21 @@ $gitV = ''; if (Has-Cmd 'git') { $gitV = (& git --version) }
 Row 'git' ([bool]$gitV) $gitV
 Row '리포' (Test-Path (Join-Path $Root 'scripts\desk\keyword-rank.js')) $Root
 Row 'pg·dotenv' ((Test-Path (Join-Path $Root 'node_modules\pg\package.json')) -and (Test-Path (Join-Path $Root 'node_modules\dotenv\package.json'))) 'node_modules'
-$envOk = $false; $envKeys = '없음'
-if ((Test-Path $envPath) -and $nodeV) {
-    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    $chk = & node (Join-Path $Root 'scripts\vm\make-vm-env.js') --check $envPath
-    $ErrorActionPreference = $old
-    try { $j = $chk | ConvertFrom-Json; $envOk = [bool]$j.ok; $envKeys = 'ok ' + $j.ok + ' · 칸 ' + ($j.keys.Count) + '개 · 없음 ' + (($j.missing) -join ',') } catch { $envKeys = '읽기 실패' }
-}
-Row '.env(DATABASE_URL)' $envOk $envKeys
+$ec = Env-Check
+Row '.env(DATABASE_URL)' $ec.ok $ec.text
+Row '.env(EXP_AUTO_API·TOKEN)' $ec.exp_ok $ec.exp
 Row 'aside.exe' ([bool]$aside) $(if ($aside) { $aside } else { '없음' })
 $st = $null
 if ($nodeV -and (Test-Path $inst)) { try { $st = (& node $inst --status) -join "`n" | ConvertFrom-Json } catch { $st = $null } }
 $reg = $false; $next = ''
 if ($st) { $reg = [bool]$st.'등록됨'; if ($st.'정보') { $next = [string]$st.'정보'.'다음 실행 시간'; if (-not $next) { $next = [string]$st.'정보'.'Next Run Time' } } }
 Row '작업 아꼼이-키워드-순위' ($reg -or -not $Register) $(if ($reg) { '다음 ' + $next } else { '미등록' + $(if ($Register) { '' } else { '(-Register 안 씀 · 정상)' }) })
+$st2 = $null
+if ($nodeV -and (Test-Path $instExp)) { try { $st2 = (& node $instExp --status) -join "`n" | ConvertFrom-Json } catch { $st2 = $null } }
+$reg2 = $false; $next2 = ''
+if ($st2) { $reg2 = [bool]$st2.'등록됨'; if ($st2.'정보') { $next2 = [string]$st2.'정보'.'다음 실행 시간'; if (-not $next2) { $next2 = [string]$st2.'정보'.'Next Run Time' } } }
+Row '작업 아꼼이-체험번호-자동' ($reg2 -or -not $Register) $(if ($reg2) { '다음 ' + $next2 } else { '미등록' + $(if ($Register) { '' } else { '(-Register 안 씀 · 정상)' }) })
+Row '체험 번호 스크립트' (Test-Path $expScript) $(if (Test-Path $expScript) { 'scripts\vm\exp-phone-auto.js' } else { '없음(#1040-A 워커2 · 리포 pull)' })
 $al = ''; try { $w = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction Stop; $al = [string]$w.AutoAdminLogon + ' · ' + [string]$w.DefaultUserName } catch { }
 Row '자동 로그인(재부팅 뒤 세션)' ($al -like ('1 · ' + $ExpectUser)) $(if ($al) { $al } else { '설정 없음 — 대표 몫(절차서 6절)' })
 $pc = (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE) -join ' '

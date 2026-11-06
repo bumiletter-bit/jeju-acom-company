@@ -1,3 +1,13 @@
+## v5.9.715 (2026-11-06) — #1040 체험 예약(플레이스) 번호 자동 입력 = 서버 API 3개 + 나스 VM 어사이드 읽기 스크립트(대표 「고」 · 워커2 시공 · 워커1 교차 점검 막을 것 0 · 설계 docs/1039-exp-phone-auto.md)
+
+- 대표 결정(11/6) = 서버 API 길 · 대조 통과면 바로 저장 + 접수 알림톡 즉시(미리 알림 없음) · 실패 = 텔레그램(건당 하루 1회) · 같은 번호가 다른 예약에 있어도 저장·발송(가족 예약) · 번호 = 이용고객(방문자) 우선 · 없으면 예약자(PHONE_PICK_ORDER 한 곳) · 11/3 「저장은 대표」 결정 변경.
+- experience.js +134(기존 줄 0) = GET /api/experience/auto/todo(place·confirmed·오늘 이후·번호 없음·contact_at 없음 · manual·취소 제외 · miss 30분·하루 6회 넘은 id 제외 · 20줄 · 번호 0) · PUT /api/experience/auto/:id(예약번호·「확정」·날짜·시간·가린 이름 글자 자리·번호 꼴 재대조 → UPDATE phone·name(화면 전체 이름)·contact_at·contact_by 'aside-auto' · 조건 contact_at IS NULL = 사람 저장 경합 409 · audit experience_phone_auto 끝 4자리·dup_ids → sendRecvNow) · POST …/:id/miss(audit + 텔레그램 · id 0 = 보안 확인·로그인 멈춤 · 사유 속 번호 꼴 숫자 지움) · 인증 = agent_office_config experience_auto {enabled,token(32자↑),daily_max 30,hours [8,21],skip 09:25~09:45} · 설정 없음 503 · 토큰 틀림 401 · enabled false 403 · miss 표식 experience_auto_miss(오늘만 남김) · 하루 상한 429.
+- server.js 1줄 = GET /api/agent-office/config 응답에서 experience_auto.token '***'.
+- scripts/vm/exp-phone-auto.js(새 · VM 전용 · keyword-rank.js Aside 클래스 재사용 · --once/--dry/--force-window · 08~21시 · 09:25~09:45 건너뜀 · 키워드 순위 도는 중(keyword-rank.json 오늘·result 없음·25분 안)이면 건너뜀 · 잠금 15분 · 6분 끊기 · stop keepTabs(다른 탭 안 닫음) · 보안 확인 탭은 남김 · 화면 판독 3꼴(머리글 칸/줄 안 낱말/#997 꼴) · 종료 0/2/1) · scripts/vm/install-exp-phone-auto.js(워커1 · 작업 「아꼼이-체험번호-자동」 10분 · --tick 8분 상한 · 로그 ~/.akkome/logs/exp-phone-auto-날짜.log) · setup-aside-vm.ps1 -Register 둘 다 · make-vm-env.js DATABASE_URL+EXP_AUTO_API·EXP_AUTO_TOKEN · docs/1039-nas-aside-vm.md.
+- 검증 = verify-1040-exp-auto 70/70(pglite · 실DB 0 · 발송 0) · verify-940 108/108 · node --check · ro-preload 기동 ✓ · krBusy 떼어 실행 4/4.
+- 🔴 배포 뒤 켜는 순서(총괄) = ①실DB experience_auto 설정(enabled false + 토큰 · audit) ②VM .env 두 칸 ③VM 에서 --once --dry --force-window 로 실화면 꼴(이용고객 칸 유무) ④enabled true ⑤대표 번호 가짜 예약 1건 왕복. 그 전까지 라이브 동작 변화 0(503 잠김). 자동 전엔 종전 길(어사이드로 읽어 대표에게 · 저장은 대표).
+- 대표 알아 둘 것 = 이용고객 번호로 저장하면 알림톡이 이용고객 폰에 「예약자 이름님」으로 감. 🔵 후보 = miss 사유 번호 거름을 휴대폰 꼴(01x)로 좁혀 전체 주소 넣기 · 외국 이름(띄어쓰기)은 대조 탈락(안전 쪽) · 상태 낱말 첫 매치(「예약 취소」 단추 글) 헛 miss.
+
 ## v5.9.714 (2026-11-05) — #1038 메모함 고객정보수정 못 찾음 글에 「선물하기 주문은 받는 분 번호로 넣어 주세요」(대표 「메워줘」 · 워커1 · 글자 1줄)
 
 - 배경(코드 확인) = lookup 은 구매자·수취인 번호 둘 다 찾음 · 선물하기 = 구매자 번호 없음 → 고객정보수정은 수취인 번호 그대로 + checked.pno(상품주문번호)로 최종발주 짝(boxPlan pno 우선) = 기능은 종전부터 됨 · 안내만 없었음. 입력삭제는 자동 송장이 구매자 번호(K)로 찾아 선물하기 불가(할 일 카드 → 수기) = 종전 그대로.

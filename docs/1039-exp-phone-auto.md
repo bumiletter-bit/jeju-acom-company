@@ -2,7 +2,17 @@
 
 > 🔴 **결정 변경**: 11/3 대표 결정(메모리 feedback-experience-phone-owner-saves = 「번호를 읽어 대표에게 알려 주고 저장은 대표」)과 10/30 결정(jeju-aside-browser = 「플레이스 예약 자동 매칭은 안 함 · 재제안 금지」)을 **대표 11/6 「체험예약도 자동으로 확인하고 입력하도록」이 바꾼다.** 이 구도가 배포되면 위 두 메모리를 고친다(총괄 몫).
 >
-> 작성 = 워커2(11/6) · 문서만 · 코드 0 · DB 쓰기 0 · 어사이드 조작 0. 줄 번호는 11/6 HEAD(504b626) 기준.
+> 작성 = 워커2(11/6) · 문서만 · 코드 0 · DB 쓰기 0 · 어사이드 조작 0. 줄 번호는 11/6 HEAD(504b626) 기준(1절 · 시공 전).
+
+## 0. #1040-A 시공 결과(11/6 · 대표 「고」 · 아래 2~7절 설계와 다른 곳은 이 절이 정본)
+
+- **대표 결정**: ① 서버 API 길(나) ② 미리 알림 없음 = 대조 통과면 바로 저장 + 접수 알림톡 ③ 실패 알림 = 기존 텔레그램(대표) ④ 같은 번호가 다른 예약에 있어도 저장·발송(가족 예약 · `dup_ids` 기록만) ⑤ **번호 = 이용고객(방문자) 먼저 · 없거나 꼴 틀리면 예약자** = `experience.js` `PHONE_PICK_ORDER` 한 곳(VM 은 두 칸을 읽은 대로 보냄 · 고르지 않음).
+- **인증 = DB 설정**(env 아님): `agent_office_config` 키 `experience_auto` = `{enabled, token(32자↑), daily_max:30, hours:[8,21], skip:['09:25','09:45']}`. 설정·토큰 없음 = 503(잠김 · 배포 직후 기본) · 토큰 틀림 = 401 · enabled false = 403. 값 넣기 = 총괄(배포 뒤 UPDATE + audit). 실패 횟수·알림 표식 = 같은 표 키 `experience_auto_miss`(오늘 것만 남김 · 새 표 0).
+- **서버(experience.js · 기존 PATCH·타이머·수집 무변경)**: `GET /api/experience/auto/todo`(place · confirmed · date_ok · 오늘 이후 · 시간 있음 · 번호 없음 · contact_at 없음 · 실패 30분 안·하루 6번 넘은 id 뺌 · 한 번 20줄 · 시간 창·하루 상한 거름 · 응답에 번호 0) · `PUT /api/experience/auto/:id`(autoCheck = 예약번호·화면 「확정」·DB confirmed·날짜·시간·가린 이름 글자·번호 꼴 · 통과 = phone·name(화면 전체 이름)·contact_at·contact_by `aside-auto` → audit `experience_phone_auto`(끝 4자리 · seen 값 · dup_ids) → `sendRecvNow` · 실패 400 {reason} · 이미 번호 409 · 하루 상한 429) · `POST /api/experience/auto/:id/miss`(audit `experience_phone_auto_miss` + 텔레그램 건당 하루 1회 · id 0 = 보안 확인·로그인 멈춤 · 사유의 번호 꼴 숫자는 지움).
+- **VM(scripts/vm/exp-phone-auto.js)**: `--once` 한 틱(작업 스케줄러 「아꼼이-체험번호-자동」 10분 · 등록 도구 = 워커1 install-exp-phone-auto.js) · `--dry` 읽기만 · `--force-window` · .env `EXP_AUTO_API`·`EXP_AUTO_TOKEN`(main 안에서 dotenv 먼저 · DATABASE_URL 안 씀) · `ASIDE_EXE` · 종료 코드 0/2/1 · 6분 넘으면 남은 줄 다음 틱 · 잠금 `~/.akkome/exp-phone-auto.lock`(15분) · 로그 = stdout(작업 도구가 파일에 붙임 · 번호 끝 4자리).
+- **화면 판독(parseRow)** 세 꼴 차례: ① 표 머리글 칸(이용고객|이용자|방문자 / 예약자|예약고객|신청자 / 이용일시 / 상태) ② 줄 안 낱말 「이용고객 홍길동 010-…」 ③ #997 꼴 「확정 이름 번호 예약번호 26.MM.DD HH:MM」(이 번호 = 예약자). 셋 다 아니면 저장 0 + miss 「꼴 모름」. 🔴 실화면에 이용고객 칸이 있는지 미확인 → 첫 실행은 `--once --dry --force-window` 로 읽은 칸(how·끝 4자리)을 보고 맞출 것.
+- **검증**: `node scripts/verify-1040-exp-auto.js` 70/70(pglite · 포트 3458 · 실DB 0 · 발송 0) · verify-940 108/108 · ro-preload 기동 = 새 라우트 503(실DB 설정 없음 = 잠김) 확인.
+- **켜는 순서(총괄)**: 배포 → `experience_auto` 설정 넣기(enabled false · 토큰) → VM .env 두 칸 → `--once --dry --force-window` 로 실화면 꼴 확인 → enabled true → 대표 번호 가짜 예약 1건 왕복(#1000 꼴).
 
 ---
 
@@ -12,7 +22,7 @@
 
 | 단계 | 위치 | 하는 일 |
 |---|---|---|
-| 타이머 | `server.js:10579` `experience_place: () => EXPERIENCE.collectPlace()` · 시드 `experience.js:1101`(5분) | 메일 수집 · 같은 메일 계정 잠금 묶음 `imap`(`server.js:10504`) |
+| 타이머 | `server.js:10579` `experience_place: () => EXPERIENCE.collectPlace()` · 시드 `server.js:1101`(5분) | 메일 수집 · 같은 메일 계정 잠금 묶음 `imap`(`server.js:10504`) |
 | 메일 찾기 | `experience.js:498` `collectPlace()` | `SINCE <3일 전> FROM booking`(MAIL_DEFAULT `:41` · 한 틱 20통) · `experience_mail_seen` 으로 한 번만 |
 | 판독 | `experience.js:154` `parsePlaceMail()` | 메일 꼴(`:151~153` 주석): 「예약자명 전\*범님」「예약번호 1384521818」「이용일시 2026.11.01.(일) 오전 10:00, 1명」「결제금액 …」 · **연락처 줄 없음 · 이름은 가려서 옴** |
 | 저장 | `experience.js:473` `savePlace()` | `ext_key = 'place:' + 예약번호` · `order_no = 예약번호` · `name = 가린 이름` · `phone = null`(메일에 없음) · 새 줄 INSERT `:493` / 다시 온 메일(변경·취소) UPDATE `:487` |
@@ -32,7 +42,7 @@
 ### 1-3. 접수 알림톡 조건
 
 - 즉시 길 `experience.js:571` `sendRecvNow()`: 설정 `experience_notify.enabled` · status confirmed · date_ok·visit_date · 오늘 이후 · 아직 안 보냄 · sms_skip 없음 · 번호 10자리↑ · 접수 시간 창(recv_from~recv_to · 기본 09:00~21:00) · 하루 상한(daily_cap) 안.
-- 타이머 길 `experience.js:589` `collectSms()`(키 `experience_sms` · 시드 10분): `:598` 대상 = `(source='store' OR (source IN ('place','manual') AND contact_at IS NOT NULL)) AND status='confirmed' AND date_ok AND phone 10자리↑ AND visit_date >= 오늘 AND sms_skip IS NULL` → **플레이스는 `contact_at` 이 있어야만 나감.**
+- 타이머 길 `experience.js:589` `collectSms()`(키 `experience_sms` · 시드 10분 `server.js:1101`): `:598` 대상 = `(source='store' OR (source IN ('place','manual') AND contact_at IS NOT NULL)) AND status='confirmed' AND date_ok AND phone 10자리↑ AND visit_date >= 오늘 AND sms_skip IS NULL` → **플레이스는 `contact_at` 이 있어야만 나감.**
 - 보내기 `experience.js:551` `sendOne()`: 줄 먼저 잡기(CLAIM · 30분 · 3번 상한) → 알림톡 UN_1894(실패면 알리고가 문자로 대체) → `sms_recv_at`·`sms_recv_via`.
 - 실사례 차이: #931·#997 은 DB 로 바로 UPDATE(contact_at 같이) → 10분 틱이 보냄(늦음). 화면·PATCH 저장은 그 자리에서 보냄(대표 11/3 「바로 나가게」의 이유).
 

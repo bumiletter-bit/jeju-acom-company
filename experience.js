@@ -225,6 +225,57 @@ function renderTpl(tpl, b) {
         .replace(/\{인원\}/g, alimVars(b)['인원'] || '인원 확인 필요');   // #782(총괄 10/20) 0명 칸 빼고 = 알림톡 #{인원} 과 같은 함수 · {체험}{입장}{유아} 는 옛 문구용으로 남김
 }
 
+// ── #1040 플레이스 번호 자동 입력(나스 VM 어사이드 → 서버 API) · 대조 규칙은 이 한 곳(VM 은 읽은 글자만 보냄) ──────────────
+const KEY_AUTO = 'experience_auto', KEY_AUTO_MISS = 'experience_auto_miss', AUTO_BY = 'aside-auto';
+const AUTO_DEFAULT = { enabled: false, token: '', daily_max: 30, hours: [8, 21], skip: ['09:25', '09:45'] };   // 설정이 없으면 잠김(503) · 값 넣기 = 총괄(배포 뒤 UPDATE + audit)
+const AUTO_MISS_MAX = 6, AUTO_MISS_GAP_MS = 30 * 60000, AUTO_TICK_MAX = 20;   // 같은 예약 하루 6번 · 실패 뒤 30분 · 한 틱 20줄
+// 🔴 번호 고르기 = 이용고객(방문자) 번호 먼저 · 없거나 꼴이 틀리면 예약자 번호(대표 11/6 「예약자랑 이용고객은 다를 거야 · 이용고객 번호를 적으면 돼」)
+const PHONE_PICK_ORDER = ['visitor_phone', 'booker_phone'];
+const autoPhoneOk = p => /^01\d{8,9}$/.test(p);
+function autoPickPhone(body) {
+    for (const k of PHONE_PICK_ORDER) { const p = String((body && body[k]) || '').replace(/\D/g, ''); if (autoPhoneOk(p)) return { phone: p, picked: k }; }
+    const p = String((body && body.phone) || '').replace(/\D/g, '');   // 두 칸을 다 못 보낸 옛 꼴 = phone 만
+    return autoPhoneOk(p) ? { phone: p, picked: 'phone' } : null;
+}
+// 메일 이름은 가려 옴(「전*범」) · 화면 이름은 전체 → 글자 수 같고 보이는 글자가 같은 자리에 같아야 · DB 이름에 * 가 없으면 완전 일치
+const autoNameNorm = s => String(s || '').replace(/\s+/g, '').replace(/님$/, '');
+function autoNameOk(dbName, seen) {
+    const a = autoNameNorm(dbName), b = autoNameNorm(seen);
+    if (!a || !b || /\*/.test(b) || b.length > 30) return false;
+    if (!/\*/.test(a)) return a === b;
+    const A = [...a], B = [...b];
+    if (A.length !== B.length) return false;
+    let shown = 0;
+    for (let i = 0; i < A.length; i++) { if (A[i] === '*') continue; shown++; if (A[i] !== B[i]) return false; }
+    return shown > 0;   // 전부 가린 이름(「***」)은 대조 근거가 없어 거름
+}
+const autoHm = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim()); return m ? String(+m[1]).padStart(2, '0') + ':' + m[2] : null; };
+function autoCheck(row, body) {
+    const no = (reason, why) => ({ ok: false, reason, why });
+    body = body || {};
+    if (!row || row.source !== 'place') return no('source', '플레이스 예약이 아니에요');
+    if (row.status !== 'confirmed') return no('status_db', '확정 예약이 아니에요(취소·반품·방문)');
+    if (!row.order_no || String(body.order_no_seen || '').trim() !== String(row.order_no)) return no('order_no', '예약번호가 달라요');
+    if (String(body.status_seen || '').trim() !== '확정') return no('status_seen', '화면 상태가 「확정」이 아니에요');
+    const v = body.visit_seen || {};
+    if (!row.visit_date || String(v.date || '') !== row.visit_date) return no('date', '이용 날짜가 달라요');
+    if (!row.visit_time || autoHm(v.time) !== autoHm(row.visit_time)) return no('time', '이용 시간이 달라요');
+    if (!autoNameOk(row.name, body.name_seen)) return no('name', '이름이 메일 이름과 달라요');
+    const p = autoPickPhone(body);
+    if (!p) return no('phone', '번호 꼴이 아니에요(010 으로 시작하는 10~11자리)');
+    if (body.phone != null && String(body.phone).replace(/\D/g, '') && String(body.phone).replace(/\D/g, '') !== p.phone) return no('phone_pick', '보낸 번호가 고르기 규칙(이용고객 먼저)과 달라요');
+    return { ok: true, phone: p.phone, picked: p.picked, name: autoNameNorm(body.name_seen) };
+}
+// 시간 창 = hours [시작,끝) KST 시 · skip [HH:MM, HH:MM) 은 건너뜀(키워드 순위 09:30 어사이드) · k = kstNow() 꼴(UTC 칸에 KST)
+function autoInWindow(c, k) {
+    const h = k.getUTCHours(), hm = String(h).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0');
+    const hr = Array.isArray(c.hours) && c.hours.length === 2 ? c.hours : AUTO_DEFAULT.hours;
+    if (!(h >= Number(hr[0]) && h < Number(hr[1]))) return false;
+    const sk = Array.isArray(c.skip) && c.skip.length === 2 ? c.skip : null;
+    if (sk && hm >= String(sk[0]) && hm < String(sk[1])) return false;
+    return true;
+}
+
 module.exports = function mountExperience(app, deps) {
     const { pool, authMiddleware, adminOnly, writeAudit } = deps;
     const env = deps.env || process.env;
@@ -835,6 +886,88 @@ module.exports = function mountExperience(app, deps) {
         } catch (e) { console.error('[#775] 방문:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
     });
 
+    // ── #1040(대표 11/6 「체험예약도 자동으로 확인하고 입력하도록」) 플레이스 번호 미입력 → 나스 VM 어사이드가 읽어 저장 ─────────────
+    //   설계 = docs/1039-exp-phone-auto.md (나) 구도 · VM 은 읽기만 · 저장·재대조·기록·알림톡은 여기 한 곳 · 기존 PATCH·타이머·수집 무변경
+    //   인증 = 설정 agent_office_config 'experience_auto' {enabled, token(32자↑), daily_max, hours:[시작,끝), skip:[HH:MM,HH:MM]} · 설정·토큰 없음 = 503(잠김) · 토큰 틀림 = 401 · enabled false = 403
+    //   GET  /api/experience/auto/todo            → { items:[{id, order_no, name_masked, visit_date, visit_time, people}], window, left, reason? }
+    //   PUT  /api/experience/auto/:id {order_no_seen, status_seen, visit_seen:{date,time}, name_seen, visitor_phone?, booker_phone?, phone?}
+    //        → 재대조(autoCheck) 통과 = phone·name·contact_at·contact_by 'aside-auto' → audit experience_phone_auto → sendRecvNow · 실패 = 400 {error, reason}
+    //   POST /api/experience/auto/:id/miss {reason, kind?} → 시도 기록 + 텔레그램(건당 하루 1회) · id 0 = 예약 없는 멈춤(보안 확인·로그인 · 사유 갈래당 하루 1회)
+    const autoCfg = async () => { const v = (await cfgGet(KEY_AUTO)) || null; return v && typeof v === 'object' ? { ...AUTO_DEFAULT, ...v, enabled: v.enabled === true } : null; };
+    const autoGate = async (req, res) => {
+        const c = await autoCfg();
+        if (!c || !c.token || String(c.token).length < 32) { res.status(503).json({ error: '자동 입력 잠김(설정 experience_auto 토큰 없음)' }); return null; }
+        const got = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        const a = Buffer.from(got), b = Buffer.from(String(c.token));
+        if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) { res.status(401).json({ error: '토큰이 맞지 않아요' }); return null; }
+        if (!c.enabled) { res.status(403).json({ error: '자동 입력 꺼짐(설정 experience_auto.enabled)' }); return null; }
+        return c;
+    };
+    const AUTO_ACTOR = { id: null, name: AUTO_BY };
+    const missGet = async () => { const v = (await cfgGet(KEY_AUTO_MISS)) || {}; const today = kstDay(); const out = {}; for (const [k, x] of Object.entries(v && typeof v === 'object' ? v : {})) if (x && x.day === today) out[k] = x; return out; };   // 오늘 것만 남김(하루 지나면 저절로 비워짐)
+    const autoDone = async () => Number((await pool.query(`SELECT COUNT(*)::int AS n FROM experience_bookings WHERE contact_by = $1 AND (contact_at + interval '9 hours')::date = $2::date`, [AUTO_BY, kstDay()])).rows[0].n) || 0;
+    app.get('/api/experience/auto/todo', async (req, res) => {
+        try {
+            const c = await autoGate(req, res); if (!c) return;
+            const window = { hours: c.hours, skip: c.skip };
+            if (!autoInWindow(c, kstNow())) return res.json({ items: [], window, left: 0, reason: '시간 밖' });
+            const left = Math.max(0, Number(c.daily_max) - await autoDone());
+            if (!left) return res.json({ items: [], window, left: 0, reason: '하루 상한' });
+            const miss = await missGet(), now = Date.now();
+            const rows = (await pool.query(`SELECT id, order_no, name, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time, exp_count, entry_count, infant_count FROM experience_bookings
+                WHERE source = 'place' AND status = 'confirmed' AND date_ok AND visit_date >= $1::date AND visit_time IS NOT NULL AND (phone IS NULL OR length(phone) < 10) AND contact_at IS NULL AND order_no IS NOT NULL
+                ORDER BY visit_date, visit_time, id LIMIT 50`, [kstDay()])).rows;
+            const items = rows.filter(r => { const m = miss[String(r.id)]; return !(m && (m.n >= AUTO_MISS_MAX || now - Date.parse(m.last_at) < AUTO_MISS_GAP_MS)); })
+                .slice(0, Math.min(left, AUTO_TICK_MAX))
+                .map(r => ({ id: r.id, order_no: r.order_no, name_masked: r.name, visit_date: r.visit_date, visit_time: r.visit_time, people: (r.exp_count || 0) + (r.entry_count || 0) + (r.infant_count || 0) }));
+            res.json({ items, window, left });
+        } catch (e) { console.error('[#1040] todo:', e.message); res.status(500).json({ error: '목록을 읽지 못했어요' }); }
+    });
+    app.put('/api/experience/auto/:id', async (req, res) => {
+        try {
+            const c = await autoGate(req, res); if (!c) return;
+            const id = Number(req.params.id) || 0, body = req.body || {};
+            const row = (await pool.query(`SELECT id, source, order_no, name, phone, status, contact_at, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time FROM experience_bookings WHERE id=$1`, [id])).rows[0];
+            if (!row) return res.status(404).json({ error: '없는 예약이에요', reason: 'not_found' });
+            if (row.contact_at || (row.phone && String(row.phone).length >= 10)) return res.status(409).json({ error: '이미 번호가 들어간 예약이에요(사람이 넣었을 수 있음 · 덮지 않음)', reason: 'already' });
+            if (await autoDone() >= Number(c.daily_max)) return res.status(429).json({ error: '오늘 자동 입력 상한', reason: 'daily_max' });
+            const chk = autoCheck(row, body);
+            if (!chk.ok) return res.status(400).json({ error: chk.why, reason: chk.reason });
+            const up = await pool.query(`UPDATE experience_bookings SET phone=$2, name=$3, contact_at=NOW(), contact_by=$4, updated_at=NOW() WHERE id=$1 AND contact_at IS NULL AND (phone IS NULL OR length(phone) < 10) AND status='confirmed' RETURNING id`, [id, chk.phone, chk.name, AUTO_BY]);
+            if (!up.rows.length) return res.status(409).json({ error: '저장하는 사이 예약이 바뀌었어요', reason: 'race' });
+            const dup = (await pool.query(`SELECT id FROM experience_bookings WHERE phone=$1 AND id<>$2 AND status IN ('confirmed','visited') ORDER BY id LIMIT 5`, [chk.phone, id])).rows.map(r => r.id);   // 가족 예약 = 정상(막지 않음 · 기록만)
+            const tail4 = p => p ? '…' + String(p).slice(-4) : p;
+            await audit('experience_phone_auto', id, { before: { name: row.name, phone: tail4(row.phone) }, after: { name: chk.name, phone: tail4(chk.phone), picked: chk.picked },
+                seen: { order_no: String(body.order_no_seen || ''), status: String(body.status_seen || ''), visit: body.visit_seen || null, visitor: tail4(digits(body.visitor_phone)), booker: tail4(digits(body.booker_phone)) }, dup_ids: dup }, AUTO_ACTOR);
+            try { const m = await missGet(); if (m[String(id)]) { delete m[String(id)]; await cfgSet(KEY_AUTO_MISS, m); } } catch (_) { }
+            let sent = null; try { sent = await sendRecvNow(id); } catch (e) { sent = 'later:' + String(e.message || e).slice(0, 80); }   // 화면 저장(PATCH :788)과 같은 길 · 안 되면 10분 틱이 나중에
+            res.json({ ok: true, id, picked: chk.picked, dup_ids: dup, sent });
+        } catch (e) { console.error('[#1040] 저장:', e.message); res.status(500).json({ error: '저장하지 못했어요', reason: 'server' }); }
+    });
+    app.post('/api/experience/auto/:id/miss', async (req, res) => {
+        try {
+            const c = await autoGate(req, res); if (!c) return;
+            const id = Number(req.params.id) || 0, body = req.body || {};
+            const reason = String(body.reason || '이유 없음').replace(/\d{3,4}[-\s]?\d{4}/g, '…').slice(0, 120);   // 번호 같은 숫자는 지움(알림·기록에 손님 번호 0)
+            const kind = String(body.kind || '').replace(/[^a-z_]/g, '').slice(0, 20) || 'miss';
+            const m = await missGet(), today = kstDay();
+            let row = null;
+            if (id) { row = (await pool.query(`SELECT id, order_no, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time FROM experience_bookings WHERE id=$1`, [id])).rows[0]; if (!row) return res.status(404).json({ error: '없는 예약이에요' }); }
+            const key = id ? String(id) : 'g:' + kind;
+            const cur = m[key] || { day: today, n: 0, notified: false };
+            cur.n++; cur.last_at = new Date().toISOString(); cur.reason = reason; cur.kind = kind;
+            let told = false;
+            if (!cur.notified && deps.notifyTelegram) {
+                const what = row ? `예약 ${row.order_no} · ${row.visit_date ? row.visit_date.slice(5).replace('-', '/') : '?'} ${row.visit_time || ''}` : '어사이드 멈춤';
+                try { deps.notifyTelegram(`🍊 체험 번호 자동 입력 못 함 · ${what} · ${reason}${row ? ' — 에이전트 오피스 · 체험 예약 「번호 미입력」에서 직접 넣어 주세요' : ''}`); told = true; } catch (_) { }
+                cur.notified = told;
+            }
+            m[key] = cur; await cfgSet(KEY_AUTO_MISS, m);
+            await audit('experience_phone_auto_miss', id || null, { kind, reason, n: cur.n, told }, AUTO_ACTOR);
+            res.json({ ok: true, n: cur.n, told });
+        } catch (e) { console.error('[#1040] miss:', e.message); res.status(500).json({ error: '기록하지 못했어요' }); }
+    });
+
     // 메일 확인 러너(창구·총괄 요청 줄 · 60초)
     async function probeTick() {
         try {
@@ -849,3 +982,4 @@ module.exports = function mountExperience(app, deps) {
     return { collectStore, collectPlace, collectSms, todoLine, summary, mailProbe, probeTick, ready, sendRecvNow, _t: { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, upsertStore, tplFor } };
 };
 module.exports._t = { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, maskSubject, imapOpen, imapDate, alimVars, fillAlim, EXP_ALIMTALK, tplFor, buildXlsx, fmtTelXl };
+module.exports._auto = { autoCheck, autoNameOk, autoPickPhone, autoInWindow, PHONE_PICK_ORDER, AUTO_DEFAULT, KEY_AUTO, AUTO_BY };   // #1040 검증용
