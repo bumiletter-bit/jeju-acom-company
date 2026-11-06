@@ -10,7 +10,7 @@ async function claim(id) {
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
-           AND NOT (pending_orders.content LIKE '[VM]%' AND (pending_orders.created_by = '창구 → VM' OR COALESCE(pending_orders.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = pending_orders.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL)))   -- #1041-b: VM 이 집는 「[VM]」(창구 → VM · 시험 계정 · 관리자 작성 = vm-watch.js WHO_OK 짝)만 뺌 · 직원이 친 「[VM]」 은 창구가 종전대로(승인 뒤 넘김)
+           AND NOT (pending_orders.content LIKE '[VM]%')   -- #1042: 「[VM]」 머리 지시는 작성자 무관 전부 VM 러너 몫(창구는 안 집음 · 대표 11/6)
          RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload, to_jsonb(pending_orders)->>'file_name' AS file_name`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
     if (!c.rows.length) return { ok: false, reason: '이미 처리 중이거나 없는 지시입니다' };
     const o = c.rows[0];

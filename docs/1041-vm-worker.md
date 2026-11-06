@@ -7,8 +7,9 @@
 | 단계 | 하는 곳 | 내용 |
 |---|---|---|
 | 넣기 | 총괄(또는 화면 「클코에게 지시하기」) | `content` 머리를 `[VM] `로 시작하는 지시를 `status '대기'`로 넣음. 시험 지시는 `created_by_id` 990000+ |
-| 거름 | 창구(launcher·get·watch)·server.js 기동 복구 | `content NOT LIKE '[VM]%'` (워커1 몫). 창구는 이 지시를 안 집고, 처리중으로 되돌리지도 않음 |
-| 집기 | VM `scripts/vm/vm-watch.js` | 30초마다 `[VM]` 대기 1건을 `처리중`으로 바꿈. 흔적은 audit `desk_claim`·source `vm`. 집는 줄 = `created_by` 「창구 → VM」(창구가 승인 뒤 넘김) · `created_by_id` ≥ 990000(총괄 전용) · 관리자 계정(users.role admin = 대표·조가영)만. 직원이 직접 친 `[VM]`은 대기에 그대로 둠 |
+| 거름 | 창구(launcher·get·watch)·server.js 기동 복구 | `NOT (content LIKE '[VM]%')` (워커1 몫). 창구는 이 지시를 안 집고, 처리중으로 되돌리지도 않음 |
+| 나누기 규칙(11/6 #1042) | — | VM 몫 = `[VM]` 머리 줄 전부(작성자 무관). 창구 몫 = 그 밖 전부. 머리 없는 어사이드 일은 창구가 승인 없이 `created_by` 「창구 → VM」 새 `[VM]` 줄로 넘김. 경계가 머리 하나라 겹침·빈틈 0 |
+| 집기 | VM `scripts/vm/vm-watch.js` | 30초마다 `[VM]` 대기 1건을 `처리중`으로 바꿈. 흔적은 audit `desk_claim`·source `vm`. 집는 줄 = `[VM]` 머리 줄 전부(11/6 #1042 · 대표 「전부 승인」 · 직원이 직접 친 줄도 · 작성자 무관) |
 | 처리 ① | 정해진 명령 | 본문이 「순위 확인」「순위 다시」「키워드 순위」 류의 짧은 한 마디(`RANK_RE` · 30자 이하)면 claude 없이 `node scripts/desk/keyword-rank.js --apply`(20분 상한). 답 = DB `keyword_rank_last` 요약(수집 n · 실패 · 막힘) |
 | 처리 ② | claude | `claude -p --model claude-opus-5-5 --output-format json --allowedTools mcp__aside__repl,mcp__aside__exec --disallowedTools Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob`. 파일 읽기 도구를 막아 .env 유출을 막습니다. 작업 폴더는 늘 `~/.akkome/vm-out/<지시번호>`(리포 CLAUDE.md 안 실림 · .env 있는 VM 설정 폴더도 피함), 본문은 stdin, 상한은 10분 |
 | 올리기 | vm-watch.js | `완료` 상태, 답 끝줄 「— 나스 VM 어사이드 처리」(첨부가 있으면 그 앞에 「첨부는 10일 뒤 여기서 지워져요」). 첨부는 `ATTACH: <경로>` 줄로 받고, `~/.akkome/vm-out/<지시번호>/` 안 파일만 `report_files`로 올림(5개 · 10MB · 창구와 같은 확장자). 요청자에게 종 알림이 가고, 시험 계정에는 가지 않음 |
@@ -25,7 +26,7 @@
   - 같은 지시는 하루 2번까지만 집습니다.
 - 창구 heartbeat(`desk_heartbeat`)는 건드리지 않습니다. VM은 `vm_heartbeat` {at, state, order_id, host}를 60초마다 따로 씁니다.
   - 그래서 창구 `get.js`·`respond.js`를 부르지 않고 같은 꼴을 vm-watch.js 안에 두었습니다. 둘 다 desk_heartbeat를 덮기 때문입니다.
-- 기동 복구는 VM 이 집을 수 있는 `[VM]` 처리중 줄만(위 「집는 줄」 조건 · 직원 `[VM]`은 창구 몫이라 안 건드림) 대기로 되돌립니다. 도는 동안 1분마다 잠금 mtime 과 vm_heartbeat(busy · order_id · pid)를 같이 갱신합니다. `vm_heartbeat`가 2분 안이고 그 지시를 돌리는 다른 살아 있는 러너(다른 기계 또는 같은 기계의 다른 pid)가 있으면 그 줄은 건너뜁니다.
+- 기동 복구는 `[VM]` 처리중 줄 전부(#1042 · 직원 줄 포함 · 집기와 같은 집합)를 대기로 되돌립니다. 도는 동안 1분마다 잠금 mtime 과 vm_heartbeat(busy · order_id · pid)를 같이 갱신합니다. `vm_heartbeat`가 2분 안이고 그 지시를 돌리는 다른 살아 있는 러너(다른 기계 또는 같은 기계의 다른 pid)가 있으면 그 줄은 건너뜁니다.
 - 그림 첨부 지시는 받지 않습니다(글로만). 받으면 바로 `오류`로 답합니다.
 - 프롬프트 규칙:
   - 저장·발송·결제·삭제·설정 단추는 누르지 않습니다.

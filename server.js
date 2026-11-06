@@ -1298,7 +1298,7 @@ async function initDB() {
         await pool.query(`UPDATE bot_products SET shipping_guide = $2 WHERE name LIKE $1 AND deleted_at IS NULL AND shipping_guide IS NULL`, [pattern, guide]);
     }
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
-    await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중' AND NOT (pending_orders.content LIKE '[VM]%' AND (pending_orders.created_by = '창구 → VM' OR COALESCE(pending_orders.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = pending_orders.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL)))`);   // #1041-b: VM 러너가 처리 중인 「[VM]」(vm-watch.js WHO_OK 짝)은 그대로
+    await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중' AND NOT (pending_orders.content LIKE '[VM]%')`);   // #1042: VM 러너 몫인 「[VM]」(작성자 무관)은 그대로
     await pool.query(`UPDATE pending_orders SET status='판독완료' WHERE status='확인표작성'`); // #469
     // 계정별 자동 로그아웃 예외 시간 (대표 7/27 — NULL=전체 설정 따름, 예: 발주컴퓨터 12시간)
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS idle_hours NUMERIC`);

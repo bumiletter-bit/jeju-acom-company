@@ -81,8 +81,10 @@ async function dbtests() {
     const a = await add('[VM] a 체험 예약 화면 봐줘', 5), b = await add('[VM] b'), c = await add('[검증469] [VM] c'), d = await add('창구 일반 지시 d', 5);
 
     mode('ok');
-    ok('집는 것 = a(직원이 직접 친 앞 줄 s1 은 건너뜀)', await W.pick(db) === a);
-    ok('직원 줄은 집기 UPDATE 도 막힘', await W.claim(db, s1) === null && (await row(s1)).status === '대기');
+    ok('#1042 직원이 직접 친 [VM] 도 집음(맨 앞 s1)', await W.pick(db) === s1);
+    ok('직원 줄 집기 UPDATE 도 됨 → 처리중', !!(await W.claim(db, s1)) && (await row(s1)).status === '처리중');
+    await db.query(`UPDATE pending_orders SET is_deleted = true WHERE id = $1`, [s1]);
+    ok('그 뒤 집는 것 = a', await W.pick(db) === a);
     const r1 = await W.pollOnce(db);
     const ra = await row(a);
     ok('a 처리 → 완료', r1.did && ra.status === '완료', r1);
@@ -122,7 +124,7 @@ async function dbtests() {
     ok('claude 2번 불림', calls() - before === 2);
     ok('시험 계정(990054) 지시는 종 알림 0', Number((await db.query(`SELECT COUNT(*)::int n FROM notifications WHERE user_id = 990054`)).rows[0].n) === 0);
     ok('시도 횟수 파일 비워짐', !(String(b) in JSON.parse(fs.readFileSync(W.STATE, 'utf8'))));
-    ok('[검증469]·창구·직원 지시는 끝까지 안 집음', await W.pick(db) === null && (await row(s1)).status === '대기' && (await row(c)).status === '대기' && (await row(d)).status === '대기');
+    ok('[검증469]·창구 일반(머리 없음) 지시는 끝까지 안 집음', await W.pick(db) === null && (await row(c)).status === '대기' && (await row(d)).status === '대기');
 
     console.log('\n[7] 정해진 명령 갈래(순위 다시 → keyword-rank --apply · claude 0)');
     const e = await add('[VM] 순위 다시', 5);
@@ -182,11 +184,11 @@ async function dbtests() {
     await hbSet(process.ppid);
     ok('살아 있는 다른 러너가 돌리는 중(heartbeat 2분 안) = 안 되돌림', (await W.recoverOwn(db)).length === 0 && (await row(h)).status === '처리중');
     await hbSet(process.pid);
-    // 처리중 5줄 = ①직원 [VM](창구 몫) ②h(총괄 990054) ③관리자(5) [VM] ④「창구 → VM」 [VM] ⑤창구 일반 → ②③④ 만 되돌림
+    // 처리중 5줄 = ①직원 [VM] ②h(총괄 990054) ③관리자(5) [VM] ④「창구 → VM」 [VM] ⑤창구 일반 → #1042 ①~④ 되돌림 · ⑤만 그대로
     const st1 = await add('[VM] 직원 처리중', 6, '직원'), ad1 = await add('[VM] 관리자 처리중', 5), dk1 = await add('[VM] 창구가 넘긴 처리중', 6, '창구 → VM');
     await db.query(`UPDATE pending_orders SET status = '처리중' WHERE id = ANY($1::int[])`, [[st1, ad1, dk1]]);
     const rec = (await W.recoverOwn(db)).sort((x, y) => x - y);
-    ok('heartbeat 가 나 자신(앞 러너 죽고 다시 뜸) = 되돌림 · 처리중 5줄 중 VM 몫 3줄만', JSON.stringify(rec) === JSON.stringify([h, ad1, dk1].sort((x, y) => x - y)) && (await row(k1)).status === '처리중' && (await row(st1)).status === '처리중', rec);
+    ok('heartbeat 가 나 자신(앞 러너 죽고 다시 뜸) = 되돌림 · 처리중 5줄 중 [VM] 4줄(직원 포함)만', JSON.stringify(rec) === JSON.stringify([h, st1, ad1, dk1].sort((x, y) => x - y)) && (await row(k1)).status === '처리중' && (await row(st1)).status === '대기', rec);
     await pg.close();
 }
 

@@ -4,7 +4,7 @@
 //     ① 정해진 명령 갈래 = 본문이 「키워드 순위 확인·순위 다시」 류(RANK_RE · 짧은 한 마디만)면 claude 없이 `node scripts/desk/keyword-rank.js --apply`(#1001 · 텔레그램은 서버 틱이 종전대로 · 20분 상한)
 //        → DB keyword_rank_last 를 읽어 「수집 n개 · 실패 · 막힘」 요약을 답으로
 //     ② 그 밖 = `claude -p --model claude-opus-5-5 --output-format json --allowedTools mcp__aside__repl,mcp__aside__exec`(파일 읽기·Bash·쓰기 도구 막음 · 작업 폴더 ~/.akkome/vm-out/<지시번호> · 본문은 stdin)
-//   집는 줄 = 창구가 승인 뒤 넘긴 줄(created_by 「창구 → VM」) · 총괄 전용 줄(created_by_id ≥ 990000) · 관리자 계정 줄만(직원이 직접 친 「[VM]」 은 그대로 둠)
+//   집는 줄 = 「[VM]」 머리 줄 전부(#1042 · 11/6 대표 「전부 승인」 · 직원 포함 · 작성자 무관) · 창구 몫 = 머리 없는 줄 전부(창구가 어사이드 일은 「창구 → VM」 새 줄로 넘김)
 //        → 답 글 + 「ATTACH: <경로>」 줄(VM ~/.akkome/vm-out/<지시번호>/ 안 파일만 · 5개 · 10MB · 창구 respond.js 확장자 목록) → report_files
 //     → status '완료'(끝줄 「— 나스 VM 어사이드 처리」) · 실패 = 1회 '대기'로 되돌려 다시 → 두 번째도 실패면 '오류' + 사유
 //   한 번에 하나: 어사이드 잠금 ~/.akkome/exp-phone-auto.lock 공유(체험 번호 틱과 같은 파일 · 1분마다 mtime 갱신 = 15분 stale 판정에 안 걸림) ·
@@ -105,7 +105,7 @@ async function recoverOwn(db) {
     let hb = null; try { hb = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'vm_heartbeat'`)).rows[0] || {}).value || null; } catch (e) { hb = null; }
     const hbFresh = !!(hb && Date.now() - Date.parse(hb.at || '') < 2 * 60000);
     const live = hbFresh && hb.order_id && (hb.host !== os.hostname() || (Number(hb.pid) !== process.pid && pidAlive(hb.pid))) ? Number(hb.order_id) : null;
-    const r = await db.query(`UPDATE pending_orders o SET status = '대기' WHERE o.status = '처리중' AND o.is_deleted = false AND o.content LIKE '[VM]%' AND ${WHO_OK} AND o.id <> $1 RETURNING o.id`, [live || 0]);   // WHO_OK = VM 이 집을 수 있는 줄만(직원 [VM] = 창구 몫은 안 건드림)
+    const r = await db.query(`UPDATE pending_orders o SET status = '대기' WHERE o.status = '처리중' AND o.is_deleted = false AND o.content LIKE '[VM]%' AND o.id <> $1 RETURNING o.id`, [live || 0]);   // #1042 「[VM]」 머리 전부 = VM 몫(pick·claim 과 같은 집합)
     if (live) log(`기동 복구: #${live} 는 살아 있는 VM 러너가 처리 중(heartbeat) — 그대로 둠`);
     for (const x of r.rows) { log(`기동 복구: #${x.id} 대기로(앞 VM 러너가 집은 채 꺼짐)`); await audit(db, 'vm_recover', x.id, { status: '대기' }); }
     return r.rows.map(x => Number(x.id));
@@ -113,23 +113,21 @@ async function recoverOwn(db) {
 // 집기 전 방어(중복 실행 0): ①VM 이 이미 답을 올린 줄(audit desk_respond · source vm)이 누가 '대기'로 되돌렸으면 안 집고 결과대로 완료/오류로 되돌림
 //   ②같은 지시는 하루 MAX_CLAIMS_DAY 번까지만 집음(audit desk_claim · source vm · KST 날짜)
 const MAX_CLAIMS_DAY = 2;
-// 누가 넣은 줄만 집나(교차 점검 7): 창구가 승인 뒤 넘긴 줄(created_by 「창구 → VM」) · 총괄 전용 줄(created_by_id ≥ 990000) · 관리자 계정(users.role admin = 대표·조가영)
-//   직원이 직접 친 「[VM]」 은 안 집고 그대로 둠(창구가 승인 뒤 넘김)
-const WHO_OK = `(o.created_by = '${FROM_DESK}' OR COALESCE(o.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = o.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL))`;
+// 누가 넣은 줄을 집나 = #1042 직원 포함 전부(작성자 거름 없음 · 「[VM]」 머리만이 VM 몫 ↔ 창구 몫 경계 · 창구·서버 거름 = NOT (content LIKE '[VM]%'))
 const VM_DONE = `EXISTS (SELECT 1 FROM audit_logs a WHERE a.target_type = 'pending_order' AND a.target_id = o.id AND a.source = 'vm' AND a.action = 'desk_respond')`;
 async function pick(db) {
     const fix = await db.query(`UPDATE pending_orders o SET status = CASE WHEN o.result->>'type' = 'error' THEN '오류' ELSE '완료' END
         WHERE o.is_deleted = false AND o.status = '대기' AND o.content LIKE '[VM]%' AND o.result->>'type' IN ('desk_answer', 'error') AND ${VM_DONE} RETURNING o.id, o.status`);
     for (const x of fix.rows) { log(`#${x.id} 이미 답한 줄이 대기로 되돌려져 있어 ${x.status}(으)로 되돌림(다시 안 돌림)`); await audit(db, 'vm_redone', Number(x.id), { status: x.status }); }
     const r = await db.query(`SELECT o.id FROM pending_orders o WHERE o.is_deleted = false AND o.status = '대기' AND o.content LIKE '[VM]%' AND o.content NOT LIKE '[검증469]%'
-          AND ${WHO_OK} AND NOT ${VM_DONE}
+          AND NOT ${VM_DONE}
           AND (SELECT COUNT(*) FROM audit_logs a WHERE a.target_type = 'pending_order' AND a.target_id = o.id AND a.source = 'vm' AND a.action = 'desk_claim'
                AND (a.created_at + interval '9 hours')::date = $1::date) < $2
         ORDER BY o.id ASC LIMIT 1`, [kstDay(), MAX_CLAIMS_DAY]);
     return r.rows[0] ? Number(r.rows[0].id) : null;
 }
 async function claim(db, id) {
-    const c = await db.query(`UPDATE pending_orders o SET status = '처리중' WHERE o.id = $1 AND o.is_deleted = false AND o.status = '대기' AND o.content LIKE '[VM]%' AND ${WHO_OK}
+    const c = await db.query(`UPDATE pending_orders o SET status = '처리중' WHERE o.id = $1 AND o.is_deleted = false AND o.status = '대기' AND o.content LIKE '[VM]%'
         RETURNING o.id, o.content, o.run_id, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image`, [id]);
     if (!c.rows.length) return null;
     const o = c.rows[0];
@@ -336,4 +334,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { isRank, RANK_RE, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, WHO_OK, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { isRank, RANK_RE, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };

@@ -640,7 +640,7 @@ async function nextOrder(onlyId) {
         || (st.directBusy && !st.fast.off && st.fast.direct && fast.route(o, null).lane === 'direct_qty');
     if (onlyId) {
         const one = await pool.query(
-            `SELECT ${ORDER_COLS} FROM pending_orders o WHERE o.id = $1 AND o.is_deleted = false AND o.status IN ('대기', '승인됨') AND NOT (o.content LIKE '[VM]%' AND (o.created_by = '창구 → VM' OR COALESCE(o.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = o.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL)))`, [onlyId]);   // #1041-b: VM 이 집는 「[VM]」(창구 → VM · 시험 계정 · 관리자 작성 = vm-watch.js WHO_OK 짝)만 뺌 · 직원이 친 「[VM]」 은 창구가 종전대로(승인 뒤 넘김)
+            `SELECT ${ORDER_COLS} FROM pending_orders o WHERE o.id = $1 AND o.is_deleted = false AND o.status IN ('대기', '승인됨') AND NOT (o.content LIKE '[VM]%')`, [onlyId]);   // #1042: 「[VM]」 머리 지시는 작성자 무관 전부 VM 러너 몫(창구는 안 집음 · 대표 11/6)
         const o = one.rows[0] || null;
         return o && !blocked(o) ? o : null;
     }
@@ -648,7 +648,7 @@ async function nextOrder(onlyId) {
         `SELECT ${ORDER_COLS} FROM pending_orders o
          WHERE o.is_deleted = false AND o.status IN ('대기', '승인됨')
            AND o.content NOT LIKE '[검증469]%'
-           AND NOT (o.content LIKE '[VM]%' AND (o.created_by = '창구 → VM' OR COALESCE(o.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = o.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL)))   -- #1041-b: VM 이 집는 「[VM]」(창구 → VM · 시험 계정 · 관리자 작성 = vm-watch.js WHO_OK 짝)만 뺌 · 직원이 친 「[VM]」 은 창구가 종전대로(승인 뒤 넘김)
+           AND NOT (o.content LIKE '[VM]%')   -- #1042: 「[VM]」 머리 지시는 작성자 무관 전부 VM 러너 몫(창구는 안 집음 · 대표 11/6)
            AND COALESCE(o.created_by_id, 0) < 990000   -- #638: 시험 번호 계정 지시는 스스로 집지 않는다(번호를 집어 주는 --ids 길은 그대로)
          ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 20`);
     // #503 같은 사람의 지시는 한 번에 하나(이어서 지시가 앞 답을 받아야 하므로 차례를 지킨다) · 돌고 있는 건 제외 · 중간발주(바로 처리)는 조회 통로가 하나라 한 번에 하나
@@ -1027,7 +1027,7 @@ async function recoverOrphans(deps) {
            FROM pending_orders o
            LEFT JOIN (SELECT target_id, MAX(created_at) AS last_claim FROM audit_logs WHERE source = 'desk' AND action = 'desk_claim' AND target_type = 'pending_order' GROUP BY target_id) a ON a.target_id = o.id
           WHERE o.status = '처리중' AND o.is_deleted = false AND COALESCE(o.created_by_id, 0) < 990000
-            AND NOT (o.content LIKE '[VM]%' AND (o.created_by = '창구 → VM' OR COALESCE(o.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = o.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL)))   -- #1041-b: VM 러너가 잡은 줄은 되돌리지 않음(VM 짝 조건)
+            AND NOT (o.content LIKE '[VM]%')   -- #1042: VM 러너 몫인 「[VM]」 줄은 되돌리지 않음
             AND COALESCE(a.last_claim, o.created_at) < now() - make_interval(mins => $1::int)
           ORDER BY o.id`, [d.minutes])).rows;
     const done = [...doneDead];

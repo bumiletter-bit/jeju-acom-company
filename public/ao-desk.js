@@ -182,7 +182,7 @@
                     <label class="desk-sr" for="desk-input">지시 내용</label>
                     <div class="desk-compose desk-cbox desk-topbox">
                         <div class="desk-thumbs" id="desk-thumbs" hidden></div>
-                        <textarea class="desk-input" id="desk-input" rows="1" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요"></textarea>
+                        <textarea class="desk-input" id="desk-input" rows="1" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요 · 네이버·플레이스 화면을 봐야 하는 일은 앞에 「[VM] 」"></textarea>
                         <div class="desk-cbox-row">
                             <input type="file" id="desk-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" multiple hidden>
                             <input type="file" id="desk-reply-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" hidden>
