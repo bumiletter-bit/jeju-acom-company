@@ -1,3 +1,12 @@
+## v5.9.718 (2026-11-06) — #1043 총괄 메모리 노트북 ↔ 나스 양방향 자동 맞추기(대표 「나스 터미널에서 처리한 것도 노트북 터미널로 이어지도록」 · 워커2 sync · 워커1 서버 틱 · 워커3 교차 점검)
+
+- 발단 = 나스 메모리 사본이 10/29 판(96개)으로 노트북(109개)보다 일주일 뒤짐 · 종전은 docs/917 수동 절차(pack-keys --pull / --only memory --out → scp → cp -a). 11/6 18:5x 총괄이 수동으로 한 번 맞춤(나스 109 = 노트북 109 · 옛 판 .pre1043).
+- scripts/desk/memory-sync.js(새) = 노트북 2분 작업 「아꼼이-노트북-알림」 tick 끝에서 `--auto` 로 따로 실행(45초 상한 · 잠금 ~/.akkome/memory-sync.lock 3분) · 해시 기준 = 같으면 나스 해시 목록 1회 읽고 끝 · 나스만 바뀜·나스 새 파일 = 받기 · 노트북만 바뀜·노트북 새 파일 = 보내기(user1 /tmp 에 sudo 없이 ustar 올림 → sudo tar -x --no-same-owner → chown 1001:100 · chmod 600) · 둘 다 바뀜·기준 없음·기록 없음 = 쓰기 0 「확인필요」 · 지운 파일은 어느 쪽도 되살리지 않음 · 점 파일 제외 · 기록 ~/.akkome/memory-sync.json·표식 .akm-memory-sync.json 은 pack-keys 수동 길과 같은 꼴(섞어 써도 됨) · 함수는 pack-keys.js export 재사용 · 로그 ~/.akkome/logs/memory-sync-날짜.log(바뀐 것·확인필요만) · 손 명령 --dry / --force <파일> / --enable / --disable / --status.
+- 확인필요 알림 = 실DB agent_office_config 'memory_sync_alert' {at,host,count,files≤10}(ON CONFLICT DO NOTHING · 하루 1번) → server.js 1분 틱 memorySyncAlertTick(15986~16002 · RENDER 일 때만)이 텔레그램 「🧠 총괄 메모리 맞추기 확인필요 n개 — 파일 이름」 1통 뒤 키 삭제(실패 fails+1 · 4번째 삭제).
+- docs/917-session-move.md 2·3·4절 = 자동 · 손으로는 --dry 확인만 · 「노트북 꺼져 있을 때 나스가 쓴 메모리 = 노트북 켜진 뒤 2분 안」.
+- 검증 verify-1043-memory-sync 37/37(가짜 폴더 2개 · 실나스 0 · 워커3 교차 점검이 잡은 결함 = 수동 pack-keys --out 뒤 .pending 중 자동이 기준을 올려 노트북 편집이 되돌아가던 것 → .pending 있으면 자동 쓰기 0 · 상한 35초 · 나스 /tmp 잔재 정리 · 확인필요 로그 하루 1줄) · verify-1043b-alert 6/6 · ro-preload 기동 ✓ · 실나스 --dry 차이 0.
+- 🔴 켜기 = 배포 뒤 `node scripts/desk/memory-sync.js --enable`(작업 재등록 불필요 · tick 이 이미 2분마다) · 첫 확인 = 다음 틱 로그 1줄 + --status.
+
 ## v5.9.717 (2026-11-06) — #1042 「[VM]」 머리 지시 = 작성자 무관 전부 나스 VM 러너 몫(대표 「전부 승인이야! 창구도 · 직원들 비번 다 알고 있어」 · 워커1 창구·서버·화면 · 워커2 러너 · 워커3 교차 점검)
 
 - 종전(#1041-b) = VM 몫은 「[VM]」 AND (창구 → VM / 총괄 전용 줄 / 관리자 작성) · 직원이 친 「[VM]」 은 창구가 받아 승인 뒤 넘김 → **이제 「[VM]」 머리면 누가 썼든 VM 이 바로 집고 창구는 안 집음**(승인 선 없음). 머리 없이 어사이드가 필요한 지시는 창구가 승인 없이 바로 「창구 → VM」 새 지시로 넘김(업무지식 543~545).

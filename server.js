@@ -15984,6 +15984,22 @@ async function deskLoginExpiredTick() {
 }
 setInterval(() => { deskLoginExpiredTick().catch(e => console.error('[#813 창구 로그인 만료] 알림 실패:', String(e.message || e).slice(0, 120))); }, 60000);
 // ── #813 창구 로그인 만료 알림 끝
+// ── #1043-b 총괄 메모리 맞추기 확인필요 알림 시작 — 노트북 scripts/desk/memory-sync.js 가 'memory_sync_alert' {at, host, count, files(≤10)} 를 넣으면 텔레그램 1통 → 키 지움
+//   파일 이름만(내용 0) · 보내기 실패('sent' 아님)면 value.fails+1 로 남겨 다음 틱 재시도 · 3번 넘게 실패하면 지움 · 렌더에서만(로컬 기동이 실DB 표식을 먹지 않게)
+async function memorySyncAlertTick(d) {
+    d = d || { get: naverCfgGet, query: (s, p) => pool.query(s, p), send: notifyTelegram };
+    const v = await d.get('memory_sync_alert');
+    if (!v || typeof v !== 'object') return 0;
+    const files = (Array.isArray(v.files) ? v.files : []).slice(0, 10).map(x => String(x).slice(0, 80));
+    const n = Number(v.count) || files.length;
+    const r = await d.send(`🧠 총괄 메모리 맞추기 확인필요 ${n}개 — ${files.join(', ') || '(이름 없음)'} · 노트북·나스 둘 다 고쳐진 파일이라 덮지 않았어요 · 총괄이 합친 뒤 memory-sync.js --force <파일>`);
+    const fails = (Number(v.fails) || 0) + (r === 'sent' ? 0 : 1);
+    if (r === 'sent' || fails > 3) { await d.query(`DELETE FROM agent_office_config WHERE key = 'memory_sync_alert'`); return r === 'sent' ? 1 : -1; }
+    await d.query(`UPDATE agent_office_config SET value = value || jsonb_build_object('fails', $1::int), updated_at = NOW() WHERE key = 'memory_sync_alert'`, [fails]);
+    return 0;
+}
+if (process.env.RENDER) setInterval(() => { memorySyncAlertTick().catch(e => console.error('[#1043-b 메모리 맞추기 알림] 실패:', String(e.message || e).slice(0, 120))); }, 60000);
+// ── #1043-b 총괄 메모리 맞추기 확인필요 알림 끝
 // ── #975 창구 힉스필드 로그인 풀림 알림 시작 — 나스 창구(launcher)가 'desk_higgsfield_login' {at, done, notified, …} 와 대표 할 일을 적으면 대표에게 알림(종·푸시) 1회 · 텔레그램 X · 집기 = UPDATE … RETURNING(배포 겹침 때 2번 막음)
 async function deskHiggsfieldLoginTick() {
     const r = await pool.query(`UPDATE agent_office_config SET value = value || jsonb_build_object('notified', true, 'notified_at', NOW()::text), updated_at = NOW()

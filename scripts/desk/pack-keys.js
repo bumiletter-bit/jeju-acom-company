@@ -111,7 +111,7 @@ function memSyncSave(how, after, extra, bundle, id) {   // bundle 이 있으면(
         else { fs.writeFileSync(SYNC_STATE, JSON.stringify(rec)); try { fs.unlinkSync(SYNC_PENDING); } catch (e) { /* 없음 */ } }
     } catch (e) { /* 기록 실패 = 다음엔 「처음」처럼 보수적으로 */ }
 }
-function nasExec(cmd, sudo, binary) {
+function nasExec(cmd, sudo, binary, input) {   // #1043 input = 표준 입력으로 보낼 Buffer(sudo 아닌 명령만 · 비번과 섞이지 않게)
     const { Client } = require(path.join(ROOT, 'node_modules', 'ssh2'));
     const kv = {}; for (const l of fs.readFileSync(path.join(HOME, '.akkome', 'nas.txt'), 'utf8').split(/\r?\n/)) { const i = l.indexOf('='); if (i > 0) kv[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
     return new Promise((resolve, reject) => {
@@ -119,6 +119,7 @@ function nasExec(cmd, sudo, binary) {
         c.on('ready', () => c.exec(sudo ? `sudo -S -p "" ${cmd}` : cmd, (e, st) => {
             if (e) { c.end(); return reject(e); }
             if (sudo) st.write(kv.pw + '\n');
+            if (input !== undefined) { if (sudo) { c.end(); return reject(new Error('sudo 명령에는 input 을 못 붙임')); } st.end(input); }
             st.on('data', d => out.push(d)); st.stderr.on('data', d => err.push(d));
             st.on('close', code => { c.end(); const o = Buffer.concat(out); if (code) return reject(new Error('나스 명령 실패(exit ' + code + '): ' + Buffer.concat(err).toString('utf8').split(kv.pw).join('<pw>').slice(0, 200))); resolve(binary ? o : o.toString('utf8')); });
         })).on('error', reject).connect({ host: '192.168.0.22', port: 22, username: kv.id, password: kv.pw, readyTimeout: 15000 });
@@ -179,6 +180,11 @@ async function pushPlan(force) {
     return { nas, local, conflict, forced, pend, nasNew };
 }
 
+// #1043 scripts/desk/memory-sync.js 가 해시·판정·나스 접속을 그대로 쓴다(복제 금지) — require 일 때는 아래 CLI 를 돌리지 않는다
+if (require.main !== module) {
+    module.exports = { sha, qsh, judge, memState, localMem, memSyncSave, promotePending, nasExec, nasMem, nasFetch, NAS_MEM, LOCAL_MEM, SYNC_STATE, SYNC_PENDING, MARK };
+    return;
+}
 const args = process.argv.slice(2);
 const oi = args.indexOf('--out');
 const outDir = oi >= 0 ? args[oi + 1] : null;

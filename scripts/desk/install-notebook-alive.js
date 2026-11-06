@@ -66,8 +66,12 @@ async function tick() {
         } finally { try { await pool.end(); } catch (e) { /* 무시 */ } }
     } catch (e) { logLine('실패: ' + String(e.message || e).slice(0, 150)); }
     // 14일 지난 날짜 로그는 지운다(이 작업 로그만 · 2분마다 한 줄이라 하루 720줄)
-    try { const cut = Date.now() - 14 * 86400e3; for (const n of fs.readdirSync(LOG_DIR)) if (/^notebook-alive-\d{4}-\d{2}-\d{2}\.log$/.test(n) && fs.statSync(path.join(LOG_DIR, n)).mtimeMs < cut) fs.unlinkSync(path.join(LOG_DIR, n)); } catch (e) { /* 무시 */ }
+    try { const cut = Date.now() - 14 * 86400e3; for (const n of fs.readdirSync(LOG_DIR)) if (/^(notebook-alive|memory-sync)-\d{4}-\d{2}-\d{2}\.log$/.test(n) && fs.statSync(path.join(LOG_DIR, n)).mtimeMs < cut) fs.unlinkSync(path.join(LOG_DIR, n)); } catch (e) { /* 무시 */ }
     clearTimeout(kill);
+    // #1043 신호를 적은 뒤 메모리 맞추기 한 번(노트북 ↔ 나스) — 따로 node 로 돌려 실패·멈춤이 신호에 번지지 않게
+    //   (상한 = 신호 10초 + 35초 · memory-sync 자체 30초 · 작업 ExecutionTimeLimit PT1M 안 · 재등록 불필요)
+//   memory-sync.js --auto 는 --enable 뒤에만 일하고(꺼져 있으면 바로 끝) · 나스 안 닿으면 조용히 · 로그는 ~/.akkome/logs/memory-sync-날짜.log
+    try { execFileSync(process.execPath, [path.join(__dirname, 'memory-sync.js'), '--auto'], { cwd: ROOT, timeout: 35000, windowsHide: true, stdio: 'ignore' }); } catch (e) { /* memory-sync 가 스스로 로그 */ }
 }
 const arg = process.argv[2];
 (async () => {
