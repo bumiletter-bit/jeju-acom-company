@@ -13,6 +13,7 @@ const CHECK_MS = 10000, BEAT_MS = 30000;
                  FROM pending_orders
                  WHERE is_deleted = false AND status IN ('대기', '승인됨')
                    AND content NOT LIKE '[검증469]%' -- 검증 스크립트의 시험 지시는 집지 않는다
+                   AND NOT (pending_orders.content LIKE '[VM]%' AND (pending_orders.created_by = '창구 → VM' OR COALESCE(pending_orders.created_by_id, 0) >= 990000 OR EXISTS (SELECT 1 FROM users u WHERE u.id = pending_orders.created_by_id AND u.role = 'admin' AND u.deleted_at IS NULL))) -- #1041-b: VM 이 집는 「[VM]」(창구 → VM · 시험 계정 · 관리자 작성 = vm-watch.js WHO_OK 짝)만 뺌 · 직원이 친 「[VM]」 은 창구가 종전대로(승인 뒤 넘김)
                    AND COALESCE(created_by_id, 0) < 990000 -- #638: 시험 번호 계정 지시도(머리말이 달라도) 집지 않는다
                  ORDER BY (status = '승인됨') DESC, id ASC LIMIT 10`);
             if (r.rows.length) {

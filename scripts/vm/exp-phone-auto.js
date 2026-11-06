@@ -137,8 +137,9 @@ function krBusy(nowMs) {
 function lockTake() {
     try {
         fs.mkdirSync(path.dirname(LOCK), { recursive: true });
-        if (fs.existsSync(LOCK) && Date.now() - fs.statSync(LOCK).mtimeMs < LOCK_STALE_MS) return false;
-        fs.writeFileSync(LOCK, String(process.pid)); return true;
+        if (fs.existsSync(LOCK)) { if (Date.now() - fs.statSync(LOCK).mtimeMs < LOCK_STALE_MS) return false; try { fs.unlinkSync(LOCK); } catch (e) { /* 남이 먼저 지움 */ } }   // 15분 넘은 낡은 잠금만 지움
+        const fd = fs.openSync(LOCK, 'wx'); try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }   // #1041-b 'wx' = 이미 있으면 실패(VM 러너와 동시에 잡아도 하나만)
+        return true;
     } catch (e) { return false; }
 }
 function lockFree() { try { if (fs.existsSync(LOCK) && fs.readFileSync(LOCK, 'utf8') === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) { /* 무시 */ } }
