@@ -182,7 +182,7 @@
         $('fo-memo').addEventListener('input', () => { markStale(); fitMemoEd(); if (st.memoEd && st.judged) st.memoEd.ed.classList.add('stale'); });
         $('fo-ship').addEventListener('change', markStale);
         $('fo-start').addEventListener('click', () => run(start));
-        $('fo-rejudge').addEventListener('click', () => run(judge));
+        $('fo-rejudge').addEventListener('click', () => run(judge, { jump: true }));   // #1051 판정 끝나면 ⚠·✕ 메모 줄 카드 → 없으면 참고의 메모 줄로
         $('fo-reload').addEventListener('click', () => run(start));
         $('fo-make').addEventListener('click', () => run(make));
         $('fo-cards').addEventListener('click', onCardClick);
@@ -238,12 +238,13 @@
         $('fo-progress').addEventListener('click', e => { const b = e.target.closest('button[data-fo-load]'); if (b) run(() => b.dataset.foLoad === 'retry' ? loadChannels(CH.filter(c => st.chState[c] && st.chState[c].fail)).then(afterLoad) : skipFailed()); });
     }
     const LOCKS = ['fo-memo', 'fo-ship', 'fo-cash-pick', 'fo-cash-none'];
-    async function run(fn) {
+    async function run(fn, opt) {
         if (st.busy || (st.ai && st.ai.running)) return; st.busy = true; $('fo-panel').classList.add('busy');
         LOCKS.forEach(id => { $(id).disabled = true; });   // 실행 중에는 입력을 잠근다 — 판정이 도는 사이 메모를 고치면 낡은 판정으로 파일이 만들어진다(워커2 재현 E)
         try { await fn(); } catch (err) { showError(err); } finally { st.busy = false; $('fo-panel').classList.remove('busy'); LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncMake(); syncAi(); syncChat(); }
         if (st.autoAi) { st.autoAi = false; if (st.judged && !st.stale) aiRead(true); }   // #520
         if (fn === judge && st.judged && !st.stale) lineFixAuto();   // #572 규칙이 못 읽은 메모 줄만 클코가 틀로 고쳐 쓰게(기다리지 않음)
+        if (opt && opt.jump && fn === judge) judgeJump();   // #1051
     }
     // 실패한 채널 없이 계속: 주문은 받았는데 그 뒤 판정에서 실패한 채널이면 받은 주문도 비운다(안내 글 「결과 파일에 들어가지 않아요」와 맞게)
     async function skipFailed() {
@@ -358,7 +359,7 @@
         markStale(); syncInput();
     }
     // #861 [메모함 적용하기] = 메모함 오늘 몫(for-ship)을 지금 바로 넣고 판정까지 · 이미 넣었으면 뺀 뒤 새로(바꿔 넣기) · 길은 자동 넣기(omInsert)와 같음
-    async function omApply() {
+    async function omApply(jump) {   // #1051 jump = [메모함 적용하기] 단추에서만(카드 단추 길 451·463 은 자리 그대로)
         if (!st.loaded) return;   // 주문을 불러오기 전엔 단추가 흐림(메모 칸도 아직 없음)
         if (st.busy || (st.ai && st.ai.running) || OMF.busy) { toast('판정·읽기가 끝난 뒤 눌러 주세요', 2500); return; }
         // 비운 뒤엔 for-ship 이 비운 줄을 안 줌 → 메모 칸 줄을 빼면 그대로 사라짐(워커2 점검) — 칸은 그대로 둔다
@@ -370,7 +371,7 @@
             await omInsert(true);
         } finally { if (b) b.disabled = false; }
         if (!OMF.lines.length && !OMF.cash.length && !OMF.shipMemos.length && !OMF.boxRows.length) { if (!$('fo-om-band').innerHTML) omBand('발주 메모함: 이번 발송일에 넣을 줄이 없어요'); markStale(); syncInput(); return; }
-        await run(judge);
+        await run(judge, { jump: !!jump });   // #1051 메모함 적용 뒤에도 같은 이동
     }
     function omResultNote(el) {
         const n = omLiveIds().length;
@@ -381,7 +382,7 @@
     }
     document.addEventListener('click', async e => {
         const b = e.target.closest('#fo-om-open, #fo-om-apply, [data-om]'); if (!b || !b.closest('#fo-panel, .fo')) return;
-        if (b.id === 'fo-om-apply') { omApply(); return; }
+        if (b.id === 'fo-om-apply') { omApply(true); return; }
         if (b.id === 'fo-om-open' || b.dataset.om === 'open') { if (window.AkmOrderMemo) window.AkmOrderMemo.open(); else toast('발주 메모함을 불러오지 못했어요', 2500); return; }
         if (b.dataset.om === 'take') {
             if (st.busy) return;
@@ -887,6 +888,17 @@
         const s = S(), l = ((s && s.allLines) || []).find(x => x.srcLine === i), hk = new Set(((l && l.hitRows) || []).map(keyOf));
         const mine = cd => { const m = LINE_CARD.exec(String(cd.id)); return m ? Number(m[2]) === i : cd.recheck && (cd.keys || []).some(k => hk.has(k)); };
         return st.cards.find(cd => mine(cd) && !closed(cd)) || st.cards.find(mine) || null;
+    }
+    // #1051(대표 11/8 「확인 누르면 확인완료 되고 참고의 메모 줄로」): [확인]·[다시 판정]·[메모함 적용하기] 판정 뒤 화면 이동 — 카드에서 고치던 중(anchor)이면 안 움직임
+    //   ⚠·✕ 메모 줄의 열린 확인 카드가 있으면 그 첫 카드(memoGo 와 같은 길) · 없으면 참고 목록의 첫 메모 줄(#869 line 줄 · 보이는 순서) · 그것도 없으면 토스트
+    function judgeJump() {
+        if (!st.judged || st.stale || anchorLive()) return;
+        const E = st.memoEd, marks = (E && E.marks) || [];
+        for (let i = 0; i < marks.length; i++) { const m = marks[i]; if (m && m.k !== 'ok') { const cd = memoLineCard(i); if (cd && !closed(cd)) { memoGo(i); return; } } }
+        const lis = [...$('fo-info').querySelectorAll('li[data-info]')], li = lis.find(l => { const it = st.info[Number(l.dataset.info)]; return it && typeof it === 'object' && it.line != null; });
+        if (!li) { toast('참고에 갈 메모 줄이 없어요', 2500); return; }
+        const det = $('fo-info').querySelector('details'); if (det && !det.open) { det.open = true; st.infoClosed = false; }
+        li.scrollIntoView({ block: 'center', behavior: smoothOk() ? 'smooth' : 'auto' }); li.classList.add('fo-flash'); setTimeout(() => li.classList.remove('fo-flash'), 1800); if (!li.hasAttribute('tabindex')) li.setAttribute('tabindex', '-1'); li.focus({ preventScroll: true });
     }
     function memoGo(i) {
         const E = st.memoEd, m = E && E.marks && E.marks[i]; if (!m || st.stale || !st.judged) return;
@@ -3245,10 +3257,10 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const rows = r.rows || [], auto = rows.filter(x => x.status === 'auto'), todo = todoRows(), s = r.summary || {};
         const qty2 = rows.filter(x => (x.tracking_all || []).length > 1).length;
         const fetchErr = CH.filter(c => r.fetch && r.fetch[c] && !r.fetch[c].ok);
-        const files = (r.files || []).map(f => `${esc(f.partner || '?')} ${Number(f.rows) || 0}줄`).join(' · ');
+        const files = (r.files || []).map((f, i) => { const lb = f.partner_label || (f.partner && f.partner !== '?' ? f.partner : '') || ('파일' + (i + 1)); return `${esc(lb)} ${Number(f.rows) || 0}박스`; }).join(' · ');   // #1051 거래처 이름 + 박스(운송장 1줄 = 1박스) · 못 정하면 「파일n」
         const chRow = c => { const b = (r.by_channel || {})[c] || {}; return `<li><b>${CH_LABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
         out.innerHTML = `
-            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 운송장 없는 주문 ${Number(r.orders_without_tracking) || 0}건(지정발송일·아직 안 보낸 주문)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
+            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 금일 미발송건 ${Number(r.orders_without_tracking) || 0}건(지정일 안 보낸 줄)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
             ${fetchErr.length ? `<p class="fo-hint err" role="alert">${fetchErr.map(c => `${CH_LABEL[c]} 주문을 못 불러왔어요(${esc(r.fetch[c].error || '오류')}) — 그 채널 운송장은 「주문 없음」으로 남아요`).join('<br>')}</p>` : ''}
             <div class="fo-sum fo-ia-sum">
                 <span>자동 <b>${s.auto || 0}</b></span><span class="${todo.length ? 'warn' : ''}">할 일 <b>${todo.length}</b></span><span>현금(송장만) <b>${s.cash || 0}</b></span><span>수량2 <b>${qty2}</b></span><span>다른 주소 박스 <b>${s.extra || 0}</b></span><span>주문 없음 <b>${s.unmatched || 0}</b></span>

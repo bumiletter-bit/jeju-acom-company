@@ -43,6 +43,22 @@ function normShips(rows, partner) {
         key: [normName(x.nm), dg(x.tel), normAddr(x.ad)].join('|'), cash: /[!！]/.test(String(x.sn || '')),
     }));
 }
+// #1051 화면 표시용 거래처 이름(partner_label) — 파일 이름 괄호가 있으면 그것 · 없으면(CJ 「파일접수 상세내역_…」) 운송장 상품명을 그날 단가표 거래처와 대조해 과반 · 못 정하면 ''
+//   🔴 표시 전용 — partner(색인 lois.upsert · normShips · 짝)에는 안 넣음(추정값이 송장 색인·짝으로 흐르지 않게)
+const shortPartnerName = name => { const s = String(name == null ? '' : name).replace(/\([^)]*\)/g, '').replace(/농협/g, '').trim(); return s || String(name || '').trim(); };   // final-order-core.js shortPartner 와 같은 꼴
+function partnerGuess(rows, byPartner) {
+    const ps = Object.keys(byPartner || {}); if (!ps.length || !(rows || []).length) return '';
+    const sets = ps.map(p => [p, new Set((byPartner[p] || []).map(normProd))]);
+    const votes = new Map(); let n = 0;
+    for (const r of rows) {
+        const k = normProd(r && r.op); if (!k) continue; n++;
+        const hit = sets.filter(([, s]) => s.has(k)).map(([p]) => p);
+        if (hit.length === 1) votes.set(hit[0], (votes.get(hit[0]) || 0) + 1);   // 두 거래처에 같은 이름이면 표 안 셈
+    }
+    const top = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+    if (!top.length || top[0][1] * 2 <= n || (top[1] && top[1][1] === top[0][1])) return '';   // 줄 과반을 못 넘으면 모름
+    return shortPartnerName(top[0][0]);
+}
 // 주문 옵션 ↔ 운송장 상품명(시트2 상품명 = 우리 양식 옵션정보 = 단가표 이름 · 채널 옵션 글은 더 길다) — 한쪽이 다른 쪽을 품을 때만 같음
 function prodMatch(orderOpt, shipProd) {
     const a = normProd(orderOpt), b = normProd(shipProd);
@@ -293,8 +309,8 @@ module.exports = function mountInvoiceAuto(app, d) {
                 catch (e) { fetchInfo[ch] = { ok: false, orders: 0, error: String((e && e.message) || e).slice(0, 120) }; }
             }
             const ships = []; parsed.forEach(p => ships.push(...normShips(p.rows.map(r => ({ ...r, partner: p.partner })), p.partner)));
-            let pricingNames = [];   // #841 그날 단가표 이름(/api/invoice/catalog 와 같은 SQL · 읽기) · 실패하면 빈 목록(표준명·글자 비교로)
-            try { const pr = await pool.query(`SELECT items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [shipDate]); const set = new Set(); pr.rows.forEach(row => (row.items || []).forEach(it => { if (it && it.name) set.add(it.name); })); pricingNames = [...set]; } catch (e) { pricingNames = []; }
+            let pricingNames = [], byPartner = {};   // #841 그날 단가표 이름(/api/invoice/catalog 와 같은 SQL · 읽기) · 실패하면 빈 목록(표준명·글자 비교로) · #1051 거래처별 이름(표시용 거래처 추정)
+            try { const pr = await pool.query(`SELECT partner, items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [shipDate]); const set = new Set(); pr.rows.forEach(row => (row.items || []).forEach(it => { if (it && it.name) { set.add(it.name); if (row.partner) (byPartner[row.partner] = byPartner[row.partner] || []).push(it.name); } })); pricingNames = [...set]; } catch (e) { pricingNames = []; byPartner = {}; }
             const iv = req.body && req.body.indiv; let indivKeys = iv && iv.date === shipDate && Array.isArray(iv.keys) ? iv.keys.slice(0, 500).map(k => String(k).slice(0, 120)) : [], holdKeys = iv && iv.date === shipDate && Array.isArray(iv.hold) ? iv.hold.slice(0, 500).map(k => String(k).slice(0, 120)) : [];   // #894 F2 최종발주가 남긴 입력삭제 주문(그 발송일만) · #938 오늘 안 나감
             // #939 서버 표식 우선 · 그날 표식이 없으면 브라우저 값(종전 길) · 브라우저 값이 1분 넘게 더 새것이면(서버 저장 실패 뒤 다시 만든 경우) 브라우저 값
             let marks = { source: iv && iv.date === shipDate ? 'browser' : 'none', differs: false };
@@ -316,7 +332,7 @@ module.exports = function mountInvoiceAuto(app, d) {
             let indexUp = 0, indexErr = null;
             for (const p of parsed) { try { indexUp += await lois.upsert(p.wb, p.rows, shipDate, p.partner === '?' ? '' : p.partner); } catch (e) { indexErr = String(e.message || e).slice(0, 120); } }
             const summary = { shipments: ships.length, auto: card.rows.filter(r => r.status === 'auto').length, todo: card.rows.filter(r => r.status === 'todo').length, cash: card.cash.length, extra: card.extra.length, unmatched: card.unmatched.length, todo_indiv_none: card.rows.filter(r => r.rule === 'todo_indiv_none').length, orders_without_tracking: card.orders_without_tracking, marks_source: marks.source, index_upserted: indexUp, ...(indexErr ? { index_error: indexErr } : {}) };
-            const filesOut = parsed.map(p => ({ name: p.name, partner: p.partner, rows: p.rows.length }));
+            const filesOut = parsed.map(p => ({ name: p.name, partner: p.partner, partner_label: p.partner !== '?' ? p.partner : partnerGuess(p.rows, byPartner), rows: p.rows.length }));   // #1051 partner_label = 화면 요약 글 전용
             await pool.query(`DELETE FROM invoice_auto_runs WHERE created_at < now() - interval '90 days'`);
             await pool.query(`DELETE FROM invoice_auto_items WHERE created_at < now() - interval '90 days'`);   // #838-4 E
             const ins = await pool.query(`INSERT INTO invoice_auto_runs (created_by, ship_date, file_hash, files, fetch_info, summary, result) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
@@ -533,3 +549,4 @@ module.exports.prodMatch = prodMatch;
 module.exports.maskRecipient = maskRecipient;
 module.exports.stripPII = stripPII;
 module.exports.canonOf = canonOf;
+module.exports.partnerGuess = partnerGuess;   // #1051

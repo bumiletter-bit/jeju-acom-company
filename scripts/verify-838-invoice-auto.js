@@ -37,7 +37,7 @@ const pool = { query: async (sql, p) => {
     if (/^UPDATE invoice_auto_runs SET register_state = 'prepared'/.test(s)) { const r = runs.find(x => x.id === p[0]); if (r) { r.register_state = 'prepared'; r.register = JSON.parse(p[1]); } return { rowCount: r ? 1 : 0 }; }
     if (/^SELECT run_id, state, tracking FROM invoice_auto_items WHERE idem_key = \$1/.test(s)) { const x = items.get(p[0]); return { rows: x ? [x] : [] }; }
     if (/^INSERT INTO invoice_auto_items \(idem_key, run_id, channel, order_key, tracking, state\) VALUES \(\$1,\$2,\$3,\$4,\$5,'ready'\) ON CONFLICT \(idem_key\) DO UPDATE SET run_id = EXCLUDED\.run_id, tracking = EXCLUDED\.tracking, state = 'ready', error_text = NULL, updated_at = now\(\) WHERE invoice_auto_items\.state NOT IN \('sent','sending','unknown'\)$/.test(s)) { const x = items.get(p[0]); if (!x) items.set(p[0], { idem_key: p[0], run_id: p[1], channel: p[2], order_key: p[3], tracking: p[4], state: 'ready', created_at: Date.now() }); else if (!['sent', 'sending', 'unknown'].includes(x.state)) { x.run_id = p[1]; x.tracking = p[4]; x.state = 'ready'; x.error_text = null; } return { rowCount: 1 }; }
-    if (/^SELECT items FROM pricing WHERE start_date <= \$1::date AND end_date >= \$1::date$/.test(s)) return { rows: PRICING_ROWS };   // #841 그날 단가표 이름(읽기)
+    if (/^SELECT (?:partner, )?items FROM pricing WHERE start_date <= \$1::date AND end_date >= \$1::date$/.test(s)) return { rows: PRICING_ROWS };   // #841 그날 단가표 이름(읽기)
     if (/^INSERT INTO delivery_shipments/.test(s)) { shipIdx.set(p[0], { tracking: p[0], date: p[1], partner: p[2] }); return { rowCount: 1 }; }
     unknownSql.push(s.slice(0, 120)); throw new Error('가짜 pool: 모르는 SQL — ' + s.slice(0, 120));
 } };
