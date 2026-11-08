@@ -9,7 +9,9 @@
 //     → status '완료'(끝줄 「— 나스 VM 어사이드 처리」) · 실패 = 1회 '대기'로 되돌려 다시 → 두 번째도 실패면 '오류' + 사유
 //   한 번에 하나: 어사이드 잠금 ~/.akkome/exp-phone-auto.lock 공유(체험 번호 틱과 같은 파일 · 1분마다 mtime 갱신 = 15분 stale 판정에 안 걸림) ·
 //     키워드 순위 도는 중(~/.akkome/keyword-rank.json 오늘·결과 없음 = exp-phone-auto krBusy) 쉼 · 키워드 09:30 창 = claude 길 09:20~09:45 · 순위 갈래 09:10~09:45 쉼(상한만큼 앞당김 · 지시는 대기에 남음) · 잠금 잡기 = 'wx'
-//   지시당 상한 10분(claude) · 20분(순위) → 자식 트리째 끔(Windows taskkill /T /F)
+//   지시당 상한 10분(claude) · 20분(순위 · 포인트 지급) → 자식 트리째 끔(Windows taskkill /T /F)
+//   #1056-a 포인트 보상 지급 갈래 = 본문이 「포인트 (보상) 지급」으로 시작(isPoint) → claude 길 그대로 + 프롬프트 규칙 ①에 포인트지급 화면 [회원검색]·[추가]·[확인]만 허용 · [절차] 블록(업무지식 절) · 상한 20분 · 09:10~09:45 쉼
+//     실패 재집기(같은 줄 하루 2회)는 절차 (c) 「오늘 같은 아이디 지급 줄 있으면 지급 X」가 중복을 막음
 //   🔴 창구(get.js·respond.js)를 부르지 않고 같은 꼴을 여기서 쓴다 = 둘 다 창구 heartbeat(desk_heartbeat)를 덮어 창구 「자리 비움」 판정이 흐려지므로.
 //     VM heartbeat = agent_office_config 'vm_heartbeat' {at, state, order_id, host} 따로(60초마다)
 //   기동 복구 = 「[VM]」 머리 '처리중'만 '대기'로(자기 것만 · 창구 지시는 손대지 않음 · vm_heartbeat 2분 안에 살아 있는 러너가 돌리는 지시는 건너뜀)
@@ -17,7 +19,7 @@
 //   사용: node scripts/vm/vm-watch.js            (계속 돎)
 //         node scripts/vm/vm-watch.js --once     (한 번만 보고 끝 · 시험)
 //         node scripts/vm/vm-watch.js --status   (잠금·키워드·상태 파일만 · DB 0)
-//   env(시험용): VM_CLAUDE_BIN(.js 면 node 로 띄움) · VM_NODE_BIN · VM_RANK_SCRIPT · VM_POLL_MS · VM_ORDER_LIMIT_MS · VM_RANK_LIMIT_MS · VM_MODEL
+//   env(시험용): VM_CLAUDE_BIN(.js 면 node 로 띄움) · VM_NODE_BIN · VM_RANK_SCRIPT · VM_POLL_MS · VM_ORDER_LIMIT_MS · VM_RANK_LIMIT_MS · VM_POINT_LIMIT_MS · VM_MODEL
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path');
 const { spawn, execFileSync } = require('child_process');
@@ -31,6 +33,7 @@ const HEAD = '[VM]';
 const POLL_MS = Number(process.env.VM_POLL_MS) || 30000, BEAT_MS = 60000;
 const ORDER_LIMIT_MS = Number(process.env.VM_ORDER_LIMIT_MS) || 10 * 60000;
 const RANK_LIMIT_MS = Number(process.env.VM_RANK_LIMIT_MS) || 20 * 60000;
+const POINT_LIMIT_MS = Number(process.env.VM_POINT_LIMIT_MS) || 20 * 60000;   // #1056-a 포인트 보상 지급 갈래(센터 로그인·주문 대조·지급 · 실건 약 15분)
 const MODEL = process.env.VM_MODEL || 'claude-opus-5-5';
 const ALLOWED = 'mcp__aside__repl,mcp__aside__exec';   // 어사이드만(교차 점검 2 · 파일 읽기 도구는 .env 유출 길이라 막음)
 const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
@@ -56,6 +59,9 @@ function log(msg) {
 const bodyOf = content => String(content || '').replace(/^\[VM\]\s*/, '').trim();
 const head60 = content => bodyOf(content).replace(/\s+/g, ' ').slice(0, 60);
 function isRank(content) { const b = bodyOf(content); return b.length > 0 && b.length <= RANK_MAX_LEN && RANK_RE.test(b); }
+// #1056-a 포인트 보상 지급 갈래 = 본문이 「포인트 (보상) 지급」으로 시작(업무지식 「네이버페이 포인트 보상 지급」 절 · 직원 누구나 · 승인 없음 = 대표 11/8)
+const POINT_RE = /^포인트\s*(?:보상\s*)?지급/;
+function isPoint(content) { return POINT_RE.test(bodyOf(content)); }
 
 // ── 쉼 판단(어사이드 한 번에 하나) ──
 function krBusy() { try { return require('./exp-phone-auto.js').krBusy(); } catch (e) { return false; } }
@@ -231,15 +237,29 @@ function findClaude() {
     for (const c of cands) if (fs.existsSync(c)) return c;
     return 'claude';
 }
+// #1056-a 포인트 지급 절차(★에이전트오피스/업무지식.md 「### 네이버페이 포인트 보상 지급」 절을 러너용으로 옮김 · 그 절을 고치면 여기도)
+const POINT_STEPS = [
+    '[절차] 네이버페이 포인트 보상 지급',
+    '(a) 스마트스토어센터 로그인 = 커머스ID 「간편 로그인」 단추(비밀번호 입력 X · 금고 자동 채움). 2단계 인증·보안 확인이 뜨면 규칙 ②대로 멈춘다.',
+    '(b) 지시의 주문번호(또는 끝4·「오늘 n시 톡톡」)로 판매관리 › 주문통합검색 → 구매자 아이디·품목·결제금액·구매확정 여부를 확인한다. 톡톡 아이디가 닉네임이거나 끝 밑줄 「_」이 빠져 보이면 톡톡 파트너센터 손님 정보 → 주문이력 → 주문번호로 묶고, 센터 회원검색 0건이면 이름 검색 뒤 마스킹 앞 글자로 대조한다.',
+    '(c) 혜택/마케팅 › 포인트 지급관리 목록에서 오늘 같은 아이디 지급 줄이 있으면 지급하지 않고 「이미 지급됨 · 일련번호」로 답한다(다시 집힌 지시도 이 확인으로 중복 0).',
+    '(d) [포인트 지급] = 지급 목적(구매확정 건 있으면 기본 · 없으면 「비구매적립」) · 지급사유 = 지시 글 그대로(15자 안) · 금액 = 지시 금액 그대로(다른 금액·다른 손님 X) → 회원검색에 그 아이디 → 추가 → 지급대상 1명·금액 확인 → [확인] 1회. 「서비스에 에러」 띠가 뜨면 목록에 새 줄이 없을 때만 1회 더(중복 0).',
+    '(e) 끝 보고 = 일련번호 · 아이디 앞 2자 · 금액 · 사유 · 지급 시각 · 비즈월렛 잔액 · 성공/실패 수.',
+    '(f) 지시의 손님 ↔ 주문(품목·결제금액·받은 날) ↔ 아이디 셋 중 하나라도 안 맞거나 후보가 둘 이상이거나 애매하면 지급하지 않고, 무엇이 안 맞는지 화면 값(성만+끝4 · 아이디 앞 2자+* · 주문번호 · 금액 · 목적)으로 답한다. 손님에게 보내는 톡톡 답은 지시에 「답도 보내」가 있을 때만(없으면 사람 몫).',
+];
 function promptFor(o) {
     const out = path.join(OUT_DIR, String(o.id));
+    const point = isPoint(o.content);
     return [
         `너는 나스 VM(어사이드 전용 윈도우 PC)의 워커야. 총괄이 창구 대기열로 보낸 지시 #${o.id} 를 처리해.`,
-        `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 읽고 조회하는 일만 한다. 저장·발송·결제·삭제·설정 변경 단추는 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`,
+        point
+            ? `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 다룬다. 이 지시는 네이버페이 포인트 보상 지급 일이라 스마트스토어센터 포인트지급 화면의 [회원검색]·[추가]·[확인] 단추는 아래 [절차]대로 누른다. 그 밖 저장·발송·결제·삭제·설정 변경 단추는 종전대로 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`
+            : `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 읽고 조회하는 일만 한다. 저장·발송·결제·삭제·설정 변경 단추는 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`,
         `②로그인·보안 확인 화면이 나오면 그 탭을 그대로 두고 「VM 어사이드에서 로그인/보안 확인 필요」로 답한다. 비밀번호·토큰·.env 값은 읽거나 답에 쓰지 않는다.`,
         `③손님 이름·번호는 꼭 필요한 만큼만(번호는 끝 4자리) 쓴다. ④답은 한국어로 짧게, 요점부터. 표가 편하면 표.`,
         `⑤파일(캡처·엑셀 등)을 넘겨야 하면 ${out} 폴더 안에 저장하고 답 맨 끝에 「ATTACH: <전체 경로>」 를 파일마다 한 줄씩 적는다(5개까지 · 10MB 이하).`,
-        `⑥이 일은 지시당 10분 안에 끝내야 한다.`,
+        point ? `⑥이 일은 지시당 20분 안에 끝내야 한다.` : `⑥이 일은 지시당 10분 안에 끝내야 한다.`,
+        ...(point ? ['', ...POINT_STEPS] : []),
         '', '[지시]', bodyOf(o.content),
     ].join('\n');
 }
@@ -258,9 +278,9 @@ function takeAttach(text, id) {
     return { answer, files, dropped };
 }
 async function doClaude(db, o) {
-    const cwd = claudeCwd(o.id);
-    const r = await run(findClaude(), ['-p', '--model', MODEL, '--output-format', 'json', '--allowedTools', ALLOWED, '--disallowedTools', DENIED], { input: promptFor(o), limitMs: ORDER_LIMIT_MS, cwd, onTick: () => heartbeat(db, 'busy', o.id) });
-    if (r.timeout) return { ok: false, why: `${Math.round(ORDER_LIMIT_MS / 60000)}분 넘어 끔` };
+    const cwd = claudeCwd(o.id), limitMs = isPoint(o.content) ? POINT_LIMIT_MS : ORDER_LIMIT_MS;
+    const r = await run(findClaude(), ['-p', '--model', MODEL, '--output-format', 'json', '--allowedTools', ALLOWED, '--disallowedTools', DENIED], { input: promptFor(o), limitMs, cwd, onTick: () => heartbeat(db, 'busy', o.id) });
+    if (r.timeout) return { ok: false, why: `${Math.round(limitMs / 60000)}분 넘어 끔` };
     let j = null; try { j = JSON.parse(String(r.out).trim().split(/\r?\n/).filter(Boolean).pop() || ''); } catch (e) { j = null; }
     if (r.code !== 0 || !j || j.is_error || (j.subtype && j.subtype !== 'success') || !String(j.result || '').trim()) {
         const why = (j && (j.result || j.subtype)) || String(r.err || r.out || '').trim().split(/\r?\n/).pop() || ('exit ' + r.code);
@@ -288,7 +308,7 @@ async function doRank(db, o) {
 async function handle(db, id) {
     const o = await claim(db, id); if (!o) return { id, did: false };
     const tries = triesBump(o.id), rank = isRank(o.content);
-    log(`#${o.id} 집음(${rank ? '순위 갈래' : 'claude'} · ${tries}번째) :: ${head60(o.content)}`);
+    log(`#${o.id} 집음(${rank ? '순위 갈래' : isPoint(o.content) ? 'claude · 포인트 지급' : 'claude'} · ${tries}번째) :: ${head60(o.content)}`);
     await heartbeat(db, 'busy', o.id);
     let res;
     try { res = o.has_image ? { ok: false, why: '그림 첨부 지시는 VM 길에서 안 받음(글로만)' } : rank ? await doRank(db, o) : await doClaude(db, o); }
@@ -305,8 +325,9 @@ async function handle(db, id) {
 async function pollOnce(db) {
     const why = busyWhy(); if (why) return { skipped: why };
     const id = await pick(db); if (!id) return { idle: true };
-    const rank = isRank(((await db.query(`SELECT content FROM pending_orders WHERE id = $1`, [id])).rows[0] || {}).content);
-    if (inSkip(kstNow(), rank)) return { skipped: (rank ? '09:10' : '09:20') + '~09:45 키워드 순위 창', id };   // 지시는 대기에 남음
+    const content = ((await db.query(`SELECT content FROM pending_orders WHERE id = $1`, [id])).rows[0] || {}).content;
+    const long = isRank(content) || isPoint(content);   // 상한 20분 갈래(순위·포인트) = 09:10 부터 쉼(상한만큼 앞당김)
+    if (inSkip(kstNow(), long)) return { skipped: (long ? '09:10' : '09:20') + '~09:45 키워드 순위 창', id };   // 지시는 대기에 남음
     if (!lockTake()) return { skipped: '잠금 못 잡음' };
     try { return await handle(db, id); } finally { lockFree(); }
 }
@@ -334,4 +355,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { isRank, RANK_RE, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
