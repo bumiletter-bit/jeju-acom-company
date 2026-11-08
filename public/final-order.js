@@ -252,6 +252,7 @@
         CH.filter(c => st.chState[c] && st.chState[c].fail).forEach(c => { if (c === 'naver') s.naver = null; else s[c] = []; st.chState[c] = { fail: true, t: '이번에는 넣지 않음' }; });
         drawProgress(); st.loaded = true; st.loadedOn = kstToday(); st.loadedAt = Date.now();
         if (s.calendar) { st.cal = s.calendar; fillShip(); }
+        await loadInsert();   // #1052
         await judge();
     }
     function showError(err) {
@@ -328,12 +329,12 @@
         if (OMF.date && OMF.ids.length && !OMF.removed) omPost(OMF.ids.slice(), true);
         Object.assign(OMF, { date: '', busy: false, lines: [], cash: [], ids: [], removed: false, prevNone: false, pend: null, cleared: false, shipMemos: [], normal: [] }); omBand('');
     }
-    async function omInsert(force) {
+    async function omInsert(force, fromLoad) {   // #1052 fromLoad = 주문 불러오기 직후 run() 안(st.busy 막이만 넘김 · 판정 전에 메모함 줄을 넣어 첫 판정 1회로)
         const date = ($('fo-ship') || {}).value;
-        if (!date || OMF.busy || st.busy || (st.ai && st.ai.running) || (!force && (OMF.date === date || OMF.removed))) return;
+        if (!date || OMF.busy || (st.busy && !fromLoad) || (st.ai && st.ai.running) || (!force && (OMF.date === date || OMF.removed))) return;
         let r = OMF.pend && OMF.pend.date === date ? OMF.pend.r : null; OMF.pend = null;
         if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?sm=1&date=' + encodeURIComponent(date)); } catch (e) { r = null; } OMF.busy = false; }   // 404·오류 = 지금처럼
-        if (r && r.ok && (st.busy || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
+        if (r && r.ok && ((st.busy && !fromLoad) || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
         if (!r || !r.ok || ($('fo-ship') || {}).value !== date) { if (!r) OMF.date = date; return; }
         if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
         OMF.date = date; OMF.removed = false; OMF.cleared = false;
@@ -583,8 +584,12 @@
         }
         st.loaded = true; st.loadedOn = kstToday(); st.loadedAt = Date.now();
         st.cal = S().calendar; fillShip();   // 다시 불러온 경우 달력(오늘·발송 가능일)을 새로
+        await loadInsert();
         await judge();
     }
+    // #1052(대표 11/8 「고」): 첫 흐름 = 메모함 오늘 몫 먼저 → 판정 1회 → AI 1회(종전 = 빈 메모로 판정 → 메모함 넣기 → [다시 판정] → AI 또) · 실패·404·0줄 = 종전처럼 판정만
+    //   omInsert 끝 markStale 은 phase loading 이라 조용함 · 이미 넣은 날짜(다시 불러오기)는 종전 조건대로 no-op
+    async function loadInsert() { try { await omInsert(false, true); } catch (e) { console.warn('[최종발주] 메모함 먼저 넣기 실패(판정만):', e && e.message); } }
 
     // ── ③ 판정 → 카드 ───────────────────────────────────────────────────────
     async function judge() {
