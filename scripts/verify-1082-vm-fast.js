@@ -94,10 +94,18 @@ function units() {
     if (H) ok('포인트 프롬프트 = #1082 전(f6bb9c3) 대비 (b-0)·⑥·#1084 (b)(e)(f) 줄만 다름(그 밖 줄 동일)', (() => {
         const a = pp.split('\n'), b = H.promptFor({ id: 9, content: '[VM] 아이디 saygoodjod 주문번호 2026110539641061 포인트 보상 5,000 · 사유 타이벡 파손 보상처리' }).split('\n');
         const extra = a.filter(l => !b.includes(l)), gone = b.filter(l => !a.includes(l));
-        const tag = l => (/^\(([a-z0-9-]+)\)/.exec(l) || /^(⑥)/.exec(l) || [])[1];
+        const tag = l => (/^\(([a-z0-9-]+)\)/.exec(l) || /^(⑥)/.exec(l) || /^(규칙):/.exec(l) || [])[1];
         const ex = extra.map(tag).sort().join(','), gn = gone.map(tag).sort().join(',');
-        return ex === 'b,b-0,e,f,⑥' && gn === 'b,e,f,⑥' && extra.some(l => /수취인\(받는 분\) 이름·전체 번호/.test(l) && /운송장번호\(12자리/.test(l) && /구매자 아이디\*\*로 한다/.test(l)) && extra.some(l => /수취인으로 찾음 → 구매자/.test(l)) && extra.some(l => /「안 맞음」이 아니다/.test(l));
+        return ex === 'b,b-0,b-t,e,f,⑥,규칙' && gn === 'b,e,f,⑥,규칙' && extra.some(l => /수취인\(받는 분\) 이름·전체 번호/.test(l) && /운송장번호\(12자리/.test(l) && /구매자 아이디\*\*로 한다/.test(l)) && extra.some(l => /수취인으로 찾음 → 구매자/.test(l)) && extra.some(l => /「안 맞음」이 아니다/.test(l));
     })());
+    // #1086 톡톡 대화방 길
+    const tb = W.promptFor({ id: 9, content: '[VM] 톡톡 ceo 11/9 14시 「귤이 다 터졌어요」 포인트 보상 3,000 · 사유 타이벡 파손 보상처리' }, { limitMs: 600000 });
+    const ta = W.promptFor({ id: 10, content: '[VM] 톡톡 ceo 손님 배송지 변경 → 제주시 연동 1 · 010-1234-5678' }, { limitMs: 600000 });
+    ok('#1086 포인트 = (b-t) 톡톡 대화방 길이 (b-0) 앞', /\n\(b-t\) #1086[^\n]*partner\.talk\.naver\.com[^\n]*스마트 요약[^\n]*productOrderDetail[^\n]*구매자 ID 전체[^\n]*그 값으로 \(b-0\)/.test(tb) && tb.indexOf('(b-t) #1086') < tb.indexOf('(b-0) #1082'));
+    ok('#1086 배송지 = (b-t) 가 (b) 앞 · 고치는 곳은 배송준비 화면(상세 창 보기 전용)', /\n\(b-t\) #1086[^\n]*그 값으로 \(c\)\(배송준비 화면/.test(ta) && ta.indexOf('(b-t) #1086') < ta.indexOf('(b) 판매관리') && /상세 창은 보기 전용/.test(ta));
+    ok('#1086 대화·상품 줄 0건·둘↑ = 센터 검색 길 · 애매하면 멈춤', /맞는 대화가 0건이거나 둘 이상 · 또는 구매이력에서 지시 품목에 맞는 상품 줄이 0건이거나 둘 이상이면 아래 \(b\) 센터 검색 길로 · 그래도 애매하면 멈춘다/.test(tb));
+    ok('#1086 규칙 ① 톡톡 = 읽기·누르기만(보내기·태그·메모 0) · 포인트·배송지 둘 다', [tb, ta].every(p => /^규칙: [^\n]*톡톡 파트너센터는 읽기와 대화·탭·링크 누르기만 한다\(메시지 보내기·태그·메모·상태 바꾸기 0/m.test(p)));
+    ok('#1086 그 밖 지시엔 톡톡 길·줄 없음', !/톡톡 파트너센터|\(b-t\)/.test(W.promptFor({ id: 77, content: '[VM] 톡톡 상담 목록 첫 줄 읽어줘' })));
     ok('로그인 유지 코드 = 센터 첫 화면만(포인트·주문 화면 주소 없음 · 저장 단추 없음)', /home\/dashboard/.test(W.JS_KEEP) && !/point|benefit|pay-order|저장|지급/.test(W.JS_KEEP) && /간편\\s\*로그인/.test(W.JS_KEEP));
 }
 
