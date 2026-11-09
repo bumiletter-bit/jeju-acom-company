@@ -8278,6 +8278,25 @@ async function collectOrderNew() {
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
 
+// #1072(대표 11/9) 반품·교환 신청자 칸 — 상세 조회 한 건에서 requestChannel(새 꼴 currentClaim.return|exchange 먼저 · 옛 return|exchange 다음) · 값 뜻은 문서에 없어 지금은 모으기·꼬리 표시만(거르기는 실값 확인 뒤 별건)
+function claimReqInfo(it) {
+    const c = (it && (it.content || it)) || {};
+    const po = c.productOrder || (it && it.productOrder) || c;
+    const cur = c.currentClaim || (it && it.currentClaim) || {};
+    const pick = (o) => o && typeof o === 'object' ? o : null;
+    let kind = '', cl = pick(cur.return);
+    if (cl) kind = 'RETURN'; else if ((cl = pick(cur.exchange))) kind = 'EXCHANGE';
+    else if (Object.keys(cur).length) cl = null;   // 새 꼴 응답(currentClaim 에 키 있음 · 예: 취소만) = 옛 칸으로 안 내려감(지난 반품 값 섞임 방지)
+    else if ((cl = pick(c.return || (it && it.return)))) kind = 'RETURN'; else if ((cl = pick(c.exchange || (it && it.exchange)))) kind = 'EXCHANGE';
+    const ch = cl && cl.requestChannel != null ? String(cl.requestChannel).trim().slice(0, 40) : '';
+    return { poid: String((po && po.productOrderId) || '').slice(-4), kind, ch, reason: cl ? String(cl.returnReason || cl.exchangeReason || '').slice(0, 40) : '' };
+}
+function claimReqTag(infos) {   // 「(신청: 값 n건 · 값 m건)」 · 값 하나도 없으면 ''
+    const cnt = new Map();
+    for (const x of infos) if (x.ch) cnt.set(x.ch, (cnt.get(x.ch) || 0) + 1);
+    if (!cnt.size) return '';
+    return ' (신청: ' + Array.from(cnt).map(([k, n]) => n > 1 ? `${k} ${n}건` : k).join(' · ') + ')';
+}
 async function collectClaim() {
     const now = Date.now();
     const cp = await naverCfgGet('naver_claim_checkpoint');
@@ -8305,7 +8324,7 @@ async function collectClaim() {
         if (await alertQuietNow()) await alertNightAcc('claim', fresh.length);  // 야간엔 아침 브리핑으로
         else {
             // #775-A 체험(배송 없는) 상품의 반품 = 방문 날짜 변경·취소 문의일 가능성 → 알림 끝에 「(체험 n건)」 표시만(알림은 그대로) · 상품 번호는 변경 목록에 없어 상세조회 1회 · 실패하면 표시 없이
-            let expTag = '';
+            let expTag = '', reqTag = '';
             try {
                 const ids = fresh.map(x => String(x.productOrderId || '')).filter(Boolean).slice(0, 100);
                 if (ids.length) {
@@ -8315,9 +8334,20 @@ async function collectClaim() {
                     const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
                     const n = (Array.isArray(items) ? items : []).filter(it => { const c = it.content || it; return isExperienceOrder(c.productOrder || it.productOrder || c, expIds); }).length;
                     if (n) expTag = ` (체험 ${n}건)`;
+                    try {   // #1072 같은 응답에서 신청자 칸(호출 추가 0) · 실패해도 체험 표시·알림은 그대로
+                        const infos = (Array.isArray(items) ? items : []).map(claimReqInfo).filter(x => x.kind);
+                        reqTag = claimReqTag(infos);
+                        if (infos.length) {
+                            try {   // 저장만 따로 — 실패해도 꼬리는 살림
+                                const at = new Date().toISOString();
+                                const prev = (await naverCfgGet('claim_request_channel_seen')) || [];
+                                await naverCfgSet('claim_request_channel_seen', infos.map(x => Object.assign(x, { at })).concat(Array.isArray(prev) ? prev : []).slice(0, 50));
+                            } catch (_) { /* 모음은 보조 */ }
+                        }
+                    } catch (_) { reqTag = ''; }
                 }
             } catch (_) { /* 표시 보조 — 실패해도 알림은 그대로 */ }
-            notifyTelegram(await alertText('claim', { '건수': fresh.length }) + expTag);
+            notifyTelegram(await alertText('claim', { '건수': fresh.length }) + expTag + reqTag);
         }
     }
     return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
