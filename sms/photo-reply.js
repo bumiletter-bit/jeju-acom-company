@@ -36,6 +36,9 @@ const ORDER_SIZE_LABEL = {
 // 대표 원문(10/10) — 글자 그대로. 고치려면 대표 확인.
 const DAMAGE_CORE = '부패과가 나왔군요, 불편드려 죄송합니다. 괜찮은 상품 드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능합니다. 괜찮다고 하시면 위 부분 좀 더 하여 보상처리 가능합니다.';
 const DAMAGE_ASK = '혹시 다른 박스·나머지도 같으실까요?';
+// #1065-e(대표 11/9 최종) 문자 채널 파손 답 = 원문 첫 문장 + 「보내 주신 사진 확인했습니다.」 + 대표 선택지 문구(sms/rules.js CLAIM_CHOICE 와 같은 글 · 글자 그대로) · 되묻기(DAMAGE_ASK)·넘기기(STAFF_TAIL) 없음 · 사진 또 보내라는 글 없음 · 톡톡은 DAMAGE_CORE 그대로
+const DAMAGE_SMS_FIRST = '부패과가 나왔군요, 불편드려 죄송합니다. 보내 주신 사진 확인했습니다.';
+const DAMAGE_SMS_CHOICE = '괜찮은 상품 드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능하시고, 입맛에 괜찮으시다고 하시면 이상 부분 보상처리도 네이버페이 포인트로 진행 가능합니다. 끝까지 만족드리도록 최선을 다하겠습니다!';
 const SIZE_GUIDE = '로얄과 사이즈는 2S = 골프공 전후 / S = 골프공보다 조금 큰 크기 / M = 종이컵 위에 걸리는 크기예요.';
 const SIZE_MEMO = '다음에 주문하실 때 배송메세지에 원하시는 사이즈를 적어 주시면 그 사이즈로 맞춰 보내드려요.';
 const SIZE_RETURN = '드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능합니다.';
@@ -65,7 +68,9 @@ function reply(judge, opt) {
     if (j.confidence !== 'high') return null;   // #617: 확실하지 않으면 봇은 답하지 않는다(직원이 사진을 보고 답한다)
 
     if (kind === 'damage') {
-        lines.push(head(channel), DAMAGE_CORE, DAMAGE_ASK, STAFF_TAIL);
+        // #1065(대표 11/9 정정) 문자(sms) = 종전 글 그대로에서 「다른 박스·나머지도 같으실까요?」 되묻기·「담당 직원이 이어서」 넘기기 줄만 뺌 · 톡톡(talk) = 종전 그대로(톡톡봇 복사본과 같게)
+        if (channel === 'sms') lines.push(head(channel), DAMAGE_SMS_FIRST, DAMAGE_SMS_CHOICE);   // #1065-e 문자 = 되묻기·넘기기 줄만 없음
+        else lines.push(head(channel), DAMAGE_CORE, DAMAGE_ASK, STAFF_TAIL);
     } else if (kind === 'size') {
         // 손님이 「크다」고 한 사진이면 「작았군요」가 틀린 말이 된다 → 방향을 모르면 「달랐군요」
         //   size_dir 칸이 아예 없으면(옛 호출) 기본 글 「작았군요」 · null(판독이 방향을 모름)이면 「달랐군요」
@@ -77,7 +82,8 @@ function reply(judge, opt) {
         if (!SIZES.includes(j.size_guess)) return null;   // 추정 사이즈가 없으면(견줄 물건 없음) 직원 몫
         const prev = orderSizeLabel(o.prevOrder);
         lines.push(head(channel), first, `사진으로는 ${j.size_guess} 정도로 보여요.` + (prev ? ` 저번에 받으신 건 ${prev}였어요.` : ''));
-        lines.push(SIZE_GUIDE, SIZE_MEMO, SIZE_RETURN, STAFF_TAIL);
+        if (channel === 'sms') lines.push(SIZE_GUIDE, SIZE_MEMO, SIZE_RETURN);   // #1065-e 문자 = 넘기기 줄(STAFF_TAIL)만 뺌 · 반품 안내 문장은 종전 그대로
+        else lines.push(SIZE_GUIDE, SIZE_MEMO, SIZE_RETURN, STAFF_TAIL);
     } else {
         return null;   // other · unclear · not_fruit · error · 모르는 값 — 손님 답 없음 · 직원 몫(#617 · 종전 되묻기 글 ASK_CORE 는 자동으로 안 보낸다)
     }
@@ -98,4 +104,4 @@ function leakCheck(text) {
     return '';
 }
 
-module.exports = { reply, leakCheck, orderSizeLabel, DAMAGE_CORE, DAMAGE_ASK, SIZE_GUIDE, ASK_CORE, SIZES };
+module.exports = { reply, leakCheck, orderSizeLabel, DAMAGE_CORE, DAMAGE_SMS_FIRST, DAMAGE_SMS_CHOICE, DAMAGE_ASK, SIZE_GUIDE, ASK_CORE, SIZES };

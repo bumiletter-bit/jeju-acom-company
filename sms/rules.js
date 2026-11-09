@@ -65,15 +65,18 @@ function claimAuto(o) {
     const t = String((o && o.text) || '');
     return !!claimText(o) && CLAIM_DAMAGE_RE.test(t) && !CLAIM_ASK_RE.test(t);
 }
+// #1065(대표 11/9 최종 · 글자 그대로 · 고치려면 대표 확인) 불만 답 선택지 문장 — 문자 사진 파손 답(photo-reply.js DAMAGE_SMS_CHOICE)과 같은 글
+const CLAIM_CHOICE = '괜찮은 상품 드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능하시고, 입맛에 괜찮으시다고 하시면 이상 부분 보상처리도 네이버페이 포인트로 진행 가능합니다. 끝까지 만족드리도록 최선을 다하겠습니다!';
 function claimText(o) {
     const t = String((o && o.text) || '');
     const damage = CLAIM_DAMAGE_RE.test(t), refund = CLAIM_REFUND_RE.test(t);
     if (!(damage || refund) || CLAIM_OTHER_RE.test(t) || CLAIM_NOT_RE.test(t)) return null;
+    // #1065(대표 11/9 최종) 종전 틀 그대로 · 파손·부패 갈래의 선택지 문장 = 대표 문구 CLAIM_CHOICE(글자 그대로) · 상태 말 없는 환불·반품 글은 선택지 줄 없음 · 되묻기·넘기기 문장 없음
     return ['고객님, 불편드려 죄송합니다.',
         (damage ? '배송 중에 약했던 부분이 상하거나 파손된 것 같습니다. ' : '') + '다음에는 더 꼼꼼하게 선별하겠습니다.',
-        '전체적으로 확인해 보시고 이상 있는 부분은 부분 환불 처리도 가능하고, 괜찮은 상품 드셔 보시고 입맛에 안 맞으시면 반품 처리도 가능하니 말씀해 주시면 빠르게 도와드리겠습니다.',
+        damage ? CLAIM_CHOICE : '',
         /교환/.test(t) ? '농산물 특성상 교환은 어려워, 새 상품을 원하시면 반품(무료 수거·전액 환불) 접수 후 재주문으로 도와드리고 있습니다.' : '',
-        '이상 있는 부분 사진을 찍어 보내 주시면 더 빠르게 처리해 드리겠습니다.'].filter(Boolean).join('\n');
+        '이상 있는 부분 사진을 찍어 보내 주시면 저희가 빠르게 확인 후 처리 도와드리겠습니다.'].filter(Boolean).join('\n');   // #1065-e(대표) 종전 사진 부탁 문장 살림 · 글 = 대표 지정
 }
 const TRACK_URL = String(process.env.SMS_PUBLIC_URL || 'https://jeju-acom-company.onrender.com').replace(/\/+$/, '') + '/track?n=';   // 서버 /track = CJ 조회로 넘김(알림톡 [택배 배송조회] 버튼과 같은 주소)
 
@@ -218,4 +221,4 @@ function prePlan(input) {
     } catch (e) { return null; }
 }
 
-module.exports = { prePlan, answer, ASK_NAME_TEXT, askNameText, notFoundText, claimText, claimAuto, TRACK_URL };
+module.exports = { prePlan, answer, ASK_NAME_TEXT, askNameText, notFoundText, claimText, claimAuto, CLAIM_CHOICE, TRACK_URL };

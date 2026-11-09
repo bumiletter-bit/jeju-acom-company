@@ -41,8 +41,10 @@ function testReply() {
         // damage high = 대표 원문 + 범위 되묻기
         const d = reply({ kind: 'damage', confidence: 'high', staff_summary: '곰팡이 3개 · 무름 2개 · 전체의 20%' }, { channel });
         all.push(['damage/high/' + channel, d]);
-        ok(typeof d === 'string' && d.includes(OWNER), `damage high ${channel}: 대표 원문 포함`);
-        ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage high ${channel}: 범위 되묻기`);
+        if (channel === 'talk') ok(typeof d === 'string' && d.includes(OWNER), `damage high ${channel}: 대표 원문 포함`);
+        else ok(typeof d === 'string' && d === ['안녕하세요 제주아꼼이네입니다.', '부패과가 나왔군요, 불편드려 죄송합니다. 보내 주신 사진 확인했습니다.', photoReply.DAMAGE_SMS_CHOICE].join('\n') && photoReply.DAMAGE_SMS_CHOICE === require(path.join(ROOT, 'sms', 'rules.js')).CLAIM_CHOICE, `damage high ${channel}: #1065-e 첫 문장 + 사진 확인 + 대표 선택지 문구(rules CLAIM_CHOICE 와 같은 글)`);
+        if (channel === 'talk') ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage high ${channel}: 범위 되묻기`);
+        else ok(!d.includes(DAMAGE_ASK) && !/담당 직원/.test(d), `damage high ${channel}: #1065 되묻기·넘기기 줄 없음(문자)`);   // #1065(대표 11/9 정정) 문자 채널만
         ok(!d.includes('곰팡이') && !d.includes('20%'), `damage high ${channel}: 직원용 요약이 손님 글에 없음`);
         // size high + 추정 사이즈
         for (const size_guess of ['2S', 'S', 'M', 'L']) {
@@ -85,7 +87,8 @@ function testReply() {
         ok(!/[0-9]/.test(text.replace(/2S/g, '')), `숫자 0(「2S」 제외) — ${label}`);
         ok(!/\d+\s*(개|과|알|박스|상자|%|퍼센트)/.test(text), `개수 꼴 0 — ${label}`);
         if (label.endsWith('/sms')) ok(!EMOJI.test(text), `sms 이모지 0 — ${label}`);
-        ok(!/환불|포인트|원\b|[0-9]+원/.test(text), `금액·환불·포인트 약속 0 — ${label}`);
+        // #1065-e(대표 지정 문구) 문자 파손 답의 대표 선택지 문구(네이버페이 포인트 보상) 한 문장만 예외(그 문장을 뺀 나머지는 종전 규칙 그대로)
+        ok(!/환불|포인트|원\b|[0-9]+원/.test(text.split(photoReply.DAMAGE_SMS_CHOICE).join('')), `금액·환불·포인트 약속 0 — ${label}`);
     }
     ok(all.some(([l, t]) => l.endsWith('/talk') && EMOJI.test(t)), 'talk 채널은 인사 그림 유지');
     // 안전망 자체 검사
@@ -218,7 +221,7 @@ async function testJudge() {
         c = fakeClient(() => aiText({ kind: 'damage', confidence: 'high', size_guess: null, size_dir: null, item: '밤호박', staff_summary: '밤호박으로 보임. 꼭지 주변에 곰팡이가 핀 것 2개.' }));
         r = await judge([{ buf: JPEG }], { text: '밤호박에 곰팡이가 폈어요', client: c });
         ok(r.kind === 'damage' && r.confidence === 'high' && r.item === '밤호박' && /^밤호박으로 보임/.test(r.staff_summary), '#616 밤호박 파손 → damage/high · item 밤호박 · 요약에 품목', r);
-        ok(photoReply.reply(r, { channel: 'sms' }).includes(photoReply.DAMAGE_CORE) && photoReply.leakCheck(photoReply.reply(r, { channel: 'sms' })) === '' && !photoReply.reply(r, { channel: 'sms' }).includes('밤호박'), '#616 밤호박 파손 → 손님에게 대표 원문(품목·개수는 손님 글에 없음)');
+        ok(photoReply.reply(r, { channel: 'sms' }).includes(photoReply.DAMAGE_SMS_CHOICE) && photoReply.leakCheck(photoReply.reply(r, { channel: 'sms' })) === '' && !photoReply.reply(r, { channel: 'sms' }).includes('밤호박'), '#616 밤호박 파손 → 손님에게 대표 원문(품목·개수는 손님 글에 없음)');
         // 요약에 품목이 빠져 오면 프로그램이 붙인다
         c = fakeClient(() => aiText({ kind: 'damage', confidence: 'low', size_guess: null, size_dir: null, item: '레몬', staff_summary: '껍질에 갈색 얼룩이 보임.' }));
         r = await judge([{ buf: JPEG }], { client: c });
@@ -269,7 +272,11 @@ function testCopies() {
         const a = fs.readFileSync(path.join(ROOT, 'sms', f), 'utf8').replace(/\r\n/g, '\n');
         const bp = path.join(BOT, f);
         ok(fs.existsSync(bp), `톡톡봇에 ${f} 있음`);
-        if (fs.existsSync(bp)) ok(a === fs.readFileSync(bp, 'utf8').replace(/\r\n/g, '\n'), `${f} 두 저장소 내용 같음`);
+        if (!fs.existsSync(bp)) continue;
+        if (f === 'photo-reply.js') {   // #1065-e 문자(sms) 글만 이 저장소에서 바뀜 → 파일 글자 대신 talk 채널 출력 바이트 대조(톡톡봇이 쓰는 길)
+            const mine = require(path.join(ROOT, 'sms', f)), bot = require(bp), J = [{ kind: 'damage', confidence: 'high' }, { kind: 'damage', confidence: 'low' }, { kind: 'size', confidence: 'high', size_guess: 'S', size_dir: 'small' }, { kind: 'size', confidence: 'high', size_guess: 'L', size_dir: 'big' }, { kind: 'size', confidence: 'high', size_guess: '2S', size_dir: null }, { kind: 'other', confidence: 'high' }];
+            ok(J.every(j => mine.reply(j, { channel: 'talk' }) === bot.reply(j, { channel: 'talk' })) && J.every(j => mine.leakCheck(String(mine.reply(j, { channel: 'talk' }) || '')) === bot.leakCheck(String(bot.reply(j, { channel: 'talk' }) || ''))), `${f} talk 채널 출력 동일(${J.length}꼴 · 톡톡봇 복사본과)`);
+        } else ok(a === fs.readFileSync(bp, 'utf8').replace(/\r\n/g, '\n'), `${f} 두 저장소 내용 같음`);
     }
     const s = fs.readFileSync(path.join(BOT, 'server.js'), 'utf8');
     ok((s.match(/ADD COLUMN IF NOT EXISTS image_url TEXT/g) || []).length === 1, 'initDB: image_url 칸');

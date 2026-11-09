@@ -476,7 +476,8 @@ module.exports = function mountSms(app, deps) {
     const AI_COND_RE = /주문하시면|주문하면|주문\s*시(?![켰킨키])|이전\s*주문|이후\s*주문|전에\s*주문|까지\s*주문|결제하시면|결제\s*시|경우|보통|대부분|평균/;   // 조건·일반론 문장 표시(「주문 건·주문은·주문분」은 그 손님 주문을 가리킬 수 있어 조건으로 보지 않는다)
     const AI_PAST_RE = /말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)|출발했|출발해서|출발하여|발송됐|발송되었|발송했|발송해\s*드렸|발송\s*완료|보내\s*드렸|도착했|배송\s*중이|배송\s*시작|이동\s*중|나갑니다|나갔|나갈\s*예정|가고\s*있|오고\s*있|곧\s*(도착|받|출발|발송|나가)/;
     const AI_DATE_RE = /(오늘|내일|모레|\d{1,2}\s*일|\d{1,2}\/\d{1,2}|[월화수목금토일]요일(?!은|엔|에는|마다|도))[^.!?\n]{0,24}(출발|발송|도착|배송|받으실|받아\s*보실|나갑|나가|나갈)/;   // 「토요일은 발송을 쉬고」 같은 요일 일반론은 뺀다
-    const AI_PROMISE_RE = /환불|반품|교환|보상|무료\s*수거|취소\s*(해|처리)|포인트|적립|쿠폰|할인해|보내\s*드리겠|재발송|재배송/;   // 약속 낱말은 사람(종전 글 그대로 · #1063 에서 두 곳이 같이 씀)
+    const noHandoff = t => (aiNote && typeof aiNote.stripHandoff === 'function' ? aiNote.stripHandoff(t) : String(t || '').trim());   // #1065 문자 길 AI 글 안전망(sms/ai-note.js)
+    const AI_PROMISE_RE =/환불|반품|교환|보상|무료\s*수거|취소\s*(해|처리)|포인트|적립|쿠폰|할인해|보내\s*드리겠|재발송|재배송/;   // 약속 낱말은 사람(종전 글 그대로 · #1063 에서 두 곳이 같이 씀)
     // #1063 주문 못 찾은 「내 주문」 물음의 AI 초안 앞에 붙이는 한 줄(초안 모드만)
     const NF_AI_NOTE = '[안내 — 이 번호로는 주문을 찾지 못했습니다. 손님의 발송일·도착일을 단정하지 말고 일반 안내(배송 기준·주문 확인 방법)로 답하고, 필요하면 주문하신 분 성함·연락처를 여쭤 주세요]\n';
     function aiAsserts(text) {   // 한 문장이라도 「조건 없이」 발송·도착을 단정하면 true
@@ -526,8 +527,9 @@ module.exports = function mountSms(app, deps) {
                     const g = await qnaGenerate(NF_AI_NOTE + await withContext(thread, inMsg, text, c), null, undefined, 'sms');
                     if (g && g.answer) {
                         const parsed = aiNote && typeof aiNote.parse === 'function' ? aiNote.parse(g.answer) : { toStaff: /^\[사람\]/.test(g.answer), text: g.answer.replace(/^\[사람\]\s*/, '') };
-                        const t = String((parsed && parsed.text) || '').trim();
-                        if (!parsed.toStaff && t && !AI_PROMISE_RE.test(t) && !aiAsserts(t)) return { text: smsSafe(t), kind: 'ai', toStaff: false, why: 'order_not_found_ai', staff_flag: 'order_not_found', used: g.used, auto_ok: false };
+                        const t = noHandoff(String((parsed && parsed.text) || '').trim());   // #1065 넘기기 문장 뺌
+                        // #1065-b(대표 「초안만이라 우리가 수정」) 이 길은 늘 초안 모드 = 약속 낱말은 막지 않고 promise 표시(카드 제목 「약속 글 포함 · 확인」) · 발송·도착 단정(aiAsserts)은 종전대로 폴백
+                        if (!parsed.toStaff && t && !aiAsserts(t)) return Object.assign({ text: smsSafe(t), kind: 'ai', toStaff: false, why: 'order_not_found_ai', staff_flag: 'order_not_found', used: g.used, auto_ok: false }, AI_PROMISE_RE.test(t) ? { promise: true } : {});
                     }
                 } catch (e) { log.error('[문자] 주문 못 찾음 AI 초안 실패(고정 문구로):', e.message); }
             }
@@ -541,9 +543,13 @@ module.exports = function mountSms(app, deps) {
                 if (g && g.answer) {
                     const parsed = aiNote && typeof aiNote.parse === 'function' ? aiNote.parse(g.answer) : { toStaff: /^\[사람\]/.test(g.answer), text: g.answer.replace(/^\[사람\]\s*/, '') };
                     if (parsed.toStaff) return { text: null, kind: null, toStaff: true, why: 'ai_to_staff' };
-                    if (AI_PROMISE_RE.test(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_promise' };   // 약속 낱말은 사람(안내 블록만 믿지 않음)
-                    if (aiAsserts(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_assert' };   // #645 ② 주문 정보 없이 발송·도착을 단정한 글 = 사람
-                    return { text: smsSafe(parsed.text), kind: 'ai', toStaff: false, why: 'ai', used: g.used, auto_ok: GENERAL_Q_RE.test(text) };   // #650 ② 명백한 사기 전 물음에 대한 AI 답만 자동 · 그 밖 AI 답은 초안
+                    parsed.text = noHandoff(parsed.text);   // #1065 「직원에게 연결」·「담당자가 연락」·「다른 상품은 괜찮으신가요」 문장 뺌 · 다 빠지면 답 없음
+                    if (!parsed.text) return { text: null, kind: null, toStaff: true, why: 'ai_skip' };
+                    // #1065-b(대표 「초안만이라 우리가 수정」) 약속 낱말 = 초안 모드면 초안 그대로 + promise 표시(사람이 보고 고쳐 보냄 · 자동 아님) · 자동 모드는 종전대로 직원 몫(ai_promise)
+                    const promise = AI_PROMISE_RE.test(parsed.text);
+                    if (promise && !(c && c.mode === 'draft')) return { text: null, kind: null, toStaff: true, why: 'ai_promise' };   // 약속 낱말은 사람(안내 블록만 믿지 않음)
+                    if (aiAsserts(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_assert' };   // #645 ② 주문 정보 없이 발송·도착을 단정한 글 = 사람(초안 모드도 그대로 · 날짜 지어내기 막음)
+                    return Object.assign({ text: smsSafe(parsed.text), kind: 'ai', toStaff: false, why: 'ai', used: g.used, auto_ok: !promise && GENERAL_Q_RE.test(text) }, promise ? { promise: true } : {});   // #650 ② 명백한 사기 전 물음에 대한 AI 답만 자동 · 그 밖 AI 답은 초안
                 }
                 return { text: null, kind: null, toStaff: true, why: 'ai_skip' };
             } catch (e) { log.error('[문자] AI 답 실패:', e.message); return { text: null, kind: null, toStaff: true, why: 'ai_error' }; }
@@ -792,8 +798,8 @@ module.exports = function mountSms(app, deps) {
         }
         // #650(대표 「고」 10/11 · 문자 최종 점검): 자동으로 나가도 되는 답(auto_ok)은 ①주문을 찾은 손님의 규칙 답 ②명백한 사기 전 물음의 AI 답 ③주문을 찾은 손님의 불만 고정 답 ④주문 여럿 되묻기 + 주문을 찾은 손님의 사진 답뿐 — 그 밖은 자동 모드에서도 초안만(직원이 [이대로 보내기])
         if (c.mode === 'draft' || !ans.auto_ok) {
-            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: ans.staff_flag || null }));
-            const what = ans.staff_flag === 'order_not_found' ? '주문을 못 찾았어요 · 되묻기 초안 확인' : ans.staff_flag === 'claim' ? '불만 글 · 초안 확인' : '봇 초안 확인';
+            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: ans.staff_flag || (ans.promise ? 'ai_promise_draft' : null) }));   // #1065-b 약속 글 초안 = 카드 사유 칩 「약속 글 포함 · 확인」
+            const what = (ans.staff_flag === 'order_not_found' ? '주문을 못 찾았어요 · 되묻기 초안 확인' : ans.staff_flag === 'claim' ? '불만 글 · 초안 확인' : '봇 초안 확인') + (ans.promise ? ' · 약속 글 포함 · 확인' : '');
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${what}`, staffBody({ text: bodyText, images, draft: ans.text, why: ans.staff_summary }));
             return done('draft', { kind: ans.kind, held: c.mode !== 'draft' });
         }
@@ -858,7 +864,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', request: '요청(주문·변경·취소)', call: '전화 요청', wrong_number: '잘못 온 문자라는 글', refuse: '수신거부·그만 보내', no_bot: '봇 응대 끔(수신거부)', foreign_number: '해외·알 수 없는 번호', order_not_found: '주문 못 찾음', order_not_found_ai: '주문 못 찾음(AI 초안)', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
+    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', request: '요청(주문·변경·취소)', call: '전화 요청', wrong_number: '잘못 온 문자라는 글', refuse: '수신거부·그만 보내', no_bot: '봇 응대 끔(수신거부)', foreign_number: '해외·알 수 없는 번호', order_not_found: '주문 못 찾음', order_not_found_ai: '주문 못 찾음(AI 초안)', ai_promise_draft: '약속 글 포함 · 확인', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
         rule_reserve: '예약 상품', rule_trouble: '배송 이상', rule_not_received: '못 받았다는 글', rule_arrive_overdue: '도착 예정일 지남', rule_ship_overdue: '발송 예정일 지남',
         rule_new_order_pending: '새 주문 대기', rule_pre_no_paid_at: '결제 시각 모름', rule_memo_date: '배송메세지 날짜 요청', rule_staff: '직원 확인' }[w] || (w ? '직원 확인' : ''));
 
