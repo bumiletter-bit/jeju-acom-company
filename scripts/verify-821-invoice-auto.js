@@ -1,5 +1,5 @@
 // #821 계산서 정리(자동) 검증 — 실DB·실메일·러너 0
-//   ①~③ server.js 의 「#821 계산서 정리(자동)」 구간(+ 대표 계정 고르기용 #581 구간)을 떼어 가짜 pool 로 틱 논리
+//   ①~③ server.js 의 「#821 계산서 정리(자동)」 구간(+ 대표 계정 찾기 #1071 구간 · 종전 #581 구간)을 떼어 가짜 pool 로 틱 논리
 //   ④ 창구 invoice-month.js 의 본 메일 표(tax_invoice_seen) = 이 PC 메모리 안 Postgres(pglite) + 가짜 메일 러너
 //   ⑤ 창구 문서 줄
 //   실행: PGLITE_DIR=<@electric-sql/pglite 가 깔린 폴더> node scripts/verify-821-invoice-auto.js
@@ -10,7 +10,7 @@ let pass = 0, fail = 0;
 const ok = (c, m, extra) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + m + (!c && extra !== undefined ? ' ' + JSON.stringify(extra).slice(0, 600) : '')); };
 const SRC = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const cut = (from, to) => { const a = SRC.indexOf(from); if (a < 0) throw new Error('표식 없음: ' + from); const b = SRC.indexOf(to, a + from.length); if (b < 0) throw new Error('끝 표식 없음: ' + to); return SRC.slice(a, b); };
-const BLOCK = cut('// ===== #581 아침 정리 — 시작', '// ===== #581 아침 정리 — 끝') + cut('// ===== #821 계산서 정리(자동) — 시작', '// ===== #821 계산서 정리(자동) — 끝');
+const BLOCK = cut('// ===== #1071 대표 계정 찾기 — 시작', '// ===== #1071 대표 계정 찾기 — 끝') + cut('// ===== #821 계산서 정리(자동) — 시작', '// ===== #821 계산서 정리(자동) — 끝');
 const KST = (d, h, m) => Date.UTC(2026, 9, d, h - 9, m);   // KST 2026-10-d h:m (d 가 31 넘으면 11월로 넘어감)
 const iso = (ms) => new Date(ms).toISOString();
 

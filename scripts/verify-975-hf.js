@@ -31,8 +31,8 @@ function serverTick(p, notes, owner) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
     const a = src.indexOf('async function deskHiggsfieldLoginTick()'), b = src.indexOf('setInterval(() => { deskHiggsfieldLoginTick()');
     if (a < 0 || b < 0) throw new Error('서버 틱 표식 없음');
-    return new Function('pool', 'deskMorningOwner', 'deskMorningCfg', 'naverCfgGet', 'createNotification', src.slice(a, b) + '\nreturn deskHiggsfieldLoginTick;')(
-        p, async () => owner, x => x || {}, async () => null, async (...x) => { notes.push(x); });
+    return new Function('pool', 'deskOwnerAccount', 'createNotification', src.slice(a, b) + '\nreturn deskHiggsfieldLoginTick;')(   // #1071 대표 계정 찾기 하나로
+        p, async () => owner, async (...x) => { notes.push(x); });
 }
 (async () => {
     const Y = '2026-11-02';

@@ -600,7 +600,7 @@ async function dupParent(o, p) {
         `SELECT a.id, a.status, a.result->>'dup_of' AS dup_of
            FROM pending_orders a JOIN pending_orders b ON b.id = $1
           WHERE a.is_deleted = false AND a.id < b.id AND a.created_by_id = b.created_by_id
-            AND b.payload IS NULL AND COALESCE(b.content, '') NOT LIKE '[%'   -- 사람이 친 지시만 · 화면이 만든 지시(「[최종발주 메모 읽기]」·「[아침 정리]」 등 = 자기 번호 결과를 기다림)는 안 묶음
+            AND b.payload IS NULL AND COALESCE(b.content, '') NOT LIKE '[%'   -- 사람이 친 지시만 · 화면이 만든 지시(「[최종발주 메모 읽기]」·「[계산서 정리]」 등 = 자기 번호 결과를 기다림)는 안 묶음
             AND a.created_at >= b.created_at - make_interval(secs => $2::int) AND a.created_at <= b.created_at
             AND regexp_replace(COALESCE(a.content, ''), '\\s', '', 'g') = regexp_replace(COALESCE(b.content, ''), '\\s', '', 'g')   -- 템플릿 글자라 \\ 두 번(SQL 에는 \s 하나)
             AND a.reply_to IS NOT DISTINCT FROM b.reply_to AND COALESCE(a.file_name, '') = COALESCE(b.file_name, '')
