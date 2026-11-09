@@ -1386,6 +1386,14 @@ function smsAppNote() {
     const n = document.createElement('div'); n.className = 'sms-app-icons'; n.id = 'sms-app-icons';
     n.innerHTML = '<button type="button" class="desk-btn sm sms-app-ico" id="sms-app-push"></button><button type="button" class="desk-btn sm sms-app-ico" id="sms-app-theme"></button>';
     head.appendChild(n);
+    // #1062-j 제목 옆 [문자 보내기] = 숨겨 둔 #sms-new(새 문자 판 · ao-desk.js #688)를 그대로 누름 · 보일지는 #sms-new 의 hidden(보내기 길 있는 서버만)을 따름
+    const nb = document.getElementById('sms-new'), sb = document.createElement('button');
+    sb.type = 'button'; sb.className = 'desk-btn sm sms-app-send'; sb.id = 'sms-app-send'; sb.textContent = '문자 보내기'; sb.title = '번호를 적어 손님에게 먼저 문자를 보내요';
+    const ttl = document.getElementById('sms-title'); if (ttl && ttl.parentNode === head) ttl.after(sb); else head.prepend(sb);
+    const sMirror = () => { sb.hidden = !nb || nb.hidden; };
+    if (nb) new MutationObserver(sMirror).observe(nb, { attributes: true, attributeFilter: ['hidden'] });
+    sb.addEventListener('click', () => { if (nb && !nb.hidden) nb.click(); });
+    sMirror();
     const src = document.getElementById('noti-push-btn'), b = document.getElementById('sms-app-push'), tb = document.getElementById('sms-app-theme');
     let asked = false, last = '';
     const mirror = () => {

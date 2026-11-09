@@ -2270,6 +2270,8 @@ html[data-app="sms"] #desk-sms .sms-win { max-width: none; height: 100%; border:
 html[data-app="sms"] #desk-sms #sms-new, html[data-app="sms"] #desk-sms #sms-count, html[data-app="sms"] #desk-sms #sms-mode, html[data-app="sms"] #desk-sms #sms-sub { display: none !important; }   /* 머리 줄 = 제목 + 아이콘만(초안 알약·오늘 요약 글 숨김) */
 html[data-app="sms"] #desk-sms .desk-tool-head { min-width: 0; }
 html[data-app="sms"] #desk-sms .desk-tool-head > b, html[data-app="sms"] #desk-sms .desk-tool-head > em { flex: 0 0 auto; }
+.sms-app-send { flex: 0 0 auto; white-space: nowrap; font-weight: 800; border-color: var(--d-accent); color: var(--d-accent); }
+@media (max-width: 720px), (pointer: coarse) { .sms-app-send { min-height: 44px; } }
 .sms-app-icons { flex: 0 0 auto; display: flex; gap: 6px; margin-left: auto; }
 .sms-app-ico { min-width: 40px; min-height: 36px; padding: 0 8px; font-size: 17px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
 @media (max-width: 720px), (pointer: coarse) { .sms-app-ico { min-width: 44px; min-height: 44px; } }
