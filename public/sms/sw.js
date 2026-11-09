@@ -3,6 +3,8 @@
 //   누르면 = 열린 문자 앱 창이 있으면 그 창을 앞으로 + 그 대화로 · 없으면 /sms/#agent-office?sms=<id> 새로 엶(대화 열기 = app.js notiApplyHash 길 그대로)
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+// 삼성 인터넷·옛 크로미움은 fetch 처리기가 있어야 「앱 설치」를 허락함 → 아무것도 안 하는 처리기(respondWith 없음 = 브라우저가 평소대로 네트워크 · 캐시 0)
+self.addEventListener('fetch', () => { });
 
 self.addEventListener('push', event => {
     let d = {};
