@@ -841,3 +841,8 @@ html[data-ao-theme="dark"] .fo-iam-list li[data-k="unknown"] { border-color: var
 html[data-ao-theme="dark"] .fo-om-link.fo-om-apply { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
 html[data-ao-theme="dark"] .fo-om-link.fo-om-apply:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
 html[data-ao-theme="dark"] .fo-om-link.fo-om-apply:disabled { background: #1A1F36; border-color: var(--f-line); color: var(--fd-dim); }
+/* #1059 「말로 바꾼 것」 ↔ 「직접 수정」 꼬리표(직접 수정이 하나라도 있을 때만 붙음) */
+.fo-src { display: inline-block; font-style: normal; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 6px; margin-right: 6px; border-radius: 6px; vertical-align: 1px; background: #E8EAFF; color: var(--f-accent-dark); }
+.fo-src[data-src="card"] { background: #FFF1D6; color: #8A5300; }
+html[data-ao-theme="dark"] .fo-src { background: rgba(129, 140, 248, .22); color: #C7CBFF; }
+html[data-ao-theme="dark"] .fo-src[data-src="card"] { background: rgba(251, 191, 36, .2); color: #FCD98A; }

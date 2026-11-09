@@ -359,6 +359,7 @@
     const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
+        if (OM.tpSaved) return OM.tpSaved;   // #1058 사이즈 바로 저장한 손님 = 꼬리표 바꾸면 그 번호(입력 칸 마지막 줄의 다른 손님 번호 대신)
         const above = String($('om-raw').value || '').split('\n').map(x => x.trim()).filter(Boolean).pop() || '', m = above.match(/^(0\d{1,3}[-\s]?\d{3,4}[-\s]?\d{4})(?=\s|$)/);
         return m && digits(m[1]).length >= 9 ? fmtTel(m[1]) : '';
     }
@@ -461,15 +462,66 @@
             else { tpNote('보내는 분 이름을 넣어 주세요', 'err'); if (name) name.focus({ preventScroll: true }); }
             return;
         }
+        if (x.k === 'size') { tpSizeSave(x, te, line); return; }   // #1058 사이즈·과수 = 입력 칸 안 거치고 바로 저장
         const raw = $('om-raw'); telLeave(raw, true);
         const cur = raw.value, pre = cur && !/\n$/.test(cur) ? cur + '\n' : cur;
         raw.value = (pre + line).slice(0, 4000); OM.raw = raw.value; xUndoHide(); inState();
         try { raw.scrollTop = raw.scrollHeight; } catch (e) { /* 그대로 */ }
-        OM.tpLast = te.value;
+        OM.tpLast = null; OM.tpSaved = null; te.value = '';   // #1058 넣은 번호는 비움(다시 누르면 입력 칸 마지막 줄 번호로 채움 = tpLastTel)
         const nSaved = x.k === 'indiv' ? savedCashOf(digits(tel)).length : 0;   // #874 이 번호 현금 줄이 이미 메모함에 있으면 알림만(바꾸기는 [입력하기] 뒤 카드에서)
-        inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote(nSaved ? `넣었어요 · 메모함에 이 번호 현금 줄 ${nSaved}개가 있어요 — [입력하기] 뒤 카드에서 [바꾸기]를 누르고 저장해야 주소 줄로 바뀌어요(저장 뒤엔 메모함 입력삭제 줄의 [추가 매칭])` : '넣었어요 · 같은 손님은 꼬리표만 바꿔 이어서, 다른 손님은 번호를 바꿔 넣으세요', 'ok');
+        inNote(`「${line}」 줄을 넣었어요`, 'ok'); tpNote(nSaved ? `넣었어요 · 메모함에 이 번호 현금 줄 ${nSaved}개가 있어요 — [입력하기] 뒤 카드에서 [바꾸기]를 누르고 저장해야 주소 줄로 바뀌어요(저장 뒤엔 메모함 입력삭제 줄의 [추가 매칭])` : '넣었어요 · 다음 손님 번호를 넣으세요(같은 손님은 꼬리표를 바꾸면 번호가 다시 채워져요)', 'ok');
         x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(b => b.setAttribute('aria-checked', 'false')); if (gw) gw.value = ''; if (name) name.value = ''; if (date) date.value = '';
-        te.focus({ preventScroll: true }); try { te.select(); } catch (e) { /* 그대로 */ }
+        te.focus({ preventScroll: true });
+    }
+    // #1058(대표 11/9) 사이즈·과수 [넣기] = 바로 저장 — [입력하기] → 카드 → (손대지 않고) [저장] 과 같은 길·같은 줄 꼴
+    //   미리보기(서버 규칙 줄) → 판매처 찾기(한 곳이면 미리 고름 = lkRun 과 같게) → 같은 줄 확인(dupCheck) → POST · 입력 칸은 안 건드림
+    //   판매처 여러 곳 · 다른 사이즈 줄이 이미 있음 · 규칙으로 안 읽힘 = 종전 카드를 열어 사람이 고름(저장은 카드 [저장])
+    async function tpSizeSave(x, te, line) {
+        if (OM.tpBusy) return;
+        const go = $('om-tp-go'), gw = $('om-tp-gw');
+        OM.tpBusy = true; go.disabled = true; go.textContent = '저장하는 중…'; tpNote('저장하는 중…');
+        const end = () => { OM.tpBusy = false; go.disabled = false; go.textContent = OM.tp && (OM.tp.k === 'smemo' || OM.tp.k === 'cedit') ? '주문 찾기' : '넣기'; };   // 저장 중 꼬리표를 바꿨으면 그 꼬리표 글(tpOpen 과 같게)
+        const tags = TAG_RE.size.test(line) ? ['size'] : [];
+        const toCard = (rows, b, why) => {   // 종전 카드(runPreview 의 cardOpen 과 같은 꼴 · from = 이 줄 → 저장 뒤 입력 칸 안 비움)
+            end(); tpNote(why, 'warn');
+            const desk = b.desk && typeof b.desk === 'object' ? b.desk : null, waiting = !!(desk && desk.state === 'wait' && desk.id != null);
+            cardOpen({ mode: 'new', raw: line, tags, source: 'manual', rows, leftover: b.leftover || '', ask: b.sms_draft || '', from: { text: line, tags, source: 'manual' },
+                wait: waiting ? { id: desk.id, start: Date.now(), sec: Number(desk.wait_sec) || 30 } : null,
+                deskNote: desk && desk.state === 'off' ? (desk.message || '창구가 꺼져 있어 지금은 규칙으로만 정리했어요 · 남은 글은 직접 채워 주세요') : '' });
+            if (waiting) waitLoop(OM.card);
+        };
+        try {
+            const pv = await API.preview({ raw: line, tags, source: 'manual' });
+            if (!pv.ok) { end(); tpNote(pv.status === 429 ? '잠시 뒤 다시 해 주세요(너무 자주 눌렀어요)' : errText(pv, '저장하지 못했어요 · 다시 눌러 주세요'), 'err'); return; }
+            const b = pv.body || {}, rows = (Array.isArray(b.rows) ? b.rows : []).map(r => normRow(r)).filter(Boolean);
+            const r = rows.length === 1 && rows[0].kind === 'line' && !b.leftover && !(b.desk && b.desk.state === 'wait') ? rows[0] : null;
+            if (!r) { toCard(rows, b, '이 줄은 카드에서 확인해 주세요'); return; }
+            if (canLook(r.key)) {
+                const lk = await API.lookup(String(r.key).trim());
+                if (!lk.ok) { toCard(rows, b, '주문을 못 찾아(연결 오류) 카드에서 판매처를 골라 [저장]해 주세요'); return; }   // 연결 오류 = 빈 판매처로 저장하지 않음(못 찾음 0건은 저장)
+                r._lk = lk.ok && lk.body ? { state: 'done', key: digits(r.key), matches: Array.isArray(lk.body.matches) ? lk.body.matches : [] } : { state: 'err', key: digits(r.key), matches: [] };
+                const ps = lkPlats(r);
+                if (!r.plat && ps.length > 1) { toCard(rows, b, `이 번호 주문이 ${ps.join('·')} 에 다 있어요 · 카드에서 판매처를 골라 [저장]해 주세요`); return; }
+                if (!r.plat && ps.length === 1) setV(r, LINE_FIELDS.find(f => f.k === 'plat'), ps[0]);
+                lkCheck(r);
+            }
+            const d = await dupCheck([r]);
+            if (d && d.same.size) { end(); tpNote('이미 같은 줄이 있어요 · 저장하지 않았어요', 'warn'); return; }
+            if (d && d.diff.length) { toCard(rows, b, `이 번호 ${d.diff[0].kind} 줄이 이미 있어요 · 카드 [저장]에서 바꿀지 골라 주세요`); return; }
+            const res = await API.save({ raw: line, tags, source: 'manual', rows: [outRow(r)] });
+            end();
+            if (!res.ok) { tpNote(errText(res, '저장하지 못했어요 · 다시 눌러 주세요'), 'err'); return; }
+            const lost = r._lk && r._lk.state === 'done' && !r.plat;
+            inNote(`「${line}」 줄을 저장했어요 · 다음 최종발주에 들어가요`, 'ok'); tpNote(lost ? '저장했어요 · 아직 이 번호 주문을 못 찾았어요(판매처 빈칸 · 메모함 줄에서 확인)' : '저장했어요 · 다음 손님 번호를 넣으세요', lost ? 'warn' : 'ok');
+            x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(z => z.setAttribute('aria-checked', 'false')); if (gw) gw.value = '';
+            OM.tpLast = null; OM.tpSaved = fmtTel(r.key); te.value = ''; te.focus({ preventScroll: true });
+            OM.tab = 'open'; syncTabs(); const ld = load();
+            {   // #1058-b 이 번호 주문이 2박스↑ 또는 2건↑ = 저장된 그 줄 고치기 카드를 바로 열어 「n박스 · 박스별로」가 보이게(1박스·못 찾음 = 저장만)
+                const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [], sid = res.body && Array.isArray(res.body.rows) && res.body.rows[0] ? res.body.rows[0].id : null;
+                if (sid != null && (ms.length >= 2 || ms.some(m => Number(m.qty) >= 2))) ld.then(() => { const sr = rowById(sid); if (sr && OM.el && !OM.el.hidden && !OM.card) editOpen(sr); });
+            }
+            setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(z => z.kind === 'line' && z.badge && z.badge.state === 'unknown')) load(); }, 6000);   // #936 즉시 조회 뒤 배지 한 번 더(cardSave 와 같게)
+        } catch (e) { console.error(e); end(); tpNote('저장하지 못했어요 · 다시 눌러 주세요', 'err'); }
     }
     // #850-f 꼬리표(서버로 보내는 tags) = 칸에 그 줄이 있을 때만 · 종전 「누른 단추」 tags 와 같은 값
     const TAG_RE = { cash: /현금\s*손님/, indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제|개별\s*발송/i, size: /사이즈/, date: /\d+\s*일\s*(?:발송|출고)|\d{1,2}\s*\/\s*\d{1,2}\s*(?:발송|출고)|^\d{1,2}\/\d{1,2}\/\d{2}\s.*(?:발송|출고)/, sender: /보내는\s*(?:이|분|사람)/ };
@@ -2250,7 +2302,7 @@
         if (el.hidden) {
             let fo = false; try { fo = !!(history.state && history.state.foPanel); } catch (e) { fo = false; }
             OWN.on = fo; OWN.stack = []; OWN.skip = 0;
-            OM.tpLast = null; el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
+            OM.tpLast = null; OM.tpSaved = null; el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
         }
         OM.tab = 'open'; syncTabs(); inState(); load();
         requestAnimationFrame(xLayout);   // #850-f 창이 보인 뒤 줄 × 자리

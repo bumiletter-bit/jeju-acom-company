@@ -569,7 +569,7 @@
     }
     async function loadChannels(list) { for (const ch of list) await clickLoad(ch); }   // 하나씩(동시에 누르면 v2 재판정이 겹친다)
     async function start() {
-        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb|memo):/.test(id))); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.recvFix = []; st.ordMemo = new Map(); st.chat.cand = []; st.chat.pending = null; st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
+        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb|memo):/.test(id))); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.patchSrc = new Map(); st.recvFix = []; st.ordMemo = new Map(); st.chat.cand = []; st.chat.pending = null; st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
         await ensureFrame();
         st.chState = {}; drawProgress();
         await loadChannels(CH);
@@ -1779,7 +1779,7 @@
                 if (!Object.keys(set).length) { say(F.byCard ? '바꾼 것이 없어요 — 앞서 고친 내용은 이미 적용돼 있어요(위 카드 머리와 「말로 바꾼 것」 목록에서 볼 수 있어요).' : '바꾼 것이 없어요.'); return; }
         F.es.forEach(e => { const k = keyOf(e), np = Object.assign({}, st.patch.get(k) || {}, set, { by: 'card' }, cd.type === 'fixsub' ? { subBy: 1 } : {}); if (set.opt != null) delete np.optAll;
             if ('boxes' in set) { if (set.boxes) { delete np.tail; delete np.tailBy; } else { delete np.boxes; delete np.boxesBy; } } else if (set.tail != null) { delete np.boxes; delete np.boxesBy; }   // #601: 꼬리 하나 ↔ 박스별은 한쪽만
-            st.patch.set(k, np); });
+            st.patch.set(k, np); markSrc(k, Object.keys(set), 'card'); });   // #1059 출처 = 직접 수정
         st.fixDraft.delete(id); fixFold().add(id); box.dataset.skip = '1';   // #615(대표 10/10): [적용] 뒤에는 접는다(펼치면 [되돌리기])
         // #608(대표 10/9 「[적용]을 누르면 [이대로 넣기]처럼 — [적용] 누르고 또 [이대로 넣기]를 누르게 돼 있다」): 배송메세지·보내는이 카드가 아직 열려 있으면
         //   그 카드의 칸(배송메세지 · 보내는 분 이름·번호·주소)에 보이는 값 그대로 [이대로 넣기]를 누른 것과 같이 끝낸다(보내는 분 이름이 비어 있으면 [안 바꿈]/[넣지 않음]).
@@ -1825,6 +1825,7 @@
             const p = Object.assign({}, st.patch.get(k) || {});
             if (typeof p.excl === 'boolean' && p.excl === toSend) { delete p.excl; delete p.exclBy; back = true; } else { p.excl = !toSend; p.exclBy = 'card'; }
             if (toSend && memoVal != null) { p.memo = memoVal; p.by = 'card'; }
+            markSrc(k, toSend && memoVal != null ? ['excl', 'memo'] : ['excl'], 'card');   // #1059
             if (Object.keys(p).length) st.patch.set(k, p); else st.patch.delete(k);
         });
         const had = st.phase === 'result' && st.files.length > 0;
@@ -1832,7 +1833,7 @@
         if (back) {
             for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500);
             await run(judge); m = byKey();
-            keys.forEach(k => { const e = m.get(k); if (e && !e.individual && !!e.excluded === toSend) st.patch.set(k, Object.assign({}, st.patch.get(k) || {}, { excl: !toSend, exclBy: 'card' })); });   // 엔진 판정이 바라는 쪽과 다르면 사람 결정으로 남긴다
+            keys.forEach(k => { const e = m.get(k); if (e && !e.individual && !!e.excluded === toSend) { st.patch.set(k, Object.assign({}, st.patch.get(k) || {}, { excl: !toSend, exclBy: 'card' })); markSrc(k, ['excl'], 'card'); } });   // 엔진 판정이 바라는 쪽과 다르면 사람 결정으로 남긴다
         }
         applyOrderDecisions(); renderSummaryOnly(); syncChat(); toast(toSend ? '오늘 발송으로 바꿨어요' : '오늘 발송에서 뺐어요');
         if (had) await remake();
@@ -2296,12 +2297,12 @@
         const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyFig(f)}${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
         const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
-        const pl = patchLines(), jejuN = [...jejuCount().values()].reduce((a, n) => a + n, 0);   // #840 제주 0건이면 카드를 옅게
+        const pl = patchItems(), jejuN = [...jejuCount().values()].reduce((a, n) => a + n, 0);   // #840 제주 0건이면 카드를 옅게
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all" title="엑셀 파일만 받아요. 수량 이미지는 엑셀의 수량 시트에도 있고, 아래 버튼으로 따로 받을 수 있어요">파일 ${st.files.length}개 전부 저장</button></div>
             <div class="fo-notes">
             <p class="fo-jeju fo-note sea${jejuN ? '' : ' is-empty'}" id="fo-jeju-result"><span class="fo-note-k">제주도 배송:</span> <b>${esc(jejuText())}</b></p>
             ${settleText() ? `<p class="fo-jeju fo-note ink" id="fo-settle-result"><span class="fo-note-k">스토어 정산예정:</span> <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}
-            ${pl.length ? `<div class="fo-patched fo-note warn" id="fo-patched"><span class="fo-note-k">특이사항:</span> <b>말로 바꾼 것 ${pl.length}건</b> <span class="fo-settle-note">(바뀐 칸은 연보라색)</span><ul>${pl.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : `<p class="fo-note warn is-empty" id="fo-patched-none"><span class="fo-note-k">특이사항:</span> 없음</p>`}
+            ${pl.length ? `<div class="fo-patched fo-note warn" id="fo-patched"><span class="fo-note-k">특이사항:</span> <b>${patchHead(pl)}</b> <span class="fo-settle-note">(바뀐 칸은 연보라색)</span><ul>${pl.map(x => `<li>${srcTag(pl, x)}${esc(x.screen)}</li>`).join('')}</ul></div>` : `<p class="fo-note warn is-empty" id="fo-patched-none"><span class="fo-note-k">특이사항:</span> 없음</p>`}
             </div>
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
             <div class="fo-files">${ps.map(partner).join('')}${ss.map(store).join('')}</div>
@@ -2551,7 +2552,7 @@
     //   직원이 대화 칸에 직접 적은 말만 주문을 바꾼다(받는 분·주소·수량·품목 이름 포함). AI가 손님 메모만 보고 스스로 그 칸들을 바꾸는 일은 없다.
     //   AI에게는 지시 글과 「후보 주문」의 이름·옵션·수량·메모·동호수·거래처·상태만 보낸다(주소 전체·전화는 보내지 않는다).
     //   돌아온 actions 는 화면이 검사한다(주소·받는 분 글자는 사람이 적은 글 안에 있어야 함 · 품목 이름은 단가표에 있는 이름만) → 「바뀔 내용」을 보여 주고 [적용]을 눌러야 바뀐다.
-    st.patch = new Map(); st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
+    st.patch = new Map(); st.patchSrc = new Map(); st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
     const LILAC = 'E4DFEC';   // 말로 바꾼 칸(연보라) — 연파랑(보내는이)·연노랑(확인)·연주황(사이즈)·노랑(제주)과 겹치지 않게
     function patchStyle(base) { return Object.assign({}, base || {}, { fill: { patternType: 'solid', fgColor: { rgb: LILAC } } }); }
     // 품목 뒤 「요청 꼬리」(「 17과로!」 — v2 의 「 S사이즈로!」와 같은 꼴). 품목 이름은 그대로 두고 옵션 칸 끝에만 붙인다 → 거래처 찾기는 꼬리를 떼고, 수량 표에는 따로 한 줄(주황).
@@ -2623,35 +2624,41 @@
         out.sum = Math.round(out.sum); return out;
     }
     function settleText() { const f = (st.files || []).find(x => x.kind === 'store'); if (!f || !f.settle) return ''; const x = f.settle; return `${x.sum.toLocaleString('ko-KR')}원 · ${x.n}건${x.none ? ` (값 없음 ${x.none}건)` : ''}`; }
+    // #1059(대표 11/9) 고친 칸마다 출처 — st.patchSrc: 주문 key → Map(칸 → 'chat' 대화 | 'card' 카드 [적용]·발송일 뒤집기) · 표식 없는 칸 = 종전 「말로」
+    function markSrc(k, fields, src) { if (!st.patchSrc) st.patchSrc = new Map(); const m = st.patchSrc.get(k) || new Map(); fields.forEach(f => m.set(f, src)); st.patchSrc.set(k, m); }
+    function srcOf(k, f) { const m = st.patchSrc && st.patchSrc.get(k); return m && m.get(f) === 'card' ? 'card' : 'chat'; }
+    // 머리 글 = 「말로 바꾼 것 n건 · 직접 수정 m건」(0건 쪽 생략) · 꼬리표는 직접 수정이 하나라도 있을 때만(말로만 있으면 종전 글 그대로)
+    function patchHead(items) { const c = items.filter(x => x.src !== 'card').length, d = items.length - c; return [c ? `말로 바꾼 것 ${c}건` : '', d ? `직접 수정 ${d}건` : ''].filter(Boolean).join(' · '); }
+    const srcTag = (items, x) => items.some(y => y.src === 'card') ? `<i class="fo-src" data-src="${x.src}">${x.src === 'card' ? '직접' : '말'}</i>` : '';
     // 말로 바꾼 것 목록 — screen = 화면용(값 포함) · log = 정리 기록용(주소 글자는 넣지 않는다)
     function patchItems() {
         const byKey = new Map(S().merged.map(e => [keyOf(e), e])), out = [], groups = new Map();
         st.patch.forEach((p, k) => {
             const e = byKey.get(k); if (!e) return; const who = whoOf(e), b = buyerName(e);
-            const add = (kind, screen, log) => out.push({ key: k, kind, screen: `${kind}: ${screen}`, log });
-            if (p.addr != null) add('주소 변경', who, b);   // 목록·정리 기록에는 이름만(주소 글자는 넣지 않는다 — 바뀐 주소는 결과 파일의 연보라 칸에서 본다)
-            if (p.recv != null) add('받는 분 변경', `${who} → ${p.recv}`, `${b}: ${e.conv['수취인명'] || ''} → ${p.recv}`);
-            if (p.qty != null) add('수량 변경', `${who} — ${qtyOf(e)} → ${p.qty}박스`, `${b}: ${qtyOf(e)} → ${p.qty}박스`);
+            const add = (kind, screen, log, f) => out.push({ key: k, kind, screen: `${kind}: ${screen}`, log, src: srcOf(k, f) });
+            if (p.addr != null) add('주소 변경', who, b, 'addr');   // 목록·정리 기록에는 이름만(주소 글자는 넣지 않는다 — 바뀐 주소는 결과 파일의 연보라 칸에서 본다)
+            if (p.recv != null) add('받는 분 변경', `${who} → ${p.recv}`, `${b}: ${e.conv['수취인명'] || ''} → ${p.recv}`, 'recv');
+            if (p.qty != null) add('수량 변경', `${who} — ${qtyOf(e)} → ${p.qty}박스`, `${b}: ${qtyOf(e)} → ${p.qty}박스`, 'qty');
             if (p.optAll) { const g = groups.get(p.optAll) || []; g.push(k); groups.set(p.optAll, g); }
-            else if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`);
-            if (p.tail != null) add('품목 뒤 요청', `${who} — ${p.tail ? '「' + p.tail + '」' : '꼬리 뗌'}`, `${b}: ${p.tail || '꼬리 뗌'}`);
-if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes)}`, `${b}: ${boxText(p.boxes)}`);   // #601
-            if (p.boxes && boxesOf(e) && boxHasX(p.boxes)) add('박스별', `${who} → ${boxExtraText(p.boxes)}`, `${b}: 박스별 받는 분·옵션 바꿈`);   // #611
-            if (p.rtel != null || p.rtel2 != null) add('받는 분 번호 변경', who, b);   // 번호 글자는 싣지 않는다
-                        if (p.sender && p.sender.name) add('보내는이 변경', `${who} — ${p.sender.name} 드림`, `${b}: ${p.sender.name} 드림`);
-            if (p.memo != null) add('배송메세지 변경', `${who} — 「${p.memo || '기본 문구'}」`, b);
-            if (p.excl === true) add(p.exclBy === 'card' ? '오늘 발송 제외' : '오늘 제외', who, b);
-            if (p.excl === false) add('오늘 발송으로', who, b);
+            else if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`, 'opt');
+            if (p.tail != null) add('품목 뒤 요청', `${who} — ${p.tail ? '「' + p.tail + '」' : '꼬리 뗌'}`, `${b}: ${p.tail || '꼬리 뗌'}`, 'tail');
+if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes)}`, `${b}: ${boxText(p.boxes)}`, 'boxes');   // #601
+            if (p.boxes && boxesOf(e) && boxHasX(p.boxes)) add('박스별', `${who} → ${boxExtraText(p.boxes)}`, `${b}: 박스별 받는 분·옵션 바꿈`, 'boxes');   // #611
+            if (p.rtel != null || p.rtel2 != null) add('받는 분 번호 변경', who, b, p.rtel != null ? 'rtel' : 'rtel2');   // 번호 글자는 싣지 않는다
+                        if (p.sender && p.sender.name) add('보내는이 변경', `${who} — ${p.sender.name} 드림`, `${b}: ${p.sender.name} 드림`, 'sender');
+            if (p.memo != null) add('배송메세지 변경', `${who} — 「${p.memo || '기본 문구'}」`, b, 'memo');
+            if (p.excl === true) add(p.exclBy === 'card' ? '오늘 발송 제외' : '오늘 제외', who, b, 'excl');
+            if (p.excl === false) add('오늘 발송으로', who, b, 'excl');
         });
         // #535: 품목 통째로 바꾼 묶음은 한 줄로(되돌리기 = 그 묶음 전부)
-        groups.forEach((ks, gid) => { const g = (st.optAll && st.optAll.get(gid)) || { from: '', to: '' }; out.push({ key: 'all:' + gid, kind: '품목 통째로 변경', screen: `품목 통째로 변경 ${ks.length}건: ${g.from} → ${g.to}`, log: `${g.from} → ${g.to} (${ks.length}건)` }); });
+        groups.forEach((ks, gid) => { const g = (st.optAll && st.optAll.get(gid)) || { from: '', to: '' }; out.push({ key: 'all:' + gid, kind: '품목 통째로 변경', screen: `품목 통째로 변경 ${ks.length}건: ${g.from} → ${g.to}`, log: `${g.from} → ${g.to} (${ks.length}건)`, src: 'chat' }); });
         return out;
     }
     const patchLines = () => patchItems().map(x => x.screen);
     function renderPatches() {
         const el = $('fo-patches'); if (!el) return; const items = patchItems();
         const keys = [...new Set(items.map(x => x.key))];
-        el.innerHTML = items.length ? `<b>말로 바꾼 것 ${items.length}건</b><ul>${keys.map(k => `<li><span>${items.filter(x => x.key === k).map(x => esc(x.screen)).join(' · ')}</span><button type="button" class="fo-btn sm" data-unpatch="${esc(k)}">되돌리기</button></li>`).join('')}</ul>` : '';
+        el.innerHTML = items.length ? `<b>${patchHead(items)}</b><ul>${keys.map(k => `<li><span>${items.filter(x => x.key === k).map(x => srcTag(items, x) + esc(x.screen)).join(' · ')}</span><button type="button" class="fo-btn sm" data-unpatch="${esc(k)}">되돌리기</button></li>`).join('')}</ul>` : '';
     }
     // #526: 에이전트 오피스 「내 지시」 대화 보기와 같은 모양(시간 표시는 없음) — 내 말 = 오른쪽 연한 인디고 말풍선 · 클코 답 = 왼쪽 인디고 띠 카드(「클코 답변」 배지 · 본문 · 아래 버튼 띠)
     function renderChat() {
@@ -2883,7 +2890,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         // #526: 「미매칭」 = 옵션 글자가 「[미매칭]」으로 시작(단가표에 없는 이름) 또는 거래처 미정. 카드에서 거래처를 골랐어도 이름은 여전히 미매칭이다(실사용에서 0건으로 세어 AI가 못 찾았다고 답함)
         const unAll = going.filter(e => /^\[미매칭\]/.test(optOf(e)) || !partnerShort(optOf(e))), un = unAll.length, unPicked = unAll.filter(e => !!partnerShort(optOf(e))).length;
         return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? cashLive().length : 0}행`,
-            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, settleText() ? `스토어 정산예정(네이버): ${settleText()}` : '', `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, settleText() ? `스토어 정산예정(네이버): ${settleText()}` : '', `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · ${patchHead(patchItems()) || '말로 바꾼 것 0건'}`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
     }
     // #570(대표 10/7): 줄 끝·맨 아래의 「변경해줘」「다 해줘」 같은 시키는 말만 있는 것은 위 정리 줄들을 가리키는 말 — 그 줄들은 화면이 처리하므로 클코에게 보내지 않는다
     const CMD_TAIL = /\s+(?:다\s*|전부\s*|모두\s*|싹\s*)?(?:변경|수정|적용|반영|표시|처리)?\s*(?:해\s*줘요?|해\s*주세요|해\s*줄래|해\s*주라|부탁해요?|부탁드려요?|부탁)\s*[!.~]*$/;
@@ -3049,10 +3056,10 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const C = st.chat, P = C.pending; if (!P || st.busy) return;
         const had = st.phase === 'result' && st.files.length > 0, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), indiv = [];
         P.items.filter(x => x.ok).forEach(x => {
-            if (x.all) { const gid = 'g' + Date.now() + Math.random().toString(36).slice(2, 6); st.optAll = st.optAll || new Map(); st.optAll.set(gid, { from: x.from, to: x.to }); x.sets.forEach(z => st.patch.set(z.key, Object.assign({}, st.patch.get(z.key) || {}, { opt: z.opt, optAll: gid }))); return; }
+            if (x.all) { const gid = 'g' + Date.now() + Math.random().toString(36).slice(2, 6); st.optAll = st.optAll || new Map(); st.optAll.set(gid, { from: x.from, to: x.to }); x.sets.forEach(z => { st.patch.set(z.key, Object.assign({}, st.patch.get(z.key) || {}, { opt: z.opt, optAll: gid })); markSrc(z.key, ['opt'], 'chat'); }); return; }
             if (x.set.indiv) { const e = byKey.get(x.key); if (e) indiv.push(`${md(s.shipDate)}\t${buyerTel(e)}\t입력o삭제x\t${CH_LABEL[e.ch] || '네이버'}`); return; }
             const np = Object.assign({}, st.patch.get(x.key) || {}, x.set); if (x.set.opt != null) delete np.optAll;   // 한 건만 따로 바꾸면 묶음에서 빠진다
-            st.patch.set(x.key, np);
+            st.patch.set(x.key, np); markSrc(x.key, Object.keys(x.set), 'chat');   // #1059 출처 = 말로
         });
         C.log[P.at].state = '적용함'; C.pending = null;
         st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg();
@@ -3090,14 +3097,14 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
           if (sv.length) L.push(`서비스 ${sv.reduce((n, r) => n + (Number(r.qty) || 0), 0)}박스(${[...by].map(([k, n]) => k + ' ' + n).join(' · ')})`);
           const nk = m.filter(e => e.indivOff).length; if (nk) L.push(`일반발송 ${nk}건(입력삭제에서 뺌 · 스토어 주소로)`); }
         const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 통째로 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
-        kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) sp.push(`· ${k} ${xs.length}건: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); });
+        kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) { const d = xs.filter(x => x.src === 'card').length; sp.push(`· ${k} ${xs.length}건${d ? (d === xs.length ? '(직접 수정)' : `(말로 ${xs.length - d} · 직접 수정 ${d})`) : ''}: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); } });
         const szN = m.filter(e => goingOut(e) && st.sizeTail && st.sizeTail.has(keyOf(e))).length; if (szN) sp.push(`· 메모 줄로 사이즈 지정 ${szN}건`);
         const cardTail = m.filter(e => goingOut(e) && !(st.patch.get(keyOf(e)) || {}).tail && !(st.sizeTail && st.sizeTail.has(keyOf(e))) && tailOf(e)); if (cardTail.length) sp.push(`· 품목 뒤 요청(손님 메모 · 카드에서 확인) ${cardTail.length}건: ${cardTail.slice(0, 6).map(e => `${buyerName(e)} ${tailOf(e)}`).join(', ')}`);
         const sm = senderMap().byKey; let rule = 0, ai = 0, hand = 0;
         m.filter(goingOut).forEach(e => { const k = keyOf(e), p = st.patch.get(k); if (p && p.sender && p.sender.name) hand++; else if (sm.has(k)) { const id = st.sambCard && st.sambCard.get(k); if (id && st.ai.tag.has(id)) ai++; else hand++; } else if (e.sender && !e.sender.ambiguous) rule++; });
         if (rule + ai + hand) sp.push(`· 보내는이 변경 ${rule + ai + hand}건 (규칙 ${rule} · AI가 처리 ${ai} · 직접 ${hand})`);
         const ex = m.filter(e => !e.individual && e.excluded);
-        const why = e => { const p = st.patch.get(keyOf(e)); if (p && p.excl === true) return '말로 제외'; const id = st.ordCard && st.ordCard.get(keyOf(e)); if (id && st.dec.get(id) === 'excl') return st.ai.tag.has(id) ? 'AI: ' + st.ai.tag.get(id) : '카드에서 제외'; if (e.req) return `메모 줄 ${md(e.req.date)}`; if (e.parse && e.parse.reqDate) return `${e.parse.reqDate} ${e.parse.kind === 'arrive' ? '도착' : '발송'} 요청`; return '손님 메모'; };
+        const why = e => { const p = st.patch.get(keyOf(e)); if (p && p.excl === true) return srcOf(keyOf(e), 'excl') === 'card' ? '직접 제외' : '말로 제외'; const id = st.ordCard && st.ordCard.get(keyOf(e)); if (id && st.dec.get(id) === 'excl') return st.ai.tag.has(id) ? 'AI: ' + st.ai.tag.get(id) : '카드에서 제외'; if (e.req) return `메모 줄 ${md(e.req.date)}`; if (e.parse && e.parse.reqDate) return `${e.parse.reqDate} ${e.parse.kind === 'arrive' ? '도착' : '발송'} 요청`; return '손님 메모'; };
         if (ex.length) { sp.push(`· 오늘 제외 ${ex.length}건${ex.length > 12 ? ' (앞 12건만 적음)' : ''}`); ex.slice(0, 12).forEach(e => sp.push(`   - ${buyerName(e)} (${why(e)})`)); }
         if ((st.recvFix || []).length) sp.push(`· 받는 분 번호로 적은 메모 줄을 주문번호로 바꿈 ${st.recvFix.reduce((a, x) => a + x.n, 0)}건`);
         if (sp.length) L.push('특이사항', ...sp);
@@ -3126,7 +3133,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             $('fo-memo').value = ''; $('fo-chat-input').value = ''; st.lineFixTried = null; st.lineFix = null; st.fixDraft = new Map(); st.memoAsk = false; memoNote(''); band('memo', ''); band('ai', '');   // #572
             st.cash = null; st.cashName = ''; st.cashNone = false; $('fo-cash').value = '';
             st.prep = null; st.loaded = false; st.judged = false; st.stale = false; st.loadedOn = null; st.loadedAt = 0; st.chState = {}; st.cards = []; st.info = []; st.infoBase = null; st.kindFilter = '';
-            st.dec = new Map(); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.recvFix = []; st.ordMemo = new Map();
+            st.dec = new Map(); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.patchSrc = new Map(); st.recvFix = []; st.ordMemo = new Map();
             st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
             st.out = null; st.files = []; st.phase = 'input'; renderMemoGut();
             ['fo-review', 'fo-result', 'fo-progress', 'fo-chat'].forEach(id => { $(id).hidden = true; });
@@ -3248,9 +3255,16 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             let indiv = null; try { const v = JSON.parse(localStorage.getItem('akm_fo_indiv') || 'null'); if (v && Array.isArray(v.keys) && Date.now() - Number(v.at || 0) < 3 * 86400e3) indiv = Object.assign({ date: v.date, at: v.at, keys: v.keys }, Array.isArray(v.hold) ? { hold: v.hold } : {}); } catch (e) { indiv = null; }   // #894 F2
             const r = await call('match', Object.assign({ files }, indiv ? { indiv } : {}));
             if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
-            ia.res = r; seedSuggest(); say(''); render();
-        } catch (err) { say(err && err.message ? err.message : String(err), true); }
+            ia.res = r; seedSuggest(); say(''); render(); showOut($('fo-ia-out'));
+        } catch (err) { say(err && err.message ? err.message : String(err), true); showOut($('fo-ia-msg')); }
         finally { clearInterval(tick); ia.busy = false; sync(); }
+    }
+    // #1060(대표 11/9) 짝 맞추기 뒤 결과(또는 오류 글) 머리로 한 번 내림 · 머리가 이미 화면 안에 보이면 안 움직임
+    function showOut(el) {
+        if (!el || el.hidden || typeof el.scrollIntoView !== 'function') return;
+        const box = el.closest('.fo-body'), r = box ? box.getBoundingClientRect() : { top: 0, bottom: window.innerHeight || document.documentElement.clientHeight }, t = el.getBoundingClientRect().top;   // 보이는 칸 = 최종발주 창 안 스크롤 칸(.fo-body)
+        if (t >= r.top && t <= r.bottom - 80) return;
+        el.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
     const todoRows = () => ((ia.res && ia.res.rows) || []).filter(r => r.status === 'todo');
     // #841 서버가 미리 고른 운송장(suggest · 고를 목록 안의 것만) = 선택해 두고 「확인 필요」 · 사람이 바꾸면 「고름」
