@@ -1,3 +1,5 @@
+## v5.9.741 (2026-11-09) — #1072-c 진단 러너 claimKeys(층별 키 이름만 · 값 0) + claimReqInfo 가 productOrder 층·claimRequestChannel 도 봄(v5.9.740 에서 8건 전부 신청 칸 못 찾음 · 워커2 · 워커1 점검 OK)
+
 ## v5.9.740 (2026-11-09) — #1072-b 반품·교환 알림 거르기 틀(설정 claim_skip_channels · 기본 없음 = 종전) + 진단 러너 신청 칸(워커2 · 워커1 점검 막을 것 0)
 
 - order_probe_request 결과 items[] 에 claimReq {poid 끝4, kind, ch(requestChannel), reason} 추가(그 밖 칸 종전 · PII 0) · 거르기 = collectClaim 낮 갈래에서 상세 조회 응답의 kind 있고 ch 가 claim_skip_channels 에 든 건만 뺌(건수 = fresh − 뺀 수 · 0이면 0통) · 조회 실패·칸 없음·목록 밖·응답에 없는 건 = 보냄(손님 건 놓침 0) · naver_claim_alerted 는 거르기 전 기록(재알림 0) · 값 모음은 뺀 건 포함 · 한글 표 claim_channel_labels {값:한글} · 야간 = 종전(아침 브리핑 건수엔 판매자 건도 셈 = 보고 거리) · 발단 = 대표가 센터에서 판매자 반품 실건 2개 확인(상품주문번호 끝 2231 19:12 · 끝 5651 17:43 · 화면 「반품 요청자 판매자」) · v1072 23/23.

@@ -8282,14 +8282,32 @@ async function collectOrderNew() {
 function claimReqInfo(it) {
     const c = (it && (it.content || it)) || {};
     const po = c.productOrder || (it && it.productOrder) || c;
-    const cur = c.currentClaim || (it && it.currentClaim) || {};
+    const cur = c.currentClaim || (it && it.currentClaim) || (po && po.currentClaim) || {};   // #1072-c productOrder 층도 봄
     const pick = (o) => o && typeof o === 'object' ? o : null;
     let kind = '', cl = pick(cur.return);
     if (cl) kind = 'RETURN'; else if ((cl = pick(cur.exchange))) kind = 'EXCHANGE';
     else if (Object.keys(cur).length) cl = null;   // 새 꼴 응답(currentClaim 에 키 있음 · 예: 취소만) = 옛 칸으로 안 내려감(지난 반품 값 섞임 방지)
-    else if ((cl = pick(c.return || (it && it.return)))) kind = 'RETURN'; else if ((cl = pick(c.exchange || (it && it.exchange)))) kind = 'EXCHANGE';
-    const ch = cl && cl.requestChannel != null ? String(cl.requestChannel).trim().slice(0, 40) : '';
+    else if ((cl = pick(c.return || (it && it.return) || (po && po.return)))) kind = 'RETURN'; else if ((cl = pick(c.exchange || (it && it.exchange) || (po && po.exchange)))) kind = 'EXCHANGE';
+    const rc = cl ? (cl.requestChannel != null ? cl.requestChannel : cl.claimRequestChannel) : null;   // #1072-c 칸 이름 다른 꼴 하나 더
+    const ch = rc != null ? String(rc).trim().slice(0, 40) : '';
     return { poid: String((po && po.productOrderId) || '').slice(-4), kind, ch, reason: cl ? String(cl.returnReason || cl.exchangeReason || '').slice(0, 40) : '' };
+}
+// #1072-c 진단 — 상세 조회 한 건의 층별 키 이름(값은 안 담음 · 개인정보 0) · 어느 층에 클레임 객체가 오는지 실응답으로 보기
+function claimKeysOf(it) {
+    const keys = o => (o && typeof o === 'object' && !Array.isArray(o)) ? Object.keys(o).slice(0, 40) : (Array.isArray(o) ? ['[배열 ' + o.length + ']'] : []);
+    const c = (it && it.content && typeof it.content === 'object') ? it.content : null;
+    const base = c || it || {};
+    const out = { top: keys(it), content: c ? keys(c) : null };
+    for (const k of ['currentClaim', 'beforeClaim', 'return', 'exchange', 'cancel', 'claim', 'completedClaims']) {
+        const v = base[k] != null ? base[k] : (it && it[k]);
+        if (v == null) continue;
+        out[k] = keys(v);
+        if (v && typeof v === 'object' && !Array.isArray(v)) for (const k2 of ['return', 'exchange', 'cancel']) if (v[k2] && typeof v[k2] === 'object') out[k + '.' + k2] = keys(v[k2]);
+        if (Array.isArray(v) && v[0] && typeof v[0] === 'object') out[k + '[0]'] = keys(v[0]);
+    }
+    const po = base.productOrder || (it && it.productOrder);
+    if (po && typeof po === 'object') out.productOrderClaimKeys = Object.keys(po).filter(k => /claim|return|exchange|request|channel/i.test(k)).slice(0, 30);
+    return out;
 }
 function claimReqTag(infos, labels) {   // 「(신청: 값 n건 · 값 m건)」 · 값 하나도 없으면 '' · labels = {값: 한글}(#1072-b · 없으면 원래 글자)
     const cnt = new Map(), L = (labels && typeof labels === 'object') ? labels : {};
@@ -16977,6 +16995,7 @@ setInterval(async () => {
                 status: po.productOrderStatus || null, claim: po.claimStatus || null,
                 hasOrdererTel: !!od.ordererTel, hasShipTel: !!(po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)),
                 claimReq: claimReqInfo(it),   // #1072-b 반품·교환 신청자 칸(requestChannel·kind·사유 · 주문번호 끝4 · PII 0)
+                claimKeys: claimKeysOf(it),   // #1072-c 진단 — 응답 층별 키 이름만(값 0 · PII 0)
             };
         });
         await naverCfgSet('order_probe_result', { at: new Date().toISOString(), asked: keys.length, got: out.length, items: out });
