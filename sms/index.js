@@ -259,6 +259,12 @@ module.exports = function mountSms(app, deps) {
         const hint = ['발송 전', r.md ? '결제 ' + r.md : '', shortOpt(r.option_text), Number(r.qty) > 1 ? r.qty + '박스' : ''].filter(Boolean).join(' · ');
         return { hint, name: r.recv_digits === digits ? r.recv_name : r.buyer_name };
     }
+    // #1062-d 안 읽은 대화 수 = 화면 summary.unread_threads 와 같은 정의(ACTIVE_SQL = 무시 대화 빼고 · staff_read_at 뒤 손님 글 있는 대화 · 시험 번호 뺌) · ms 주면 그 시간 넘으면 null
+    async function unreadCount(ms) {
+        const q = pool.query(`SELECT count(*)::int AS n FROM sms_threads t WHERE ${ACTIVE_SQL}`).then(r => (r.rows[0] ? Number(r.rows[0].n) || 0 : 0), () => null);
+        if (!ms) return q;
+        let tm; const n = await Promise.race([q, new Promise(ok => { tm = setTimeout(() => ok(null), ms); })]); clearTimeout(tm); return n;
+    }
     async function appNotify(thread, text, nImg, bucket) {
         try {
             if (!thread || !thread.id || !deps.push || typeof deps.push.sendApp !== 'function') return 0;
@@ -267,8 +273,9 @@ module.exports = function mountSms(app, deps) {
             if (!deps.testMode && isTestDigits(thread.phone_digits)) return 0;
             if (thread.status === 'ignored' && APP_HIDE.includes(bucket)) return 0;
             const pre = String(thread.order_hint || '').trim() ? null : await appPreHint(thread.phone_digits);   // #1062-B
+            const badge = await unreadCount(300);   // #1062-d 아이콘 숫자 = 안 읽은 대화 수(이 글 포함 · 300ms 넘으면 숫자 없이)
             const title = appTitle(thread, pre && pre.name), message = appBody(thread, text, nImg, pre && pre.hint), link = `agent-office?sms=${thread.id}`, tag = 'sms-' + thread.id;
-            let sent = 0; for (const uid of c.app_user_ids) { const r = await deps.push.sendApp(uid, { title, message, link, tag }); sent += (r && r.sent) || 0; }
+            let sent = 0; for (const uid of c.app_user_ids) { const r = await deps.push.sendApp(uid, Object.assign({ title, message, link, tag }, badge == null ? {} : { badge })); sent += (r && r.sent) || 0; }
             return sent;
         } catch (e) { log.error('[문자] 문자 앱 알림 실패(무시):', e.message); return 0; }
     }
@@ -1190,6 +1197,11 @@ module.exports = function mountSms(app, deps) {
         ORDER BY COALESCE(t.last_in_at, t.updated_at) DESC, t.id DESC LIMIT 100`, [Object.keys(BOTFAIL_WHY)])).rows
         .map(t => ({ ch: 'sms', id: t.id, why: BOTFAIL_WHY[t.staff_why] || (t.last_out_state === 'failed' ? '발송 실패' : '봇 실패'), at: t.at ? new Date(t.at).toISOString() : null, who: '끝 ' + phoneTail(t.phone_digits) }));
     try { require('../desk-inbox.js').hook('botfail_sms', () => _botFailSms()); } catch (e) { }
+    // #1062-d 문자 앱 아이콘 숫자(화면이 대화 읽은 뒤·켤 때 setAppBadge) — 읽기만 · { ok, n }
+    app.get('/api/sms/unread-count', authMiddleware, wrap(async (req, res) => {
+        const n = await unreadCount(); if (n == null) return res.status(500).json({ ok: false, error: '안 읽은 수를 못 셌어요' });
+        res.json({ ok: true, n });
+    }));
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
         const c = await cfg(); const st = (await naverCfgGet('sms_gateway_state')) || {};
         const today = kstDate();
@@ -1477,7 +1489,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _appNotify: appNotify, _appTitle: appTitle, _appBody: appBody, _appPreHint: appPreHint, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _appNotify: appNotify, _appTitle: appTitle, _appBody: appBody, _appPreHint: appPreHint, _unreadCount: unreadCount, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

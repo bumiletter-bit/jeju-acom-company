@@ -6,18 +6,22 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 // 삼성 인터넷·옛 크로미움은 fetch 처리기가 있어야 「앱 설치」를 허락함 → 아무것도 안 하는 처리기(respondWith 없음 = 브라우저가 평소대로 네트워크 · 캐시 0)
 self.addEventListener('fetch', () => { });
 
+// #1062-d 아이콘 숫자 = payload.badge(안 읽은 대화 수) → setAppBadge(0 = 지움) · 지원 안 하는 브라우저(안드로이드 크롬·삼성 인터넷 대부분)는 조용히 넘김 = 런처가 떠 있는 알림 수로 셈
+const setBadge = n => { try { const nav = self.navigator; if (!nav || !Number.isInteger(n) || n < 0) return Promise.resolve(); return Promise.resolve(n > 0 ? (nav.setAppBadge && nav.setAppBadge(n)) : (nav.clearAppBadge && nav.clearAppBadge())).catch(() => { }); } catch (e) { return Promise.resolve(); } };
 self.addEventListener('push', event => {
     let d = {};
     try { d = event.data ? event.data.json() : {}; } catch (e) { d = { body: event.data ? event.data.text() : '' }; }
+    // type 'badge' = 숫자만(알림 없음) — 서버는 지금 이 꼴을 안 보냄(웹 푸시 userVisibleOnly: 알림 없이 끝나면 브라우저가 대신 알림을 띄움) · 받으면 숫자만
+    if (d.type === 'badge') { event.waitUntil(setBadge(Number(d.n))); return; }
     const tag = d.tag || (d.link ? 'sms-' + d.link : 'akkome-sms');
-    event.waitUntil(self.registration.showNotification(d.title || '아꼼이 문자', {
+    event.waitUntil(Promise.all([setBadge(d.badge), self.registration.showNotification(d.title || '아꼼이 문자', {
         body: d.body || '',
         icon: '/sms/icon-192.png',
         badge: '/sms/icon-192.png',
         tag,
         renotify: true,
         data: { link: d.link || '' },
-    }));
+    })]));
 });
 
 // 알림 → 여는 주소(검증이 떼어 부름)

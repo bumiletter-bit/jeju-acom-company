@@ -253,7 +253,7 @@ function indivBadge(line, rows, orders, base, opt) {
 //   r = 메모 줄(line_key·note·plat·line·checked) · orders = order_memo_preorders 그 번호(구매자 번호 또는 주문번호) 줄 [{channel, option_text, qty}] · opt = { catalog(Set) · orderNo(주문번호 줄) · pending(즉시 조회 중 = unknown) · noTable(표 못 읽음 = unknown) }
 //   주문 고르기 = plat 적혀 있으면 그 채널만(없으면 전부) · 사이즈 = core.sizeLines(줄) · 과수 = core.gwaLines(사이즈 뗀 글) · 귤 로얄과 = final-order.js sizeItem 과 같은 판정 · 만감류 = gwaItem(황금향·한라봉·레드향·천혜향 · 카라향 X)
 const LB_ROYAL = o => { const t = String(o || ''); return /귤/.test(t) && /로얄과/.test(t) && !/선물용/.test(t); };
-const LB_GWA = (o, cat) => { const b = cat && core.stripTail ? core.stripTail(String(o || ''), n => cat.has(n)) : String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(b) && !/카라향/.test(b); };
+const LB_GWA = (o, cat) => { const b = cat && core.stripTail ? core.stripTail(String(o || ''), n => cat.has(n)) : String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(b) && /선물/.test(b) && !/카라향/.test(b); };   // #1061-c 과수 지정 = 선물용 만감류만(메모리 jeju-gift-size-rule · 화면 ao-ordermemo.js gwaItem 과 같은 규칙)
 function lineBadge(r, orders, opt) {
     const o = opt || {}, cat = o.catalog instanceof Set ? o.catalog : null, q = v => Math.max(0, parseInt(v, 10) || 0);
     const B = (state, why, type) => ({ kind: 'line', state, t: state === 'ok' ? '매칭완료' : state === 'fail' ? '매칭실패' : '주문 확인 중', why: why || '', type });
@@ -286,7 +286,7 @@ function lineBadge(r, orders, opt) {
         if (sz && sz.parts) { const n = sz.parts.reduce((t, p) => t + q(p.n), 0), m = roy.reduce((t, x) => t + q(x.qty), 0); if (n !== m) return B('fail', `메모 ${n}건 · 주문 ${m}박스`, type); }
         return B('ok', '', type);
     }
-    if (type === 'gwa') return od.some(x => LB_GWA(x.option_text, cat)) ? B('ok', '', type) : B('fail', '만감류 주문 없음', type);
+    if (type === 'gwa') return od.some(x => LB_GWA(x.option_text, cat)) ? B('ok', '', type) : B('fail', '만감류 선물용 주문 없음', type);
     return B('ok', '', type);   // 보내는이·날짜 지정·메모 수정·배송메모·주문번호 줄 = 주문 있음
 }
 // #944(대표 11/1) 주소 줄 → 현금 손님 줄로 떼기 = A칸 「!」 다시 + B·K 복원은 아래 #949(순수 · PUT to_cash 길 · #935 [현금으로]도 같은 규칙)

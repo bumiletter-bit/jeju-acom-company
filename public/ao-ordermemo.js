@@ -373,13 +373,14 @@
     // #1061-b(대표 11/9 실기기 · 레몬 주문에 사이즈가 그냥 저장됨) 사이즈·과수 줄은 찾은 주문에 지정 가능한 품목이 있을 때만 저장
     //   판정 = 서버 order-memo.js lineBadge 와 같은 낱말(LB_ROYAL = 귤·로얄과·선물용 아님 · LB_GWA = 황금향·한라봉·레드향·천혜향 · 카라향 X) · 주문 0건·찾는 중 = 여기서 안 막음(종전 길)
     const SZ_ROYAL = o => { const t = String(o || ''); return /귤/.test(t) && /로얄과/.test(t) && !/선물용/.test(t); };
-    const SZ_GWA = o => { const t = String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(t) && !/카라향/.test(t); };
+    const SZ_GWA = o => { const t = String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(t) && !/카라향/.test(t) && /선물/.test(t); };   // #1061-c 과수 = 선물용 만감류만(gwaItem 과 같음 · 가정용·혼합과 X · 메모리 jeju-gift-size-rule)
+    const LK_RETRY = [2500, 2500, 3000];   // #1061-c 첫 조회 0건 = 즉시 주문 조회(#936)가 끝나기를 기다려 다시 묻는 간격(합 8초)
     function szBlock(r) {
         if (!r || r.kind !== 'line' || isBoxRow(r) || !(r._lk && r._lk.state === 'done')) return '';
         const n = String(r.note || ''), k = /사이즈/.test(n) ? 'size' : /\d\s*과로/.test(n) ? 'gwa' : ''; if (!k) return '';
         const ms = lkIn(r); if (!ms.length) return '';
         if (ms.some(m => (k === 'size' ? SZ_ROYAL : SZ_GWA)(m.option))) return '';
-        return `⚠ 이 주문(${optBrief(ms[0].option) || '그 품목'})은 ${k === 'size' ? '사이즈' : '과수'} 지정이 안 돼요 · 저장하지 않았어요`;
+        return `⚠ 이 주문(${optBrief(ms[0].option) || '그 품목'})은 ${k === 'size' ? '사이즈' : '과수'} 지정이 안 돼요${k === 'gwa' ? '(선물용만)' : ''} · 저장하지 않았어요`;
     }
     // #1061-b ③ 사이즈·과수 줄을 받는 분 번호로 넣음(찾은 주문이 전부 recv) = 최종발주 matchKey(구매자 번호·주문번호)에 안 붙음 → 구매자 번호(하나일 때) 또는 상품주문번호(선물하기 = 구매자 번호 없음 · 주문 1건)로 바꿔 저장
     const isSzRow = r => !!r && r.kind === 'line' && !isBoxRow(r) && /사이즈|\d\s*과로/.test(String(r.note || ''));
@@ -551,7 +552,18 @@
             const r = rows.length === 1 && rows[0].kind === 'line' && !b.leftover && !(b.desk && b.desk.state === 'wait') ? rows[0] : null;
             if (!r) { toCard(rows, b, '이 줄은 카드에서 확인해 주세요'); return; }
             if (canLook(r.key)) {
-                const lk = await API.lookup(String(r.key).trim());
+                let lk = await API.lookup(String(r.key).trim());
+                {   // #1061-c(대표 11/9 실기기) 금방 들어온 주문 = 첫 조회가 즉시 주문 조회(#936 · 6초쯤)보다 먼저 와 0건 → 「주문 찾는 중…」 띠로 2.5초마다 다시(최대 3회 · 약 8초) · 그래도 0건일 때만 미매칭 되묻기
+                    const tel1 = te.value;
+                    for (let i = 0; i < LK_RETRY.length && lk.ok && lk.body && !(Array.isArray(lk.body.matches) && lk.body.matches.length) && canLook(r.key) && /^0\d{8,11}$/.test(digits(r.key)); i++) {
+                        go.textContent = '주문 찾는 중…'; tpNote('주문 찾는 중…');
+                        await new Promise(z => setTimeout(z, LK_RETRY[i]));
+                        if (OM.tp !== x || !$('om-tp') || $('om-tp').hidden || !OM.el || OM.el.hidden) { end(); if (OM.tp && $('om-tp') && !$('om-tp').hidden) tpNote('취소했어요 · 저장하지 않았어요', 'warn'); return; }   // 판 × · 다른 꼬리표 = 저장 0(새 판에 띠는 다른 꼬리표일 때만)
+                        if (te.value !== tel1) { end(); tpNote('번호가 바뀌었어요 · [넣기]를 다시 눌러 주세요', 'warn'); return; }
+                        lk = await API.lookup(String(r.key).trim());
+                    }
+                    go.textContent = '저장하는 중…'; tpNote('저장하는 중…');
+                }
                 if (!lk.ok) { toCard(rows, b, '주문을 못 찾아(연결 오류) 카드에서 판매처를 골라 [저장]해 주세요'); return; }   // 연결 오류 = 빈 판매처로 저장하지 않음(못 찾음 0건은 저장)
                 r._lk = lk.ok && lk.body ? { state: 'done', key: digits(r.key), matches: Array.isArray(lk.body.matches) ? lk.body.matches : [] } : { state: 'err', key: digits(r.key), matches: [] };
                 const ps = lkPlats(r);
@@ -1696,7 +1708,7 @@
         c.dirty = true; if (!cardReveal(c, ri)) renderCard(); if (c.rows[ri].kind === 'line') lkRun(ri);   // #900 2-B 안 그린 줄이면 그 쪽까지 펼침
         const fx = $('om-card').querySelectorAll('.om-rowcard')[ri]; const t2 = fx && (fx.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || fx.querySelector('.om-seg-b[aria-checked="true"]')); if (t2) t2.focus({ preventScroll: true });
     }
-    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; delete o._ik; delete o._ik0; delete o._ib0; delete o._k10typed; delete o._pairSaved; delete o._svcTouched; delete o._expTouched; delete o._noIndiv; delete o._ord; delete o._splitFrom; delete o._bx; delete o._bxOff; delete o._bxTouched; delete o._xo; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
+    const stripTmp = r => { const o = Object.assign({}, r); delete o._dateBad; delete o._new; delete o._lk; delete o._lkSeq; delete o._lkT; delete o._lkTry; delete o._lkTryKey; delete o.checked; delete o._fromLine; delete o._addr; delete o._addrSeq; delete o._addrT; delete o._ik; delete o._ik0; delete o._ib0; delete o._k10typed; delete o._pairSaved; delete o._svcTouched; delete o._expTouched; delete o._noIndiv; delete o._ord; delete o._splitFrom; delete o._bx; delete o._bxOff; delete o._bxTouched; delete o._xo; return o; };   // checked = 찾기가 저절로 채움(고친 것으로 안 셈)
     // ── #850-c 판매처 확인 — 번호(또는 주문번호)로 발송 전 주문 찾기(계약 §7 · 7일) · 찾은 판매처 하나면 미리 고름 · 판매처 누르면 그 곳 결과로
     //   r._lk = { state: busy|done|err, key(숫자), matches } · r.checked = 고른 판매처에서 찾았을 때만 { plat, as, at }(§8 · 최종발주 「취소됐을 수 있어요」 근거)
     // ── #938(대표 11/1) 같은 구매자 주문이 둘 이상(A 4박스 · B 8박스)이면 주문별로 발송일 다르게 — 「이 주문」 체크 + 발송일 칸 → 저장 때 주문별 발송일이 하나라도 다르거나 일부만 체크면 **주문번호 키 줄로 나눠 저장**(A·B 둘 다 · note·plat 그대로 · 각자 발송일 · 전화번호 줄은 안 남김 · checked.buyer = 전화번호) · 전부 같으면 종전 전화번호 줄 1개(바이트 동일)
@@ -1966,6 +1978,14 @@
         if (OM.card !== c || r._lkSeq !== seq) return;
         const i = c.rows.indexOf(r); if (i < 0) return;
         r._lk = res.ok && res.body ? { state: 'done', key, matches: Array.isArray(res.body.matches) ? res.body.matches : [] } : { state: 'err', key, matches: [] };
+        {   // #1061-c 0건 = 즉시 주문 조회(#936)를 기다려 「주문 찾는 중…」 그대로 다시(번호당 최대 3회 · 약 8초 · 번호 바꾸면 처음부터)
+            if (r._lkTryKey !== key) { r._lkTryKey = key; r._lkTry = 0; }
+            if (r._lk.state === 'done' && !r._lk.matches.length && isSzRow(r) && /^0\d{8,11}$/.test(key) && r._lkTry < LK_RETRY.length) {   // 사이즈·과수 줄만(입력삭제·날짜·보내는이 줄 = 종전 1회 · 입력삭제 [저장] 안 막힘)
+                const wait = LK_RETRY[r._lkTry++]; r._lk = { state: 'busy', key, matches: [] }; lkPaint(i);
+                setTimeout(() => { if (OM.card !== c || r._lkSeq !== seq || digits(r.key) !== key) return; const j = c.rows.indexOf(r); if (j >= 0) lkRun(j); }, wait);
+                return;
+            }
+        }
         const ps = lkPlats(r);
         if (!r.plat && ps.length === 1) {   // 한 곳에서만 찾음 = 미리 고름(처음 정리한 값도 같이 — 고친 것으로 안 셈 · 사람이 이미 골랐으면 그대로)
             const f = LINE_FIELDS.find(x => x.k === 'plat'), o = c.orig[i];

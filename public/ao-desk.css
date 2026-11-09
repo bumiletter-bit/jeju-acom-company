@@ -2266,3 +2266,6 @@ html[data-app="sms"] #desk-sms .sms-win { max-width: none; height: 100%; border:
 .sms-app-push-s:empty { display: none; }
 @media (max-width: 720px), (pointer: coarse) { .sms-app-note { margin: 0 12px 8px; } .sms-app-push { min-height: 44px; } }
 :where(html[data-ao-theme="dark"]) .sms-app-note { background: rgba(99, 102, 241, .16); }
+/* #1062-c 문자 앱 첫 진입 = 문자 창이 열릴 때까지 본 화면(사이드바·에이전트 오피스) 대신 가림막 한 장(로그인 화면은 .app 밖이라 그대로 · 창 닫혀 다시 열 때도 같음 · 실패 띠 #sms-app-fail 은 위) */
+html[data-app="sms"] body:not(.sms-win-open) .app::after { content: "문자 불러오는 중…"; position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; background: var(--card-bg, #fff); color: var(--text-mid, #667085); font-size: 15px; font-weight: 600; }
+html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after { background: #151a33; color: #c7cce6; }

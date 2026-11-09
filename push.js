@@ -104,14 +104,14 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
         } catch (e) { console.error('[push] 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
     }
     // #1062 문자 앱(label 'sms-app') 구독에만 — { title, message, link, tag } · 실패해도 던지지 않음 · urgency high(폰이 쉬고 있어도 빨리)
-    async function sendApp(userId, { title, message, link, tag }) {
+    async function sendApp(userId, { title, message, link, tag, badge }) {
         try {
             if (!userId) return { sent: 0, skip: 'no-user' };
             const sc = await scope(); if (sc.sms === false) return { sent: 0, skip: 'scope' };
             await init();
             const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1 AND label = $2`, [userId, APP_LABEL])).rows;
             if (!subs.length) return { sent: 0, skip: 'no-sub' };
-            const payload = JSON.stringify({ title: clip(title, 60) || '아꼼이 문자', body: clipKeep(message, 300), link: clip(link, 60) || '', tag: clip(tag, 40) || '', app: 'sms' });
+            const payload = JSON.stringify(Object.assign({ title: clip(title, 60) || '아꼼이 문자', body: clipKeep(message, 300), link: clip(link, 60) || '', tag: clip(tag, 40) || '', app: 'sms' }, Number.isInteger(badge) && badge >= 0 ? { badge } : {}));   // #1062-d 아이콘 숫자
             return await pushTo(subs, payload, { TTL: 3600, urgency: 'high' });
         } catch (e) { console.error('[push] 문자 앱 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
     }

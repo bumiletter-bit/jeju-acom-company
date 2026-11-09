@@ -1273,8 +1273,35 @@ function smsAppStart() {
         tries = 0; smsAppNote(); const f = document.getElementById('sms-app-fail'); if (f) f.remove();
     };
     setTimeout(open, hashSms ? 1500 : 60);
+    smsAppBadge();
     new MutationObserver(() => { if (!document.body.classList.contains('sms-win-open')) setTimeout(() => { if (!document.body.classList.contains('sms-win-open')) open(); }, 120); })
         .observe(document.body, { attributes: true, attributeFilter: ['class'] });   // 뒤로가기·닫기로 문자 창이 닫히면 다시(문자 밖 화면으로 안 나감)
+}
+// #1062-d 문자 앱 아이콘 숫자 = 안 읽은 손님 대화 수(워커2 계약 GET /api/sms/unread-count {ok,n} = summary.unread_threads 와 같은 정의) · 문자 앱에서만
+//   문자 창이 이미 받는 요약(/api/sms/summary)의 unread_threads 를 먼저 씀 → 대화 열기(읽음)·답 보냄·[처리함] 뒤엔 unread-count 한 번(0.6초 묶음) · 화면 다시 켤 때도
+//   대화를 열면 그 손님 알림(tag 'sms-<대화id>')을 닫음 = 안드로이드 런처 숫자(떠 있는 알림 수)도 줄어듦 · setAppBadge 없는 브라우저 = 조용히 넘어감 · ao-desk.js 0 변경(fetch 를 지켜봄)
+function smsAppBadgeSet(n) {
+    n = Math.max(0, Math.floor(Number(n) || 0)); smsAppBadgeSet.last = n;
+    try { const p = n ? (navigator.setAppBadge && navigator.setAppBadge(n)) : (navigator.clearAppBadge ? navigator.clearAppBadge() : navigator.setAppBadge && navigator.setAppBadge(0)); if (p && p.catch) p.catch(() => {}); } catch (_) { /* 지원 안 함 */ }
+}
+function smsAppBadge() {
+    if (smsAppBadge.on || typeof window.fetch !== 'function') return; smsAppBadge.on = true;
+    const raw = window.fetch.bind(window); let tm = null;
+    const pull = () => { clearTimeout(tm); tm = setTimeout(() => { raw('/api/sms/unread-count', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }).then(r => r.ok ? r.json() : null).then(d => { if (d && d.ok && d.n != null) smsAppBadgeSet(d.n); }).catch(() => {}); }, 600); };
+    const closeNoti = id => { try { if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.getNotifications({ tag: 'sms-' + id })).then(ns => (ns || []).forEach(x => x.close())).catch(() => {}); } catch (_) { /* 없음 */ } };
+    window.fetch = function (input, init) {
+        const p = raw(input, init);
+        try {
+            const u = String(typeof input === 'string' ? input : (input && input.url) || ''), path = u.replace(/^https?:\/\/[^/]+/, ''), m = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+            if (/^\/api\/sms\/summary(\?|$)/.test(path)) p.then(r => r && r.ok ? r.clone().json() : null).then(d => { if (d && d.unread_threads != null) smsAppBadgeSet(d.unread_threads); else if (d) pull(); }).catch(() => {});
+            else { const t = path.match(/^\/api\/sms\/threads\/(\d+)(\?[^#]*)?$/);
+                if (t && m === 'GET' && !/[?&]peek=1/.test(t[2] || '')) { closeNoti(t[1]); p.then(r => { if (r && r.ok) pull(); }).catch(() => {}); }   // 대화 펼침 = 읽음(peek 은 읽음 아님)
+                else if (m === 'POST' && /^\/api\/sms\/(threads\/\d+\/(reply|send-draft|done|handled)|send)(\?|$)/.test(path)) p.then(r => { if (r && r.ok) pull(); }).catch(() => {}); }
+        } catch (_) { /* 숫자만 못 고침 */ }
+        return p;
+    };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pull(); });
+    pull();
 }
 function smsAppFail() {   // #1062 문자 창을 18초 안에 못 엶 = 메뉴 숨긴 빈 화면에서 멈추지 않게 안내 + [새로고침]
     if (document.getElementById('sms-app-fail')) return;
@@ -15032,7 +15059,7 @@ setupNaverTimerCard();
         if (!can()) return paint("no", "이 브라우저는 폰 알림을 지원하지 않아요. 아이폰이면 홈 화면에 추가한 뒤 다시 열어 주세요.");
         if (Notification.permission === "denied") return paint("no", "폰 설정에서 이 사이트의 알림이 막혀 있어요. 브라우저 설정에서 허용으로 바꿔 주세요.");
         const s = await sub();
-        paint(s ? "on" : "off");
+        paint(s ? "on" : "off", s && akmIsSmsApp() ? "이 기기로 문자 알림이 와요." : undefined);   // #1062-c 문자 앱 글
     };
 
     async function turnOn() {
@@ -15046,6 +15073,10 @@ setupNaverTimerCard();
             let s = await reg.pushManager.getSubscription();
             if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
             await api("/api/push/subscribe", "POST", akmIsSmsApp() ? Object.assign(s.toJSON(), { label: 'sms-app' }) : s.toJSON());   // #1062 문자 앱 구독 = label 'sms-app'(서버가 문자 알림만 보냄 · 본 앱은 종전 그대로)
+            if (akmIsSmsApp()) {   // #1062-c 문자 앱 = 시험 푸시(/api/push/test)는 문자 앱 구독을 건너뛰어 「보낼 기기가 없습니다」가 떴음 → 문자 앱 구독 수를 다시 읽어 글만 갱신(본 앱 기기로 시험 알림 안 보냄)
+                let k2 = null; try { k2 = await api("/api/push/key?label=sms-app"); } catch (_) { /* 아래 글 */ }
+                return paint("on", k2 && k2.subscribed ? "이 기기로 문자 알림이 와요." : "켰어요. 문자 알림 등록을 확인하지 못했어요 · 잠시 뒤 다시 열어 주세요.");
+            }
             paint("on", "켰습니다. 시험 알림을 보냅니다.");
             const t = await api("/api/push/test", "POST", {});
             paint("on", t.message || "시험 알림을 보냈어요.");
