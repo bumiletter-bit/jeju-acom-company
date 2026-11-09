@@ -274,6 +274,7 @@
         $('om-sm').addEventListener('change', e => { if (e.target.name !== 'om-sm-o' || !OM.sm) return; OM.sm.pick = Number(e.target.value); const ex = smExisting(OM.sm.matches[OM.sm.pick]); if (!String(OM.sm.text || '').trim()) OM.sm.text = ex ? ex.checked.ship_memo : ''; tpNote(''); smDraw(); });
         tp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.target.id === 'om-tp-tel' || e.target.id === 'om-tp-name' || e.target.id === 'om-tp-gw')) { e.preventDefault(); tpGo(); } });
         tp.addEventListener('change', e => { if (e.target.id === 'om-tp-date') { tpNote(''); if (!$('om-tp-tel').value.trim()) $('om-tp-tel').focus({ preventScroll: true }); else $('om-tp-go').focus({ preventScroll: true }); } });
+        tp.addEventListener('click', e => { const q = e.target.closest('[data-tpask]'); if (q) { const f = OM.tpAsk; if (f) f(q.dataset.tpask === 'yes'); else tpNote(''); return; } });   // #1061 ② 되묻기 [그래도 넣기]·[취소]
         tp.addEventListener('click', e => { const b = e.target.closest('[data-tpsz]'); if (!b || !OM.tp) return; OM.tp.sz = b.dataset.tpsz; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false')); const g = $('om-tp-gw'); if (g) g.value = ''; tpNote(''); });   // #882 사이즈 고르면 과수 칸 비움(둘 중 하나)
         tp.addEventListener('input', e => { if (e.target.id !== 'om-tp-gw' || !OM.tp || !e.target.value.trim() || !OM.tp.sz) return; OM.tp.sz = null; tp.querySelectorAll('[data-tpsz]').forEach(x => x.setAttribute('aria-checked', 'false')); });   // #882 과수 치면 사이즈 단추 풂(칸 값은 안 바꿈 · #857)
         OM.el.querySelector('.om-tabs').addEventListener('click', e => { const b = e.target.closest('.om-tabb'); if (!b || b.dataset.tab === OM.tab) return; OM.tab = b.dataset.tab; syncTabs(); load(); });
@@ -356,7 +357,20 @@
     //   입력삭제 「010-1234-5678 입력o삭제x」 · 사이즈 「… S사이즈로」 · 날짜 「… 10/27 발송」(해 넘김 = 「1/3/27 … 발송」) · 보내는이 「… 보내는이 홍길동」 (ruleLine · invoice-v2 parseLines · sizeLines 가 읽는 꼴)
     //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
     const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'], smemo: ['메모 수정', '우리 택배 양식의 배송메시지만 바꿔요 · 판매처 주문 원본은 그대로'], cedit: ['고객정보수정', '이 번호 발송 전 주문을 주문마다 고쳐요 · 품목·사이즈·과수·받는 분·배송메세지·보내는 분·발송일 · 판매처 주문 원본은 그대로'] };
-    const tpNote = (t, k) => { const n = $('om-tp-note'); if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };
+    const tpNote = (t, k) => { const n = $('om-tp-note'); OM.tpAsk = null; OM.tpDone = null; if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };   // #1061 다른 글이 오면 되묻기·완료 띠는 끝남
+    function tpAskShow(msg, go) {   // #1061 ② 되묻기 띠([그래도 넣기][취소]) · 번호를 고치거나 다른 글이 오면 사라짐(tpNote)
+        const n = $('om-tp-note'); if (!n) return; tpNote('');
+        n.innerHTML = `<span class="om-tp-ask-t">${esc(msg)}</span><span class="om-tp-ask-b"><button type="button" class="om-btn sm" data-tpask="no">취소</button><button type="button" class="om-btn sm primary" data-tpask="yes">그래도 넣기</button></span>`; n.dataset.k = 'ask';
+        OM.tpAsk = go; const y = n.querySelector('[data-tpask="yes"]'); if (y) y.focus({ preventScroll: true });
+    }
+    function tpDoneShow(head, tl) { tpNote((tl.warn ? '⚠ ' : '✅ ') + head + ' · ' + tl.t, tl.warn ? 'donew' : 'done'); OM.tpDone = { head }; return OM.tpDone; }   // #1061 ① 완료 띠 = 다음 동작(번호 치기·꼬리표 바꾸기·다음 넣기)까지 남음
+    function tpDoneTail(r, sid) {   // 저장된 줄 배지(서버) 먼저 · 아직 없으면 주문 찾기 결과
+        const sr = sid != null ? rowById(sid) : null, lb = sr && lineBadge(sr);
+        if (lb) return lb.state === 'unknown' ? { t: '주문 확인 중' } : lb.state === 'fail' ? { t: '확인필요' + (lb.why ? '(' + lb.why + ')' : ''), warn: true } : { t: (sr.plat ? sr.plat + ' ' : '') + lbText(lb) + tpBoxN(r) };
+        const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [];
+        return ms.length ? { t: (r.plat ? r.plat + ' ' : '') + '매칭완료' + tpBoxN(r) } : { t: '미매칭(판매처 빈칸 · 메모함 줄에서 확인)', warn: true };
+    }
+    const tpBoxN = r => { const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : []; const n = ms.reduce((s, m) => s + (Number(m.qty) || 1), 0); return n ? `(${n}박스${ms.length > 1 ? ' · 주문 ' + ms.length + '건' : ''})` : ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
         if (OM.tpSaved) return OM.tpSaved;   // #1058 사이즈 바로 저장한 손님 = 꼬리표 바꾸면 그 번호(입력 칸 마지막 줄의 다른 손님 번호 대신)
@@ -374,8 +388,14 @@
         tp.dataset.k = k; tpNote(''); smReset(); $('om-tp-go').textContent = k === 'smemo' || k === 'cedit' ? '주문 찾기' : '넣기';
         if (!was) { tp.hidden = false; tel.value = tpLastTel(); }
         else if (!tel.value.trim()) tel.value = tpLastTel();
+        if (!tpSeen(tel)) { try { tel.scrollIntoView({ block: 'center' }); } catch (e) { /* 그대로 */ } }   // #1061 ③ 번호 칸이 화면 밖이면 가운데로(보이면 안 움직임) → 커서(폰 자판)
         tel.focus({ preventScroll: true }); try { tel.select(); } catch (e) { /* 그대로 */ }
-        try { tp.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 그대로 */ }
+    }
+    function tpSeen(el) {   // 화면(폰 자판 뺀 높이)과 스크롤 칸 안에 통째로 보이나
+        const r = el.getBoundingClientRect(), vv = window.visualViewport, vh = vv ? vv.height + (vv.offsetTop || 0) : innerHeight;
+        if (r.top < 0 || r.bottom > vh) return false;
+        for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { const s = getComputedStyle(p); if (/(auto|scroll|hidden)/.test(s.overflowY)) { const q = p.getBoundingClientRect(); if (r.top < q.top || r.bottom > q.bottom) return false; } }
+        return true;
     }
     function tpClose(focusRaw) {
         const tp = $('om-tp'); if (!OM.tp || !tp) { OM.tp = null; return; }
@@ -505,22 +525,37 @@
                 if (!r.plat && ps.length === 1) setV(r, LINE_FIELDS.find(f => f.k === 'plat'), ps[0]);
                 lkCheck(r);
             }
-            const d = await dupCheck([r]);
-            if (d && d.same.size) { end(); tpNote('이미 같은 줄이 있어요 · 저장하지 않았어요', 'warn'); return; }
-            if (d && d.diff.length) { toCard(rows, b, `이 번호 ${d.diff[0].kind} 줄이 이미 있어요 · 카드 [저장]에서 바꿀지 골라 주세요`); return; }
-            const res = await API.save({ raw: line, tags, source: 'manual', rows: [outRow(r)] });
-            end();
-            if (!res.ok) { tpNote(errText(res, '저장하지 못했어요 · 다시 눌러 주세요'), 'err'); return; }
-            const lost = r._lk && r._lk.state === 'done' && !r.plat;
-            inNote(`「${line}」 줄을 저장했어요 · 다음 최종발주에 들어가요`, 'ok'); tpNote(lost ? '저장했어요 · 아직 이 번호 주문을 못 찾았어요(판매처 빈칸 · 메모함 줄에서 확인)' : '저장했어요 · 다음 손님 번호를 넣으세요', lost ? 'warn' : 'ok');
-            x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(z => z.setAttribute('aria-checked', 'false')); if (gw) gw.value = '';
-            OM.tpLast = null; OM.tpSaved = fmtTel(r.key); te.value = ''; te.focus({ preventScroll: true });
-            OM.tab = 'open'; syncTabs(); const ld = load();
-            {   // #1058-b 이 번호 주문이 2박스↑ 또는 2건↑ = 저장된 그 줄 고치기 카드를 바로 열어 「n박스 · 박스별로」가 보이게(1박스·못 찾음 = 저장만)
-                const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [], sid = res.body && Array.isArray(res.body.rows) && res.body.rows[0] ? res.body.rows[0].id : null;
-                if (sid != null && (ms.length >= 2 || ms.some(m => Number(m.qty) >= 2))) ld.then(() => { const sr = rowById(sid); if (sr && OM.el && !OM.el.hidden && !OM.card) editOpen(sr); });
+            const commit = async () => {
+                const d = await dupCheck([r]);
+                if (d && d.same.size) { end(); tpNote('이미 같은 줄이 있어요 · 저장하지 않았어요', 'warn'); return; }
+                if (d && d.diff.length) { toCard(rows, b, `이 번호 ${d.diff[0].kind} 줄이 이미 있어요 · 카드 [저장]에서 바꿀지 골라 주세요`); return; }
+                const res = await API.save({ raw: line, tags, source: 'manual', rows: [outRow(r)] });
+                end();
+                if (!res.ok) { tpNote(errText(res, '저장하지 못했어요 · 다시 눌러 주세요'), 'err'); return; }
+                const head = (/과로$/.test(line) ? '과수' : '사이즈') + ' 넣기 완료', sid = res.body && Array.isArray(res.body.rows) && res.body.rows[0] ? res.body.rows[0].id : null;
+                inNote(`「${line}」 줄을 저장했어요 · 다음 최종발주에 들어가요`, 'ok');
+                x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(z => z.setAttribute('aria-checked', 'false')); if (gw) gw.value = '';
+                OM.tpLast = null; OM.tpSaved = fmtTel(r.key); te.value = ''; te.focus({ preventScroll: true });
+                const tok = tpDoneShow(head, tpDoneTail(r, null));   // #1061 ① 완료 띠(번호 비운 뒤 · input 이벤트로 안 지워짐)
+                const upd = () => { if (OM.tpDone === tok) { tpDoneShow(head, tpDoneTail(r, sid)); OM.tpDone = tok; } };   // 서버 배지가 오면 그 글로(다른 동작이 띠를 지웠으면 그대로)
+                OM.tab = 'open'; syncTabs(); const ld = load(); ld.then(upd);
+                {   // #1058-b 이 번호 주문이 2박스↑ 또는 2건↑ = 저장된 그 줄 고치기 카드를 바로 열어 「n박스 · 박스별로」가 보이게(1박스·못 찾음 = 저장만)
+                    const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [];
+                    if (sid != null && (ms.length >= 2 || ms.some(m => Number(m.qty) >= 2))) ld.then(() => { const sr = rowById(sid); if (sr && OM.el && !OM.el.hidden && !OM.card) editOpen(sr); });
+                }
+                setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(z => z.kind === 'line' && z.badge && z.badge.state === 'unknown')) load().then(upd); }, 6000);   // #936 즉시 조회 뒤 배지 한 번 더(cardSave 와 같게) · #1061 띠 글도
+            };
+            if (r._lk && r._lk.state === 'done' && !r._lk.matches.length) {   // #1061 ② 주문 0건 = 저장 전에 되묻기(종전 = 판매처 빈칸으로 조용히 저장)
+                end(); const dg0 = digits(r.key);
+                tpAskShow('⚠ 이 번호 주문을 못 찾았어요(미매칭) · 그래도 넣을까요?', yes => {
+                    if (!yes) { tpNote('취소했어요 · 저장하지 않았어요', 'warn'); te.focus({ preventScroll: true }); return; }
+                    if (OM.tpBusy || digits(te.value) !== dg0) { tpNote('번호가 바뀌었어요 · [넣기]를 다시 눌러 주세요', 'warn'); return; }
+                    OM.tpBusy = true; go.disabled = true; go.textContent = '저장하는 중…'; tpNote('저장하는 중…');
+                    commit().catch(e => { console.error(e); end(); tpNote('저장하지 못했어요 · 다시 눌러 주세요', 'err'); });
+                });
+                return;
             }
-            setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(z => z.kind === 'line' && z.badge && z.badge.state === 'unknown')) load(); }, 6000);   // #936 즉시 조회 뒤 배지 한 번 더(cardSave 와 같게)
+            await commit();
         } catch (e) { console.error(e); end(); tpNote('저장하지 못했어요 · 다시 눌러 주세요', 'err'); }
     }
     // #850-f 꼬리표(서버로 보내는 tags) = 칸에 그 줄이 있을 때만 · 종전 「누른 단추」 tags 와 같은 값

@@ -95,6 +95,16 @@ body.om-open .mobile-menu-btn, body.om-open .mobile-noti-btn { visibility: hidde
 .om-tp-note:empty { display: none; }
 .om-tp-note[data-k="err"] { color: var(--d-err); font-weight: 700; }
 .om-tp-note[data-k="ok"] { color: var(--d-ok, var(--d-sub)); }
+/* #1061 완료 띠(초록 · 미매칭 저장 = 호박) · 되묻기 띠(호박 + 단추) */
+.om-tp-note[data-k="done"], .om-tp-note[data-k="donew"], .om-tp-note[data-k="ask"] { padding: 9px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 700; }
+.om-tp-note[data-k="done"] { background: #D1FADF; color: #05603A; }
+.om-tp-note[data-k="donew"], .om-tp-note[data-k="ask"] { background: #FEF0C7; color: #93370D; }
+.om-tp-note[data-k="ask"] { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.om-tp-ask-t { flex: 1 1 200px; }
+.om-tp-ask-b { display: flex; gap: 8px; margin-left: auto; }
+html[data-ao-theme="dark"] .om-tp-note[data-k="done"] { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
+html[data-ao-theme="dark"] .om-tp-note[data-k="donew"], html[data-ao-theme="dark"] .om-tp-note[data-k="ask"] { background: rgba(245, 158, 11, .16); color: #FCD34D; }
+@media (max-width: 960px), (pointer: coarse) { .om-tp-ask-b .om-btn { min-height: 44px; } }
 @media (max-width: 960px), (pointer: coarse) {
   .om-tp-x { min-height: 44px; min-width: 44px; }
   .om-tp-tel, .om-tp-name, .om-tp-date { font-size: 16px; }
