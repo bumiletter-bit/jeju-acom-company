@@ -358,19 +358,50 @@
     //   번호 = 직전에 넣은 번호(없으면 입력 칸 마지막 줄 맨 앞 번호)를 미리 채우고 통째 골라 둠 → 같은 손님이면 그대로 · 다른 손님이면 바로 치면 바뀜
     const TP_KIND = { indiv: ['입력삭제', '이 번호 주문은 택배사 양식에서 빼고 현금 주소 줄로'], size: ['사이즈·과수', '귤 로얄과 사이즈 · 만감류 선물용 과수'], date: ['날짜 지정', '그날 발송분으로'], sender: ['보내는이', '선물 보내는 분 이름'], smemo: ['메모 수정', '우리 택배 양식의 배송메시지만 바꿔요 · 판매처 주문 원본은 그대로'], cedit: ['고객정보수정', '이 번호 발송 전 주문을 주문마다 고쳐요 · 품목·사이즈·과수·받는 분·배송메세지·보내는 분·발송일 · 판매처 주문 원본은 그대로'] };
     const tpNote = (t, k) => { const n = $('om-tp-note'); OM.tpAsk = null; OM.tpDone = null; if (!n) return; n.textContent = t || ''; n.dataset.k = k || ''; };   // #1061 다른 글이 오면 되묻기·완료 띠는 끝남
-    function tpAskShow(msg, go) {   // #1061 ② 되묻기 띠([그래도 넣기][취소]) · 번호를 고치거나 다른 글이 오면 사라짐(tpNote)
+    function tpAskShow(msg, go, lbl) {   // #1061 ② 되묻기 띠([그래도 넣기][취소]) · 번호를 고치거나 다른 글이 오면 사라짐(tpNote)
         const n = $('om-tp-note'); if (!n) return; tpNote('');
-        n.innerHTML = `<span class="om-tp-ask-t">${esc(msg)}</span><span class="om-tp-ask-b"><button type="button" class="om-btn sm" data-tpask="no">취소</button><button type="button" class="om-btn sm primary" data-tpask="yes">그래도 넣기</button></span>`; n.dataset.k = 'ask';
+        n.innerHTML = `<span class="om-tp-ask-t">${esc(msg)}</span><span class="om-tp-ask-b"><button type="button" class="om-btn sm" data-tpask="no">${esc((lbl && lbl[0]) || '취소')}</button><button type="button" class="om-btn sm primary" data-tpask="yes">${esc((lbl && lbl[1]) || '그래도 넣기')}</button></span>`; n.dataset.k = 'ask';
         OM.tpAsk = go; const y = n.querySelector('[data-tpask="yes"]'); if (y) y.focus({ preventScroll: true });
     }
     function tpDoneShow(head, tl) { tpNote((tl.warn ? '⚠ ' : '✅ ') + head + ' · ' + tl.t, tl.warn ? 'donew' : 'done'); OM.tpDone = { head }; return OM.tpDone; }   // #1061 ① 완료 띠 = 다음 동작(번호 치기·꼬리표 바꾸기·다음 넣기)까지 남음
     function tpDoneTail(r, sid) {   // 저장된 줄 배지(서버) 먼저 · 아직 없으면 주문 찾기 결과
         const sr = sid != null ? rowById(sid) : null, lb = sr && lineBadge(sr);
-        if (lb) return lb.state === 'unknown' ? { t: '주문 확인 중' } : lb.state === 'fail' ? { t: '확인필요' + (lb.why ? '(' + lb.why + ')' : ''), warn: true } : { t: (sr.plat ? sr.plat + ' ' : '') + lbText(lb) + tpBoxN(r) };
-        const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [];
-        return ms.length ? { t: (r.plat ? r.plat + ' ' : '') + '매칭완료' + tpBoxN(r) } : { t: '미매칭(판매처 빈칸 · 메모함 줄에서 확인)', warn: true };
+        if (lb) return lb.state === 'unknown' ? { t: '주문 확인 중' } : lb.state === 'fail' ? { t: '확인필요' + (lb.why ? '(' + lb.why + ')' : ''), warn: true } : { t: (sr.plat ? sr.plat + ' ' : '') + lbText(lb) + tpBoxN(r) + szRecvTxt(r) };
+        const ms = szMs(r);
+        return ms.length ? { t: (r.plat ? r.plat + ' ' : '') + '매칭완료' + tpBoxN(r) + szRecvTxt(r) } : { t: '미매칭(판매처 빈칸 · 메모함 줄에서 확인)', warn: true };
     }
-    const tpBoxN = r => { const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : []; const n = ms.reduce((s, m) => s + (Number(m.qty) || 1), 0); return n ? `(${n}박스${ms.length > 1 ? ' · 주문 ' + ms.length + '건' : ''})` : ''; };
+    // #1061-b(대표 11/9 실기기 · 레몬 주문에 사이즈가 그냥 저장됨) 사이즈·과수 줄은 찾은 주문에 지정 가능한 품목이 있을 때만 저장
+    //   판정 = 서버 order-memo.js lineBadge 와 같은 낱말(LB_ROYAL = 귤·로얄과·선물용 아님 · LB_GWA = 황금향·한라봉·레드향·천혜향 · 카라향 X) · 주문 0건·찾는 중 = 여기서 안 막음(종전 길)
+    const SZ_ROYAL = o => { const t = String(o || ''); return /귤/.test(t) && /로얄과/.test(t) && !/선물용/.test(t); };
+    const SZ_GWA = o => { const t = String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(t) && !/카라향/.test(t); };
+    function szBlock(r) {
+        if (!r || r.kind !== 'line' || isBoxRow(r) || !(r._lk && r._lk.state === 'done')) return '';
+        const n = String(r.note || ''), k = /사이즈/.test(n) ? 'size' : /\d\s*과로/.test(n) ? 'gwa' : ''; if (!k) return '';
+        const ms = lkIn(r); if (!ms.length) return '';
+        if (ms.some(m => (k === 'size' ? SZ_ROYAL : SZ_GWA)(m.option))) return '';
+        return `⚠ 이 주문(${optBrief(ms[0].option) || '그 품목'})은 ${k === 'size' ? '사이즈' : '과수'} 지정이 안 돼요 · 저장하지 않았어요`;
+    }
+    // #1061-b ③ 사이즈·과수 줄을 받는 분 번호로 넣음(찾은 주문이 전부 recv) = 최종발주 matchKey(구매자 번호·주문번호)에 안 붙음 → 구매자 번호(하나일 때) 또는 상품주문번호(선물하기 = 구매자 번호 없음 · 주문 1건)로 바꿔 저장
+    const isSzRow = r => !!r && r.kind === 'line' && !isBoxRow(r) && /사이즈|\d\s*과로/.test(String(r.note || ''));
+    function szRecvFix(r) {   // null = 바꿀 것 없음 · { k:'buyer'|'pno', key, m } · { k:'multi' }
+        if (!isSzRow(r) || r._fromRecv || !(r._lk && r._lk.state === 'done') || r._lk.key !== digits(r.key)) return null;
+        const ms = lkIn(r); if (!ms.length || !ms.every(x => x.as === 'recv')) return null;
+        const bs = [...new Set(ms.map(x => digits(x.buyer_phone)).filter(d => d.length >= 9))];
+        if (bs.length === 1 && ms.every(x => digits(x.buyer_phone) === bs[0])) return { k: 'buyer', key: telShow(bs[0]), m: ms[0] };
+        if (!bs.length && ms.length === 1 && ms[0].pno) return { k: 'pno', key: String(ms[0].pno), m: ms[0] };
+        return { k: 'multi' };
+    }
+    function szRecvApply(r, fx) {   // 줄 글 번호도 같이(setV) · checked = 카드에서 구매자 번호로 넣었을 때와 같은 꼴 + from_recv
+        setV(r, LINE_FIELDS.find(f => f.k === 'key'), fx.key);
+        const plat = r.plat || fx.m.plat || '';
+        if (!r.plat && plat) setV(r, LINE_FIELDS.find(f => f.k === 'plat'), plat);
+        r.checked = fx.k === 'buyer' ? { plat, as: 'buyer', at: new Date().toISOString(), from_recv: true } : { plat, as: 'order', at: new Date().toISOString(), pno: fx.key, from_recv: true };
+        r._fromRecv = fx.k; r._lk = Object.assign({}, r._lk, { key: digits(fx.key) });
+    }
+    const szRecvAsk = fx => { const x = fx.m, who = x.recv_name || (x.recv_initial ? x.recv_initial + '○' : ''), pd = md(x.paid_at); return [who ? '받는 분 ' + who : '받는 분 번호', optBrief(x.option) + (x.qty ? ` ${x.qty}박스` : ''), pd ? pd + ' 결제' : ''].filter(Boolean).join(' · ') + ' 주문 맞나요?'; };
+    const szRecvTxt = r => r._fromRecv === 'buyer' ? ' (받는 분 번호 → 구매자 번호로 저장)' : r._fromRecv === 'pno' ? ' (받는 분 번호 → 주문번호로 저장)' : '';
+    const szMs = r => r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => r._fromRecv || m.as === 'buyer') : [];   // #1061-b ③ 받는 분 번호 → 바꿔 저장한 줄 = 찾은 주문 전부
+    const tpBoxN = r => { const ms = szMs(r); const n = ms.reduce((s, m) => s + (Number(m.qty) || 1), 0); return n ? `(${n}박스${ms.length > 1 ? ' · 주문 ' + ms.length + '건' : ''})` : ''; };
     function tpLastTel() {
         if (OM.tpLast) return OM.tpLast;
         if (OM.tpSaved) return OM.tpSaved;   // #1058 사이즈 바로 저장한 손님 = 꼬리표 바꾸면 그 번호(입력 칸 마지막 줄의 다른 손님 번호 대신)
@@ -388,8 +419,11 @@
         tp.dataset.k = k; tpNote(''); smReset(); $('om-tp-go').textContent = k === 'smemo' || k === 'cedit' ? '주문 찾기' : '넣기';
         if (!was) { tp.hidden = false; tel.value = tpLastTel(); }
         else if (!tel.value.trim()) tel.value = tpLastTel();
-        if (!tpSeen(tel)) { try { tel.scrollIntoView({ block: 'center' }); } catch (e) { /* 그대로 */ } }   // #1061 ③ 번호 칸이 화면 밖이면 가운데로(보이면 안 움직임) → 커서(폰 자판)
+        const fix = () => { if (OM.tp && !tp.hidden && !tpSeen(tel)) { try { tel.scrollIntoView({ block: 'center' }); } catch (e) { /* 그대로 */ } } };   // #1061 ③ 번호 칸이 화면 밖이면 가운데로(보이면 안 움직임) → 커서(폰 자판)
+        void tp.offsetHeight; fix();
         tel.focus({ preventScroll: true }); try { tel.select(); } catch (e) { /* 그대로 */ }
+        requestAnimationFrame(() => requestAnimationFrame(fix)); setTimeout(fix, 350);   // #1061-b 첫 열기 = 판이 그려진 뒤·폰 자판이 올라온 뒤 한 번 더 잼(종전 = 둘째 누름에야 번호 칸으로)
+        const vv = window.visualViewport; if (vv) { const h = () => { vv.removeEventListener('resize', h); fix(); }; vv.addEventListener('resize', h); setTimeout(() => vv.removeEventListener('resize', h), 1500); }
     }
     function tpSeen(el) {   // 화면(폰 자판 뺀 높이)과 스크롤 칸 안에 통째로 보이나
         const r = el.getBoundingClientRect(), vv = window.visualViewport, vh = vv ? vv.height + (vv.offsetTop || 0) : innerHeight;
@@ -525,6 +559,9 @@
                 if (!r.plat && ps.length === 1) setV(r, LINE_FIELDS.find(f => f.k === 'plat'), ps[0]);
                 lkCheck(r);
             }
+            { const no = szBlock(r); if (no) { end(); tpNote(no, 'donew'); te.focus({ preventScroll: true }); return; } }   // #1061-b 지정 안 되는 품목 = 저장 막음(번호 유지 · 되묻기 없음)
+            const fx = szRecvFix(r), tel0 = te.value;
+            if (fx && fx.k === 'multi') { toCard(rows, b, '받는 분 번호로 찾은 주문의 구매자가 여럿이에요 · 카드에서 확인해 주세요'); return; }
             const commit = async () => {
                 const d = await dupCheck([r]);
                 if (d && d.same.size) { end(); tpNote('이미 같은 줄이 있어요 · 저장하지 않았어요', 'warn'); return; }
@@ -535,12 +572,12 @@
                 const head = (/과로$/.test(line) ? '과수' : '사이즈') + ' 넣기 완료', sid = res.body && Array.isArray(res.body.rows) && res.body.rows[0] ? res.body.rows[0].id : null;
                 inNote(`「${line}」 줄을 저장했어요 · 다음 최종발주에 들어가요`, 'ok');
                 x.sz = null; $('om-tp').querySelectorAll('[data-tpsz]').forEach(z => z.setAttribute('aria-checked', 'false')); if (gw) gw.value = '';
-                OM.tpLast = null; OM.tpSaved = fmtTel(r.key); te.value = ''; te.focus({ preventScroll: true });
+                OM.tpLast = null; OM.tpSaved = r._fromRecv ? tel0 : fmtTel(r.key); te.value = ''; te.focus({ preventScroll: true });
                 const tok = tpDoneShow(head, tpDoneTail(r, null));   // #1061 ① 완료 띠(번호 비운 뒤 · input 이벤트로 안 지워짐)
                 const upd = () => { if (OM.tpDone === tok) { tpDoneShow(head, tpDoneTail(r, sid)); OM.tpDone = tok; } };   // 서버 배지가 오면 그 글로(다른 동작이 띠를 지웠으면 그대로)
                 OM.tab = 'open'; syncTabs(); const ld = load(); ld.then(upd);
                 {   // #1058-b 이 번호 주문이 2박스↑ 또는 2건↑ = 저장된 그 줄 고치기 카드를 바로 열어 「n박스 · 박스별로」가 보이게(1박스·못 찾음 = 저장만)
-                    const ms = r._lk && r._lk.state === 'done' ? lkIn(r).filter(m => m.as === 'buyer') : [];
+                    const ms = szMs(r);
                     if (sid != null && (ms.length >= 2 || ms.some(m => Number(m.qty) >= 2))) ld.then(() => { const sr = rowById(sid); if (sr && OM.el && !OM.el.hidden && !OM.card) editOpen(sr); });
                 }
                 setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(z => z.kind === 'line' && z.badge && z.badge.state === 'unknown')) load().then(upd); }, 6000);   // #936 즉시 조회 뒤 배지 한 번 더(cardSave 와 같게) · #1061 띠 글도
@@ -553,6 +590,16 @@
                     OM.tpBusy = true; go.disabled = true; go.textContent = '저장하는 중…'; tpNote('저장하는 중…');
                     commit().catch(e => { console.error(e); end(); tpNote('저장하지 못했어요 · 다시 눌러 주세요', 'err'); });
                 });
+                return;
+            }
+            if (fx) {   // #1061-b ③ 받는 분 번호 = 그 주문 맞는지 묻고 「네」 = 구매자 번호(또는 상품주문번호)로 바꿔 저장
+                end(); const dg0 = digits(r.key);
+                tpAskShow('⚠ ' + szRecvAsk(fx) + (fx.k === 'buyer' ? ' · 구매자 번호 ' + fx.key + '로 저장해요' : ' · 선물하기(구매자 번호 없음) = 주문번호로 저장해요'), yes => {
+                    if (!yes) { tpNote('저장하지 않았어요 · 구매자 번호로 다시 넣어 주세요', 'warn'); te.focus({ preventScroll: true }); return; }
+                    if (OM.tpBusy || digits(te.value) !== dg0) { tpNote('번호가 바뀌었어요 · [넣기]를 다시 눌러 주세요', 'warn'); return; }
+                    szRecvApply(r, fx); OM.tpBusy = true; go.disabled = true; go.textContent = '저장하는 중…'; tpNote('저장하는 중…');
+                    commit().catch(e => { console.error(e); end(); tpNote('저장하지 못했어요 · 다시 눌러 주세요', 'err'); });
+                }, ['아니요', '네, 넣기']);
                 return;
             }
             await commit();
@@ -1880,6 +1927,7 @@
         const x = m[0], who = x.recv_name || (x.recv_initial ? x.recv_initial + '○' : ''), pd = md(x.paid_at);
         const body = [who ? '받는 분 ' + who : '', optBrief(x.option) + (x.qty ? ` ${x.qty}박스` : ''), pd ? pd + ' 결제' : ''].filter(s => s.trim()).join(' · ') + (m.length > 1 ? ` 외 ${m.length - 1}건` : '');
         if (indivRecv(r)) return `입력삭제는 구매자 번호로 넣어야 송장이 붙어요 · 구매자 번호로 바꿔 주세요${indivBuyer(r) ? '' : ' · 구매자 번호를 번호 칸에 직접 넣어 주세요'} · 지금 번호 = 받는 분 번호 · ${x.plat} · ${body}`;   // #867
+        if (x.as === 'recv' && isSzRow(r)) { const f = szRecvFix(r); if (f && f.k !== 'multi') return `수취인 번호로 넣으셨네요 · ${x.plat} · ${body} · 저장하면 ${f.k === 'buyer' ? '구매자 번호 ' + f.key : '주문번호 ' + f.key}로 바꿔 저장해요`; }   // #1061-b ③
         if (x.as === 'recv') { const b = indivBuyer(r); return `수취인 번호로 넣으셨네요 · ${x.plat} · ${body}${x.addr ? ' · 주소 ' + x.addr : ''} · 맞나요?${b ? ` ${telShow(b)}(구매자 연락처) · 맞으면 구매자 연락처로 수정해 주세요` : ''}`; }   // 이름·주소 = 새 표(#850-e)에 있을 때만 · 없으면 성 한 글자 · #884 구매자 번호 하나일 때만 덧붙임(단추 없음 · 직접 수정 · 저장 안 막음)
         return `${x.plat}${x.as === 'order' ? ' 주문번호' : ''} · ${body} · 맞아요`;
     }
@@ -2211,6 +2259,8 @@
             if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
             cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}`); load(); return;
         }
+        { const bi = rows.findIndex(r => szBlock(r)); if (bi >= 0) { c._saving = false; toast(szBlock(rows[bi])); cardReveal(c, c.rows.indexOf(rows[bi])); return; } }   // #1061-b 카드 [저장]·[고친 대로 저장] 길도 같은 판정
+        { const fx = rows.map(r => [r, szRecvFix(r)]).filter(z => z[1] && z[1].k !== 'multi'); fx.forEach(z => szRecvApply(z[0], z[1])); if (fx.length) toast(fx.map(z => z[1].k === 'buyer' ? '구매자 번호 ' + z[1].key + '로 저장해요' : '선물하기 = 주문번호 ' + z[1].key + '로 저장해요').join(' · ')); }   // #1061-b ③ 받는 분 번호 사이즈·과수 줄 = 저장 때 같은 변환
         { const bxr = rows.filter(r => r.kind === 'line' && r._bx).map(boxApply); if (bxr.includes('none')) toast('박스마다 다른 것이 없어 사이즈 줄로 저장해요'); if (bxr.includes('box')) c.dupOk = c.dupOk || null; }   // #1021 열린 박스별 판 = 저장 단추가 같이 실행(메모리 feedback-save-button-does-pending-action)
         const xHas = x => (OM.list || []).some(o => o.kind === 'line' && o.state === 'open' && o.id !== (rows[0] && rows[0].id) && digits(o.key) === digits(x.key) && o.checked && x.checked && String(o.checked.pno || '') === String(x.checked.pno || ''));   // #1025-b 같은 번호·같은 주문 줄이 이미 열려 있으면 다시 안 넣음(고치기 두 번 저장 중복)
         const xExtra = c.mode === 'edit' && rows[0] && rows[0].kind === 'line' ? xoRows(rows[0]).filter(x => !xHas(x)) : [];   // #1025 고치기 = 이 줄 PUT 뒤 다른 품목 주문 줄은 새로 POST
