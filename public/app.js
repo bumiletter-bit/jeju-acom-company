@@ -165,6 +165,7 @@ function showLoginPage() {
     document.querySelector('.app').style.display = 'none';
     currentUser = null;
     stopNotiPolling();
+    smsAppCacheClear();   // #1062-e 로그인 화면 = 문자 앱 기기 캐시 지움(로그아웃·만료·계정 바꿈 · 본 앱은 그 키를 안 씀)
     // #578 PC 에서는 아이디 칸에 커서(폰은 자판이 화면을 가리므로 그대로)
     try { if (window.matchMedia('(pointer: fine)').matches) { const u = document.getElementById('login-username'); if (u && !u.value) u.focus(); } } catch (_) { }
 }
@@ -220,8 +221,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 function onLoginSuccess() {
     showAppPage();
     updateUserUI();
+    if (akmIsSmsApp()) { setTimeout(startNotiPolling, 5000); } else {   // #1062-e 문자 앱 = 일정·정산 첫 읽기 안 함 · 알림 종은 5초 뒤(문자 목록 먼저)
     init();
     startNotiPolling();
+    }
     if (akmIsSmsApp()) smsAppStart();   // #1062 「아꼼이 문자」 앱 = 문자 창만
     notiApplyHash();   // #576 푸시 알림으로 열린 경우 그 알림의 창으로
 }
@@ -294,7 +297,13 @@ function checkAuth() {
     const userStr = localStorage.getItem('jwt_user');
     if (token && userStr) {
         currentUser = JSON.parse(userStr);
+        const fast = akmIsSmsApp() && !!smsAppBoot.cache;   // #1062-e 문자 앱 + 이 계정 캐시 있음 = 로그인 확인을 기다리지 않고 문자 창부터(확인은 뒤에서)
+        if (fast) { try { onLoginSuccess(); } catch (e) { console.error(e); } try { if (window.akmNavInit) window.akmNavInit(); } catch (_) { /* #678 */ } }
         api('/api/auth/me').then(user => {
+            if (fast) {   // 확인 끝 = 사용자 정보만 새로(계정이 바뀌었으면 캐시 지우고 새로 고침)
+                if (!user || String(user.id) !== String(currentUser && currentUser.id)) { smsAppCacheClear(); location.reload(); return; }
+                currentUser = user; localStorage.setItem('jwt_user', JSON.stringify(user)); updateUserUI(); return;
+            }
             currentUser = user;
             localStorage.setItem('jwt_user', JSON.stringify(user));
             onLoginSuccess();
@@ -313,6 +322,7 @@ function checkAuth() {
             } catch (_) { /* 복원 실패 = 종전 동작(메인) */ }
             try { if (window.akmNavInit) window.akmNavInit(); } catch (_) { /* #678 뒤로가기 기록 — 못 써도 화면은 그대로 */ }
         }).catch(() => {
+            if (fast) smsAppCacheClear();
             showLoginPage();
         });
     } else {
@@ -1277,6 +1287,49 @@ function smsAppStart() {
     new MutationObserver(() => { if (!document.body.classList.contains('sms-win-open')) setTimeout(() => { if (!document.body.classList.contains('sms-win-open')) open(); }, 120); })
         .observe(document.body, { attributes: true, attributeFilter: ['class'] });   // 뒤로가기·닫기로 문자 창이 닫히면 다시(문자 밖 화면으로 안 나감)
 }
+// #1062-e(대표 「문자 앱 불러오는 게 늦다 · 색인 같은 걸로」) 문자 앱만 = ①문자 요약·목록을 app.js 가 실리자마자 미리 받음(에이전트 오피스 fetch 들 뒤에 줄 서지 않게)
+//   ②기기 캐시 'sms-app-cache'(마지막 요약 + 목록 첫 50건 + 받은 시각 + 계정 id · 이 기기 localStorage 안에서만 · 서버 전송 0 · 담는 범위 = 화면에 이미 보이는 목록과 같음)
+//     → 다음에 열 때 그 값을 먼저 그림(「새로 고치는 중…」) → 미리 받은 서버 값이 오면 AkmAoDesk.smsRefresh 로 바꿔치기 · 7일 지난 캐시·다른 계정·토큰 없음 = 안 씀(지움)
+//   ③캐시가 있으면 로그인 확인(/api/auth/me)을 기다리지 않고 문자 창부터(뒤에서 확인 · 실패 = 캐시 지우고 로그인 화면 · 계정 다름 = 지우고 새로 고침)
+//   ④문자 목록이 보일 때까지(최대 4초) 문자 밖 /api 요청(에이전트 오피스·톡톡·일정·알림)을 잠깐 미룸 · 본 앱(/)은 이 함수가 안 불림
+var SMS_APP_CK = 'sms-app-cache', SMS_APP_SUM = '/api/sms/summary', SMS_APP_THR = '/api/sms/threads?scope=all&q=&limit=50', SMS_APP_DAY7 = 7 * 864e5;
+function smsAppCacheRead(user) {
+    try { const c = JSON.parse(localStorage.getItem(SMS_APP_CK) || 'null'); if (!c || !user || String(c.uid) !== String(user.id) || !(Date.now() - Number(c.at) < SMS_APP_DAY7) || !c.sum || !c.thr || !Array.isArray(c.thr.items)) return null; return c; } catch (_) { return null; }
+}
+function smsAppCacheClear() { try { localStorage.removeItem(SMS_APP_CK); } catch (_) { /* 저장소 막힘 */ } }
+function smsAppBoot() {
+    if (smsAppBoot.on || typeof window.fetch !== 'function') return; smsAppBoot.on = true;
+    const token = localStorage.getItem('jwt_token'); let user = null; try { user = JSON.parse(localStorage.getItem('jwt_user') || 'null'); } catch (_) { user = null; }
+    if (!token || !user) { smsAppCacheClear(); return; }
+    const C = smsAppCacheRead(user); if (!C) smsAppCacheClear(); smsAppBoot.cache = C;
+    const raw = window.fetch.bind(window), hdr = () => ({ headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } });
+    const keep = { sum: C ? C.sum : null, thr: C ? C.thr : null }, save = () => { if (!keep.sum || !keep.thr) return; try { localStorage.setItem(SMS_APP_CK, JSON.stringify({ uid: user.id, at: Date.now(), sum: keep.sum, thr: { items: (keep.thr.items || []).slice(0, 50), more: keep.thr.more } })); } catch (_) { /* 꽉 참 = 캐시 없이 */ } };
+    const tee = (k, p) => p.then(r => { if (r && r.ok) r.clone().json().then(d => { if (d && typeof d === 'object' && (k === 'sum' ? ('mode' in d || 'enabled' in d) : Array.isArray(d.items))) { keep[k] = d; save(); } }).catch(() => {}); return r; });
+    const pre = { sum: tee('sum', raw(SMS_APP_SUM, hdr())), thr: tee('thr', raw(SMS_APP_THR, hdr())) }, used = { sum: false, thr: false }, served = { sum: false, thr: false };
+    const json = d => new Response(JSON.stringify(d), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+    let gateOpen = false, gateRes; const gate = new Promise(r => { gateRes = r; }); const openGate = () => { if (!gateOpen) { gateOpen = true; gateRes(); } };
+    setTimeout(openGate, 4000); (function chk() { if (gateOpen) return; if (document.querySelector('#sms-list .sms-row, #sms-list .desk-empty:not(.ship-empty)')) openGate(); else setTimeout(chk, 80); })();
+    window.fetch = function (input, init) {
+        try {
+            const u = String(typeof input === 'string' ? input : (input && input.url) || ''), path = u.replace(/^https?:\/\/[^/]+/, ''), m = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+            const k = m !== 'GET' ? '' : path === SMS_APP_SUM ? 'sum' : path === SMS_APP_THR ? 'thr' : '';
+            if (k) {
+                if (C && !served[k]) { served[k] = true; smsAppStale(true); if (served.sum && served.thr) Promise.all([pre.sum, pre.thr]).then(() => { const d = window.AkmAoDesk; if (d && typeof d.smsRefresh === 'function' && d.smsRefresh()) setTimeout(() => smsAppStale(false), 400); else setTimeout(() => smsAppStale(false), 400); }, () => smsAppStale(false)); return Promise.resolve(json(C[k])); }   // 캐시 먼저(네트워크 0) → 미리 받은 값이 오면 다시 받기(아래 미리 받은 응답을 씀)
+                if (!used[k]) { used[k] = true; return pre[k].then(r => r.clone(), () => raw(input, init)); }
+                return tee(k, raw(input, init));   // 그 뒤 주기 새로 고침도 캐시에 담음
+            }
+            if (!gateOpen && /^\/api\//.test(path) && !/^\/api\/(sms|auth|push|version)\b/.test(path)) return gate.then(() => raw(input, init));
+        } catch (_) { /* 종전 그대로 */ }
+        return raw(input, init);
+    };
+}
+function smsAppStale(on) {
+    let n = document.getElementById('sms-app-stale');
+    if (!on) { if (n) n.remove(); return; }
+    if (n || !document.body) return;
+    n = document.createElement('div'); n.id = 'sms-app-stale'; n.className = 'sms-app-stale'; n.setAttribute('role', 'status'); n.textContent = '새로 고치는 중…';
+    document.body.appendChild(n); setTimeout(() => { if (n.isConnected) n.remove(); }, 15000);
+}
 // #1062-d 문자 앱 아이콘 숫자 = 안 읽은 손님 대화 수(워커2 계약 GET /api/sms/unread-count {ok,n} = summary.unread_threads 와 같은 정의) · 문자 앱에서만
 //   문자 창이 이미 받는 요약(/api/sms/summary)의 unread_threads 를 먼저 씀 → 대화 열기(읽음)·답 보냄·[처리함] 뒤엔 unread-count 한 번(0.6초 묶음) · 화면 다시 켤 때도
 //   대화를 열면 그 손님 알림(tag 'sms-<대화id>')을 닫음 = 안드로이드 런처 숫자(떠 있는 알림 수)도 줄어듦 · setAppBadge 없는 브라우저 = 조용히 넘어감 · ao-desk.js 0 변경(fetch 를 지켜봄)
@@ -1284,16 +1337,31 @@ function smsAppBadgeSet(n) {
     n = Math.max(0, Math.floor(Number(n) || 0)); smsAppBadgeSet.last = n;
     try { const p = n ? (navigator.setAppBadge && navigator.setAppBadge(n)) : (navigator.clearAppBadge ? navigator.clearAppBadge() : navigator.setAppBadge && navigator.setAppBadge(0)); if (p && p.catch) p.catch(() => {}); } catch (_) { /* 지원 안 함 */ }
 }
+// #1062-f 폰 아이콘 숫자 = 떠 있는 알림 수 → 안 읽은 대화(unread-count 의 unread[{id,t,b}] · 최대 30 · 인증·광고 포함)와 알림을 맞춤
+//   안 읽었는데 알림이 없음(밀어서 지움·다른 기기에서 읽음 표시 뒤 새 글 등) = 조용히 다시 띄움(tag sms-<id> · 소리 0) · 알림은 있는데 읽음 = 닫음
+//   목록이 n 전부가 아니면(unread_full false · 워커2 계약) 닫기는 안 함 · 알림 권한 없음·sw 없음 = 건너뜀 · 본 앱은 안 불림
+function smsAppNotiSync(list, n, full) {
+    try {
+        if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker || !navigator.serviceWorker.ready) return;
+        if (typeof full !== "boolean") full = !(Number(n) > list.length);   // 옛 서버(칸 없음) = 숫자로 판단
+        const want = new Map(list.filter(x => x && x.id != null).map(x => [String(x.id), x]));
+        navigator.serviceWorker.ready.then(reg => reg.getNotifications().then(ns => {
+            const have = new Map(); (ns || []).forEach(x => { const m = /^sms-(\d+)$/.exec(String(x.tag || "")); if (m) have.set(m[1], x); });
+            want.forEach((x, id) => { if (!have.has(id)) { const p = reg.showNotification(String(x.t || "문자"), { body: String(x.b || ""), tag: "sms-" + id, silent: true, renotify: false, icon: "/sms/icon-192.png", badge: "/sms/icon-192.png", data: { link: "agent-office?sms=" + id } }); if (p && p.catch) p.catch(() => {}); } });
+            if (full) have.forEach((x, id) => { if (!want.has(id)) x.close(); });
+        })).catch(() => {});
+    } catch (_) { /* 알림 못 맞춤 = 숫자만 */ }
+}
 function smsAppBadge() {
     if (smsAppBadge.on || typeof window.fetch !== 'function') return; smsAppBadge.on = true;
     const raw = window.fetch.bind(window); let tm = null;
-    const pull = () => { clearTimeout(tm); tm = setTimeout(() => { raw('/api/sms/unread-count', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }).then(r => r.ok ? r.json() : null).then(d => { if (d && d.ok && d.n != null) smsAppBadgeSet(d.n); }).catch(() => {}); }, 600); };
+    const pull = () => { clearTimeout(tm); tm = setTimeout(() => { raw('/api/sms/unread-count', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }).then(r => r.ok ? r.json() : null).then(d => { if (d && d.ok && d.n != null) { smsAppBadgeSet(d.n); if (Array.isArray(d.unread)) smsAppNotiSync(d.unread, d.n, d.unread_full); } }).catch(() => {}); }, 600); };
     const closeNoti = id => { try { if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.getNotifications({ tag: 'sms-' + id })).then(ns => (ns || []).forEach(x => x.close())).catch(() => {}); } catch (_) { /* 없음 */ } };
     window.fetch = function (input, init) {
         const p = raw(input, init);
         try {
             const u = String(typeof input === 'string' ? input : (input && input.url) || ''), path = u.replace(/^https?:\/\/[^/]+/, ''), m = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
-            if (/^\/api\/sms\/summary(\?|$)/.test(path)) p.then(r => r && r.ok ? r.clone().json() : null).then(d => { if (d && d.unread_threads != null) smsAppBadgeSet(d.unread_threads); else if (d) pull(); }).catch(() => {});
+            if (/^\/api\/sms\/summary(\?|$)/.test(path)) p.then(r => { if (r && r.ok) pull(); }).catch(() => {});   // #1062-f 요약(30초마다)이 올 때도 unread-count 로(무시 대화 포함 n · 알림 맞추기 같이) — 요약 unread_threads 와 정의가 달라 숫자가 오락가락하지 않게
             else { const t = path.match(/^\/api\/sms\/threads\/(\d+)(\?[^#]*)?$/);
                 if (t && m === 'GET' && !/[?&]peek=1/.test(t[2] || '')) { closeNoti(t[1]); p.then(r => { if (r && r.ok) pull(); }).catch(() => {}); }   // 대화 펼침 = 읽음(peek 은 읽음 아님)
                 else if (m === 'POST' && /^\/api\/sms\/(threads\/\d+\/(reply|send-draft|done|handled)|send)(\?|$)/.test(path)) p.then(r => { if (r && r.ok) pull(); }).catch(() => {}); }
@@ -6893,6 +6961,7 @@ async function init() {
     }
 }
 
+if (akmIsSmsApp()) smsAppBoot();   // #1062-e 문자 앱만 = 미리 받기·기기 캐시(로그인 확인보다 먼저)
 checkAuth();
 
 // =============================================

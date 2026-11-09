@@ -2269,3 +2269,5 @@ html[data-app="sms"] #desk-sms .sms-win { max-width: none; height: 100%; border:
 /* #1062-c 문자 앱 첫 진입 = 문자 창이 열릴 때까지 본 화면(사이드바·에이전트 오피스) 대신 가림막 한 장(로그인 화면은 .app 밖이라 그대로 · 창 닫혀 다시 열 때도 같음 · 실패 띠 #sms-app-fail 은 위) */
 html[data-app="sms"] body:not(.sms-win-open) .app::after { content: "문자 불러오는 중…"; position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; background: var(--card-bg, #fff); color: var(--text-mid, #667085); font-size: 15px; font-weight: 600; }
 html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after { background: #151a33; color: #c7cce6; }
+/* #1062-e 문자 앱 기기 캐시로 먼저 그린 동안 「새로 고치는 중…」 작은 알약(서버 값이 오면 사라짐) */
+.sms-app-stale { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9500; padding: 4px 12px; border-radius: 999px; background: rgba(17, 24, 39, .78); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }

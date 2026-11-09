@@ -3690,6 +3690,7 @@
         } catch (e) { return false; }
     }
     window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id), histIdle: hbIdle, histDepth: () => HB.stack.length,
+        smsRefresh: () => { if (!SMS.sum) return false; smsSummary(); smsList(true); return true; },   // #1062-e 문자 앱 기기 캐시로 먼저 그린 뒤 서버 값으로 바꿔치기(app.js smsAppBoot 만 부름)
         hbPush, hbDrop,   // #850 발주 메모함 창·카드·옵션 목록도 같은 기록(폰 뒤로가기 = 연 순서대로 닫힘)
         smsPutReply: (id, text) => { if (!SMS.open || String(SMS.open) !== String(id)) return false; const ta = $('sms-text'); if (!ta) return false; ta.value = String(text || ''); ta.dispatchEvent(new Event('input', { bubbles: true })); return true; } };   // #850 손님께 물어볼 문자 초안 → 답 칸(보내기는 직원)   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
 

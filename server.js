@@ -64,10 +64,12 @@ function smsAppHtml() {
     one(/<head(?:\s[^>]*)?>/i, '$&\n    <base href="/">\n    <script>document.addEventListener("click",function(e){if(e.defaultPrevented||e.button)return;var a=e.target&&e.target.closest&&e.target.closest(\'a[href^="#"]\');if(!a||a.target)return;e.preventDefault();var x=a.getAttribute("href");if(x.length>1)location.hash=x.slice(1);});</script>', 'head');
     one(/<link\b[^>]*\brel=["']manifest["'][^>]*>/i, '<link rel="manifest" href="/sms/manifest.webmanifest">', 'manifest');
     one(/navigator\.serviceWorker\.register\(\s*['"]\/sw\.js['"][^)]*\)/, "navigator.serviceWorker.register('/sms/sw.js', { scope: '/sms/' })", 'sw');
+    // #1062-e(워커1 측정 · 첫 열기 47초) head 안 CDN 3개(엑셀·PDF·화면 캡처 = 문자 모드에선 안 씀)가 화면 그리기를 막음 → /sms/ 에서만 defer(쓰는 곳은 전부 함수 안 · 불러오는 순서 그대로)
+    { let n = 0; h = h.replace(/<script src="(https:\/\/[^"]*(?:xlsx|jspdf|html2canvas)[^"]*)"><\/script>/g, (m0, u) => { n++; return `<script src="${u}" defer></script>`; }); if (n < 3) miss.push('cdn'); }
     if (miss.length) {
         const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
         console.warn('[sms-app] index.html 에서 못 찾은 자리(그 자리 빼고 보냄):', miss.join(','));
-        if (SMS_APP_HTML.warnDay !== day) { SMS_APP_HTML.warnDay = day; if (process.env.RENDER) { const WHY = { html: '문자 모드 안 켜짐', head: '화면 파일 경로(base) 빠짐', manifest: '앱 설치가 본 앱으로 잡힘', sw: '알림이 본 앱 쪽으로 붙음' }; notifyTelegram(`⚠️ 문자 앱(/sms/) 화면: index.html 에서 못 찾은 자리 = ${miss.map(x => x + '(' + WHY[x] + ')').join(', ')} · 화면은 그대로 보냄 · server.js smsAppHtml 손질 필요`).catch(() => { }); } }
+        if (SMS_APP_HTML.warnDay !== day) { SMS_APP_HTML.warnDay = day; if (process.env.RENDER) { const WHY = { html: '문자 모드 안 켜짐', head: '화면 파일 경로(base) 빠짐', manifest: '앱 설치가 본 앱으로 잡힘', sw: '알림이 본 앱 쪽으로 붙음', cdn: '엑셀·PDF 도구가 첫 화면을 늦춤(defer 못 붙임)' }; notifyTelegram(`⚠️ 문자 앱(/sms/) 화면: index.html 에서 못 찾은 자리 = ${miss.map(x => x + '(' + WHY[x] + ')').join(', ')} · 화면은 그대로 보냄 · server.js smsAppHtml 손질 필요`).catch(() => { }); } }
     }
     SMS_APP_HTML.mtime = st.mtimeMs; SMS_APP_HTML.html = h; return h;
 }

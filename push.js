@@ -103,15 +103,27 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
             return await pushTo(subs, payload);
         } catch (e) { console.error('[push] 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
     }
+    // #1062-f 안 읽은 대화 목록을 payload 에 — 웹 푸시는 암호화 뒤 4KB 상한 → JSON 3,600바이트 안으로(넘치면 b 를 30자로 → 그래도 넘치면 뒤에서부터 뺌 · 뺐으면 unread_full=false = 받는 쪽은 「없는 알림 닫기」 안 함)
+    const PAYLOAD_MAX = 3600;
+    function fitUnread(base, unread, full) {
+        if (!Array.isArray(unread)) return JSON.stringify(base);
+        let list = unread.slice(0, 30).map(u => ({ id: Number(u && u.id) || 0, t: clip(u && u.t, 40), b: clip(u && u.b, 60) })).filter(u => u.id > 0), isFull = full === true && list.length === unread.length;
+        const out = () => JSON.stringify(Object.assign({}, base, { unread: list, unread_full: isFull }));
+        let s = out(); if (Buffer.byteLength(s) <= PAYLOAD_MAX) return s;
+        list = list.map(u => Object.assign({}, u, { b: u.b.slice(0, 30) })); s = out();
+        while (Buffer.byteLength(s) > PAYLOAD_MAX && list.length) { list.pop(); isFull = false; s = out(); }
+        return s;
+    }
     // #1062 문자 앱(label 'sms-app') 구독에만 — { title, message, link, tag } · 실패해도 던지지 않음 · urgency high(폰이 쉬고 있어도 빨리)
-    async function sendApp(userId, { title, message, link, tag, badge }) {
+    async function sendApp(userId, { title, message, link, tag, badge, unread, unread_full }) {
         try {
             if (!userId) return { sent: 0, skip: 'no-user' };
             const sc = await scope(); if (sc.sms === false) return { sent: 0, skip: 'scope' };
             await init();
             const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1 AND label = $2`, [userId, APP_LABEL])).rows;
             if (!subs.length) return { sent: 0, skip: 'no-sub' };
-            const payload = JSON.stringify(Object.assign({ title: clip(title, 60) || '아꼼이 문자', body: clipKeep(message, 300), link: clip(link, 60) || '', tag: clip(tag, 40) || '', app: 'sms' }, Number.isInteger(badge) && badge >= 0 ? { badge } : {}));   // #1062-d 아이콘 숫자
+            const base = Object.assign({ title: clip(title, 60) || '아꼼이 문자', body: clipKeep(message, 300), link: clip(link, 60) || '', tag: clip(tag, 40) || '', app: 'sms' }, Number.isInteger(badge) && badge >= 0 ? { badge } : {});   // #1062-d 아이콘 숫자
+            const payload = fitUnread(base, unread, unread_full);   // #1062-f 알림 맞추기 목록(웹 푸시 4KB 상한 안으로)
             return await pushTo(subs, payload, { TTL: 3600, urgency: 'high' });
         } catch (e) { console.error('[push] 문자 앱 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
     }
