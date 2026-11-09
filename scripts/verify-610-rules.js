@@ -402,7 +402,14 @@ console.log('②-f 불만 글 고정 답 · 되묻기 · 둘째 답(#646)');
     ok('05 불만 답: 숫자·금액·비율 0 · 「네이버·톡톡·페이」 0 · 봇이 결정하는 말(해 드리겠습니다 꼴의 환불·재발송) 0 · 이모지·「^^」 0 · smsSafe 그대로 · 한 통 900바이트 안(SMS_MAX_BYTES · #1065-e 대표 문구로 교환 글 523)', !/\d|원\b|%|퍼센트|네이버|톡톡|페이|환불해 드리|재발송|새로 보내|\^\^/.test(allC) && !EMOJI_RE.test(allC) && [c1, c2, c3].every(t => smsSafe(t) === t && smsBytes(t) <= 900), [c1, c2, c3].map(smsBytes));
     ok('06 주문 못 찾음 되묻기(글자 그대로) — 보통 / 둘째 답 / 불만 글', rules.notFoundText({}) === '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.'
         && rules.notFoundText({ again: true }) === '보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.'
-        && rules.notFoundText({ claim: true }) === '고객님, 불편드려 죄송합니다.\n보내주신 번호로는 주문이 확인되지 않아, 주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.', rules.notFoundText({ claim: true }));
+        && rules.notFoundText({ claim: true }) === '에고 그러셨군요, 불편드려 죄송합니다.\n말씀해 주시면 빠르게 처리 도와드리겠습니다.\n다만 보내주신 번호로는 주문이 확인되지 않아, 주문하신 다른 번호나 주문하신 분 또는 받으시는 분 성함을 알려 주시면 빠르게 확인 후 처리 도와드리겠습니다.\n늘 고객님 입장에서 만족드리도록 최선을 다하겠습니다. 다시 한번 죄송합니다.', rules.notFoundText({ claim: true }));   // #1077 클레임 응대 먼저 → 주문자 확인(상태 낱말 없음 꼴)
+    {   // #1077 상태 낱말 있음 = 그 낱말 + 원인·선택지 두 줄 · 「네이버페이」 없음 · 개수 안 말함
+        const nf = t => rules.notFoundText({ claim: true, text: t });
+        const a = nf('여러번 주문했는데 평소에는 무른게 한두개였는데 이번엔 6개나 나와서 조금 실망했어요… 다음에는 조금만 더 잘 부탁드립니다ㅜㅜ'), b = nf('귤에 곰팡이가 피어서 왔어요'), c = nf('환불해 주세요'), d = nf('물건이 불량이에요');
+        ok('06-b #1077 주문 못 찾은 불만 글 — 무른 게 · 곰팡이 핀 게 · 환불만 · 낱말 없는 불량', a.split('\n')[1].startsWith('무른 게 나오셨군요.') && a.split('\n').length === 5 && /보상처리도 가능합니다!/.test(a)
+            && b.split('\n')[1].startsWith('곰팡이 핀 게 나오셨군요.') && c.split('\n').length === 4 && c.split('\n')[1] === '말씀해 주시면 빠르게 처리 도와드리겠습니다.'
+            && d.split('\n')[1].startsWith('상태가 좋지 않은 게 나오셨군요.') && ![a, b, c, d].some(x => /네이버페이|6개|\^\^|[\u{1F300}-\u{1FAFF}]/u.test(x)), [a, b, c, d]);
+    }
     const sh = o => ({ match: 'one', order: Object.assign({ ship_date: '2026-10-12', partner: '효돈', trackings: ['590111112222'], tracking_tail: '2222', delivered: false, status_label: '집화' }, o) });
     const ask = (text, order, again, now) => rules.answer({ text, bucket: 'ship_q', now: now || '2026-10-12T15:00:00+09:00', holidays: H, order, again });
     const s2 = ask('언제 와요?', sh({}), true), s1 = ask('언제 와요?', sh({}), false), y2 = ask('발송됐나요?', sh({}), true), d2 = ask('송장번호 알려주세요', sh({ delivered: true, status_label: '배송완료' }), true, '2026-10-14T10:00:00+09:00');

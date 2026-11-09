@@ -497,7 +497,7 @@ module.exports = function mountSms(app, deps) {
         if (bucket === 'claim') {
             if (!(rulesMod && typeof rulesMod.claimText === 'function')) return { text: null, kind: null, toStaff: true, why: 'claim' };
             if (lookup && lookup.match === 'many') return { text: askName(), kind: 'ask', toStaff: false, why: 'many', staff_flag: 'claim', auto_ok: true };
-            if (!(lookup && lookup.match === 'one')) return { text: notFound({ claim: true }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'claim' };
+            if (!(lookup && lookup.match === 'one')) return { text: notFound({ claim: true, text }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'claim' };
             const ct = rulesMod.claimText({ text });
             if (!ct) return { text: null, kind: null, toStaff: true, why: 'claim' };
             let sentBefore = true;

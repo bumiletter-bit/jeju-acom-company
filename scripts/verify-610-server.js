@@ -328,7 +328,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
     const dsCols = (await pool.query(`SELECT column_name, is_generated FROM information_schema.columns WHERE table_name = 'delivery_shipments' AND column_name IN ('buyer_phone','phone_digits','buyer_digits') ORDER BY 1`)).rows;
     ok(dsCols.length === 3 && dsCols.filter(c => c.is_generated === 'ALWAYS').length === 2, 'delivery_shipments 칸 3개(생성 2) ' + JSON.stringify(dsCols));
 
-    const NFC = '고객님, 불편드려 죄송합니다.\n보내주신 번호로는 주문이 확인되지 않아, 주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';   // #646 주문 못 찾은 불만 글 되묻기
+    const NFC = t => require('../sms/rules.js').notFoundText({ claim: true, text: t });   // #1077 주문 못 찾은 불만 글 = 클레임 응대 먼저 → 주문자 확인(글마다 상태 낱말이 달라 그 글로 계산 · 종전 #646 고정 되묻기)
     console.log('⑨ #635 폰 문자함 구도 — 안 읽음 · scope · 초안 항상 · 사람 몫 사유');
     {
         const cols = (await pool.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'sms_threads' AND column_name IN ('staff_read_at','staff_why') ORDER BY 1`)).rows;
@@ -385,8 +385,8 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         tc = await thread(PC); ok(tc.status === 'staff_needed' && tc.draft_text === '세 번째 글 초안.', '#635 잠금(직원 몫) 중에도 글이 올 때마다 초안을 새로 ' + tc.draft_text);
         const sumA = (await api('GET', '/api/sms/summary')).json;
         await hook(env('sms:received', { messageId: 'u8', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + PC.slice(1) }));
-        tc = await thread(PC); ok(tc.status === 'staff_needed' && tc.draft_text === NFC && tc.staff_why === 'claim', '#635·#646 잠금 중 불만 글(주문 못 찾음) = 자동 발송 0 · 초안 = 성함·연락처 되묻기 + staff_why claim ' + tc.staff_why);
-        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id); ok(it && it.needs_staff === true && it.staff_why === 'claim' && it.staff_why_label === '불만·클레임' && it.draft_text === NFC && it.unread === 4, '#635 목록: needs_staff true · 사유 · unread 4 ' + JSON.stringify(it || {}).slice(0, 160));
+        tc = await thread(PC); ok(tc.status === 'staff_needed' && tc.draft_text === NFC('귤이 다 썩어서 왔어요 환불해주세요') && tc.staff_why === 'claim', '#635·#646 잠금 중 불만 글(주문 못 찾음) = 자동 발송 0 · 초안 = 성함·연락처 되묻기 + staff_why claim ' + tc.staff_why);
+        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id); ok(it && it.needs_staff === true && it.staff_why === 'claim' && it.staff_why_label === '불만·클레임' && it.draft_text === NFC('귤이 다 썩어서 왔어요 환불해주세요') && it.unread === 4, '#635 목록: needs_staff true · 사유 · unread 4 ' + JSON.stringify(it || {}).slice(0, 160));
         {   // #660 사람 몫인 대화는 읽어도 open 에 남는다(읽음 칸만 잠깐 바꿔 보고 되돌림)
             const keep = (await pool.query(`SELECT staff_read_at FROM sms_threads WHERE id = $1`, [tc.id])).rows[0].staff_read_at;
             await pool.query(`UPDATE sms_threads SET staff_read_at = now() WHERE id = $1`, [tc.id]);
@@ -432,7 +432,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         // 마. 새 번호 클레임(auto) · draft 모드 = 전부 초안
         const PD = T + '1044';
         await hook(env('sms:received', { messageId: 'u10', message: '상자가 터져서 왔어요 환불해주세요', phoneNumber: '+82' + PD.slice(1) }));
-        let td = await thread(PD); const outD = (await msgs(PD)).filter(x => x.direction === 'out'); ok(td.status === 'draft' && td.draft_text === NFC && td.staff_why === 'claim' && outD.length === 0, '#646·#650 새 번호 불만 글(주문 못 찾음) = 자동 발송 0 · 성함·연락처 되묻기 초안 + 직원 확인(claim) ' + td.status);
+        let td = await thread(PD); const outD = (await msgs(PD)).filter(x => x.direction === 'out'); ok(td.status === 'draft' && td.draft_text === NFC('상자가 터져서 왔어요 환불해주세요') && td.staff_why === 'claim' && outD.length === 0, '#646·#650 새 번호 불만 글(주문 못 찾음) = 자동 발송 0 · 성함·연락처 되묻기 초안 + 직원 확인(claim) ' + td.status);
         // 바. 사람 몫 사유는 두 곳에 같은 값: 대화 칸 sms_threads.staff_why(지금 상태) + 그 받은 글 sms_messages.ai_json.staff_why(#633 「봇 실패」 셈)
         const lastIn = async d => (await msgs(d)).filter(x => x.direction === 'in').pop();
         ok((await thread(PD)).staff_why === 'claim', '#646 답이 나간 불만 글도 대화 칸 staff_why = claim(직원 확인)');
@@ -506,7 +506,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         // 섞인 글은 종전 갈래: 「잘 받았는데 썩은 게 있어요」 = claim → 사람 몫
         const PJ = T + '1050';
         await hook(env('sms:received', { messageId: 'u21', message: '잘 받았는데 썩은 게 있어요', phoneNumber: '+82' + PJ.slice(1) }));
-        const tj = await thread(PJ); ok(tj.status === 'draft' && tj.staff_why === 'claim' && tj.draft_text === NFC, '#641·#646 「잘 받았는데 썩은 게 있어요」 = claim(인사 갈래 아님) · 주문 못 찾음 → 되묻기 초안 + 직원 확인 ' + tj.staff_why);
+        const tj = await thread(PJ); ok(tj.status === 'draft' && tj.staff_why === 'claim' && tj.draft_text === NFC('잘 받았는데 썩은 게 있어요'), '#641·#646 「잘 받았는데 썩은 게 있어요」 = claim(인사 갈래 아님) · 주문 못 찾음 → 되묻기 초안 + 직원 확인 ' + tj.staff_why);
         // 하. #635-C send-draft 「내가 본 초안」 대조: 같음 = 발송 · 다름 = 409·발송 0 · 사라짐 = 409 + null · seen 없음 = 종전
         sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'draft', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
         const PK = T + '1051'; aiAnswer = { answer: '첫 초안입니다.', used: [] };
