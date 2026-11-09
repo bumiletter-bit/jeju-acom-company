@@ -31,7 +31,7 @@ const W = require('./vm/vm-watch.js');
 const HEAD_DIR = path.join(T, 'head', 'scripts', 'vm'); fs.mkdirSync(HEAD_DIR, { recursive: true });
 let H = null;
 try {
-    const src = execFileSync('git', ['show', 'HEAD:scripts/vm/vm-watch.js'], { cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 1e7 });
+    const src = execFileSync('git', ['show', 'f6bb9c3:scripts/vm/vm-watch.js'], { cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 1e7 });
     fs.writeFileSync(path.join(HEAD_DIR, 'vm-watch.js'), src); H = require(path.join(HEAD_DIR, 'vm-watch.js'));
 } catch (e) { console.log('  (HEAD 판 못 읽음: ' + e.message + ')'); }
 
@@ -91,10 +91,12 @@ function units() {
     ok('배송지 = 오늘 발주 안 나감 줄', /오늘 최종발주 = 아직 안 나감/.test(pa));
     ok('배송지 = 발주 나감이면 거래처 연락 줄 안내', /이미 나감 → 저장했으면/.test(W.promptFor({ id: 10, content: '[VM] 주소 변경 홍길동 010-1234-5678 → 서울' }, { sentToday: true })));
     ok('배송지 프롬프트에 포인트 절차 없음 · 포인트 프롬프트에 배송지 절차 없음', !/포인트 보상 지급\n/.test(pa) && !/\[절차\] 네이버페이/.test(pa) && !/\[절차\] 네이버 주문 배송지/.test(pp));
-    if (H) ok('포인트 프롬프트 = HEAD 대비 (b-0)·⑥ 줄만 다름(그 밖 줄 동일)', (() => {
+    if (H) ok('포인트 프롬프트 = #1082 전(f6bb9c3) 대비 (b-0)·⑥·#1084 (b)(e)(f) 줄만 다름(그 밖 줄 동일)', (() => {
         const a = pp.split('\n'), b = H.promptFor({ id: 9, content: '[VM] 아이디 saygoodjod 주문번호 2026110539641061 포인트 보상 5,000 · 사유 타이벡 파손 보상처리' }).split('\n');
         const extra = a.filter(l => !b.includes(l)), gone = b.filter(l => !a.includes(l));
-        return extra.length === 2 && extra.some(l => /^\(b-0\)/.test(l)) && extra.some(l => /^⑥/.test(l)) && gone.length === 1 && /^⑥이 일은 지시당 20분/.test(gone[0]);
+        const tag = l => (/^\(([a-z0-9-]+)\)/.exec(l) || /^(⑥)/.exec(l) || [])[1];
+        const ex = extra.map(tag).sort().join(','), gn = gone.map(tag).sort().join(',');
+        return ex === 'b,b-0,e,f,⑥' && gn === 'b,e,f,⑥' && extra.some(l => /수취인\(받는 분\) 이름·전체 번호/.test(l) && /운송장번호\(12자리/.test(l) && /구매자 아이디\*\*로 한다/.test(l)) && extra.some(l => /수취인으로 찾음 → 구매자/.test(l)) && extra.some(l => /「안 맞음」이 아니다/.test(l));
     })());
     ok('로그인 유지 코드 = 센터 첫 화면만(포인트·주문 화면 주소 없음 · 저장 단추 없음)', /home\/dashboard/.test(W.JS_KEEP) && !/point|benefit|pay-order|저장|지급/.test(W.JS_KEEP) && /간편\\s\*로그인/.test(W.JS_KEEP));
 }
