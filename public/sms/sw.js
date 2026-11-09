@@ -59,21 +59,23 @@ self.addEventListener('push', event => {
     }).then(() => syncUnread(d, tag))]));
 });
 // #1062-g 상태 표시줄 작은 아이콘 = /sms/badge-96.png(흰 말풍선 실루엣 · 안드로이드는 알파만 씀) · 큰 아이콘(icon) = 컬러 icon-192 그대로
-// #1062-f 알림 맞추기 — 안드로이드 아이콘 숫자 = 떠 있는 알림 수 → 안 읽은 대화 수와 같게
+// #1062-f·h 알림 맞추기 — 안드로이드 아이콘 숫자 = 떠 있는 알림 수 → 안 읽은 글 수와 같게(#1062-h 글마다 한 장)
 //   payload.unread 에 있는데 알림이 없는 대화(사용자가 지움 등) = 조용히 되살림(silent · renotify false) · unread_full 일 때만 목록에 없는(읽은) 대화 알림 닫음 · 이번 알림(tag)은 건드리지 않음
 async function syncUnread(d, curTag) {
     try {
         if (!d || !Array.isArray(d.unread) || !self.registration.getNotifications) return;
-        const want = new Map(d.unread.filter(u => u && u.id).map(u => ['sms-' + u.id, u]));
+        // #1062-h 글 단위 = tag sms-<tid>-<id>(tid 없으면 옛 꼴 sms-<id>) · 옛 대화 단위 알림 sms-<tid> 도 맞추기 대상(unread_full 때 목록에 없으니 닫힘)
+        const tagOf = u => (u.tid ? 'sms-' + u.tid + '-' + u.id : 'sms-' + u.id);
+        const want = new Map(d.unread.filter(u => u && u.id).map(u => [tagOf(u), u]));
         const shown = await self.registration.getNotifications(), have = new Set();
         for (const n of shown) {
-            if (!/^sms-\d+$/.test(n.tag || '')) continue;
+            if (!/^sms-\d+(?:-\d+)?$/.test(n.tag || '')) continue;
             have.add(n.tag);
             if (d.unread_full === true && !want.has(n.tag) && n.tag !== curTag) n.close();
         }
         for (const [t, u] of want) {
             if (have.has(t) || t === curTag) continue;
-            await self.registration.showNotification(u.t || '아꼼이 문자', { body: u.b || '', icon: '/sms/icon-192.png', badge: '/sms/badge-96.png', tag: t, renotify: false, silent: true, data: { link: 'agent-office?sms=' + u.id } });
+            await self.registration.showNotification(u.t || '아꼼이 문자', { body: u.b || '', icon: '/sms/icon-192.png', badge: '/sms/badge-96.png', tag: t, renotify: false, silent: true, data: { link: 'agent-office?sms=' + (u.tid || u.id) } });
         }
     } catch (e) { /* 맞추기 실패는 무시(이번 알림은 이미 떴음) */ }
 }

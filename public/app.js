@@ -1340,23 +1340,24 @@ function smsAppBadgeSet(n) {
 // #1062-f 폰 아이콘 숫자 = 떠 있는 알림 수 → 안 읽은 대화(unread-count 의 unread[{id,t,b}] · 최대 30 · 인증·광고 포함)와 알림을 맞춤
 //   안 읽었는데 알림이 없음(밀어서 지움·다른 기기에서 읽음 표시 뒤 새 글 등) = 조용히 다시 띄움(tag sms-<id> · 소리 0) · 알림은 있는데 읽음 = 닫음
 //   목록이 n 전부가 아니면(unread_full false · 워커2 계약) 닫기는 안 함 · 알림 권한 없음·sw 없음 = 건너뜀 · 본 앱은 안 불림
-function smsAppNotiSync(list, n, full) {
+function smsAppNotiSync(list, n, full, sentAt) {
     try {
         if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker || !navigator.serviceWorker.ready) return;
         if (typeof full !== "boolean") full = !(Number(n) > list.length);   // 옛 서버(칸 없음) = 숫자로 판단
-        const want = new Map(list.filter(x => x && x.id != null).map(x => [String(x.id), x]));
+        // #1062-h 글 단위 = unread[{id:글, tid:대화, t, b}] · tag sms-<tid>-<id> (tid 없는 옛 서버 = 대화 단위 sms-<id>)
+        const want = new Map(list.filter(x => x && x.id != null).map(x => [x.tid != null ? "sms-" + x.tid + "-" + x.id : "sms-" + x.id, x]));
         navigator.serviceWorker.ready.then(reg => reg.getNotifications().then(ns => {
-            const have = new Map(); (ns || []).forEach(x => { const m = /^sms-(\d+)$/.exec(String(x.tag || "")); if (m) have.set(m[1], x); });
-            want.forEach((x, id) => { if (!have.has(id)) { const p = reg.showNotification(String(x.t || "문자"), { body: String(x.b || ""), tag: "sms-" + id, silent: true, renotify: false, icon: "/sms/icon-192.png", badge: "/sms/badge-96.png", data: { link: "agent-office?sms=" + id } }); if (p && p.catch) p.catch(() => {}); } });
-            if (full) have.forEach((x, id) => { if (!want.has(id)) x.close(); });
+            const have = new Map(); (ns || []).forEach(x => { const tg = String(x.tag || ""); if (/^sms-\d+(-\d+)?$/.test(tg)) have.set(tg, x); });   // 옛 sms-<tid> 꼴도 잡아 full 때 닫음
+            want.forEach((x, tg) => { if (!have.has(tg)) { const p = reg.showNotification(String(x.t || "문자"), { body: String(x.b || ""), tag: tg, silent: true, renotify: false, icon: "/sms/icon-192.png", badge: "/sms/badge-96.png", data: { link: "agent-office?sms=" + (x.tid != null ? x.tid : x.id) } }); if (p && p.catch) p.catch(() => {}); } });
+            if (full) have.forEach((x, tg) => { if (!want.has(tg) && !(sentAt && Number(x.timestamp) >= sentAt)) x.close(); });   // 요청 보낸 뒤 뜬 알림(방금 온 새 글)은 목록에 아직 없어도 안 닫음
         })).catch(() => {});
     } catch (_) { /* 알림 못 맞춤 = 숫자만 */ }
 }
 function smsAppBadge() {
     if (smsAppBadge.on || typeof window.fetch !== 'function') return; smsAppBadge.on = true;
     const raw = window.fetch.bind(window); let tm = null;
-    const pull = () => { clearTimeout(tm); tm = setTimeout(() => { raw('/api/sms/unread-count', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }).then(r => r.ok ? r.json() : null).then(d => { if (d && d.ok && d.n != null) { smsAppBadgeSet(d.n); if (Array.isArray(d.unread)) smsAppNotiSync(d.unread, d.n, d.unread_full); } }).catch(() => {}); }, 600); };
-    const closeNoti = id => { try { if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.getNotifications({ tag: 'sms-' + id })).then(ns => (ns || []).forEach(x => x.close())).catch(() => {}); } catch (_) { /* 없음 */ } };
+    const pull = () => { clearTimeout(tm); tm = setTimeout(() => { const sentAt = Date.now(); raw('/api/sms/unread-count', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }).then(r => r.ok ? r.json() : null).then(d => { if (d && d.ok && d.n != null) { smsAppBadgeSet(d.n); if (Array.isArray(d.unread)) smsAppNotiSync(d.unread, d.n, d.unread_full, sentAt); } }).catch(() => {}); }, 600); };
+    const closeNoti = id => { try { if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.getNotifications()).then(ns => (ns || []).forEach(x => { const tg = String(x.tag || ''); if (tg === 'sms-' + id || tg.indexOf('sms-' + id + '-') === 0) x.close(); })).catch(() => {}); } catch (_) { /* 없음 */ } };   // #1062-h 그 대화 글 알림 전부(sms-<tid>-*) + 옛 sms-<tid>
     window.fetch = function (input, init) {
         const p = raw(input, init);
         try {
@@ -1380,14 +1381,28 @@ function smsAppFail() {   // #1062 문자 창을 18초 안에 못 엶 = 메뉴 �
     document.body.appendChild(n);
 }
 function smsAppNote() {
-    const win = document.querySelector('#desk-sms .sms-win'); if (!win || document.getElementById('sms-app-note')) return;
-    const n = document.createElement('div'); n.className = 'sms-app-note'; n.id = 'sms-app-note';
-    n.innerHTML = '<span class="sms-app-note-t">답은 이 앱에서 보내 주세요 · 폰 메시지 앱에서 보낸 글은 기록이 안 남아요</span><button type="button" class="desk-btn sm sms-app-push" id="sms-app-push">알림 받기</button><span class="sms-app-push-s" id="sms-app-push-s" role="status"></span>';
-    const head = win.querySelector('.desk-tool-head'); if (head && head.nextSibling) win.insertBefore(n, head.nextSibling); else win.prepend(n);
-    const src = document.getElementById('noti-push-btn'), b = document.getElementById('sms-app-push'), s = document.getElementById('sms-app-push-s');
-    const mirror = () => { if (!src) { b.hidden = true; return; } const t = src.textContent.trim(); b.textContent = t === '끄기' ? '알림 끄기' : t === '켜기' ? '알림 받기' : t; b.disabled = src.disabled; const sub = document.getElementById('noti-push-sub'); s.textContent = sub && src.textContent.trim() !== '켜기' ? sub.textContent : ''; };
-    if (src) { new MutationObserver(mirror).observe(document.getElementById('noti-push') || src, { subtree: true, childList: true, characterData: true, attributes: true }); }
-    b.addEventListener('click', () => { if (src && !src.disabled) src.click(); });
+    // #1062-i(대표) 안내 띠 없앰 → 머리 줄(손님 연락 · …) 맨 오른쪽 끝에 아이콘 2개 = 🔔/🔕 알림(종 판 #noti-push-btn 을 그대로 누름) · ☾/☀ 야간(ao-desk.js AkmAoTheme · 저장 키 akm_ao_theme · 다음 열기는 index.html 머리 스크립트가 유지)
+    const head = document.querySelector('#desk-sms .sms-win .desk-tool-head'); if (!head || document.getElementById('sms-app-icons')) return;
+    const n = document.createElement('div'); n.className = 'sms-app-icons'; n.id = 'sms-app-icons';
+    n.innerHTML = '<button type="button" class="desk-btn sm sms-app-ico" id="sms-app-push"></button><button type="button" class="desk-btn sm sms-app-ico" id="sms-app-theme"></button>';
+    head.appendChild(n);
+    const src = document.getElementById('noti-push-btn'), b = document.getElementById('sms-app-push'), tb = document.getElementById('sms-app-theme');
+    let asked = false, last = '';
+    const mirror = () => {
+        if (!src) { b.hidden = true; return; }
+        const t = src.textContent.trim(), on = t === '끄기', no = t === '안 됨';
+        b.textContent = on ? '🔔' : no ? '🔕' : t === '잠시만' ? '⏳' : '🔕'; b.disabled = src.disabled || no || t === '잠시만';
+        const lab = on ? '알림 켜짐 · 누르면 끄기' : no ? '이 기기에서는 알림을 쓸 수 없어요' : '알림 꺼짐 · 누르면 켜기';
+        b.setAttribute('aria-label', lab); b.title = lab; b.setAttribute('aria-pressed', String(on));
+        const sub = document.getElementById('noti-push-sub'), msg = sub ? sub.textContent.trim() : '';
+        if (asked && t !== '잠시만' && msg && msg !== last && typeof showToast === 'function') { asked = false; showToast(msg, '', 3500); }   // 상태 글은 누른 뒤 한 번만 토스트
+        last = t !== '잠시만' ? msg : last;
+    };
+    if (src) new MutationObserver(mirror).observe(document.getElementById('noti-push') || src, { subtree: true, childList: true, characterData: true, attributes: true });
+    b.addEventListener('click', () => { if (src && !src.disabled) { asked = true; last = ''; src.click(); } });
+    const tPaint = () => { const T = window.AkmAoTheme, on = !!(T && T.isDark()); tb.hidden = !T; tb.textContent = on ? '☀' : '☾'; const lab = on ? '밝은 화면으로 바꾸기' : '야간 화면으로 바꾸기'; tb.setAttribute('aria-pressed', String(on)); tb.setAttribute('aria-label', lab); tb.title = lab; };
+    tb.addEventListener('click', () => { if (window.AkmAoTheme) window.AkmAoTheme.toggle(); tPaint(); });
+    document.addEventListener('akm-ao-theme', tPaint); tPaint();
     mirror(); if (typeof akPushRefresh === 'function') akPushRefresh();
 }
 

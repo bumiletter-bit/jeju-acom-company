@@ -228,23 +228,33 @@ module.exports = function mountSms(app, deps) {
     }
     // #1062(대표 11/9) 「아꼼이 문자」 앱 알림 = 진짜 문자 꼴 · 손님 문자가 적힐 때마다(recordInbound · mms:downloaded 사진 붙은 뒤) · 5분 잠금 X · staff_notify 무관
     //   받는 사람 = 설정 sms_gateway.app_user_ids 의 계정 · 그 계정의 문자 앱 구독(label 'sms-app')에만(push.sendApp) · 알림 종 표(notifications)에는 안 적음
-    //   제목 = 「이*화 · 010-****-2485」 — 이름은 문자 보낸 번호가 그 주문의 받는 분일 때만(order_json.role 'recipient' · 구매자 이름은 DB 에 없음 → 번호만)
-    //   본문 = 손님 글 전문(+ 「📷 사진 n장」) + 다음 줄 「주문: <order_hint>」 · 봇 초안은 안 실음(열면 보임) · 상한 300자는 push.sendApp
+    //   제목 = 「이영화 · 010-1234-2485」(#1062-h 가림 없음) — 이름은 문자 보낸 번호가 그 주문의 받는 분일 때만(order_json.role 'recipient' · 구매자 이름은 DB 에 없음 → 번호만)
+    //   #1062-h(대표 「A 고」) 글마다 알림 1장(tag sms-<대화id>-<글id> · 문자 앱처럼) · 본문 = 그 글 전문(+ 「📷 사진 n장」) + 다음 줄 「주문: <order_hint>」 · 봇 초안은 안 실음(열면 보임) · 상한 300자는 push.sendApp
     //   거름 = 꺼진 연동(enabled false) · 받을 계정 없음 · 시험 번호(0999 · 검증 testMode 는 통과) · 로컬 서버(RENDER 아님 · testMode 제외)
     //     #1062-f(대표 11/9) 인증번호·광고·무시 대화 글도 알림 = 기존 메시지 앱과 같게(종전 「무시 대화 otp·ad·carrier 거름」 삭제)
-    const maskName = n => { const a = Array.from(String(n || '').replace(/\s+/g, '')); if (!a.length) return ''; if (a.length <= 2) return a[0] + '*'; return a[0] + '*'.repeat(a.length - 2) + a[a.length - 1]; };
-    const dashMasked = d => { d = String(d || ''); return d.length >= 10 ? d.slice(0, 3) + '-' + '*'.repeat(d.length - 7) + '-' + d.slice(-4) : phoneMasked(d); };
-    function appTitle(thread, preName) {
+    // #1062-h(대표 11/9 「누르면 다 보이는데 가릴 이유 없음 · 문자 앱과 같게」) 제목 = 이름·번호 전부(가림 없음) · 🔴 잠금 화면에도 이름·번호가 보임 = 대표 허용(11/9)
+    //   「서지옥 · 010-1234-4031」 · 이름 없으면 번호만 · 이 대화 안 읽은 손님 글 2개↑면 끝에 「 (3)」(그 손님 안 읽은 글 수)
+    const fullName = n => String(n || '').replace(/\s+/g, '').slice(0, 20);
+    const dashFull = d => { d = String(d || '').replace(/\D/g, ''); if (/^02\d{7,8}$/.test(d)) return '02-' + d.slice(2, -4) + '-' + d.slice(-4); if (/^0\d{9,10}$/.test(d)) return d.slice(0, 3) + '-' + d.slice(3, -4) + '-' + d.slice(-4); return d || '번호 없음'; };
+    function appTitle(thread, preName, nUnread) {
         let oj = thread && thread.order_json; if (typeof oj === 'string') { try { oj = JSON.parse(oj); } catch (e) { oj = null; } }
-        const o = (oj && oj.order) || {}, nm = oj && oj.role === 'recipient' ? maskName(o.recipient_name || o.recipient_initial || '') : maskName(preName || '');
-        const ph = dashMasked(thread && thread.phone_digits);
-        return nm ? nm + ' · ' + ph : ph;
+        const o = (oj && oj.order) || {}, nm = oj && oj.role === 'recipient' ? fullName(o.recipient_name || o.recipient_initial || '') : fullName(preName || '');
+        const ph = dashFull(thread && thread.phone_digits), k = Number(nUnread) || 0;
+        return (nm ? nm + ' · ' + ph : ph) + (k >= 2 ? ` (${k})` : '');
     }
+    // #1062-h 본문 = 그 글 전문(+ 「📷 사진 n장」) + 다음 줄 「주문: …」 · 300자(push.sendApp 상한) 안: 글 먼저 — 주문 줄까지 넘치면 주문 줄을 뺌
+    const APP_BODY_MAX = 300;
+    const photoOf = n => (Number(n) || 0) > 0 ? `📷 사진 ${Number(n)}장` : '';
     function appBody(thread, text, nImg, preHint) {
-        const t = String(text || '').trim(), n = Number(nImg) || 0, photo = n > 0 ? `📷 사진 ${n}장` : '';
+        const t = String(text || '').trim(), photo = photoOf(nImg);
         const first = t && photo ? t + ' ' + photo : (t || photo || '(내용 없음)');
-        const h = String((thread && thread.order_hint) || preHint || '').trim();
-        return h ? first + '\n주문: ' + h : first;
+        const h = String((thread && thread.order_hint) || preHint || '').trim(), full = h ? first + '\n주문: ' + h : first;
+        return full.length <= APP_BODY_MAX ? full : first.slice(0, APP_BODY_MAX);
+    }
+    // 이 대화의 안 읽은 손님 글 수(staff_read_at 뒤 · 제목 「(n)」) · 300ms 넘거나 실패 = null(「(n)」 없이)
+    async function appThreadUnread(threadId, ms) {
+        const q = pool.query(`SELECT ${UNREAD_SQL} AS un FROM sms_threads t WHERE t.id = $1`, [threadId]).then(r => (r.rows[0] ? Number(r.rows[0].un) || 0 : null), () => null);
+        let tm; const v = await Promise.race([q, new Promise(ok => { tm = setTimeout(() => ok(null), ms || 300); })]); clearTimeout(tm); return v;
     }
     // #1062-B 새 번호 첫 문자(대화 줄에 order_hint 가 아직 없음) = 발송 전 주문 표(order_memo_preorders · 발주 메모함 표 · 수집기가 이미 받아 둔 줄 · 추가 API 0)를 1번 SELECT
     //   번호가 받는 분(recv_digits) = 받는 분 이름 · 구매자(buyer_digits) = 구매자 이름(둘 다 문자 보낸 그 사람) · 줄 꼴 = order_hint 와 같게 「발송 전 · 결제 M/D · 옵션 · n박스」
@@ -258,35 +268,42 @@ module.exports = function mountSms(app, deps) {
         const hint = ['발송 전', r.md ? '결제 ' + r.md : '', shortOpt(r.option_text), Number(r.qty) > 1 ? r.qty + '박스' : ''].filter(Boolean).join(' · ');
         return { hint, name: r.recv_digits === digits ? r.recv_name : r.buyer_name };
     }
-    // #1062-d·f 문자 앱 「안 읽음」 = 기존 메시지 앱과 같게 — staff_read_at 뒤 손님 글이 있는 대화 전부(무시 대화·인증·광고 포함 · 시험 번호 0999 만 뺌)
-    //   { n, unread:[{ id, t(알림 제목 꼴), b(마지막 손님 글 앞 60자) }] 최근 글 순 최대 30, full(목록이 n 전부) } · ms 주면 그 시간 넘으면 null(알림은 숫자·목록 없이)
-    //   폰(안드로이드)은 아이콘 숫자 = 떠 있는 알림 수 → /sms/sw.js·화면이 이 목록으로 알림을 맞춤(없는 것 조용히 되살림 · 읽은 것 닫음)
+    // #1062-d·f·h 문자 앱 「안 읽음」 = 기존 메시지 앱과 같게 = **안 읽은 글 수**(#1062-h) — staff_read_at 뒤 손님 글 전부(무시 대화·인증·광고 포함 · 시험 번호 0999 만 뺌)
+    //   { n(글 수 합), unread:[{ id(글), tid(대화), t(알림 제목 꼴 · 그 대화 안 읽은 수 (n)), b(그 글 앞 60자) }] 최근 글 순 최대 30, full(목록이 n 전부) } · ms 주면 그 시간 넘으면 null(알림은 숫자·목록 없이)
+    //   폰(안드로이드)은 아이콘 숫자 = 떠 있는 알림 수 → /sms/sw.js·화면이 이 목록으로 알림을 맞춤(없는 글 알림 조용히 되살림 · 읽은 것 닫음) · tag = sms-<tid>-<id>
     const APP_UNREAD_N = 30;
     async function unreadInfo(ms) {
-        const q = pool.query(`SELECT t.id, t.phone_digits, t.order_json, t.last_in_text, t.has_image, count(*) OVER () AS total FROM sms_threads t
-            WHERE ${UNREAD_SQL} > 0 ${TEST_HIDE_T2} ORDER BY t.last_in_at DESC NULLS LAST, t.id DESC LIMIT ${APP_UNREAD_N}`).then(r => {
+        const q = pool.query(`SELECT m.id, m.thread_id, m.body, m.kind, t.phone_digits, t.order_json,
+                (SELECT count(*)::int FROM sms_images i WHERE i.message_id = m.id) AS nimg,
+                count(*) OVER (PARTITION BY m.thread_id) AS tun, count(*) OVER () AS total
+            FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
+            WHERE m.direction = 'in' AND m.created_at > COALESCE(t.staff_read_at, 'epoch'::timestamptz) ${TEST_HIDE_T2}
+            ORDER BY m.id DESC LIMIT ${APP_UNREAD_N}`).then(r => {
             const rows = r.rows || [], n = rows.length ? Number(rows[0].total) || rows.length : 0;
-            const unread = rows.map(x => { const b = String(x.last_in_text || '').replace(/\s+/g, ' ').trim(); return { id: Number(x.id), t: appTitle(x), b: (b || (x.has_image ? '📷 사진' : '')).slice(0, 60) }; });
+            const unread = rows.map(x => {
+                const t = String(x.body || '').replace(/\s+/g, ' ').trim(), ph = photoOf(x.nimg) || (x.kind === 'mms' && !t ? '📷 사진' : '');
+                return { id: Number(x.id), tid: Number(x.thread_id), t: appTitle(x, null, x.tun), b: (t && ph ? t + ' ' + ph : (t || ph)).slice(0, 60) };
+            });
             return { n, unread, full: unread.length >= n };
         }, () => null);
         if (!ms) return q;
         let tm; const v = await Promise.race([q, new Promise(ok => { tm = setTimeout(() => ok(null), ms); })]); clearTimeout(tm); return v;
     }
     const unreadCount = async ms => { const v = await unreadInfo(ms); return v ? v.n : null; };
-    async function appNotify(thread, text, nImg, bucket) {
+    async function appNotify(thread, text, nImg, bucket, msgId) {
         try {
             if (!thread || !thread.id || !deps.push || typeof deps.push.sendApp !== 'function') return 0;
             if (!process.env.RENDER && !deps.testMode) return 0;   // 로컬 검증 서버가 실DB 로 폰에 쏘지 않게(push.js 배달부와 같은 원칙)
             const c = await cfg(); if (!c.enabled || !c.app_user_ids.length) return 0;
             if (!deps.testMode && isTestDigits(thread.phone_digits)) return 0;
             const pre = String(thread.order_hint || '').trim() ? null : await appPreHint(thread.phone_digits);   // #1062-B
-            const ur = await unreadInfo(300);   // #1062-d·f 아이콘 숫자 + 알림 맞추기 목록(이 글 포함 · 300ms 넘으면 없이)
-            const title = appTitle(thread, pre && pre.name), message = appBody(thread, text, nImg, pre && pre.hint), link = `agent-office?sms=${thread.id}`, tag = 'sms-' + thread.id;
+            const [ur, tun] = await Promise.all([unreadInfo(300), appThreadUnread(thread.id, 300)]);   // #1062-d·f·h 아이콘 숫자(안 읽은 글 수) + 알림 맞추기 목록 + 이 대화 안 읽은 수(이 글 포함 · 300ms 넘으면 없이)
+            const mid = Number(msgId) || 0, title = appTitle(thread, pre && pre.name, tun), message = appBody(thread, text, nImg, pre && pre.hint), link = `agent-office?sms=${thread.id}`, tag = mid ? `sms-${thread.id}-${mid}` : 'sms-' + thread.id;   // #1062-h 글마다 한 장
             let sent = 0; for (const uid of c.app_user_ids) { const r = await deps.push.sendApp(uid, Object.assign({ title, message, link, tag }, ur ? { badge: ur.n, unread: ur.unread, unread_full: ur.full } : {})); sent += (r && r.sent) || 0; }
             return sent;
         } catch (e) { log.error('[문자] 문자 앱 알림 실패(무시):', e.message); return 0; }
     }
-    const appNotifySoon = (thread, text, nImg, bucket) => { appNotify(thread, text, nImg, bucket).catch(() => { }); };   // 기다리지 않음(줄 적기·200 응답을 늦추지 않게)
+    const appNotifySoon = (thread, text, nImg, bucket, msgId) => { appNotify(thread, text, nImg, bucket, msgId).catch(() => { }); };   // 기다리지 않음(줄 적기·200 응답을 늦추지 않게)
     // 직원 알림(화면 알림 + 폰 푸시 · type 'sms' · 손님 번호·이름 없이 끝 4자리만)
     async function notifyStaff(c, thread, title, message, opts = {}) {
         if (c && c.staff_notify === false) return 0;   // #837: 설정 sms_gateway.staff_notify false = 직원 알림(알림 종·폰 푸시) 전부 끔 — 모든 문자 알림이 이 함수 하나를 지나므로 여기서 끊음 · 5분 잠금 UPDATE 도 안 함 · 대화 상태·staff_why·미처리 집계·에이전트 오피스 카드·텔레그램은 무접촉
@@ -541,7 +558,7 @@ module.exports = function mountSms(app, deps) {
         if (!msg) return { done: { thread_id: thread.id, dup: true, action: 'dup' } };
         if (hasImage) await saveImages(msg.id, imgs);
         if (recordOnly) { await setThread(thread.id, { last_in_at: msg.event_at, last_in_text: thread.last_in_text || '', has_image: thread.has_image || hasImage }); await markDecided(msg.id); return { done: { thread_id: thread.id, message_id: msg.id, bucket, action: 'pending_photo' } }; }
-        appNotifySoon(thread, bodyText, imgs.length, bucket);   // #1062 문자 앱 알림(손님 문자마다)
+        appNotifySoon(thread, bodyText, imgs.length, bucket, msg.id);   // #1062 문자 앱 알림(손님 문자마다)
         return { thread, msg, bodyText, imgs };
     }
     async function decideRecorded(rec) {
@@ -804,7 +821,7 @@ module.exports = function mountSms(app, deps) {
         await pool.query(`UPDATE sms_messages SET deciding_at = NULL WHERE id = $1`, [prev.id]);
         const msg = Object.assign({}, prev, { body: bodyText, bucket, kind: n > 0 ? 'mms' : 'sms' });
         const rows = n ? (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [prev.id])).rows.map(r => ({ contentType: r.content_type, data: r.data.toString('base64') })) : [];
-        appNotifySoon(thread, bodyText, n, bucket);   // #1062 사진 문자 = 사진이 붙은 이때 한 번(mms:received 메타 단계는 안 알림)
+        appNotifySoon(thread, bodyText, n, bucket, prev.id);   // #1062 사진 문자 = 사진이 붙은 이때 한 번(mms:received 메타 단계는 안 알림)
         return { thread, msg, bodyText, imgs: rows, extra: { attached: n } };
     }
     async function attachDownloaded(e) { return Object.assign({ ok: true, event: e.ev }, await decideRecorded(await recordDownloaded(e))); }
@@ -1496,7 +1513,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _appNotify: appNotify, _appTitle: appTitle, _appBody: appBody, _appPreHint: appPreHint, _unreadCount: unreadCount, _unreadInfo: unreadInfo, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _appNotify: appNotify, _appTitle: appTitle, _appBody: appBody, _appThreadUnread: appThreadUnread, _appPreHint: appPreHint, _unreadCount: unreadCount, _unreadInfo: unreadInfo, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

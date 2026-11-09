@@ -107,7 +107,7 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
     const PAYLOAD_MAX = 3600;
     function fitUnread(base, unread, full) {
         if (!Array.isArray(unread)) return JSON.stringify(base);
-        let list = unread.slice(0, 30).map(u => ({ id: Number(u && u.id) || 0, t: clip(u && u.t, 40), b: clip(u && u.b, 60) })).filter(u => u.id > 0), isFull = full === true && list.length === unread.length;
+        let list = unread.slice(0, 30).map(u => Object.assign({ id: Number(u && u.id) || 0 }, Number(u && u.tid) > 0 ? { tid: Number(u.tid) } : {}, { t: clip(u && u.t, 40), b: clip(u && u.b, 60) })).filter(u => u.id > 0), isFull = full === true && list.length === unread.length;   // #1062-h 글 단위 = id 글 · tid 대화
         const out = () => JSON.stringify(Object.assign({}, base, { unread: list, unread_full: isFull }));
         let s = out(); if (Buffer.byteLength(s) <= PAYLOAD_MAX) return s;
         list = list.map(u => Object.assign({}, u, { b: u.b.slice(0, 30) })); s = out();
