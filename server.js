@@ -107,6 +107,24 @@ async function sessionIdleInfo() {
     } catch (_) { _idleCache.at = Date.now(); } // 조회 실패 → 기존값 유지
     return _idleCache;
 }
+// #1068(대표 11/9) 긴 로그인 계정 — 설정 agent_office_config 'auth_long_session' {user_ids:[10]}(기본 [] = 전원 종전) · 1분 캐시
+//   · 그 계정은 로그인 때 토큰 10년(claim ls:1 + ph = 비번 해시 조각) · 유휴 자동 로그아웃 검사 건너뜀 · 로그아웃 단추는 그대로
+//   · 안전: 비번이 바뀌면 ph 가 달라져 긴 토큰은 바로 401(authMiddleware) · 설정에서 빼면 1분 안에 그 긴 토큰도 종전 7일 토큰과 같아짐(발급 7일 지났으면 401 · 유휴 검사 다시)
+let _longSessCache = { at: 0, ids: new Set() };
+function longSessionIdsFrom(v) {
+    const arr = Array.isArray(v) ? v : (v && Array.isArray(v.user_ids) ? v.user_ids : []);
+    return new Set(arr.map(Number).filter(n => Number.isInteger(n) && n > 0));
+}
+async function longSessionIds() {
+    if (Date.now() - _longSessCache.at < 60_000) return _longSessCache.ids;
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'auth_long_session'`);
+        _longSessCache = { at: Date.now(), ids: longSessionIdsFrom(r.rows[0] && r.rows[0].value) };
+    } catch (_) { _longSessCache.at = Date.now(); } // 조회 실패 → 기존값 유지
+    return _longSessCache.ids;
+}
+function pwHashTag(hash) { return crypto.createHmac('sha256', String(JWT_SECRET || '')).update(String(hash || '')).digest('hex').slice(0, 16); }   // #1068 HMAC = 토큰을 풀어 읽어도 비번 해시와 맞춰 볼 수 없는 값
+function loginTokenOpts(userId, longIds) { return longIds && longIds.has(Number(userId)) ? { expiresIn: '3650d', long: true } : { expiresIn: '7d', long: false }; }
 
 // #829(위험 7): 토큰(7일) 안의 role·position 을 그대로 믿지 않는다 — users 표를 60초 캐시로 재조회해 퇴사(deleted_at)·권한이 바뀐 계정을 즉시 반영한다.
 //   · 캐시 = 사용자 id 열쇠(최대 500) · 사용자 수정·퇴사 라우트가 그 id 를 지워 바로 반영 · 시험 번호 계정(≥990000 · users 표에 없음)은 토큰 그대로(종전 검증 흐름 유지)
@@ -119,9 +137,9 @@ async function authUserLookup(id) {
     const hit = _authUserCache.get(key);
     if (hit && Date.now() - hit.at < AUTH_USER_CACHE_MS) return hit;
     try {
-        const r = await pool.query('SELECT id, username, name, position, color, role, deleted_at FROM users WHERE id = $1', [key]);
+        const r = await pool.query('SELECT id, username, name, position, color, role, deleted_at, password_hash FROM users WHERE id = $1', [key]);
         const row = r.rows[0] || null;
-        const ent = { at: Date.now(), u: row && !row.deleted_at ? { id: row.id, username: row.username, name: row.name, position: row.position, color: row.color, role: row.role } : null };
+        const ent = { at: Date.now(), ph: row ? pwHashTag(row.password_hash) : '', u: row && !row.deleted_at ? { id: row.id, username: row.username, name: row.name, position: row.position, color: row.color, role: row.role } : null };   // #1068 ph = 긴 토큰 비번 대조용 조각(해시 원문은 안 들고 있음)
         if (_authUserCache.size >= 500 && !_authUserCache.has(key)) _authUserCache.delete(_authUserCache.keys().next().value);
         _authUserCache.set(key, ent);
         return ent;
@@ -142,10 +160,15 @@ async function authMiddleware(req, res, next) {
         const ent = await authUserLookup(req.user.id);
         if (ent) {
             if (!ent.u) return res.status(401).json({ error: '계정이 퇴사 처리됐거나 없습니다. 다시 로그인해주세요' });
+            if (req.user.ls && req.user.ph !== ent.ph) return res.status(401).json({ error: '비밀번호가 바뀌어 다시 로그인이 필요합니다' });   // #1068 긴 토큰 = 비번 바뀌면 끊김
             req.user = Object.assign({}, req.user, ent.u);   // role·position·name·color 는 지금 DB 값(토큰이 7일 낡아도 권한은 즉시)
         }
     }
     try {
+        if (req.user && req.user.ls) {
+            if ((await longSessionIds()).has(Number(req.user.id))) return next();   // #1068 긴 로그인 계정 = 유휴 자동 로그아웃 없음
+            if (!(Number(req.user.iat) > 0) || Date.now() - Number(req.user.iat) * 1000 > 7 * 864e5) return res.status(401).json({ error: '토큰이 만료되었거나 유효하지 않습니다' });   // #1068 설정에서 빠진 계정의 긴 토큰 = 종전 7일 토큰과 같게
+        }
         const sig = token.slice(-40);
         const info = await sessionIdleInfo();
         const idleMs = (req.user && info.users[req.user.id]) || info.ms;   // 계정별 예외 우선, 없으면 전체 설정
@@ -1558,11 +1581,10 @@ app.post('/api/auth/login', async (req, res) => {
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다' });
 
-        const token = jwt.sign(
-            { id: user.id, username: user.username, name: user.name, position: user.position, color: user.color, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        const lo = loginTokenOpts(user.id, await longSessionIds());   // #1068 긴 로그인 계정(설정 auth_long_session) = 10년 · 그 밖 종전 7일
+        const claims = { id: user.id, username: user.username, name: user.name, position: user.position, color: user.color, role: user.role };
+        if (lo.long) { claims.ls = 1; claims.ph = pwHashTag(user.password_hash); }
+        const token = jwt.sign(claims, JWT_SECRET, { expiresIn: lo.expiresIn });
 
         res.json({
             token,
@@ -1625,6 +1647,7 @@ app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
 
         const hash = await bcrypt.hash(newPassword, 10);
         await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+        authUserCacheDrop(req.user.id);   // #1068 긴 토큰 비번 대조가 1분 캐시를 기다리지 않게
 
         res.json({ success: true, message: '비밀번호가 변경되었습니다' });
     } catch (err) {

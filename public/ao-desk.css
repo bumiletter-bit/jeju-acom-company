@@ -981,6 +981,10 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-draft[data-k="new"] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sms-draft[data-k="new"][hidden] { display: none; }
 .sms-draft .desk-btn { flex: none; min-height: 44px; }
+/* #1067 초안 칸 펼치기 — 넘칠 때만 띠 오른쪽 끝 단추 · 펼친 칸은 높이 전환만(색은 토큰 = 야간 따라감) */
+.sms-draft.has-grow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sms-draft.has-grow[hidden] { display: none; }
+.sms-draft .sms-grow-btn { margin-left: auto; min-width: 44px; padding: 0 12px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
 .sms-warn { padding: 8px 10px; border-radius: 8px; background: #FEF6E7; color: #B54708; font-size: 12.5px; line-height: 1.5; }
 .sms-text { width: 100%; min-height: 76px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; }
 .sms-text::placeholder { color: var(--d-sub); }

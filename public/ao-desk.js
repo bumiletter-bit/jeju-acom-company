@@ -1914,6 +1914,37 @@
         $('sms-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
         const w = $('sms-warn'), dead = smsDead();
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
+        smsGrowSync();
+    }
+    // #1067(대표 11/9) 초안 칸 펼치기 — 글이 칸을 넘칠 때만 띠 오른쪽에 [▼ 펼치기]/[▲ 접기] · 펼침 = 원래 높이 2배(화면 60% 상한) · 초점 없을 때 첫 탭도 펼침(편집 중 탭은 커서만) · 대화 바꾸면 새 칸이라 접힘
+    function smsGrow(on) {
+        const ta = document.getElementById('sms-text'); if (!ta) return;
+        if (on) {
+            if (ta.classList.contains('sms-grow')) return;
+            const base = ta.offsetHeight, vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+            ta.dataset.growBase = String(base); ta.style.height = Math.max(base, Math.min(base * 2, Math.round(vh * 0.6))) + 'px'; ta.classList.add('sms-grow');
+        } else { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }
+        smsGrowSync();
+    }
+    function smsGrowSync() {
+        const ta = document.getElementById('sms-text'), band = document.getElementById('sms-draft'); if (!ta || !band) return;
+        const open = ta.classList.contains('sms-grow');
+        let need = false;
+        if (!band.hidden && ta.offsetHeight) {
+            if (open) {   // 펼친 칸은 scrollHeight 가 늘 칸 높이 이상 → 원래 높이로 잠깐 되돌려 글 높이를 잰다(같은 순간 안이라 화면엔 안 보임)
+                const h = ta.style.height, st = ta.scrollTop; ta.style.height = (Number(ta.dataset.growBase) || 0) + 'px';
+                need = ta.scrollHeight > ta.clientHeight + 2; ta.style.height = h; ta.scrollTop = st;
+            } else need = ta.scrollHeight > ta.clientHeight + 2;
+        }
+        if (open && !need) { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }   // 글이 줄어 원래 칸에 들어가면 접고 단추도 뺀다
+        let b = document.getElementById('sms-draft-grow');
+        if (!need) { if (b) b.remove(); band.classList.remove('has-grow'); return; }
+        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'sms-draft-grow'; b.className = 'desk-btn sm sms-grow-btn'; b.setAttribute('aria-controls', 'sms-text'); }
+        if (b.parentNode !== band || band.lastChild !== b) band.appendChild(b);   // 띠 글이 바뀌면(innerHTML) 단추가 빠지므로 끝에 다시 붙인다
+        band.classList.add('has-grow');
+        const on = ta.classList.contains('sms-grow'), tx = on ? '▲ 접기' : '▼ 펼치기';
+        if (b.textContent !== tx) b.textContent = tx;
+        b.setAttribute('aria-expanded', on ? 'true' : 'false');
     }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
@@ -2138,9 +2169,13 @@
                     const b = document.getElementById('sms-buy-more'); if (b && mb) b.focus({ preventScroll: true }); return;
                 }
             }   // #653 구매이력 더보기·접기
+            if (e.target.closest('#sms-draft-grow')) { const ta = $('sms-text'); smsGrow(!(ta && ta.classList.contains('sms-grow'))); return; }   // #1067
+            if (e.target.id === 'sms-text') { const t1 = SMS.growTap; SMS.growTap = false; if (t1 && document.getElementById('sms-draft-grow')) smsGrow(true); return; }   // #1067 초점 없던 칸 첫 탭 = 펼침(커서는 브라우저가 둔 자리 그대로)
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
+        list.addEventListener('pointerdown', e => { if (e.target.id === 'sms-text') SMS.growTap = document.activeElement !== e.target; else if (e.target.closest && e.target.closest('#sms-draft-grow')) e.preventDefault(); });   // #1067 단추 누름이 답 칸 초점(폰 자판)을 뺏지 않게
+        window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });   // #1067 폭이 바뀌면 줄바꿈이 달라져 넘침 다시
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
         list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
