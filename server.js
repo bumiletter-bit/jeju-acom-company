@@ -6890,6 +6890,55 @@ const chLabel = (uid) => { const u = String(uid || ''); return u.startsWith('kak
    (실측 최근 SKIP = "감사합니다 시원하고 행복한날되세요~", "…좋은 귤 기대해봅니다").
    → 미답변 중에서도 **직원 답변이 필요한 신호**(질문·요청·불만)가 있는 것만 알린다. */
 const NEEDS_STAFF_RE = /\?|？|나요|까요|가요|는지|어떻게|언제|얼마|되나|될까|알려|문의|해\s*주|부탁|안\s*왔|파손|불량|물러|상했|썩|이상|잘못|누락|빠졌|바꿔|변경|취소|반품|환불|교환/;
+// #1069(대표 11/9) 발주 메모함에 넣을 내용(사이즈·과수 · 날짜 지정 · 주소 나눠 보내기)이 담긴 손님 글 — 메모함 꼬리표(사이즈·과수/날짜/입력삭제)와 같은 뜻 · 손님 말투라 메모함 줄 규칙(sizeLines = 번호 줄 꼴)은 못 써서 같은 낱말로 정규식 하나
+//   🔴 넓히지 말 것 — 「S사이즈 몇 개?」「언제 도착?」 같은 물음은 안 잡힘(부탁·바꿈 말이나 날짜 숫자가 붙어야)
+const MEMO_ACT = '(?:보내(?!\\s*주신|\\s*준|\\s*드린)|바꿔|바꾸|변경|해\\s*주|해\\s*줘|부탁|발송|주세|주실|받고|받을|원해|원합)';   // #1069-b 가능·되나·될까 뺌(「로얄과 가능한가요」 물음)
+const NEEDS_MEMO_RE = new RegExp([
+    '(?<![A-Za-z])(?:2S|S|M|L|2L|XL)\\s*(?:사이즈|size)?\\s*(?:로|으로)\\s*' + MEMO_ACT,                 // S사이즈로 보내 주세요 · m으로 바꿔
+    '(?:로얄과|중대과|소과|큰\\s*(?:거|걸|것|사이즈)|작은\\s*(?:거|걸|것|사이즈))\\s*(?:로|으로)?\\s*' + MEMO_ACT,   // 로얄과로 부탁 · 큰 걸로 보내
+    '사이즈\\s*(?:를|은|는)?\\s*(?:바꿔|바꾸|변경)',                                                         // 사이즈 바꿔 주세요
+    '(?<!\\d)[1-3]?\\d\\s*과\\s*(?:로|짜리\\s*(?:로)?)?\\s*' + MEMO_ACT,                                     // 13과로 부탁 · 12과짜리로 보내(「10과 정도 들어있나요」는 안 잡힘)
+    '(?<![\\d/~\\-])(?:\\d{1,2}\\s*월\\s*)?\\d{1,2}\\s*일\\s*(?:에|날|쯤|까지|로)?\\s*(?:발송|출고|도착(?!했|한|됐)|받(?!았|은)|배송(?!\\s*(?:정도\\s*)?걸|\\s*(?:되나|돼|됐|되었))|보내)(?!\\s*(?:정도\\s*)?걸)',   // 12일 발송 · 11월 20일에 받
+    '(?<![\\d/~\\-])\\d{1,2}\\s*/\\s*\\d{1,2}\\s*(?:일|에|날|까지|로)?\\s*(?:발송|출고|도착(?!했|한|됐)|받(?!았|은)|배송(?!\\s*(?:정도\\s*)?걸|\\s*(?:되나|돼|됐|되었))|보내)(?!\\s*(?:정도\\s*)?걸)',            // 11/12 도착
+    '(?:발송|출고|배송|도착)\\s*(?:일|날짜)?\\s*(?:을|를|은|는)?\\s*\\d{1,2}\\s*(?:일|/)(?!\\s*(?:정도\\s*)?걸)',   // #1069-b 「배송 2일 걸리나요」 뺌                         // 발송을 12일로
+    '(?:주소|배송지)\\s*(?:를|가|는|은)?\\s*(?:따로|각각|다르게|두\\s*군데|두\\s*곳|여러\\s*곳)',                 // 주소 따로
+    '(?:나눠|나누어|따로|각각)\\s*(?:서)?\\s*(?:보내(?!\\s*주신|\\s*준)|발송(?!\\s*(?:되었|됐))|배송(?!\\s*(?:되었|됐))|받(?!았|은))',   // #1069-b 「각각 받았는데」 뺌                                         // 나눠서 보내 주세요
+].join('|'), 'i');
+function needsMemo(text) { return NEEDS_MEMO_RE.test(String(text || '')); }
+// #1069 텔레그램 HTML 알림(문의·톡톡만) — 본문 &<> 이스케이프 · <b> 굵게 · 4,000자 넘으면 가장 긴 칸부터 「…」(텔레그램 4,096 상한)
+function tgEsc(v) { return String(v == null ? '' : v).replace(/\r/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+const TG_HTML_MAX = 4000;
+function tgBlock(head, fields, tail) {   // head·tail = 글(굵게로 감쌈) · fields = [[머리, 값]] · 칸 사이 빈 줄
+    const vals = fields.map(f => tgEsc(String(f[1] == null ? '' : f[1]).trim()));
+    const build = () => [`<b>${tgEsc(head)}</b>`].concat(fields.map((f, i) => `<b>${tgEsc(f[0])}:</b> ${vals[i]}`)).concat(tail ? [`<b>${tgEsc(tail)}</b>`] : []).join('\n\n');
+    let out = build();
+    for (let guard = 0; out.length > TG_HTML_MAX && guard < 20; guard++) {
+        let k = 0; vals.forEach((v, i) => { if (v.length > vals[k].length) k = i; });
+        const cut = Math.max(0, vals[k].length - (out.length - TG_HTML_MAX) - 1);
+        vals[k] = vals[k].slice(0, cut).replace(/&[a-z]*$/, '') + '…';
+        out = build();
+    }
+    return out;
+}
+function tgPlain(html) { return String(html || '').replace(/<\/?b>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'); }
+// 건마다 한 통 · 1.1초 간격(텔레그램 같은 방 초당 1통) · 결과 배열 반환('sent' 등)
+async function tgSendBlocks(blocks) {
+    const res = [];
+    for (let i = 0; i < blocks.length; i++) {
+        if (i) await new Promise(r => setTimeout(r, 1100));
+        const r = await notifyTelegram(blocks[i], { html: true });
+        res.push(r);
+        if (r !== 'sent') break;   // 꺼짐·토큰 없음·실패면 나머지는 안 보냄(톡톡 큐는 남은 건 다음 틱에)
+    }
+    return res;
+}
+function qnaDoneBlock(kind, product, question, answer) {   // kind = '상품문의' | '고객문의'
+    return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', [['상품', product || '-'], ['문의', question], ['답변', answer]]);
+}
+function talkBlock(ch, unanswered, message, botAnswer, memo) {
+    if (unanswered) return tgBlock(`🟨 ${ch} · 봇이 답 못함`, [['손님', message]], memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : '');
+    return tgBlock(`🟧 ${ch} · 답변완료 (*확인필요*)`, [['손님', message], ['봇', botAnswer]], memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : '직접 처리해 주세요');
+}
 let _ttReqBusy = false;
 setInterval(async () => {
     if (_ttReqBusy) return;
@@ -6917,30 +6966,27 @@ setInterval(async () => {
              ⓑ못 답하는 건 손님을 고객센터·카카오톡으로 유도하는 것으로 완결된다(직원 개입 지점이 없다).
            ⚠️ 내가 대표 발화를 결함 신고로 해석해 임의 시공했던 것을 되돌린 것 — 판단 지점은 먼저 물을 것. */
         const hits = r.rows.filter(x =>
-            TALKTALK_REQUEST_RE.test(String(x.message || '')) ||
+            TALKTALK_REQUEST_RE.test(String(x.message || '')) || needsMemo(x.message) ||   // #1069 봇이 답했어도 메모할 내용이면(사이즈·과수·날짜·나눠 보내기) 알림
             (String(x.bot_response || '') === '[SKIP-무응답]' && NEEDS_STAFF_RE.test(String(x.message || ''))));
         let queue = Array.isArray(st.queue) ? st.queue : [];
         for (const h of hits) {
             const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
             // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
             // #522(대표 10/5 「톡톡은 내용이 얼추 나오게 · 봇 답변도 보이게 · 편하게」): 라벨 한 줄 + 손님 글 150자 + 봇이 답한 건은 봇 답변 첫머리 80자. 매번 붙던 설명 4줄은 뺐다.
-            const cut = (s, n) => { const x = String(s || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x; };
-            const chName = { '톡톡': '네이버톡톡' }[chLabel(h.user_id)] || chLabel(h.user_id);
-            queue.push(`${chName} · ${미답 ? '봇이 답 못함' : '봇이 답함(처리 필요)'}\n${cut(h.message, 150)}` + (미답 ? '' : `\n↳ 봇: ${cut(h.bot_response, 80)}`));
+            // #1069(대표 11/9): 자르지 않음(4,000자 넘을 때만 「…」) · 건마다 한 통 · 색 머리(🟨 답 못함 · 🟧 답했지만 확인필요) · HTML 굵게 → 큐에는 다 만든 글 { h } 로
+            queue.push({ h: talkBlock(chLabel(h.user_id), 미답, h.message, h.bot_response, needsMemo(h.message)) });
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietNow();
         let lastAlert = st.last_alert || null;
         if (!quiet && queue.length) {
-            const NUM = '①②③④⑤⑥⑦⑧';
-            const lines = queue.slice(0, 8).map((m, n) => `${NUM[n]} ${m}`).join('\n\n') + (queue.length > 8 ? `\n\n… 그 밖에 ${queue.length - 8}건` : '');
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
-            /* 🔴 #371(대표 실물): 안내 문구가 낡아 있었다 — #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌린 뒤에도
-               "카카오는 챗봇 대화라 알림이 오지 않습니다"가 그대로 나갔다(대표가 받은 건 네이버톡톡 건인데도 그 문장이 붙었다).
-               지금은 채널마다 답변 창구가 있으므로 그대로 안내한다. */
-            const result = await notifyTelegram(`📮 톡톡 확인 ${queue.length}건\n\n${lines}`);
-            lastAlert = { at: new Date().toISOString(), count: queue.length, result };
-            if (result === 'sent') queue = [];
+            // #1069: 건마다 한 통 · 한 틱 최대 10통(1.1초 간격 · 남은 건 다음 틱) · 보낸 건만 큐에서 뺌 · 배포 전 쌓인 옛 글자 줄(문자열)은 이스케이프해 그대로
+            const batch = queue.slice(0, 10).map(m => (m && typeof m === 'object' && m.h) ? m.h : tgEsc(String(m || '')));
+            const rs = await tgSendBlocks(batch);
+            let sentN = 0; while (sentN < rs.length && rs[sentN] === 'sent') sentN++;
+            lastAlert = { at: new Date().toISOString(), count: batch.length, result: rs[rs.length - 1], sent: sentN };
+            if (sentN) queue = queue.slice(sentN);
         }
         await naverCfgSet('talktalk_request_state', { last_id: lastId, queue, last_alert: lastAlert });
     } catch (e) { console.error('[요청형알림] 오류:', e.message); }
@@ -8204,8 +8250,9 @@ async function collectOrderNew() {
         } catch (_) { /* 요약 집계 실패해도 신규주문 알림은 정상 발송 (무회귀) */ }
     }
     if (await alertQuietNow()) {   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
-        if (paid.length > 0 && await alertEnabled('order')) await alertNightAcc('order', paid.length);
-        if (kakaoSentN > 0) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
+        const ordOnN = await alertEnabled('order');   // #1070 신규주문 알림 꺼짐 = 주문·발송 건수 안 모음(실패·보류·번호없음은 종전대로)
+        if (paid.length > 0 && ordOnN) await alertNightAcc('order', paid.length);
+        if (kakaoSentN > 0 && ordOnN) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
         // #334(대표): 밤사이 실패·보류·차단도 아침에 보이게 — 건수 누적 + 실패 사유 최대 5건 보관.
         //   카운터 누적 방식이라 시간대 변환이 개입하지 않는다(#333에서 데인 함정 회피).
         if (kakaoFailN > 0) await alertNightAcc('kakaosend_fail', kakaoFailN);
@@ -8217,7 +8264,10 @@ async function collectOrderNew() {
                 await naverCfgSet('alert_night_kakao_fail', prev.concat(kakaoFailRows).slice(0, 5));
             } catch (_) { /* 상세 보관 실패해도 건수는 남는다 */ }
         }
-    } else if (paid.length > 0 && await alertEnabled('order')) {
+    } else if (!(await alertEnabled('order'))) {
+        // #1070(대표 11/9 「특이사항은 어차피 다 오니 신규주문 알림톡 발송은 끄기」) 신규주문 알림 꺼짐 = 건수 한 줄 0통 · 실패·보류·번호없음 줄이 있을 때만 그 줄들
+        if (kakaoLines.length) notifyTelegram(`🔴 알림톡 특이사항\n${kakaoLines.join('\n')}`);
+    } else if (paid.length > 0) {
         const base = (await alertText('order', { '건수': paid.length })) + (kakaoSentN > 0 ? ` · 알림톡 ${kakaoSentN}건 발송` : '');
         notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
     } else if (kakaoAny) {
@@ -8701,6 +8751,7 @@ async function collectInquiry() {
     }
     // 대표 7/27: 신규 미답변 → 생성 → 자동 답변(inquiry_auto_post ON일 때만·기본 OFF). 반품·교환·환불 카테고리는 무조건 직원(클레임).
     let inqPosted = 0, inqStaff = 0, inqFailed = 0;
+    const inqDone = [];   // #1069 답변완료 건마다 텔레그램 한 통(상품·문의·답 전체)
     if (freshItems.length) {
         const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
         for (const f of freshItems) {
@@ -8723,6 +8774,7 @@ async function collectInquiry() {
             try {
                 await naverPostInquiryAnswer(f.id, gen.answer, { name: 'auto' });
                 inqPosted++;
+                inqDone.push(qnaDoneBlock('고객문의', f.item.product_name, [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n'), gen.answer));
             } catch (e) {
                 inqFailed++;
                 inqStaff++;
@@ -8733,7 +8785,7 @@ async function collectInquiry() {
         }
         // 대표 7/27 알림 개선: 상황별 분리 + 야간 조용 (오류 알림은 항상)
         if (!(await alertQuietNow())) {
-            if (inqPosted > 0 && await alertEnabled('autodone')) notifyTelegram(await alertText('autodone', { '채널': '고객문의', '건수': inqPosted }));
+            if (inqPosted > 0 && await alertEnabled('autodone')) tgSendBlocks(inqDone).catch(() => {});   // #1069 건수 한 줄 → 건마다 한 통(🟦 · 끝나길 안 기다림 = 수집 시간 종전)
             if (inqStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': inqStaff, '채널': '고객문의' }));
         }
         if (inqFailed) notifyTelegram(`⚠️ 고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
@@ -9363,6 +9415,7 @@ async function collectQna() {
     }
     // 신규 미답변 → 시나리오 기반 생성 → 자동 게시(스위치 ON일 때만). 실패·SKIP·스위치 OFF = 직원 답변 대기.
     let posted = 0, needStaff = 0, failed = 0;
+    const qnaDone = [];   // #1069 답변완료 건마다 텔레그램 한 통
     if (fresh.length) {
         const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
         for (const q of fresh) {
@@ -9381,6 +9434,7 @@ async function collectQna() {
             try {
                 await naverPostQnaAnswer(q.id, draft, { name: 'auto' });
                 posted++;
+                qnaDone.push(qnaDoneBlock('상품문의', q.product, q.question, draft));
             } catch (e) {
                 failed++;
                 needStaff++;
@@ -9394,7 +9448,7 @@ async function collectQna() {
     await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
     // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상)
     if (!(await alertQuietNow())) {
-        if (posted > 0 && await alertEnabled('autodone')) notifyTelegram(await alertText('autodone', { '채널': '상품문의', '건수': posted }));
+        if (posted > 0 && await alertEnabled('autodone')) tgSendBlocks(qnaDone).catch(() => {});   // #1069 건마다 한 통(🟩)
         if (needStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': needStaff, '채널': '상품문의' }));
     }
     if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
@@ -15878,16 +15932,17 @@ async function telegramChatId() {
         return _tgChatId;
     } catch (e) { return null; }
 }
-function tgMask(text) {
+function tgMask(text, max) {
     // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙
     // 🔴 #340(대표 지시 2026-08-10): 회원ID처럼 **글자·@·.·_·-에 붙은 숫자는 식별자**이므로 가리지 않는다.
     //    종전엔 룰렛 당첨 알림의 회원ID(4790625123@k)가 통째로 ●●●가 되어 누구에게 쿠폰을 줘야 하는지
     //    알 수 없었다(실사고). 금액(19800원·1,234,567)·전화번호(01012345678)는 그대로 가려진다.
     return String(text || '')
         .replace(/(?<![A-Za-z@._\-0-9])(?:\d{1,3}(?:,\d{3}){2,}|\d{5,})(?![A-Za-z@._\-0-9])/g, '●●●')
-        .slice(0, 400);
+        .slice(0, max || 400);   // #1069 HTML 문의·톡톡 알림만 4,096(그 밖 종전 400)
 }
-async function notifyTelegram(text) {
+async function notifyTelegram(text, opts) {
+    const html = !!(opts && opts.html);   // #1069 문의·톡톡 알림만 HTML(<b>) · 400 이면 평문으로 1번 다시
     // 지시 #50-5: 일시 네트워크 오류 재시도 1회 (run #64 완료 알림이 배포 셧다운 순간 'fetch failed'로 유실된 사고 대응)
     const sendOnce = async () => {
         if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return 'off';
@@ -15895,11 +15950,13 @@ async function notifyTelegram(text) {
         if (!token) return 'no-token';
         const chatId = await telegramChatId();
         if (!chatId) return 'no-chat';
-        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        const post = (t, pm) => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: tgMask(text) }),
+            body: JSON.stringify(pm ? { chat_id: chatId, text: t, parse_mode: pm } : { chat_id: chatId, text: t }),
             signal: AbortSignal.timeout(TG_TIMEOUT_MS),   // #794 텔레그램이 응답을 안 주면 10초에 끊음(재시도 1회 포함 최대 약 25초 · 던지지 않고 audit 만 — 호출부 동작 무변경)
         });
+        let res = html ? await post(tgMask(text, 4096), 'HTML') : await post(tgMask(text), null);
+        if (html && res.status === 400) res = await post(tgMask(tgPlain(text), 4096), null);   // #1069 HTML 꼴 거절 = 평문 1번
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return 'sent';
     };
