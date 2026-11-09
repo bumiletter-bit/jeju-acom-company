@@ -11446,7 +11446,7 @@ const invoiceAuto = require('./invoice-auto.js')(app, { pool, authMiddleware, ad
 // ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====
 //   켜기 = agent_office_config 'sms_gateway' {"enabled":true,"mode":"record"} (record → draft → auto 순 · auto 는 대표 「고」 뒤) · env SMSGATE_USER/PASS/SIGNING_KEY(Render) · webhook 등록 = POST /api/sms/register-webhooks(관리자 1회)
 //   무회귀: 설정 행이 없으면 webhook 은 받아 기록만 하고 아무 것도 보내지 않는다 · 다른 기능과 표를 공유하지 않음(delivery_shipments 에 buyer_phone 칸만 추가)
-const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, push,   // #1062 push = 문자 앱 알림(push.sendApp) loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,
+const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, push, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,   // #1062 push = 문자 앱 알림(push.sendApp) · #1073 종전엔 이 주석이 뒤 네 이름을 삼켜 문자 모듈에서 undefined 였음
     // #610-G 발송 전 주문 보관(sms/preorders.js · 설정 sms_gateway.preorders 가 true 일 때만 60분 1회) — cafe24 는 const 가 뒤(10324행)라 지연 참조(TDZ)
     // #667 발주확인 전 주문도(네이버 NOT_YET · 쿠팡 ACCEPT) — 대표가 아침에 손으로 발주확인하기 전에 문자한 손님도 찾게. 이 줄에서만 켠다(행에 _x.placeOrderStatus · _status 가 실림)
     ordersBusy: () => _ordersBusy > 0,   // #667-b: 다른 곳이 주문을 조회 중이면 true(문자 수집 자신의 조회는 Core 직행이라 안 셈)
