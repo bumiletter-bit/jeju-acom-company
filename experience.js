@@ -64,10 +64,10 @@ function buildXlsx(rows, sales, from, to, notes) {
     const ws = wb.addWorksheet('체험 예약', { properties: { defaultRowHeight: 20 } });
     ws.columns = [{ header: '방문일', key: 'd', width: 12 }, { header: '요일', key: 'w', width: 5 }, { header: '시간', key: 't', width: 7 }, { header: '구분', key: 's', width: 9 }, { header: '이름', key: 'n', width: 11 }, { header: '연락처', key: 'p', width: 15 },
         { header: '체험', key: 'e', width: 6 }, { header: '입장', key: 'en', width: 6 }, { header: '유아', key: 'i', width: 6 }, { header: '금액', key: 'a', width: 11 }, { header: '상태', key: 'st', width: 9 }, { header: '접수 안내', key: 'sm', width: 9 }, { header: '날짜 확인', key: 'dk', width: 14 }, { header: '메모', key: 'm', width: 28 }, { header: '번호', key: 'no', width: 19 }];
-    const N = ws.columns.length, ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '확인 필요' };
+    const N = ws.columns.length, ST = { confirmed: '확정', canceled: '취소', returned: '반품', visited: '방문', unknown: '확인 필요', deleted: '우리 취소' };   // #1066 deleted
     const live = { e: 0, en: 0, i: 0, a: 0, n: 0 };
     for (const r of rows) {
-        const off = r.status === 'canceled' || r.status === 'returned', vis = r.status === 'visited';
+        const off = r.status === 'canceled' || r.status === 'returned' || r.status === 'deleted', vis = r.status === 'visited';
         const row = ws.addRow({ d: r.visit_date || '', w: r.visit_date ? dowOf(r.visit_date) : '', t: r.visit_time || (timeTbd(r) ? TIME_TBD : ''), s: r.source === 'store' ? '스토어' : r.source === 'manual' ? '수기' : '플레이스', n: r.name || '', p: fmtTelXl(r.phone),
             e: r.exp_count == null ? null : Number(r.exp_count), en: r.entry_count == null ? null : Number(r.entry_count), i: r.infant_count == null ? null : Number(r.infant_count), a: r.amount == null ? null : Number(r.amount), st: ST[r.status] || r.status, sm: r.sms_recv_at ? (r.sms_recv_via === 'alimtalk' ? '알림톡' : '문자') : '', dk: r.date_ok ? '' : (r.date_why || '확인 필요'), m: r.memo || '', no: r.order_no || '' });
         if (!off) { live.e += Number(r.exp_count) || 0; live.en += Number(r.entry_count) || 0; live.i += Number(r.infant_count) || 0; live.a += Number(r.amount) || 0; live.n++; }
@@ -298,7 +298,7 @@ module.exports = function mountExperience(app, deps) {
             visit_date DATE, visit_time VARCHAR(5),
             exp_count INTEGER NOT NULL DEFAULT 0, entry_count INTEGER NOT NULL DEFAULT 0, infant_count INTEGER NOT NULL DEFAULT 0,
             amount INTEGER,
-            status VARCHAR(12) NOT NULL DEFAULT 'confirmed',   -- confirmed | canceled | returned | visited | unknown(메일 꼴 모름)
+            status VARCHAR(12) NOT NULL DEFAULT 'confirmed',   -- confirmed | canceled | returned | visited | unknown(메일 꼴 모름) | deleted(#1066 우리가 플레이스·센터에서 취소 = 메일 안 옴 → 직원이 [삭제])
             date_ok BOOLEAN NOT NULL DEFAULT FALSE, date_why VARCHAR(40), date_fixed BOOLEAN NOT NULL DEFAULT FALSE,
             option_text TEXT, raw TEXT, items JSONB NOT NULL DEFAULT '{}'::jsonb,
             memo TEXT,
@@ -534,7 +534,7 @@ module.exports = function mountExperience(app, deps) {
         const raw = ('제목: ' + mail.subject + '\n' + mail.text).slice(0, 20000);
         if (old) {
             const fixed = old.date_fixed;
-            const status = p.status === 'canceled' ? 'canceled' : (old.status === 'visited' ? 'visited' : 'confirmed');
+            const status = p.status === 'canceled' ? 'canceled' : old.status === 'deleted' ? 'deleted' : (old.status === 'visited' ? 'visited' : 'confirmed');   // #1066 우리가 지운 예약(deleted)은 뒤 메일(변경 등)이 와도 안 살림 · 손님 취소 메일은 종전대로 canceled
             await pool.query(`UPDATE experience_bookings SET status=$2, name=CASE WHEN contact_at IS NOT NULL THEN name ELSE COALESCE($3,name) END, phone=CASE WHEN contact_at IS NOT NULL THEN phone ELSE COALESCE($4,phone) END, visit_date=$5, visit_time=$6, date_ok=$7, date_why=$8,
                 exp_count=COALESCE($9,exp_count), entry_count=COALESCE($10,entry_count), infant_count=COALESCE($11,infant_count), amount=COALESCE($12,amount), raw=$13, sms_eve_at = CASE WHEN visit_date IS DISTINCT FROM $5::date THEN NULL ELSE sms_eve_at END, updated_at=NOW() WHERE id=$1`,   /* #804 메일 「변경」으로 날짜가 바뀌면 새 날짜 전날 문자를 다시(PATCH 길과 같은 꼴 · SET 안의 visit_date = 바꾸기 전 값) */
                 [old.id, status, p.name, p.phone, fixed ? old.visit_date : (p.date || old.visit_date), fixed ? old.visit_time : (p.time || old.visit_time), fixed ? true : p.date_ok, fixed ? null : (p.date_ok ? null : (p.why || '메일 날짜 못 읽음')),
@@ -822,6 +822,7 @@ module.exports = function mountExperience(app, deps) {
                 if (phNow && /\*/.test(String(nmNow || ''))) return res.status(400).json({ error: '이름에 *(가린 글자)가 남아 있어요 — 손님 이름으로 고친 뒤 저장해 주세요(그대로면 「박*현님」으로 나가요)' });
                 set.push('contact_at=NOW()'); put('contact_by', String(actor(req).name || '').slice(0, 60) || null);
             }
+            if ('status' in b && old.status === 'deleted') return res.status(409).json({ error: '우리 취소(삭제)한 예약이에요 · 복구는 관리자 [복구]로' });   // #1066 PATCH 로 deleted 되살리기 막음
             if ('status' in b) { if (!['confirmed', 'canceled', 'visited'].includes(b.status)) return res.status(400).json({ error: '상태는 확정·취소·방문' }); put('status', b.status); }
             if (!set.length) return res.status(400).json({ error: '바꿀 칸이 없어요' });
             if ('visit_date' in b || 'visit_time' in b) {   // 직원이 날짜·시간을 정함 = 확인 끝 · 수집이 다시 덮지 않음
@@ -884,6 +885,44 @@ module.exports = function mountExperience(app, deps) {
             const row = (await pool.query(`SELECT ${ROW_COLS} FROM experience_bookings WHERE id=$1`, [id])).rows[0];
             res.json({ ok: true, item: row });
         } catch (e) { console.error('[#775] 방문:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
+    });
+    // #1066(대표 11/9 비 · 「우리가 플레이스에서 취소한 건은 메일이 안 와 화면에 남음」) ① 손님 찾기 ② [삭제] = 우리 취소(status 'deleted' · 표 ALTER 0)
+    //   GET  /api/agent-office/experience/search?q=   이름 부분일치 · 번호 끝 4자리 · 예약·주문번호 · (7자리↑ 숫자 = 번호 일부) · 전체 기간 · 최근 방문일 순 50건 · 취소·반품·삭제 줄도(화면이 회색)
+    //   POST /api/agent-office/experience/:id/delete {on}   on true = 확정·방문·확인 필요 → deleted(전 직원 · 세무사 X) · on false = 복구(관리자만 · 방문 기록 있으면 visited)
+    //        deleted = 건수·명단·달력·엑셀 합계·접수/전날 안내·알림톡·VM 번호 자동 입력에서 빠짐(전부 status='confirmed'·IN(confirmed,visited) 조건이라 저절로) · 손님 취소(메일)·반품 길 무변경
+    //        누가·언제 = audit experience_delete / experience_restore(before status) · 플레이스 뒤 메일이 와도 savePlace 가 deleted 유지(손님 취소 메일만 canceled)
+    const likeEsc = s => String(s).replace(/[\\%_]/g, c => '\\' + c);
+    app.get('/api/agent-office/experience/search', authMiddleware, async (req, res) => {
+        try {
+            await ready;
+            const q = String(req.query.q || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+            if (!q) return res.json({ q, items: [] });
+            const dg = q.replace(/[^0-9]/g, ''), onlyNum = /^[0-9\s-]+$/.test(q);
+            const val = ['%' + likeEsc(q) + '%'], or = [`name ILIKE $1`, `order_no ILIKE $1`];
+            if (onlyNum && dg.length === 4) { val.push(dg); or.push(`right(phone, 4) = $${val.length}`); }
+            if (onlyNum && dg.length >= 7) { val.push('%' + dg + '%'); or.push(`phone LIKE $${val.length}`); }
+            if (onlyNum && dg.length >= 5 && dg !== q) { val.push('%' + dg + '%'); or.push(`order_no LIKE $${val.length}`); }   // 「1393-580…」 꼴로 친 예약번호
+            const rows = (await pool.query(`SELECT ${ROW_COLS} FROM experience_bookings WHERE ext_key NOT LIKE 'manual:new-%' AND (${or.join(' OR ')})
+                ORDER BY visit_date DESC NULLS LAST, visit_time DESC NULLS LAST, id DESC LIMIT 50`, val)).rows;
+            res.json({ q, items: rows });
+        } catch (e) { console.error('[#1066] 찾기:', e.message); res.status(500).json({ error: '찾지 못했어요' }); }
+    });
+    app.post('/api/agent-office/experience/:id/delete', authMiddleware, async (req, res) => {
+        try {
+            await ready;
+            if (req.user && req.user.role === 'accountant') return res.status(403).json({ error: '세무사 계정은 지울 수 없어요' });
+            const id = Number(req.params.id) || 0, on = !(req.body && req.body.on === false);
+            if (!on && !(req.user && req.user.role === 'admin')) return res.status(403).json({ error: '복구는 관리자만 할 수 있어요' });
+            const old = (await pool.query(`SELECT id, status, source, name, to_char(visit_date,'YYYY-MM-DD') AS visit_date, visit_time FROM experience_bookings WHERE id=$1`, [id])).rows[0];
+            if (!old) return res.status(404).json({ error: '없는 예약이에요' });
+            const r = on
+                ? await pool.query(`UPDATE experience_bookings SET status='deleted', updated_at=NOW() WHERE id=$1 AND status IN ('confirmed','visited','unknown') RETURNING id`, [id])
+                : await pool.query(`UPDATE experience_bookings SET status = CASE WHEN visited_at IS NOT NULL THEN 'visited' ELSE 'confirmed' END, updated_at=NOW() WHERE id=$1 AND status='deleted' RETURNING id`, [id]);
+            if (!r.rows.length) return res.status(409).json({ error: on ? '이미 취소·반품·삭제된 예약이에요' : '삭제된 예약이 아니에요' });
+            await audit(on ? 'experience_delete' : 'experience_restore', id, { before: { status: old.status }, after: { status: on ? 'deleted' : 'restored' }, source: old.source, visit_date: old.visit_date, visit_time: old.visit_time }, actor(req));
+            const row = (await pool.query(`SELECT ${ROW_COLS} FROM experience_bookings WHERE id=$1`, [id])).rows[0];
+            res.json({ ok: true, item: row });
+        } catch (e) { console.error('[#1066] 삭제:', e.message); res.status(500).json({ error: '저장하지 못했어요' }); }
     });
 
     // ── #1040(대표 11/6 「체험예약도 자동으로 확인하고 입력하도록」) 플레이스 번호 미입력 → 나스 VM 어사이드가 읽어 저장 ─────────────

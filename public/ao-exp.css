@@ -48,6 +48,7 @@ body.xp-open { overflow: hidden; }
 .xp-st { font-weight: 600; }
 .xp-st.s-visited { color: var(--x-ok); }
 .xp-st.s-canceled, .xp-st.s-returned { color: var(--x-err); }
+.xp-st.s-deleted { color: var(--x-sub); background: var(--x-soft); border: 1px solid var(--x-line); border-radius: 999px; padding: 0 8px; }   /* #1066 우리 취소 = 회색 알약 */
 .xp-st.s-unknown { color: var(--x-warn); }
 .xp-sms { font-style: normal; font-size: 12px; }
 .xp-sms.ok { color: var(--x-ok); }
@@ -319,3 +320,28 @@ html[data-ao-theme="dark"] .xp-sale-line { background: rgba(255, 146, 43, .10); 
 .xp-memo-edit .xp-edit-acts { align-items: center; justify-content: flex-end; }
 .xp-m-who { flex: 1 1 auto; min-width: 0; color: var(--x-acc); font-size: 12px; font-weight: 700; }
 @media (max-width: 720px) { .xp-acts { flex-wrap: wrap; } }
+
+/* #1066 ① 손님 찾기(창 머리 아래 한 줄 · 결과 = 아래로 펼침 목록) ② [삭제] 확인 칸 · 찾아 간 줄 잠깐 강조 */
+.xp-find { position: relative; padding: 8px 20px; border-bottom: 1px solid var(--x-line); }
+.xp-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.xp-q { box-sizing: border-box; width: 100%; min-height: 40px; padding: 0 12px; border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-soft); color: var(--x-ink); font: inherit; font-size: 14px; }
+.xp-q:focus { outline: 2px solid var(--x-acc); outline-offset: 0; background: var(--x-card); }
+.xp-qres { position: absolute; left: 20px; right: 20px; top: calc(100% - 4px); z-index: 30; max-height: min(60vh, 420px); overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--x-card); border: 1px solid var(--x-line); border-radius: 12px; box-shadow: 0 10px 28px rgba(16, 24, 40, .18); }
+.xp-qres li { margin: 0; }
+.xp-qhit { box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 6px 10px; border: 0; border-left: 3px solid var(--x-st); border-radius: 8px; background: transparent; color: var(--x-ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.xp-qhit.src-pl { border-left-color: var(--x-pl); } .xp-qhit.src-mn { border-left-color: var(--x-mn); }
+.xp-qhit:hover, .xp-qhit:focus-visible { background: var(--x-acc-soft); }
+.xp-qhit.off { color: var(--x-sub); } .xp-qhit.off b { text-decoration: line-through; }
+.xp-qhit .xp-qd { flex: none; color: var(--x-sub); font-variant-numeric: tabular-nums; }
+.xp-qhit b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xp-qhit .xp-qp { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--x-sub); }
+.xp-qhit .xp-st, .xp-qhit .xp-src { flex: none; }
+.xp-qnone { padding: 12px; color: var(--x-sub); font-size: 13px; }
+.xp-btn.danger { background: var(--x-err); border-color: var(--x-err); color: #fff; }
+.xp-delask p { margin: 0 0 8px; font-size: 13px; line-height: 1.5; flex-basis: 100%; }
+.xp-row.xp-hit { outline: 2px solid var(--x-acc); outline-offset: -2px; background: var(--x-acc-soft); transition: background .3s; }
+@media (max-width: 720px) {
+    .xp-find { padding: 8px 16px; } .xp-qres { left: 16px; right: 16px; }
+    .xp-qhit .xp-qp, .xp-qhit .xp-src { display: none; }   /* 폰 = 날짜·시간 · 이름 · 상태 한 줄 */
+}
+@media (max-width: 960px), (pointer: coarse) { .xp-q { min-height: 44px; } }
