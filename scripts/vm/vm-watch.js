@@ -12,6 +12,11 @@
 //   지시당 상한 10분(claude) · 20분(순위 · 포인트 지급) → 자식 트리째 끔(Windows taskkill /T /F)
 //   #1056-a 포인트 보상 지급 갈래 = 본문이 「포인트 (보상) 지급」으로 시작(isPoint) → claude 길 그대로 + 프롬프트 규칙 ①에 포인트지급 화면 [회원검색]·[추가]·[확인]만 허용 · [절차] 블록(업무지식 절) · 상한 20분 · 09:10~09:45 쉼
 //     실패 재집기(같은 줄 하루 2회)는 절차 (c) 「오늘 같은 아이디 지급 줄 있으면 지급 X」가 중복을 막음
+//   #1082 포인트 갈래 = 소넷(FAST_MODEL · 10분) 먼저 → 실패(시간 초과·오류·빈 결과)면 Opus 1회(20분 · 글머리 RETRY_NOTE = 오늘 지급 줄 먼저 확인 · 애매하면 멈춤)
+//     → 그래도 실패면 대기로 안 되돌리고 오류(실행 최대 2번 = 종전과 같음) · 이 갈래는 09:00~09:45 쉼(소넷+Opus 30분) · 아이디+주문번호 둘 다 있으면 찾기 건너뛰고 대조만(b-0)
+//   #1083 배송지 변경 갈래(isAddr · 네이버만) = 같은 소넷 → Opus 1회 · [고객 배송지 정보수정]·주소 검색·[저장]만 허용 · 멈춤 조건(ADDR_STEPS e) ·
+//     오늘 최종발주 나갔나 = 실DB 읽기(final_order_marks 오늘 · 「[최종발주]」 오늘 줄) → 저장했으면 답에 「⚠ 오늘 발주 나감 → 거래처 연락」 한 줄
+//   #1082-② 센터 로그인 유지(keepMaybe) = 쉬는 동안 30분마다 센터 첫 화면 탭 새로고침(claude 0) · 로그인 화면 = 「간편 로그인」 1회 · 2단계·폰 승인 = 멈춤 + 텔레그램(서버 하루 1통) + 3시간 쉼
 //   🔴 창구(get.js·respond.js)를 부르지 않고 같은 꼴을 여기서 쓴다 = 둘 다 창구 heartbeat(desk_heartbeat)를 덮어 창구 「자리 비움」 판정이 흐려지므로.
 //     VM heartbeat = agent_office_config 'vm_heartbeat' {at, state, order_id, host} 따로(60초마다)
 //   기동 복구 = 「[VM]」 머리 '처리중'만 '대기'로(자기 것만 · 창구 지시는 손대지 않음 · vm_heartbeat 2분 안에 살아 있는 러너가 돌리는 지시는 건너뜀)
@@ -20,6 +25,7 @@
 //         node scripts/vm/vm-watch.js --once     (한 번만 보고 끝 · 시험)
 //         node scripts/vm/vm-watch.js --status   (잠금·키워드·상태 파일만 · DB 0)
 //   env(시험용): VM_CLAUDE_BIN(.js 면 node 로 띄움) · VM_NODE_BIN · VM_RANK_SCRIPT · VM_POLL_MS · VM_ORDER_LIMIT_MS · VM_RANK_LIMIT_MS · VM_POINT_LIMIT_MS · VM_MODEL
+//         · #1082 VM_FAST_MODEL · VM_FAST_LIMIT_MS · VM_ADDR_LIMIT_MS · VM_CENTER_KEEP_MS(0 = 로그인 유지 끔) · ASIDE_EXE
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path');
 const { spawn, execFileSync } = require('child_process');
@@ -35,13 +41,22 @@ const ORDER_LIMIT_MS = Number(process.env.VM_ORDER_LIMIT_MS) || 10 * 60000;
 const RANK_LIMIT_MS = Number(process.env.VM_RANK_LIMIT_MS) || 20 * 60000;
 const POINT_LIMIT_MS = Number(process.env.VM_POINT_LIMIT_MS) || 20 * 60000;   // #1056-a 포인트 보상 지급 갈래(센터 로그인·주문 대조·지급 · 실건 약 15분)
 const MODEL = process.env.VM_MODEL || 'claude-opus-5-5';
+// #1082 포인트·#1083 배송지 갈래 = 먼저 소넷(빠름) → 실패(시간 초과·오류·빈 결과)면 같은 지시를 Opus 로 1회(재시도 글머리에 「중복 확인 먼저」) · 그 밖 지시는 종전 MODEL 그대로
+const FAST_MODEL = process.env.VM_FAST_MODEL || 'claude-sonnet-5-5';
+const FAST_LIMIT_MS = Number(process.env.VM_FAST_LIMIT_MS) || 10 * 60000;   // 소넷 상한(실건 5~7분) · 이어 Opus 20분 = 합 30분 → 이 두 갈래는 09:00 부터 쉼(SKIP_FAST)
+const ADDR_LIMIT_MS = Number(process.env.VM_ADDR_LIMIT_MS) || 20 * 60000;    // #1083 배송지 변경 Opus 재시도 상한
+// #1082-② 센터 로그인 유지 = 러너가 쉬는 동안 30분마다 센터 탭 가벼운 새로고침(claude 안 부름 · aside MCP 직접) · 0 = 끔
+const KEEP_MS = process.env.VM_CENTER_KEEP_MS != null && process.env.VM_CENTER_KEEP_MS !== '' ? Number(process.env.VM_CENTER_KEEP_MS) : 30 * 60000;
+const KEEP_STATE = path.join(DIR, 'vm-center-keep.json');
+const KEEP_PHONE_BACKOFF_MS = 3 * 3600e3;   // 2단계·폰 승인 화면을 본 뒤 3시간은 다시 안 누름(텔레그램은 서버가 하루 1통)
+const CENTER_HOME = 'https://sell.smartstore.naver.com/#/home/dashboard';
 const ALLOWED = 'mcp__aside__repl,mcp__aside__exec';   // 어사이드만(교차 점검 2 · 파일 읽기 도구는 .env 유출 길이라 막음)
 const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
 // claude 작업 폴더 = 늘 ~/.akkome/vm-out/<지시번호>(리포 밖 = 리포 CLAUDE.md 안 실림 · .env 있는 C:\akm-vm 도 피함 · aside MCP 는 user 설정이라 그대로)
 const TOUCH_MS = Number(process.env.VM_TOUCH_MS) || 60000;   // 도는 동안 잠금 mtime·vm_heartbeat(busy) 갱신 간격
 const MAX_TRIES = 2;   // 첫 실패 = 대기로 한 번 되돌림 · 두 번째 실패 = 오류
 // 키워드 순위 09:30 창 피하기 = 상한만큼 앞당김(claude 10분 → 09:20 · 순위 20분 → 09:10)
-const SKIP_CLAUDE = ['09:20', '09:45'], SKIP_RANK = ['09:10', '09:45'];
+const SKIP_CLAUDE = ['09:20', '09:45'], SKIP_RANK = ['09:10', '09:45'], SKIP_FAST = ['09:00', '09:45'];   // #1082 SKIP_FAST = 소넷 10분 + Opus 20분
 // 정해진 명령 갈래: 「[VM]」 뒤 본문이 이 꼴의 짧은 한 마디일 때만(「키워드 순위 관리 화면 고쳐줘」 처럼 다른 일이 섞이면 claude 길)
 const RANK_RE = /^(?:키워드\s*)?순위\s*(?:확인|다시|재수집|수집|돌려|체크)?\s*(?:다시)?\s*(?:해\s*줘|해\s*주세요|해|좀|부탁(?:해)?|요)?[\s.!?~]*$/;
 const FROM_DESK = '창구 → VM';   // 창구가 승인 뒤 넘긴 줄의 created_by
@@ -63,13 +78,26 @@ function isRank(content) { const b = bodyOf(content); return b.length > 0 && b.l
 const POINT_RE = /^포인트\s*(?:보상\s*)?지급/;
 // #1064(11/9 지시 #3528 「[VM] saygoodjod 네이버페이 보상처리진행해줘! 포인트 지급이고 …」 이 갈래를 못 탐) = 본문 어디든
 //   (포인트 && 지급) · 보상 처리/지급 · (네이버페이 && 보상) 이면 포인트 갈래 · 순위 갈래(isRank)가 먼저라 「순위 확인」류는 겹치지 않음
-const POINT_ANY = [s => POINT_RE.test(s), s => /포인트/.test(s) && /지급/.test(s), s => /보상\s*(?:처리|지급)/.test(s), s => /네이버\s*페이/.test(s) && /보상/.test(s)];
+const POINT_AMT = /\d{1,3}(?:,\d{3})+|\d+\s*(?:원|천)/, POINT_ASK = /내역|얼마|확인|봐\s*줘/;
+const POINT_ANY = [s => POINT_RE.test(s), s => /포인트/.test(s) && /지급/.test(s), s => /보상\s*(?:처리|지급)/.test(s), s => /네이버\s*페이/.test(s) && /보상/.test(s),
+    s => /포인트/.test(s) && /보상/.test(s) && (POINT_AMT.test(s) || /아이디/.test(s) || /\d{16}/.test(s)) && !POINT_ASK.test(s)];   // #1082 「아이디 abc 포인트 보상 5,000」(사유 없이)도 포인트 갈래 = 금액·아이디·주문번호 있을 때만 · 조회 꼬리(내역·얼마·확인·봐줘) 제외(워커1 점검)
 function isPoint(content) { const b = bodyOf(content); return !isRank(content) && POINT_ANY.some(f => f(b)); }
+// #1083 배송지 변경 갈래(네이버만) · 순위·포인트 갈래가 먼저 · 워커1 점검 = 「주소」 단독은 URL 뜻과 겹침 →
+//   (「배송지·받는 곳」 또는 「주소」 + 상품주문번호 16자리·전화번호 꼴) && 변경 류 · 조회 꼬리(확인·봐줘·있는지·됐는지·알려)는 제외(단 주문번호·「→」 있으면 실행 지시)
+const ADDR_ACT = /(?:변경|수정|바꿔|바꾸|바꿀|바뀐|정정)/, ADDR_ASK = /(?:확인|봐\s*줘|봐\s*주|있는지|됐는지|되었는지|알려)/;
+const ORDER_NO_RE = /\d{16}/, PHONE_RE = /01[016789][-\s]?\d{3,4}[-\s]?\d{4}/;
+function isAddr(content) {
+    const b = bodyOf(content);
+    if (isRank(content) || isPoint(content) || !ADDR_ACT.test(b)) return false;
+    if (!(/배송지|받는\s*곳/.test(b) || (/주소/.test(b) && (ORDER_NO_RE.test(b) || PHONE_RE.test(b))))) return false;
+    return !(ADDR_ASK.test(b) && !ORDER_NO_RE.test(b) && !/→|->/.test(b));
+}
+const isFast = content => isPoint(content) || isAddr(content);   // 소넷 → Opus 1회 갈래
 
 // ── 쉼 판단(어사이드 한 번에 하나) ──
 function krBusy() { try { return require('./exp-phone-auto.js').krBusy(); } catch (e) { return false; } }
 // k = kstNow() 꼴(UTC 칸에 KST) · rank = 순위 갈래면 09:10 부터 · 아니면 09:20 부터
-function inSkip(k, rank) { const w = rank ? SKIP_RANK : SKIP_CLAUDE; const hm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0'); return hm >= w[0] && hm < w[1]; }
+function inSkip(k, rank) { const w = rank === 'fast' ? SKIP_FAST : rank ? SKIP_RANK : SKIP_CLAUDE; const hm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0'); return hm >= w[0] && hm < w[1]; }
 function lockBusy() { try { return fs.existsSync(LOCK) && Date.now() - fs.statSync(LOCK).mtimeMs < LOCK_STALE_MS; } catch (e) { return false; } }
 function busyWhy() { if (krBusy()) return '키워드 순위 도는 중'; if (lockBusy()) return '어사이드 잠금(체험 번호 틱 등)'; return ''; }
 const LOCK_MARK = () => 'vm-watch:' + process.pid;
@@ -244,6 +272,7 @@ function findClaude() {
 const POINT_STEPS = [   // #1080(대표 11/9 23:1x) ①구매자 아이디 회원검색 · 목적 = 구매확정 이력 있으면 구매 프로모션 적립 · 없으면 비구매 적립 ②중복 = 오늘 같은 아이디만 멈춤 ③주문 찾기 최근 3개월 ④지급 화면 매번 새로 · [지급대상 확인] 무반응 = 처음부터 1회만 다시 ⑤비즈월렛 자동충전(잔액은 보고 줄에만)
     '[절차] 네이버페이 포인트 보상 지급',
     '(a) 스마트스토어센터 로그인 = 커머스ID 「간편 로그인」 단추(비밀번호 입력 X · 금고 자동 채움). 2단계 인증·보안 확인이 뜨면 규칙 ②대로 멈춘다.',
+    '(b-0) #1082 지시에 구매자 네이버 아이디와 주문번호가 둘 다 적혀 있으면 찾는 단계를 건너뛴다 → 주문통합검색(최근 3개월)에서 그 주문번호 1건만 열어 구매자ID = 지시 아이디 · 품목 · 결제금액 · (지시에 손님 이름·번호가 있으면 그것도) 맞는지 대조만 → 셋 다 맞을 때만 (c)(d)(e) 대로 지급 · 하나라도 다르면 (f) 대로 멈춘다.',
     '(b-1) #1064 지시에 네이버 아이디(영문·숫자 아이디 · 예 saygoodjod)가 직접 적혀 있으면 주문 한 건을 특정할 필요가 없다 → 센터 회원검색에서 그 아이디 1건 확인 + 판매관리 › 주문통합검색(기간 = 최근 3개월)에서 구매자ID 로 지시 품목(예 타이벡) 주문이 1건 이상 있는지만 확인한다(여러 건이어도 OK · 어느 건인지 가리지 않음) → (c)(d)(e) 대로 지급. 「주문이 여럿이라 어느 건인지 몰라 못 함」 식으로 멈추지 않는다.',
     '(b) 아이디 없이 주문번호(또는 이름·끝4·「오늘 n시 톡톡」)로 온 지시 = 판매관리 › 주문통합검색(기간 = 최근 3개월 · 한 달 넘어 연락 오는 손님도 있다)에서 주문을 찾아 구매자 아이디·품목·결제금액·구매확정 여부를 확인한다 → 그 **구매자 아이디**로 지급한다. 톡톡 아이디가 닉네임이거나 끝 밑줄 「_」이 빠져 보이면 톡톡 파트너센터 손님 정보 → 주문이력 → 주문번호로 묶고, 센터 회원검색 0건이면 이름 검색 뒤 마스킹 앞 글자로 대조한다.',
     '(c) 중복 막기 = 혜택/마케팅 › 포인트 지급관리 목록(지급 시점 「오늘」)에서 **오늘** 같은 아이디 지급 줄이 있을 때만 지급하지 않고 「이미 오늘 지급됨 · 일련번호 · 금액」으로 답한다(다시 집힌 지시도 이 확인으로 중복 0). 어제·지난달 등 그 전 지급은 막지 않는다 — 지급은 그대로 하고 끝 보고에 「전에도 받음: 날짜 · 금액 · 사유」 한 줄만. 화면의 「최근 30일 지급」 칸에 값이 나와도 그것 때문에 멈추지 않는다.',
@@ -253,22 +282,52 @@ const POINT_STEPS = [   // #1080(대표 11/9 23:1x) ①구매자 아이디 회�
     '(f) (b) 길(주문번호·이름·끝4·톡톡 시각) = 지시의 손님 ↔ 주문(품목·결제금액·받은 날) ↔ 아이디 셋 중 하나라도 안 맞거나 후보가 둘 이상이거나 애매하면 / (b-1) 길(아이디 직접) = 회원검색 0건·2건↑이거나 그 아이디에 지시 품목 주문이 0건이면 → 지급하지 않고, 무엇이 안 맞는지 화면 값(이름·번호·네이버 아이디 전체 · 주문번호 · 금액 · 목적)으로 답한다. 손님에게 보내는 톡톡 답은 지시에 「답도 보내」가 있을 때만(없으면 사람 몫).',
     '(g) 지시 글 꼴 예시: 「[VM] 아이디 saygoodjod 포인트 보상 5,000 · 사유 타이벡 파손 보상처리」 · 「[VM] 포인트 보상 지급 주문번호 2026110539641061 6,000 · 사유 타이벡 파손 보상처리」.',
 ];
-function promptFor(o) {
+// #1083 배송지 변경 절차(네이버만 · 실례 #952 = 11/2 상품주문 2026110170868221) · 업무지식 「배송지 변경(VM)」 절과 같게
+const ADDR_STEPS = [
+    '[절차] 네이버 주문 배송지 변경(스마트스토어센터 · 쿠팡·자사몰 주문이면 하지 말고 「네이버 주문만 VM 이 바꿔요 · 사람 확인 필요」로 답한다)',
+    '(a) 센터 로그인 = 커머스ID 「간편 로그인」 단추(비밀번호 입력 X · 금고 자동 채움). 2단계 인증·보안 확인이 뜨면 규칙 ②대로 멈춘다.',
+    '(b) 판매관리 › 배송준비(발주확인 끝난 주문 · 없으면 주문통합검색 최근 3개월)에서 주문을 찾는다 = 지시의 (상품)주문번호가 있으면 그것 먼저 · 없으면 구매자 또는 수취인 이름 + 전화번호로. 손님 ↔ 주문이 정확히 하나로 맞을 때만 다음으로.',
+    '(c) 그 주문의 [고객 배송지 정보수정] → 주소 검색에 지시의 새 주소(도로명·지번)를 넣어 찾는다 → 후보가 정확히 1개일 때만 고르고 상세주소(동·호수 등)를 지시 그대로 넣는다 → 저장 1회. 받는 분 이름·번호를 바꾸라는 지시가 있으면 그 칸도 지시 그대로(없으면 그대로 둔다).',
+    '(d) 저장 뒤 그 주문을 다시 열어(새로 고침) 바뀐 주소가 지시와 같은지 확인한다. 같은 화면에서 저장을 두 번 누르지 않는다(이미 새 주소면 다시 저장 X).',
+    '(e) 멈춤(저장하지 않음) = 발송처리 됐거나 배송준비·발주확인 상태가 아님 · 후보 주문이 둘 이상이라 애매 · 주소 검색 후보 0개 또는 2개 이상 · 지시의 이름·번호가 주문과 안 맞음 · 새 주소가 지시에 없거나 덜 적힘 → 무엇이 안 맞는지 화면 값(이름·번호 전체 · 주문번호 · 주문 상태 · 검색 후보)으로 답한다.',
+    '(f) 배송 메모(문 앞에 놔 주세요 등)를 바꾸라는 말이 있으면 센터에 그 칸이 없다(#952) → 답에 「배송 메모는 센터에 칸 없음 → 발주 메모함에 넣어 주세요: <메모 글>」 한 줄.',
+    '(g) 끝 보고 = 첫 줄 「✅ 배송지 변경 완료」(멈췄으면 「⚠️ 배송지 변경 못 함 — 까닭」) → 상품주문번호 · 받는 분 이름·번호 전체 · 바뀌기 전 주소 전체 → 바뀐 주소 전체 · 주문 상태 · (해당하면) 배송 메모 안내 줄.',
+    '(h) 지시 글 꼴 예시: 「[VM] 배송지 변경 주문번호 2026110170868221 → 제주시 서흘길 9, 3층」 · 「[VM] 주소 변경 홍길동 010-1234-5678 → 서울 강남구 테헤란로 1 101동 1001호」.',
+];
+const RETRY_NOTE = [
+    '[다시 시도 · 중요] 같은 지시를 앞 모델이 처리하다 중간에 끊겼다(시간 초과·오류). 앞 시도가 어디까지 했는지 모른다.',
+    '→ 무엇보다 먼저 이미 된 일인지 확인한다: 포인트 = 포인트 지급관리 목록(지급 시점 「오늘」)에 같은 아이디 줄이 있으면 지급하지 말고 「이미 오늘 지급됨(앞 시도) · 일련번호 · 금액」으로 답한다 / 배송지 = 그 주문 주소가 이미 새 주소면 저장하지 말고 「이미 바뀜(앞 시도)」으로 답한다.',
+    '→ 목록·주문을 못 읽는 등 확인이 애매하면 지급·저장하지 말고 멈춰 「앞 시도 결과 확인 못 함 — 사람 확인 필요」로 답한다.',
+];
+function promptFor(o, opt) {
     const out = path.join(OUT_DIR, String(o.id));
-    const point = isPoint(o.content);
+    const point = isPoint(o.content), addr = !point && isAddr(o.content), op = opt || {};
+    const mins = Math.round((op.limitMs || (point || addr ? FAST_LIMIT_MS : ORDER_LIMIT_MS)) / 60000);
     return [
         `너는 나스 VM(어사이드 전용 윈도우 PC)의 워커야. 총괄이 창구 대기열로 보낸 지시 #${o.id} 를 처리해.`,
         point
             ? `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 다룬다. 이 지시는 네이버페이 포인트 보상 지급 일이라 스마트스토어센터 포인트지급 화면의 [회원검색]·[추가]·[지급대상 확인]·[확인] 단추는 아래 [절차]대로 누른다. 그 밖 저장·발송·결제·삭제·설정 변경 단추는 종전대로 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`
-            : `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 읽고 조회하는 일만 한다. 저장·발송·결제·삭제·설정 변경 단추는 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`,
+            : addr
+                ? `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 다룬다. 이 지시는 네이버 주문 배송지 변경 일이라 스마트스토어센터 그 주문의 [고객 배송지 정보수정]·주소 검색·후보 고르기·[저장] 단추는 아래 [절차]대로 누른다. 그 밖 저장·발송처리·발주확인·취소·결제·삭제·설정 변경 단추는 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`
+                : `규칙: ①어사이드 도구(mcp__aside__repl·exec)로 웹 화면을 읽고 조회하는 일만 한다. 저장·발송·결제·삭제·설정 변경 단추는 누르지 않는다(지시에 그런 일이 있으면 하지 말고 답에 「사람 확인 필요」로 적는다).`,
         `②로그인·보안 확인 화면이 나오면 그 탭을 그대로 두고 「VM 어사이드에서 로그인/보안 확인 필요」로 답한다. 비밀번호·토큰·.env 값은 읽거나 답에 쓰지 않는다.`,
         `③답은 사내 화면(에이전트 오피스)에만 보이니 손님 이름·전화번호·네이버 아이디는 가리지 말고 전체로 쓴다(센터와 대조해야 함 · 「정*영」「je***」「끝4」 꼴 금지 · #1076 대표). 텔레그램·외부로 보내는 글은 없다. ④답은 한국어로 짧게, 요점부터. 표가 편하면 표.`,
         `⑤파일(캡처·엑셀 등)을 넘겨야 하면 ${out} 폴더 안에 저장하고 답 맨 끝에 「ATTACH: <전체 경로>」 를 파일마다 한 줄씩 적는다(5개까지 · 10MB 이하).`,
-        point ? `⑥이 일은 지시당 20분 안에 끝내야 한다.` : `⑥이 일은 지시당 10분 안에 끝내야 한다.`,
+        point || addr ? `⑥이 일은 지시당 ${mins}분 안에 끝내야 한다.` : `⑥이 일은 지시당 10분 안에 끝내야 한다.`,
         ...(point ? ['', ...POINT_STEPS] : []),
+        ...(addr ? ['', ...ADDR_STEPS, `(i) 오늘 최종발주 = ${op.sentToday ? '이미 나감 → 저장했으면 끝 보고에 「⚠ 오늘 발주 나감 → 거래처(효돈/대성)에 주소 변경 연락 필요」 한 줄(저장은 그대로 한다)' : '아직 안 나감(거래처 연락 줄 없음)'}.`] : []),
+        ...(op.retry ? ['', ...RETRY_NOTE] : []),
         '', '[지시]', bodyOf(o.content),
     ].join('\n');
 }
+// #1083 오늘 최종발주가 나갔나(실DB 읽기만) = final_order_marks 오늘 고친 줄 또는 「[최종발주] …」 정리 기록 오늘 줄
+async function finalSentToday(db) {
+    const day = kstDay();
+    try { if ((await db.query(`SELECT 1 FROM final_order_marks WHERE (updated_at AT TIME ZONE 'Asia/Seoul')::date = $1::date LIMIT 1`, [day])).rows.length) return true; } catch (e) { /* 표 없음 = 아래로 */ }
+    try { if ((await db.query(`SELECT 1 FROM pending_orders WHERE is_deleted = false AND content LIKE '[최종발주] %' AND (created_at + interval '9 hours')::date = $1::date LIMIT 1`, [day])).rows.length) return true; } catch (e) { /* 무시 */ }
+    return false;
+}
+const SENT_LINE = '⚠ 오늘 발주 나감 → 거래처(효돈/대성)에 주소 변경 연락 필요';
 // 답 글에서 「ATTACH: 경로」 줄을 떼고, 그 지시 폴더(vm-out/<id>) 안의 실제 파일만 남긴다(.env 등 다른 파일이 나가지 않게)
 function takeAttach(text, id) {
     const base = path.resolve(OUT_DIR, String(id)) + path.sep, files = [], dropped = [];
@@ -284,8 +343,13 @@ function takeAttach(text, id) {
     return { answer, files, dropped };
 }
 async function doClaude(db, o) {
-    const cwd = claudeCwd(o.id), limitMs = isPoint(o.content) ? POINT_LIMIT_MS : ORDER_LIMIT_MS;
-    const r = await run(findClaude(), ['-p', '--model', MODEL, '--output-format', 'json', '--allowedTools', ALLOWED, '--disallowedTools', DENIED], { input: promptFor(o), limitMs, cwd, onTick: () => heartbeat(db, 'busy', o.id) });
+    if (isFast(o.content)) return doFast(db, o);   // #1082·#1083 소넷 → Opus 1회
+    const cwd = claudeCwd(o.id), limitMs = ORDER_LIMIT_MS;
+    return claudeOnce(db, o, MODEL, limitMs, promptFor(o), cwd);
+}
+// claude 한 번(종전 doClaude 본문 그대로 · 모델·상한·프롬프트만 인자)
+async function claudeOnce(db, o, model, limitMs, input, cwd) {
+    const r = await run(findClaude(), ['-p', '--model', model, '--output-format', 'json', '--allowedTools', ALLOWED, '--disallowedTools', DENIED], { input, limitMs, cwd, onTick: () => heartbeat(db, 'busy', o.id) });
     if (r.timeout) return { ok: false, why: `${Math.round(limitMs / 60000)}분 넘어 끔` };
     let j = null; try { j = JSON.parse(String(r.out).trim().split(/\r?\n/).filter(Boolean).pop() || ''); } catch (e) { j = null; }
     if (r.code !== 0 || !j || j.is_error || (j.subtype && j.subtype !== 'success') || !String(j.result || '').trim()) {
@@ -294,6 +358,26 @@ async function doClaude(db, o) {
     }
     const a = takeAttach(j.result, o.id);
     return { ok: true, answer: a.answer + (a.dropped.length ? `\n\n(올리지 못한 첨부: ${a.dropped.join(', ')} — VM 지시 폴더 밖이거나 형식·크기 밖)` : ''), files: a.files };
+}
+// #1082·#1083 포인트·배송지 = 소넷 먼저 → 실패면 Opus 1회(재시도 글머리 = 이미 된 일인지 먼저 확인 · 애매하면 멈춤) → 그래도 실패면 대기로 안 되돌리고 바로 오류(3·4번째 실행 없음)
+async function doFast(db, o) {
+    const cwd = claudeCwd(o.id), addr = isAddr(o.content);
+    const sentToday = addr ? await finalSentToday(db) : false;
+    const again = Number(o.tries) >= 2;   // 다시 집힌 줄(재시작 뒤 포함) = 앞 시도가 어디까지 했는지 모름 → 소넷 첫 실행에도 RETRY_NOTE(워커1 점검)
+    const first = await claudeOnce(db, o, FAST_MODEL, FAST_LIMIT_MS, promptFor(o, { limitMs: FAST_LIMIT_MS, sentToday, retry: again }), cwd);
+    let res = first, used = FAST_MODEL;
+    if (!first.ok) {
+        log(`#${o.id} 소넷 실패 → Opus 로 1회 다시 · ${clean(first.why, 120)}`);
+        await appendStep(db, o.run_id, 'error', '↩️ 소넷 실패 — Opus 로 한 번 더(이미 된 일인지 먼저 확인): ' + clean(first.why, 200));
+        await audit(db, 'vm_fast_retry', o.id, { from: FAST_MODEL, to: MODEL, why: clean(first.why, 200) });
+        const lim = addr ? ADDR_LIMIT_MS : POINT_LIMIT_MS;
+        res = await claudeOnce(db, o, MODEL, lim, promptFor(o, { limitMs: lim, sentToday, retry: true }), cwd);
+        used = MODEL;
+        if (!res.ok) res = { ok: false, noRetry: true, why: `소넷·Opus 둘 다 실패 — 사람 확인 필요(앞 시도가 ${addr ? '저장' : '지급'}까지 갔는지 센터에서 먼저 확인) · 소넷: ${clean(first.why, 120)} · Opus: ${clean(res.why, 150)}` };
+    }
+    if (res.ok && addr && sentToday && /^\s*✅/.test(res.answer) && !res.answer.includes('오늘 발주 나감')) res.answer = res.answer.replace(/^[^\n]*/, m => m + '\n' + SENT_LINE);
+    if (res.ok) keepWrite({ at: new Date().toISOString() });   // 센터를 방금 썼음 = 로그인 유지 틱 30분 뒤로
+    return { ...res, model: used };
 }
 async function doRank(db, o) {
     const startedAt = Date.now();
@@ -313,27 +397,97 @@ async function doRank(db, o) {
 // 한 건 처리(집기 → 갈래 → 올리기 · 실패 1회 = 대기로)
 async function handle(db, id) {
     const o = await claim(db, id); if (!o) return { id, did: false };
-    const tries = triesBump(o.id), rank = isRank(o.content);
-    log(`#${o.id} 집음(${rank ? '순위 갈래' : isPoint(o.content) ? 'claude · 포인트 지급' : 'claude'} · ${tries}번째) :: ${head60(o.content)}`);
+    const tries = triesBump(o.id), rank = isRank(o.content); o.tries = tries;
+    log(`#${o.id} 집음(${rank ? '순위 갈래' : isPoint(o.content) ? 'claude · 포인트 지급' : isAddr(o.content) ? 'claude · 배송지 변경' : 'claude'} · ${tries}번째) :: ${head60(o.content)}`);
     await heartbeat(db, 'busy', o.id);
     let res;
     try { res = o.has_image ? { ok: false, why: '그림 첨부 지시는 VM 길에서 안 받음(글로만)' } : rank ? await doRank(db, o) : await doClaude(db, o); }
     catch (e) { res = { ok: false, why: '러너 오류: ' + e.message }; }
     let out;
     if (res.ok) { out = await respond(db, o, { kind: 'answer', answer: res.answer, title: res.title || '', attachments: res.files || [] }); triesClear(o.id); }
-    else if (tries < MAX_TRIES && !o.has_image) { await backToWait(db, o, res.why); out = { ok: true, status: '대기(다시)' }; }
+    else if (tries < MAX_TRIES && !o.has_image && !res.noRetry) { await backToWait(db, o, res.why); out = { ok: true, status: '대기(다시)' }; }
     else { out = await respond(db, o, { kind: 'error', error: res.why }); triesClear(o.id); }
     log(`#${o.id} → ${out.status || out.reason}${res.ok ? '' : ' · ' + clean(res.why, 120)}`);
     await heartbeat(db, 'idle');
     return { id: o.id, did: true, ok: res.ok, status: out.status || out.reason, rank };
 }
+// ── #1082-② 센터 로그인 유지(claude 0 · aside MCP 직접 · keyword-rank.js Aside) ──
+//   러너가 쉴 때(집을 지시 0) 마지막 센터 사용 30분 뒤 → 쉼 창(09:10~09:45)·키워드·잠금 피해 잠금 잡고 → 센터 첫 화면 탭(없으면 엶) 새로고침
+//   → 로그인 화면이면 「간편 로그인」 단추 1회 → 2단계·폰 승인·보안 확인 화면이면 멈춤 + 텔레그램(서버 하루 1통) + 3시간 안 누름
+//   지급·배송지 화면은 열지 않음(센터 첫 화면 탭만) · aside.exe 없는 PC(노트북·검증) = 아무것도 안 함
+const ASIDE_EXE = process.env.ASIDE_EXE || path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Aside', 'CLI', 'current', 'aside.exe');
+let asideFactory = null, keepNotify = null;   // 시험용 갈아끼우기(_setKeep)
+function keepRead() { try { const j = JSON.parse(fs.readFileSync(KEEP_STATE, 'utf8')); return j && typeof j === 'object' ? j : {}; } catch (e) { return {}; } }
+function keepWrite(patch) { try { fs.mkdirSync(DIR, { recursive: true }); const s = { ...keepRead(), ...patch }; const tmp = KEEP_STATE + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(s)); fs.renameSync(tmp, KEEP_STATE); } catch (e) { log('센터 유지 상태 쓰기 실패(무시): ' + e.message); } }
+const JS_KEEP = `const HOME = ${JSON.stringify(CENTER_HOME)};
+let t = null, opened = false;
+for (const x of tabs) { try { if (/^https:\\/\\/sell\\.smartstore\\.naver\\.com\\/#\\/home\\/dashboard/.test(x.url())) { t = x; break; } } catch (e) {} }
+if (!t) { t = await openTab(HOME); opened = true; }
+else { try { await t.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { try { await t.evaluate(() => location.reload()); } catch (_) {} } }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const look = async () => { let u = '', txt = ''; try { u = t.url(); } catch (e) {} try { txt = await t.evaluate(() => (document.body && document.body.innerText || '').slice(0, 2000)); } catch (e) {} return { u, txt }; };
+const isLogin = s => /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com|\\/login/i.test(s.u);
+const isPhone = s => /2단계|인증번호|본인\\s*확인|보안\\s*확인|기기\\s*등록|새로운\\s*기기|승인\\s*요청|휴대폰으로/.test(s.txt);
+await wait(5000);
+let a = await look(), state = 'ok', clicked = false;
+if (isLogin(a)) {
+  if (isPhone(a)) state = 'need_phone';
+  else {
+    try { clicked = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /간편\\s*로그인/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); } catch (e) { clicked = false; }
+    if (!clicked) state = 'login_fail';
+    else { await wait(8000); a = await look(); state = !isLogin(a) && /sell\\.smartstore\\.naver\\.com/.test(a.u) ? 'relogin' : isPhone(a) ? 'need_phone' : 'login_fail'; }
+  }
+} else if (!/sell\\.smartstore\\.naver\\.com/.test(a.u)) state = 'unknown';
+let where = ''; try { const q = new URL(a.u); where = q.host + q.pathname; } catch (e) {}
+console.log(JSON.stringify({ state, clicked, opened, where }));`;
+async function keepCenterOnce() {
+    const aside = asideFactory ? asideFactory() : new (require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js')).Aside)(ASIDE_EXE, s => log(s));
+    let timer = null;
+    try {
+        await aside.start();
+        return await Promise.race([aside.replJson('#1082 센터 로그인 유지', JS_KEEP), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('센터 유지 3분 넘음')), 3 * 60000); })]);
+    } finally { clearTimeout(timer); await Promise.resolve(aside.stop({ keepTabs: true })).catch(() => { }); }   // 센터 탭은 남김(다음 새로고침·지급이 씀)
+}
+// 🔵 텔레그램은 체험 자동(experience_auto)의 길을 빌림 → experience_auto.enabled 를 끄면(403) 로그인 알림도 같이 꺼짐(로그만 남음)
+async function keepTell(reason) {
+    if (keepNotify) return keepNotify(reason);
+    const API = String(process.env.EXP_AUTO_API || '').replace(/\/+$/, ''), TOKEN = String(process.env.EXP_AUTO_TOKEN || '');
+    if (!/^https?:\/\//.test(API) || TOKEN.length < 32) { log('센터 유지: 텔레그램 길 없음(.env EXP_AUTO_API·TOKEN) — 로그만'); return false; }
+    try {   // 서버 텔레그램 길 = 체험 번호 자동의 「예약 없는 멈춤」(id 0 · kind 갈래당 하루 1통 · #1040)
+        const r = await fetch(API + '/api/experience/auto/0/miss', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, kind: 'center_login' }), signal: AbortSignal.timeout(15000) });
+        return r.status === 200;
+    } catch (e) { log('센터 유지: 텔레그램 못 보냄 ' + e.message); return false; }
+}
+async function keepMaybe(force) {
+    if (!KEEP_MS && !force) return null;
+    const st = keepRead(), now = Date.now();
+    if (!force) {
+        if (st.phone_at && now - Date.parse(st.phone_at) < KEEP_PHONE_BACKOFF_MS) return null;
+        if (st.at && now - Date.parse(st.at) < KEEP_MS) return null;
+    }
+    if (inSkip(kstNow(), true) || busyWhy()) return null;   // 09:10~09:45 · 키워드 도는 중 · 남의 잠금
+    if (!asideFactory && !fs.existsSync(ASIDE_EXE)) return null;   // VM 아닌 PC
+    if (!lockTake()) return null;
+    let r;
+    try { r = await keepCenterOnce(); } catch (e) { r = { state: 'error', error: clean(e.message, 200) }; }
+    finally { lockFree(); }
+    const at = new Date().toISOString();
+    keepWrite({ at, result: r && r.state, error: r && r.error || null, ...(r && r.state === 'need_phone' ? { phone_at: at } : {}) });
+    log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.error ? ' · ' + r.error : ''}`);
+    if (r && (r.state === 'need_phone' || r.state === 'login_fail')) {
+        await keepTell(r.state === 'need_phone' ? '스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — VM 어사이드 센터 탭에서 승인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤'
+            : '스마트스토어센터 로그인 풀림(간편 로그인 안 됨) — VM 어사이드 센터 탭에서 로그인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤');
+        if (r.state === 'login_fail') keepWrite({ phone_at: at });   // 같은 3시간 쉼(단추 거듭 누르지 않게)
+    }
+    return r;
+}
 // 한 번 보기: 쉼 판단 → 집을 것 → 잠금 → 처리
 async function pollOnce(db) {
     const why = busyWhy(); if (why) return { skipped: why };
-    const id = await pick(db); if (!id) return { idle: true };
+    const id = await pick(db); if (!id) { const k = await keepMaybe(); return k ? { idle: true, keep: k.state } : { idle: true }; }
     const content = ((await db.query(`SELECT content FROM pending_orders WHERE id = $1`, [id])).rows[0] || {}).content;
-    const long = isRank(content) || isPoint(content);   // 상한 20분 갈래(순위·포인트) = 09:10 부터 쉼(상한만큼 앞당김)
-    if (inSkip(kstNow(), long)) return { skipped: (long ? '09:10' : '09:20') + '~09:45 키워드 순위 창', id };   // 지시는 대기에 남음
+    const long = isFast(content) ? 'fast' : isRank(content);   // 상한 20분 갈래(순위) = 09:10 부터 · #1082 소넷+Opus 갈래(포인트·배송지) = 09:00 부터 쉼(상한만큼 앞당김)
+    if (inSkip(kstNow(), long)) return { skipped: (long === 'fast' ? '09:00' : long ? '09:10' : '09:20') + '~09:45 키워드 순위 창', id };   // 지시는 대기에 남음
     if (!lockTake()) return { skipped: '잠금 못 잡음' };
     try { return await handle(db, id); } finally { lockFree(); }
 }
@@ -361,4 +515,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, SKIP_FAST, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
