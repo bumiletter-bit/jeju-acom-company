@@ -1,3 +1,7 @@
+## v5.9.740 (2026-11-09) — #1072-b 반품·교환 알림 거르기 틀(설정 claim_skip_channels · 기본 없음 = 종전) + 진단 러너 신청 칸(워커2 · 워커1 점검 막을 것 0)
+
+- order_probe_request 결과 items[] 에 claimReq {poid 끝4, kind, ch(requestChannel), reason} 추가(그 밖 칸 종전 · PII 0) · 거르기 = collectClaim 낮 갈래에서 상세 조회 응답의 kind 있고 ch 가 claim_skip_channels 에 든 건만 뺌(건수 = fresh − 뺀 수 · 0이면 0통) · 조회 실패·칸 없음·목록 밖·응답에 없는 건 = 보냄(손님 건 놓침 0) · naver_claim_alerted 는 거르기 전 기록(재알림 0) · 값 모음은 뺀 건 포함 · 한글 표 claim_channel_labels {값:한글} · 야간 = 종전(아침 브리핑 건수엔 판매자 건도 셈 = 보고 거리) · 발단 = 대표가 센터에서 판매자 반품 실건 2개 확인(상품주문번호 끝 2231 19:12 · 끝 5651 17:43 · 화면 「반품 요청자 판매자」) · v1072 23/23.
+
 ## v5.9.739 (2026-11-09) — #1072 1걸음 = 반품·교환 텔레그램 끝에 「(신청: …)」 꼬리 + 신청 채널 값 모으기(대표 「손님이 직접 신청한 반품·교환만 오게」 · 2걸음 거르기는 실값 확정 뒤 · 워커2 시공 · 워커1 점검 막을 것 0)
 
 - 공식 문서 = 반품 return·교환 exchange 안 requestChannel(string) 하나뿐 · 값 목록·설명 없음(포럼 0) → 실값 먼저 모음 · 🔴 네이버가 반품 정보 위치를 data[n].currentClaim.return 으로 옮김(옛 칸 2026-10-28 이후 지원 종료 예정) → claimReqInfo = currentClaim.return/exchange 먼저 · currentClaim 에 키가 있으면 옛 칸 안 봄(취소 건에 지난 반품 값 섞임 방지).
