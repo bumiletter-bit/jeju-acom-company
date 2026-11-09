@@ -1347,7 +1347,7 @@ function smsAppNotiSync(list, n, full) {
         const want = new Map(list.filter(x => x && x.id != null).map(x => [String(x.id), x]));
         navigator.serviceWorker.ready.then(reg => reg.getNotifications().then(ns => {
             const have = new Map(); (ns || []).forEach(x => { const m = /^sms-(\d+)$/.exec(String(x.tag || "")); if (m) have.set(m[1], x); });
-            want.forEach((x, id) => { if (!have.has(id)) { const p = reg.showNotification(String(x.t || "문자"), { body: String(x.b || ""), tag: "sms-" + id, silent: true, renotify: false, icon: "/sms/icon-192.png", badge: "/sms/icon-192.png", data: { link: "agent-office?sms=" + id } }); if (p && p.catch) p.catch(() => {}); } });
+            want.forEach((x, id) => { if (!have.has(id)) { const p = reg.showNotification(String(x.t || "문자"), { body: String(x.b || ""), tag: "sms-" + id, silent: true, renotify: false, icon: "/sms/icon-192.png", badge: "/sms/badge-96.png", data: { link: "agent-office?sms=" + id } }); if (p && p.catch) p.catch(() => {}); } });
             if (full) have.forEach((x, id) => { if (!want.has(id)) x.close(); });
         })).catch(() => {});
     } catch (_) { /* 알림 못 맞춤 = 숫자만 */ }
