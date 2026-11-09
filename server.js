@@ -14645,7 +14645,7 @@ async function maruTrySettlementOcrConfirm(order, actor) {
         type: 'settlement_saved_ocr', partner: r.partner, date: r.date, total: r.total, box_total: r.box_total, overwrote,
         notice: `${r.partner} ${r.date} 정산관리에 ${overwrote ? '덮어쓰기' : '저장'} 완료 (${r.box_total}박스, ${(r.total || 0).toLocaleString()}원) — 정산관리 화면에서 확인·수정 가능`,
     });
-    notifyTelegram(`✅ 정산관리 입력 — ${r.partner} ${r.date} (${r.box_total}박스)${overwrote ? ' [덮어씀]' : ''}`);
+    // #1081(대표 11/9) 정산관리 입력 텔레그램 끔(회사프로그램 알림·카드는 그대로)
     return true;
 }
 
@@ -15750,7 +15750,7 @@ app.post('/api/agent-office/settlement-ocr-save', authMiddleware, adminOnly, asy
         await pool.query(`UPDATE pending_orders SET status='완료', processed_at=NOW(),
             result = jsonb_set(jsonb_set(result, '{type}', '"settlement_saved_ocr"'), '{saved_partner}', $2) WHERE id=$1`,
             [order_id, JSON.stringify(partner)]);
-        notifyTelegram(`✅ 정산관리 입력 — ${partner} ${date} (${boxTotal}박스)${del.rows.length ? ' [덮어씀]' : ''}`);
+        // #1081(대표 11/9) 정산관리 입력 텔레그램 끔(회사프로그램 알림·카드는 그대로)
         res.json({ message: `${partner} ${date} 정산관리에 ${del.rows.length ? '덮어쓰기' : '저장'} 완료 (${boxTotal}박스, ${total.toLocaleString()}원)`, partner, total, overwrote: del.rows.length });
     } catch (err) { handleAdminErr(res, err); }
 });

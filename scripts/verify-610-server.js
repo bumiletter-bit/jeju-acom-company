@@ -755,7 +755,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         sms.resetCfg();
         // 더. #646 주문을 찾은 손님의 불만 글 = 고정 답 1번 + 직원 확인 · 이어지는 불만 = 답 없음 · 둘째 답부터 인사 줄임
         {
-            const CL = '고객님, 불편드려 죄송합니다.\n배송 중에 약했던 부분이 상하거나 파손된 것 같습니다. 다음에는 더 꼼꼼하게 선별하겠습니다.\n전체적으로 확인해 보시고 이상 있는 부분은 부분 환불 처리도 가능하고, 괜찮은 상품 드셔 보시고 입맛에 안 맞으시면 반품 처리도 가능하니 말씀해 주시면 빠르게 도와드리겠습니다.\n이상 있는 부분 사진을 찍어 보내 주시면 더 빠르게 처리해 드리겠습니다.';
+            const CL = require('../sms/rules.js').claimText({ text: '귤이 여러 개 썩어서 왔어요 환불해주세요' });   // #1079 실코드 글 그대로(#1065 대표 문구 · #1079 되짚기 줄 「상한 게 나오셨군요」 포함) — 종전 글자 박음은 #1065 뒤 낡았던 것
             const PT = T + '1070', PU = T + '1071', TA = '999600064601', TB = '999600064602';
             const wipe = async () => { await pool.query(`DELETE FROM delivery_status WHERE tracking IN ($1, $2)`, [TA, TB]); await pool.query(`DELETE FROM delivery_shipments WHERE tracking IN ($1, $2)`, [TA, TB]); };
             await wipe();
@@ -769,7 +769,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
             let tt = await thread(PT), ot = await outOf(PT);
             ok(aiQs.length === nA && ot.length === 1 && ot[0].body === CL && ot[0].rule_kind === 'claim' && tt.status === 'bot_replied' && tt.staff_why === 'claim' && notes.length === nN + 1 && /불만 글 — 봇이 사과·안내 답을 보냈어요/.test(notes[notes.length - 1].title),
                 '#646 주문 있는 손님의 불만 글 = 고정 답(사과 + 부분 환불·반품 가능 + 사진 부탁) 1통 · AI 0 · 직원 확인(claim) + 알림 ' + JSON.stringify({ n: ot.length, why: tt.staff_why, ai: aiQs.length - nA }));
-            ok(!/\d|원|개 |%|퍼센트|네이버|톡톡|환불해 드리겠|재발송|보내 드리겠|효돈|거래처/.test(CL) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(CL) && sms.smsSafe(CL) === CL, '#646 불만 답 문구: 숫자·금액·비율 0 · 채널 낱말 0 · 봇이 결정하는 말 0 · 이모지 0 · smsSafe 그대로');
+            ok(!/\d|원|개 |%|퍼센트|네이버|톡톡|환불해 드리겠|재발송|보내 드리겠|효돈|거래처/.test(CL.split(require('../sms/rules.js').CLAIM_CHOICE).join('')) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(CL) && sms.smsSafe(CL) === CL, '#646 불만 답 문구: 숫자·금액·비율 0 · 채널 낱말 0 · 봇이 결정하는 말 0 · 이모지 0 · smsSafe 그대로');
             r = await api('GET', '/api/sms/threads?scope=active&limit=200'); it = (r.json.items || []).find(x => x.id === tt.id);
             ok(it && it.needs_staff === true && it.staff_why_label === '불만·클레임' && it.last_dir === 'in', '#646 목록: needs_staff true · 사유 「불만·클레임」');
             // 이어지는 불만 글(쿨다운이 지난 것처럼) = 다시 안 보냄 → 사람

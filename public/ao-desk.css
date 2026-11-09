@@ -981,6 +981,13 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-draft[data-k="new"] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sms-draft[data-k="new"][hidden] { display: none; }
 .sms-draft .desk-btn { flex: none; min-height: 44px; }
+/* #1078 답 칸에 초점 있을 때 바로 위 「손님 글」 띠(4줄 넘치면 띠 안 스크롤 · 누르면 한 줄로 접힘) · 자판 떠 있으면 창 = 보이는 높이 · 색은 토큰만(야간 따라감) */
+.sms-cust { max-height: calc(1.5em * 4 + 14px); overflow-y: auto; padding: 6px 10px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-soft); color: var(--d-ink); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; overscroll-behavior: contain; }
+.sms-cust[hidden] { display: none; }
+.sms-cust b { margin-right: 6px; color: var(--d-sub); font-size: 11.5px; font-weight: 800; }
+.sms-cust.fold { max-height: calc(1.5em + 14px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#desk-sms.sms-modal.sms-kb-on:not([hidden]) { top: var(--sms-vt, 0px); bottom: auto; height: var(--sms-vh, 100vh); padding: 0; }
+#desk-sms.sms-kb-on .sms-order { max-height: 44px; overflow-y: auto; overscroll-behavior: contain; }   /* 자판 떠 있는 동안 구매이력은 두 줄 남짓(안에서 스크롤) = 대화 칸 자리 */
 .sms-warn { padding: 8px 10px; border-radius: 8px; background: #FEF6E7; color: #B54708; font-size: 12.5px; line-height: 1.5; }
 .sms-text { width: 100%; min-height: 76px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; }
 .sms-text::placeholder { color: var(--d-sub); }

@@ -1709,7 +1709,7 @@
         const li = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
         if (!li) { if (smsHistAt() === 'th') smsHistBack(1); return; }
         const x = (SMS.items || []).find(i => i.id === id) || {};
-        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
+        SMS.open = id; SMS.thread = null; SMS.custFold = false; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
         SMS.openAt = Math.max(0, (SMS.items || []).findIndex(i => i.id === id)); SMS.openRow = x.id ? x : null;
         { const un = li.querySelector('.sms-un'); if (un) un.remove(); li.classList.remove('unread'); li.dataset.un = '0'; }   // #635 여는 순간 읽음(서버도 GET 에서 읽음으로)
         const th = document.createElement('div');
@@ -1721,6 +1721,7 @@
             + `<div class="sms-typing" id="sms-typing" role="status" aria-live="polite" hidden></div>`
             + `<div class="sms-draft" id="sms-draft" hidden>봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.</div>`
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
+            + `<div class="sms-cust" id="sms-cust" role="button" tabindex="0" title="누르면 접거나 펼쳐요" hidden></div>`   // #1078 답 칸에 초점 있을 때만 · 손님 글
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
             + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
@@ -1877,7 +1878,7 @@
                 }
                 else SMS.newDraft = dt;
             } }
-        smsSync();
+        smsSync(); smsCustSync();
         if (!SMS.items || !SMS.items.some(x => x.id === id && x.status === t.status)) { SMS.sig = ''; smsRenderList(); }
         else smsRenderList();   // 읽음·안 읽음 수가 바뀌었으면 그 줄 배지도 바로(바뀐 것이 없으면 다시 그리지 않는다)
     }
@@ -1916,25 +1917,41 @@
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
         smsGrowSync();
     }
-    // #1067-b(대표 11/9 폰) 답 칸 탭 = 펼침/접힘(단추 없음 · 초안·직접 친 글 모두) — 탭하면 글 높이에 맞춰 늘어남(최대 = 원래 높이 2배 · 화면 60% 상한) · 펼친 채 다시 탭 = 원래 크기
-    //   글이 원래 칸에 다 들어가면 탭해도 그대로 · 펼친 채 치면 높이가 글을 따라감(줄면 줄고 원래 칸에 들어가면 접힘) · 글 고르기·끌기·길게 누름은 토글 안 함 · 대화 바꾸면 새 칸이라 접힘
-    const smsGrowMax = base => { const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight; return Math.max(base, Math.min(base * 2, Math.round(vh * 0.6))); };
-    function smsGrowOff(ta) { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }
-    function smsGrowFit(ta) {   // 펼친 칸 높이 = 글 높이(원래 높이 ~ 최대) · 같은 순간 안에서 원래 높이로 잠깐 되돌려 재므로 화면엔 안 보임
-        const base = Number(ta.dataset.growBase) || 0; if (!base) return smsGrowOff(ta);
-        const st = ta.scrollTop; ta.style.height = base + 'px';
-        const need = ta.scrollHeight + (ta.offsetHeight - ta.clientHeight);   // 테두리까지(border-box)
-        if (ta.scrollHeight <= ta.clientHeight + 2) { smsGrowOff(ta); ta.scrollTop = st; return; }   // 원래 칸에 들어가면 접음
-        ta.style.height = Math.min(need, smsGrowMax(base)) + 'px'; ta.scrollTop = st;
-    }
-    function smsGrow(on) {
+    // #1078(대표 11/9 「추천으로 고」 · 폴드7: 탭 토글로 칸이 줄었다 늘었다 · 자판 뜨면 손님 글이 밀려 안 보임) — #1067-b 탭 토글은 뺐다
+    //   ① 답 칸 높이 = 글 길이 따라 저절로(최소 = 원래 칸 · 최대 = 자판 없을 때 원래 2배·화면 60% 상한 / 자판 떠 있을 때 4줄) · 넘치면 칸 안 스크롤 · 값은 안 바꾸고 높이만
+    //   ② 답 칸에 초점이 오면 바로 위에 「손님 글」 띠(우리가 마지막으로 보낸 글 뒤 손님 글 · 없으면 마지막 손님 글 1개 · 4줄 넘치면 띠 안 스크롤) · 띠 누르면 접힘/펼침(답 칸 초점 그대로) · 초점 빠지면 숨김
+    //   ③ 자판이 뜨면(visualViewport) 창을 남은 높이에 맞추고 대화는 맨 아래(smsVvNow · sms-kb-on)
+    const smsKbOn = () => { const vv = window.visualViewport; return !!vv && window.innerHeight - vv.height > 120; };
+    function smsGrowSync() {
         const ta = document.getElementById('sms-text'); if (!ta || !ta.offsetHeight) return;
-        if (!on) return smsGrowOff(ta);
-        if (ta.classList.contains('sms-grow')) return;
-        if (ta.scrollHeight <= ta.clientHeight + 2) return;   // 다 보이면 그대로
-        ta.dataset.growBase = String(ta.offsetHeight); ta.classList.add('sms-grow'); smsGrowFit(ta);
+        const st = ta.scrollTop, had = ta.style.height;
+        ta.style.height = '';   // 원래 칸(CSS) 높이로 재기 — 같은 순간 안이라 화면엔 안 보임
+        const base = ta.offsetHeight;
+        if (ta.scrollHeight <= ta.clientHeight + 2) { if (had) ta.scrollTop = st; return; }
+        const cs = getComputedStyle(ta), lh = parseFloat(cs.lineHeight) || 22, frame = ta.offsetHeight - ta.clientHeight + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+        const max = smsKbOn() ? Math.max(base, Math.round(lh * 4 + frame)) : Math.max(base, Math.min(base * 2, Math.round(vh * 0.6)));
+        const need = ta.scrollHeight + (ta.offsetHeight - ta.clientHeight);
+        ta.style.height = Math.min(need, max) + 'px'; ta.scrollTop = st;
     }
-    function smsGrowSync() { const ta = document.getElementById('sms-text'); if (ta && ta.classList.contains('sms-grow') && ta.offsetHeight) smsGrowFit(ta); }
+    // ② 손님 글 띠
+    function smsCustText() {
+        const ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [];
+        let lastOut = -1; ms.forEach((m, i) => { if (m.direction === 'out' && m.state !== 'cancelled') lastOut = i; });
+        const one = m => { const b = String(m.body || '').trim(), pic = Array.isArray(m.image_ids) && m.image_ids.length; return b ? (pic ? b + ' 📷' : b) : (pic ? '📷 사진' : ''); };
+        let ins = ms.slice(lastOut + 1).filter(m => m.direction !== 'out').map(one).filter(Boolean);
+        if (!ins.length) { const li = ms.filter(m => m.direction !== 'out').map(one).filter(Boolean); ins = li.length ? [li[li.length - 1]] : []; }
+        return ins.join('\n');
+    }
+    function smsCustSync() {
+        const ta = document.getElementById('sms-text'), band = document.getElementById('sms-cust'); if (!ta || !band) return;
+        const ae = document.activeElement, on = (ae === ta || ae === band) && window.matchMedia('(pointer: coarse)').matches, txt = on ? smsCustText() : '';   // #1078-b 터치 기기만(PC 는 자판이 화면을 안 가려 띠가 필요 없고 첫 클릭 때 칸이 밀림) · 띠에 초점이 있어도(키보드 Enter/Space) 그대로
+        band.hidden = !txt;
+        if (!txt) return;
+        if (band.dataset.t !== txt) { band.dataset.t = txt; band.innerHTML = '<b>손님 글</b>' + esc(txt); band.scrollTop = band.scrollHeight; }
+        band.classList.toggle('fold', !!SMS.custFold);
+        band.setAttribute('aria-expanded', SMS.custFold ? 'false' : 'true');
+    }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
         if (Date.now() < (SMS.lockUntil || 0)) return;   // 초안이 막 바뀐 0.8초 동안은 단추·Ctrl+Enter 어느 쪽으로도 안 나간다
@@ -2019,9 +2036,13 @@
         const want = (!vv || !(SMS.open || SMS.neu.on)) ? '' : [Math.round(vv.height), Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)), Math.max(0, Math.round(vv.offsetTop))].join(',');
         if (want === (SMS.vvSig || '')) return;   // 같은 값이면 손대지 않는다(자판이 떠 있는 동안 스크롤 사건마다 다시 배치하면 화면이 떨린다)
         SMS.vvSig = want;
-        if (!want) { card.style.removeProperty('--sms-vh'); card.style.removeProperty('--sms-kb'); card.style.removeProperty('--sms-vt'); return; }
+        if (!want) { card.style.removeProperty('--sms-vh'); card.style.removeProperty('--sms-kb'); card.style.removeProperty('--sms-vt'); card.classList.remove('sms-kb-on'); smsGrowSync(); return; }
         const [h, kb, top] = want.split(',');
         card.style.setProperty('--sms-vh', h + 'px'); card.style.setProperty('--sms-kb', kb + 'px'); card.style.setProperty('--sms-vt', top + 'px');
+        {   // #1078 자판이 떠 있으면(가린 높이 120px 넘음) 창 = 보이는 높이(폭 721↑ 도 · 720 이하는 종전 시트 규칙) · 켜지는 순간 대화 맨 아래(마지막 손님 글)
+            const on = smsKbOn(), was = card.classList.contains('sms-kb-on'); card.classList.toggle('sms-kb-on', on); smsGrowSync();
+            if (on && !was) { const ms = document.getElementById('sms-msgs'); if (ms) requestAnimationFrame(() => { ms.scrollTop = ms.scrollHeight; }); }
+        }
     }
     function smsVv() { if (SMS.vvRaf) return; SMS.vvRaf = requestAnimationFrame(smsVvNow); }   // #655: 한 프레임에 한 번
     function smsTick(now) {
@@ -2158,14 +2179,15 @@
                     const b = document.getElementById('sms-buy-more'); if (b && mb) b.focus({ preventScroll: true }); return;
                 }
             }   // #653 구매이력 더보기·접기
-            if (e.target.id === 'sms-text') { const g = SMS.growTap; SMS.growTap = null; const ta = e.target;   // #1067-b 탭 = 펼침/접힘(누르기 전 글을 골라 둔 상태·끌기·길게 누름 = 그대로)
-                if (g && !g.skip && e.detail <= 1 && Date.now() - g.t < 500 && Math.abs(e.clientX - g.x) < 10 && Math.abs(e.clientY - g.y) < 10) smsGrow(!ta.classList.contains('sms-grow'));
-                return; }
+            if (e.target.closest('#sms-cust')) { SMS.custFold = !SMS.custFold; smsCustSync(); return; }   // #1078 띠만 접힘/펼침
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
-        list.addEventListener('pointerdown', e => { if (e.target.id === 'sms-text') SMS.growTap = { t: Date.now(), x: e.clientX, y: e.clientY, skip: e.button > 0 || e.shiftKey || (e.pointerType !== 'touch' && document.activeElement === e.target) }; });   // #1067-b 탭 거름용(시각·자리 · 마우스는 이미 초점 있는 칸을 누르면 = 커서 옮기기·고르기라 토글 안 함(PC 에서 고치는 중 높이 안 뜀) · 폰 터치는 탭 = 토글 · 고르기는 길게 누름·끌기라 시간·거리로 거름)
-        window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });   // #1067 폭이 바뀌면 줄바꿈이 달라져 펼친 높이 다시
+        window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });
+        list.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('#sms-cust')) e.preventDefault(); });   // #1078 손님 글 띠 누름이 답 칸 초점(폰 자판)을 뺏지 않게
+        list.addEventListener('focusin', e => { if (e.target.id === 'sms-text') smsCustSync(); });
+        list.addEventListener('focusout', e => { if (e.target.id === 'sms-text' || e.target.id === 'sms-cust') setTimeout(smsCustSync, 250); });
+        list.addEventListener('keydown', e => { if (e.target.id === 'sms-cust' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); SMS.custFold = !SMS.custFold; smsCustSync(); } });   // #1078-b 키보드로 접기·펴기   // #1078 초점 빠지면 띠 숨김(0.25초 뒤 · 바로 숨기면 [보내기] 누르는 도중 칸이 움직여 누름이 빗나갈 수 있음)   // #1067 폭이 바뀌면 줄바꿈이 달라져 펼친 높이 다시
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
         list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
