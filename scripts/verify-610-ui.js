@@ -201,7 +201,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 await scopeBtn(pg, true); await openThread(pg, 9);
                 const ms = await pg.evaluate(() => Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out')).map(m => { const b = m.querySelector('.sms-bub'), cs = getComputedStyle(b); return m.dataset.s + '|' + m.querySelector('small').textContent.replace(/\s+/g, ' ').trim().replace(/\d\d:\d\d|\d+\/\d+ /g, '').replace(/ · · /g, ' · ') + '|' + (/line-through/.test(cs.textDecorationLine || cs.textDecoration) ? '줄' : '') + (cs.borderTopStyle === 'dashed' ? '점선' : ''); }));
                 ok(ms[0] === 'cancelled|봇 · · 안 보냄 · 직원이 먼저 답해서 취소|줄점선'.replace(' · · ', ' · ') || /^cancelled\|봇 · .*안 보냄 · 직원이 먼저 답해서 취소\|줄점선$/.test(ms[0]), `[${label}] #651 직원이 먼저 답해 취소된 봇 글 = 줄 긋기·점선 + 「안 보냄 · 직원이 먼저 답해서 취소」(${ms[0]})`);
-                ok(/^cancelled\|봇 · .*안 보냄 · 시간이 지나 취소\|줄점선$/.test(ms[1]) && /^delivered\|직원\(오피스\) · .*전달됨\|$/.test(ms[2]) && /^sending\|직원\(오피스\) · .*보내는 중\|$/.test(ms[3]) && /^sending\|/.test(ms[4]) && ms.length === 5, `[${label}] #651 묵어서 취소 「${ms[1]}」 · 나간 글은 그대로 · 발송 중 조각 2개 「보내는 중」`);
+                ok(/^cancelled\|봇 · .*안 보냄 · 시간이 지나 취소\|줄점선$/.test(ms[1]) && /^delivered\|[^가-힣]*발송완료\|$/.test(ms[2]) && /^sending\|[^가-힣]*보내는 중\|$/.test(ms[3]) && /^sending\|/.test(ms[4]) && ms.length === 5, `[${label}] #651 묵어서 취소 「${ms[1]}」 · 나간 글은 그대로 · 발송 중 조각 2개 「보내는 중」`);
                 await closeThread(pg); await openThread(pg, 3);
                 {   // #653 구매이력 여러 건 = 맨 위 1건 + [n건 더보기] → 같은 틀로 펼침 · 다시 누르면 접힘 · 폴링 뒤에도 펼친 채
                     const h1 = await buyOf();
@@ -255,7 +255,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 }
                 await closeThread(pg); await openThread(pg, 8);
                 const gw = await pg.evaluate(() => (Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out small')).pop() || {}).textContent);
-                ok(/^전달 앱 · /.test(gw || ''), `[${label}] #651 실서버 발신 표시 gateway_other = 「전달 앱」(${gw})`);
+                ok(/^\d/.test(gw || '') && !/전달 앱|직원|우리/.test(gw || ''), `[${label}] #1075 직원·전달 앱 글 = 누가 칸 없이 「시각 · 상태」(${gw})`);   // 종전 #651 「전달 앱 · …」
                 await closeThread(pg); await scopeBtn(pg, false);
                 await mock('/__mock/reset', {}); await wake(pg); await rowsAre(pg, 7);
             }
@@ -391,7 +391,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             let log = await logOf();
             const d1 = await pg.evaluate(() => ({ last: (Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out small')).pop() || {}).textContent, ta: document.getElementById('sms-text').value, badge: document.getElementById('sms-th-badge').textContent, draft: document.getElementById('sms-draft').hidden, tag: !!document.querySelector('.sms-item[data-id="1"] .sms-tag') }));
             ok(log.length === 1 && log[0].action === 'send-draft' && log[0].id === 1, `[${label}] [이대로 보내기] → 가짜 서버에 send-draft 1건 도착(${JSON.stringify(log.map(l => l.action + ':' + l.id))})`);
-            ok(/직원\(오피스\)/.test(d1.last || '') && /보내는 중/.test(d1.last || '') && d1.ta === '' && d1.badge === '직원 답변' && d1.draft && T.some(t => /답을 보냈어요/.test(t)), `[${label}] 보낸 답이 대화에 「${d1.last}」 · 답 칸 비움 · 머리 「${d1.badge}」 · 초안 안내 사라짐 · 안내 띠`);
+            ok(/^\d\d:\d\d · 보내는 중/.test(d1.last || '') && !/직원/.test(d1.last || '') && d1.ta === '' && d1.badge === '직원 답변' && d1.draft && T.some(t => /답을 보냈어요/.test(t)), `[${label}] 보낸 답이 대화에 「${d1.last}」 · 답 칸 비움 · 머리 「${d1.badge}」 · 초안 안내 사라짐 · 안내 띠`);
             ok(await rows(pg) === 7 && !!(await pg.locator('#sms-thread').count()), `[${label}] 보낸 뒤에도 열어 둔 동안은 그대로`);
             await closeThread(pg);
             ok(await rowsAre(pg, 6) && !(await pg.locator('.sms-item[data-id="1"]').count()) && await chipIs(pg, '6'), `[${label}] 접으면 빠짐(6줄 · 알약 6)`);
@@ -406,7 +406,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             const l2 = log[log.length - 1] || {};
             ok(log.length === 2 && l2.action === 'reply' && l2.id === 2 && /50박스 가능합니다/.test((l2.body || {}).text || ''), `[${label}] ${phone ? '[답 보내기]' : 'Ctrl+Enter'} → reply { text } 도착(${l2.action}:${l2.id} 「${String((l2.body || {}).text || '').slice(0, 16)}」)`);
             const d2 = await pg.evaluate(() => ({ badge: document.getElementById('sms-th-badge').textContent, who: (Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out small')).pop() || {}).textContent, why: !!document.querySelector('.sms-item[data-id="2"] .sms-why') }));
-            ok(d2.badge === '직원 답변' && /직원\(오피스\)/.test(d2.who || '') && !d2.why, `[${label}] 답 뒤 머리 「${d2.badge}」 · 보낸 사람 「${d2.who}」 · 사유 알약 사라짐`);
+            ok(d2.badge === '직원 답변' && /^\d\d:\d\d · /.test(d2.who || '') && !/직원/.test(d2.who || '') && !d2.why, `[${label}] 답 뒤 머리 「${d2.badge}」 · 보낸 사람 「${d2.who}」 · 사유 알약 사라짐`);
             await closeThread(pg);
             ok(await rowsAre(pg, 5) && await chipIs(pg, '5'), `[${label}] 접으면 빠짐(5줄 · 알약 5)`);
             ok((await logOf()).every(l => l.action === 'send-draft' || l.action === 'reply'), `[${label}] 여기까지 서버에 간 쓰기 = 보내기뿐(handled·close 0)`);

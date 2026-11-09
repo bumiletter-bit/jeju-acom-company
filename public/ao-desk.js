@@ -1225,7 +1225,7 @@
     const SMS_MODE = { record: ['기록만', '봇은 답하지 않고 받은 문자만 기록해요'], draft: ['초안', '봇이 답 초안을 만들고, 사람이 보내요'], auto: ['자동 답변', '간단한 문의는 봇이 바로 답해요'] };
     // sender: gateway_other = 우리 화면·봇이 낸 글이 아닌데 전달 앱이 「보냈다」고 알려 온 글(앱 대시보드·다른 프로그램 · 서버가 쉬는 사이 나간 글) — 직원이 폰 문자 앱에서 손으로 보낸 글은 여기로 안 온다
     const SMS_WHO = { bot: '봇', staff_phone: '직원(폰)', staff_desk: '직원(오피스)', gateway_other: '전달 앱' };
-    const SMS_STATE = { queued: '보내는 중', sending: '보내는 중', sent: '보냄', delivered: '전달됨', failed: '보내지 못함', cancelled: '안 보냄(취소)' };
+    const SMS_STATE = { queued: '보내는 중', sending: '보내는 중', sent: '발송완료', delivered: '발송완료', failed: '보내지 못함', cancelled: '안 보냄(취소)' };
     // #651: 취소된 글은 손님에게 안 나간 글이다 — 사유를 붙여 한눈에(직원이 먼저 답함 · 시간이 지남). 봇 답이 유예 중(queued)이면 「곧 발송」
     const smsStateLabel = m => {
         if (m.state === 'cancelled') { const r = String(m.fail_reason || ''); return '안 보냄 · ' + (/stale/.test(r) ? '시간이 지나 취소' : /handover/.test(r) ? '손님이 이어서 보내 직원 확인으로 넘김' : /staff|gateway|handled|close/.test(r) ? '직원이 먼저 답해서 취소' : '취소'); }
@@ -1850,7 +1850,7 @@
             const out = m.direction === 'out', dk = smsDay(m.event_at);
             const sep = dk && dk !== day ? `<div class="sms-day"><span>${esc(smsDayLabel(m.event_at))}</span></div>` : ''; day = dk || day;
             const imgs = (Array.isArray(m.image_ids) ? m.image_ids : []).map(i => `<button type="button" class="sms-thumb" data-img="${esc(i)}" aria-label="사진 크게 보기"><img alt="${out ? '보낸' : '손님이 보낸'} 사진" data-img="${esc(i)}"></button>`).join('');
-            const meta = [out ? (SMS_WHO[m.sender] || '우리') : '', smsWhen(m.event_at), out ? smsStateLabel(m) : ''].filter(Boolean).map(esc).join(' · ');
+            const meta = [out && m.sender === 'bot' ? SMS_WHO.bot : '', smsWhen(m.event_at), out ? smsStateLabel(m) : ''].filter(Boolean).map(esc).join(' · ');   // #1075(대표 11/9) 누가 칸 = 봇만(직원·전달 앱은 빼고 「시각 · 상태」) · sent·delivered = 「발송완료」
             const holdHere = out && m.state === 'queued' && m.sender === 'bot' && !holdShown; if (holdHere) holdShown = true;   // 여러 통으로 나뉜 봇 답이면 단추는 첫 통에만
             const hold = holdHere ? ' <button type="button" class="sms-hold" title="이 봇 답을 보내지 않고, 이 대화는 직원이 맡아요">보내지 않기</button>' : '';   // 유예 중인 봇 답을 사람이 막는다(서버 /handled = 대기 발송 취소 + 직원 답변으로 잠금)
             const omOn = !out && String(m.body || '').trim() && window.AkmOrderMemo && typeof window.AkmOrderMemo.appendFromSms === 'function', omDone = omOn && SMS.omPut.keys.has(omK(m, mi));
@@ -1916,36 +1916,25 @@
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
         smsGrowSync();
     }
-    // #1067(대표 11/9) 초안 칸 펼치기 — 글이 칸을 넘칠 때만 띠 오른쪽에 [▼ 펼치기]/[▲ 접기] · 펼침 = 원래 높이 2배(화면 60% 상한) · 초점 없을 때 첫 탭도 펼침(편집 중 탭은 커서만) · 대화 바꾸면 새 칸이라 접힘
+    // #1067-b(대표 11/9 폰) 답 칸 탭 = 펼침/접힘(단추 없음 · 초안·직접 친 글 모두) — 탭하면 글 높이에 맞춰 늘어남(최대 = 원래 높이 2배 · 화면 60% 상한) · 펼친 채 다시 탭 = 원래 크기
+    //   글이 원래 칸에 다 들어가면 탭해도 그대로 · 펼친 채 치면 높이가 글을 따라감(줄면 줄고 원래 칸에 들어가면 접힘) · 글 고르기·끌기·길게 누름은 토글 안 함 · 대화 바꾸면 새 칸이라 접힘
+    const smsGrowMax = base => { const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight; return Math.max(base, Math.min(base * 2, Math.round(vh * 0.6))); };
+    function smsGrowOff(ta) { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }
+    function smsGrowFit(ta) {   // 펼친 칸 높이 = 글 높이(원래 높이 ~ 최대) · 같은 순간 안에서 원래 높이로 잠깐 되돌려 재므로 화면엔 안 보임
+        const base = Number(ta.dataset.growBase) || 0; if (!base) return smsGrowOff(ta);
+        const st = ta.scrollTop; ta.style.height = base + 'px';
+        const need = ta.scrollHeight + (ta.offsetHeight - ta.clientHeight);   // 테두리까지(border-box)
+        if (ta.scrollHeight <= ta.clientHeight + 2) { smsGrowOff(ta); ta.scrollTop = st; return; }   // 원래 칸에 들어가면 접음
+        ta.style.height = Math.min(need, smsGrowMax(base)) + 'px'; ta.scrollTop = st;
+    }
     function smsGrow(on) {
-        const ta = document.getElementById('sms-text'); if (!ta) return;
-        if (on) {
-            if (ta.classList.contains('sms-grow')) return;
-            const base = ta.offsetHeight, vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-            ta.dataset.growBase = String(base); ta.style.height = Math.max(base, Math.min(base * 2, Math.round(vh * 0.6))) + 'px'; ta.classList.add('sms-grow');
-        } else { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }
-        smsGrowSync();
+        const ta = document.getElementById('sms-text'); if (!ta || !ta.offsetHeight) return;
+        if (!on) return smsGrowOff(ta);
+        if (ta.classList.contains('sms-grow')) return;
+        if (ta.scrollHeight <= ta.clientHeight + 2) return;   // 다 보이면 그대로
+        ta.dataset.growBase = String(ta.offsetHeight); ta.classList.add('sms-grow'); smsGrowFit(ta);
     }
-    function smsGrowSync() {
-        const ta = document.getElementById('sms-text'), band = document.getElementById('sms-draft'); if (!ta || !band) return;
-        const open = ta.classList.contains('sms-grow');
-        let need = false;
-        if (!band.hidden && ta.offsetHeight) {
-            if (open) {   // 펼친 칸은 scrollHeight 가 늘 칸 높이 이상 → 원래 높이로 잠깐 되돌려 글 높이를 잰다(같은 순간 안이라 화면엔 안 보임)
-                const h = ta.style.height, st = ta.scrollTop; ta.style.height = (Number(ta.dataset.growBase) || 0) + 'px';
-                need = ta.scrollHeight > ta.clientHeight + 2; ta.style.height = h; ta.scrollTop = st;
-            } else need = ta.scrollHeight > ta.clientHeight + 2;
-        }
-        if (open && !need) { ta.classList.remove('sms-grow'); ta.style.height = ''; delete ta.dataset.growBase; }   // 글이 줄어 원래 칸에 들어가면 접고 단추도 뺀다
-        let b = document.getElementById('sms-draft-grow');
-        if (!need) { if (b) b.remove(); band.classList.remove('has-grow'); return; }
-        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'sms-draft-grow'; b.className = 'desk-btn sm sms-grow-btn'; b.setAttribute('aria-controls', 'sms-text'); }
-        if (b.parentNode !== band || band.lastChild !== b) band.appendChild(b);   // 띠 글이 바뀌면(innerHTML) 단추가 빠지므로 끝에 다시 붙인다
-        band.classList.add('has-grow');
-        const on = ta.classList.contains('sms-grow'), tx = on ? '▲ 접기' : '▼ 펼치기';
-        if (b.textContent !== tx) b.textContent = tx;
-        b.setAttribute('aria-expanded', on ? 'true' : 'false');
-    }
+    function smsGrowSync() { const ta = document.getElementById('sms-text'); if (ta && ta.classList.contains('sms-grow') && ta.offsetHeight) smsGrowFit(ta); }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
         if (Date.now() < (SMS.lockUntil || 0)) return;   // 초안이 막 바뀐 0.8초 동안은 단추·Ctrl+Enter 어느 쪽으로도 안 나간다
@@ -2169,13 +2158,14 @@
                     const b = document.getElementById('sms-buy-more'); if (b && mb) b.focus({ preventScroll: true }); return;
                 }
             }   // #653 구매이력 더보기·접기
-            if (e.target.closest('#sms-draft-grow')) { const ta = $('sms-text'); smsGrow(!(ta && ta.classList.contains('sms-grow'))); return; }   // #1067
-            if (e.target.id === 'sms-text') { const t1 = SMS.growTap; SMS.growTap = false; if (t1 && document.getElementById('sms-draft-grow')) smsGrow(true); return; }   // #1067 초점 없던 칸 첫 탭 = 펼침(커서는 브라우저가 둔 자리 그대로)
+            if (e.target.id === 'sms-text') { const g = SMS.growTap; SMS.growTap = null; const ta = e.target;   // #1067-b 탭 = 펼침/접힘(누르기 전 글을 골라 둔 상태·끌기·길게 누름 = 그대로)
+                if (g && !g.skip && e.detail <= 1 && Date.now() - g.t < 500 && Math.abs(e.clientX - g.x) < 10 && Math.abs(e.clientY - g.y) < 10) smsGrow(!ta.classList.contains('sms-grow'));
+                return; }
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
-        list.addEventListener('pointerdown', e => { if (e.target.id === 'sms-text') SMS.growTap = document.activeElement !== e.target; else if (e.target.closest && e.target.closest('#sms-draft-grow')) e.preventDefault(); });   // #1067 단추 누름이 답 칸 초점(폰 자판)을 뺏지 않게
-        window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });   // #1067 폭이 바뀌면 줄바꿈이 달라져 넘침 다시
+        list.addEventListener('pointerdown', e => { if (e.target.id === 'sms-text') SMS.growTap = { t: Date.now(), x: e.clientX, y: e.clientY, skip: e.button > 0 || e.shiftKey || (e.pointerType !== 'touch' && document.activeElement === e.target) }; });   // #1067-b 탭 거름용(시각·자리 · 마우스는 이미 초점 있는 칸을 누르면 = 커서 옮기기·고르기라 토글 안 함(PC 에서 고치는 중 높이 안 뜀) · 폰 터치는 탭 = 토글 · 고르기는 길게 누름·끌기라 시간·거리로 거름)
+        window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });   // #1067 폭이 바뀌면 줄바꿈이 달라져 펼친 높이 다시
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
         list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
