@@ -2254,3 +2254,15 @@ html[data-ao-theme="dark"] .side-theme { color: var(--d-warn); }
 }
 :where(html[data-ao-theme="dark"]) .desk-term-chip { background: var(--d-soft); border-color: var(--d-line); color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-term-chip[data-s="nas"], :where(html[data-ao-theme="dark"]) .desk-term-chip[data-s="notebook"], :where(html[data-ao-theme="dark"]) .desk-term-chip[data-s="both"] { color: var(--d-ink); }
+
+/* #1062 「아꼼이 문자」 앱(/sms/ · html[data-app="sms"]) = 문자 창만 전체 화면 · 메뉴·채널 탭·닫기 숨김(본 앱은 이 묶음 밖 그대로) */
+html[data-app="sms"] .sidebar, html[data-app="sms"] .mobile-menu-btn, html[data-app="sms"] .mobile-noti-btn, html[data-app="sms"] .mobile-overlay { display: none !important; }
+html[data-app="sms"] #desk-sms #sms-close, html[data-app="sms"] #desk-sms #sms-tabs { display: none !important; }
+html[data-app="sms"] #desk-sms.sms-modal:not([hidden]) { padding: 0; background: var(--d-card); }
+html[data-app="sms"] #desk-sms .sms-win { max-width: none; height: 100%; border: 0; border-radius: 0; box-shadow: none; animation: none; }
+.sms-app-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 16px 8px; padding: 8px 12px; border-radius: 10px; background: var(--d-accent-soft, #EEF0FF); color: var(--d-ink); font-size: 13px; line-height: 1.45; }
+.sms-app-note-t { flex: 1 1 220px; font-weight: 600; }
+.sms-app-push-s { flex: 1 0 100%; color: var(--d-sub); font-size: 12px; }
+.sms-app-push-s:empty { display: none; }
+@media (max-width: 720px), (pointer: coarse) { .sms-app-note { margin: 0 12px 8px; } .sms-app-push { min-height: 44px; } }
+:where(html[data-ao-theme="dark"]) .sms-app-note { background: rgba(99, 102, 241, .16); }

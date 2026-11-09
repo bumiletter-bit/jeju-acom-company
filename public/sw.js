@@ -1,4 +1,4 @@
-const CACHE_NAME = 'acom-v2';   // #473 푸시 추가
+const CACHE_NAME = 'acom-v3';   // #473 푸시 추가 · #1062 알림 아이콘 /icon-192.png 생김(종전 404)
 const urlsToCache = ['/', '/index.html', '/styles.css', '/app.js', '/logo.png'];
 
 // 설치 시 기본 리소스 캐싱
@@ -40,6 +40,7 @@ self.addEventListener('notificationclick', event => {
     const link = (event.notification.data && event.notification.data.link) || "";
     const url = "/" + (link ? "#" + link : "");
     event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+        list = list.filter(c => { try { return !new URL(c.url).pathname.startsWith('/sms/'); } catch (e) { return true; } });   // #1062 문자 앱(/sms/) 창은 본 앱 알림이 쓰지 않음(PC 에 둘 다 깔렸을 때 문자 창이 본 앱으로 바뀌지 않게 · /sms/sw.js 의 거울)
         for (const c of list) { if ("focus" in c) { if (link && "navigate" in c) c.navigate(url); return c.focus(); } }
         return clients.openWindow(url);
     }));

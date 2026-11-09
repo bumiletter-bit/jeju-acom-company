@@ -101,6 +101,7 @@ module.exports = function mountSms(app, deps) {
             context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
             typing_ttl_sec: num(v.typing_ttl_sec, TYPING_TTL_MS / 1000, 5, 120),   // #683 「입력 중」 표시 유효 시간
             staff_notify: v.staff_notify !== false,   // #837 행에 false 만 꺼짐 · 없음·그 밖 = true(종전)
+            app_user_ids: Array.isArray(v.app_user_ids) ? v.app_user_ids.map(Number).filter(n => Number.isInteger(n) && n > 0) : [],   // #1062 「아꼼이 문자」 앱 알림 받을 계정(손님 문자마다 · 5분 잠금 X · staff_notify 무관 · 기본 = 아무도 안 받음)
         };
     }
     let _cfgCache = null, _cfgAt = 0;
@@ -225,6 +226,53 @@ module.exports = function mountSms(app, deps) {
         const r = await pool.query(`SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL ORDER BY id`);
         return [...new Set(r.rows.map(x => x.id).concat(c.staff_ids))];
     }
+    // #1062(대표 11/9) 「아꼼이 문자」 앱 알림 = 진짜 문자 꼴 · 손님 문자가 적힐 때마다(recordInbound · mms:downloaded 사진 붙은 뒤) · 5분 잠금 X · staff_notify 무관
+    //   받는 사람 = 설정 sms_gateway.app_user_ids 의 계정 · 그 계정의 문자 앱 구독(label 'sms-app')에만(push.sendApp) · 알림 종 표(notifications)에는 안 적음
+    //   제목 = 「이*화 · 010-****-2485」 — 이름은 문자 보낸 번호가 그 주문의 받는 분일 때만(order_json.role 'recipient' · 구매자 이름은 DB 에 없음 → 번호만)
+    //   본문 = 손님 글 전문(+ 「📷 사진 n장」) + 다음 줄 「주문: <order_hint>」 · 봇 초안은 안 실음(열면 보임) · 상한 300자는 push.sendApp
+    //   거름 = 꺼진 연동(enabled false) · 받을 계정 없음 · 시험 번호(0999 · 검증 testMode 는 통과) · 무시(ignored) 대화의 인증번호·광고·안내문(otp·ad·carrier) 글 · 로컬 서버(RENDER 아님 · testMode 제외)
+    //     (무시 대화라도 진짜 손님 글은 알림 — 실DB ignored 27 대화 = 그 세 갈래 글뿐이고 새 손님 글이 오면 판정이 new 로 되살림 · 그 첫 글을 놓치지 않게)
+    const maskName = n => { const a = Array.from(String(n || '').replace(/\s+/g, '')); if (!a.length) return ''; if (a.length <= 2) return a[0] + '*'; return a[0] + '*'.repeat(a.length - 2) + a[a.length - 1]; };
+    const dashMasked = d => { d = String(d || ''); return d.length >= 10 ? d.slice(0, 3) + '-' + '*'.repeat(d.length - 7) + '-' + d.slice(-4) : phoneMasked(d); };
+    function appTitle(thread, preName) {
+        let oj = thread && thread.order_json; if (typeof oj === 'string') { try { oj = JSON.parse(oj); } catch (e) { oj = null; } }
+        const o = (oj && oj.order) || {}, nm = oj && oj.role === 'recipient' ? maskName(o.recipient_name || o.recipient_initial || '') : maskName(preName || '');
+        const ph = dashMasked(thread && thread.phone_digits);
+        return nm ? nm + ' · ' + ph : ph;
+    }
+    function appBody(thread, text, nImg, preHint) {
+        const t = String(text || '').trim(), n = Number(nImg) || 0, photo = n > 0 ? `📷 사진 ${n}장` : '';
+        const first = t && photo ? t + ' ' + photo : (t || photo || '(내용 없음)');
+        const h = String((thread && thread.order_hint) || preHint || '').trim();
+        return h ? first + '\n주문: ' + h : first;
+    }
+    const APP_HIDE = ['otp', 'ad', 'carrier'];
+    // #1062-B 새 번호 첫 문자(대화 줄에 order_hint 가 아직 없음) = 발송 전 주문 표(order_memo_preorders · 발주 메모함 표 · 수집기가 이미 받아 둔 줄 · 추가 API 0)를 1번 SELECT
+    //   번호가 받는 분(recv_digits) = 받는 분 이름 · 구매자(buyer_digits) = 구매자 이름(둘 다 문자 보낸 그 사람) · 줄 꼴 = order_hint 와 같게 「발송 전 · 결제 M/D · 옵션 · n박스」
+    //   300ms 넘거나 표가 없거나 실패 = 없이 보냄(빠르기 우선)
+    const shortOpt = t => String(t || '').replace(/아꼼이네\s*상품선택\s*:\s*/g, '').replace(/상품\s*및\s*과수\s*:\s*/g, '').replace(/^\s*\d+\.\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    async function appPreHint(digits) {
+        if (!/^0\d{8,11}$/.test(String(digits || ''))) return null;
+        const q = pool.query(`SELECT recv_digits, recv_name, buyer_name, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'FMMM/FMDD') AS md FROM order_memo_preorders WHERE miss = 0 AND (buyer_digits = $1 OR recv_digits = $1) ORDER BY paid_at DESC NULLS LAST LIMIT 1`, [digits]).then(r => r.rows[0] || null, () => null);
+        let tm; const r = await Promise.race([q, new Promise(ok => { tm = setTimeout(() => ok(null), 300); })]); clearTimeout(tm);
+        if (!r) return null;
+        const hint = ['발송 전', r.md ? '결제 ' + r.md : '', shortOpt(r.option_text), Number(r.qty) > 1 ? r.qty + '박스' : ''].filter(Boolean).join(' · ');
+        return { hint, name: r.recv_digits === digits ? r.recv_name : r.buyer_name };
+    }
+    async function appNotify(thread, text, nImg, bucket) {
+        try {
+            if (!thread || !thread.id || !deps.push || typeof deps.push.sendApp !== 'function') return 0;
+            if (!process.env.RENDER && !deps.testMode) return 0;   // 로컬 검증 서버가 실DB 로 폰에 쏘지 않게(push.js 배달부와 같은 원칙)
+            const c = await cfg(); if (!c.enabled || !c.app_user_ids.length) return 0;
+            if (!deps.testMode && isTestDigits(thread.phone_digits)) return 0;
+            if (thread.status === 'ignored' && APP_HIDE.includes(bucket)) return 0;
+            const pre = String(thread.order_hint || '').trim() ? null : await appPreHint(thread.phone_digits);   // #1062-B
+            const title = appTitle(thread, pre && pre.name), message = appBody(thread, text, nImg, pre && pre.hint), link = `agent-office?sms=${thread.id}`, tag = 'sms-' + thread.id;
+            let sent = 0; for (const uid of c.app_user_ids) { const r = await deps.push.sendApp(uid, { title, message, link, tag }); sent += (r && r.sent) || 0; }
+            return sent;
+        } catch (e) { log.error('[문자] 문자 앱 알림 실패(무시):', e.message); return 0; }
+    }
+    const appNotifySoon = (thread, text, nImg, bucket) => { appNotify(thread, text, nImg, bucket).catch(() => { }); };   // 기다리지 않음(줄 적기·200 응답을 늦추지 않게)
     // 직원 알림(화면 알림 + 폰 푸시 · type 'sms' · 손님 번호·이름 없이 끝 4자리만)
     async function notifyStaff(c, thread, title, message, opts = {}) {
         if (c && c.staff_notify === false) return 0;   // #837: 설정 sms_gateway.staff_notify false = 직원 알림(알림 종·폰 푸시) 전부 끔 — 모든 문자 알림이 이 함수 하나를 지나므로 여기서 끊음 · 5분 잠금 UPDATE 도 안 함 · 대화 상태·staff_why·미처리 집계·에이전트 오피스 카드·텔레그램은 무접촉
@@ -479,6 +527,7 @@ module.exports = function mountSms(app, deps) {
         if (!msg) return { done: { thread_id: thread.id, dup: true, action: 'dup' } };
         if (hasImage) await saveImages(msg.id, imgs);
         if (recordOnly) { await setThread(thread.id, { last_in_at: msg.event_at, last_in_text: thread.last_in_text || '', has_image: thread.has_image || hasImage }); await markDecided(msg.id); return { done: { thread_id: thread.id, message_id: msg.id, bucket, action: 'pending_photo' } }; }
+        appNotifySoon(thread, bodyText, imgs.length, bucket);   // #1062 문자 앱 알림(손님 문자마다)
         return { thread, msg, bodyText, imgs };
     }
     async function decideRecorded(rec) {
@@ -741,6 +790,7 @@ module.exports = function mountSms(app, deps) {
         await pool.query(`UPDATE sms_messages SET deciding_at = NULL WHERE id = $1`, [prev.id]);
         const msg = Object.assign({}, prev, { body: bodyText, bucket, kind: n > 0 ? 'mms' : 'sms' });
         const rows = n ? (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [prev.id])).rows.map(r => ({ contentType: r.content_type, data: r.data.toString('base64') })) : [];
+        appNotifySoon(thread, bodyText, n, bucket);   // #1062 사진 문자 = 사진이 붙은 이때 한 번(mms:received 메타 단계는 안 알림)
         return { thread, msg, bodyText, imgs: rows, extra: { attached: n } };
     }
     async function attachDownloaded(e) { return Object.assign({ ok: true, event: e.ev }, await decideRecorded(await recordDownloaded(e))); }
@@ -1427,7 +1477,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, refreshPreorders, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _staffBody: staffBody, _appNotify: appNotify, _appTitle: appTitle, _appBody: appBody, _appPreHint: appPreHint, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

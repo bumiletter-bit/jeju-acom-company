@@ -49,6 +49,33 @@ app.use('/api/track-order', express.json({ limit: '2kb' }));   // #610 손님 �
 app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/sms/webhook')) req.rawBody = buf.toString('utf8'); } }));   // #610 문자 webhook 서명 검증용 원문(그 라우트만)
 app.use((req, res, next) => { const h = String(req.headers['x-forwarded-host'] || req.hostname || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, ''); if (req.path === '/' && h === String(process.env.EVENT_HOST || 'event.akkome.com').toLowerCase()) return res.redirect(302, '/lucky.html'); next(); });   // #708: 이벤트 주소(event.akkome.com)로 들어온 「/」는 손님 이벤트 페이지로(express.static 이 index.html 을 내보내기 전에) · 다른 Host·경로는 무접촉
 app.use('/media', express.static(path.join(__dirname, 'public', 'media'), { maxAge: '1d' }));   // #832(총괄 10/24) 홈 영상(public/media · 파일 이름에 _v2 꼴 버전) = Cache-Control public, max-age=86400 · 다른 정적 파일·index.html 은 아래 종전 규칙(max-age=0) 그대로
+// #1062(대표 11/9) 「아꼼이 문자」 앱 = /sms/ — 본 앱 index.html 을 그대로 쓰되 다섯 곳만 바꿔 보낸다(파일 무변경 · 화면은 data-app="sms" 를 읽어 문자 모드 · 워커1 몫)
+//   ① <html …> 에 data-app="sms" ② <head> 첫머리 <base href="/">(index.html 의 상대 경로 styles.css?v= · 늦게 불러오는 js 가 / 에서 찾게)
+//   ③ base 때문에 href="#…" 링크가 / 로 페이지를 떠나지 않게 — 아무도 막지 않은 「#」 링크 누름은 해시만 바꿈 ④ manifest → /sms/manifest.webmanifest ⑤ 서비스 워커 /sw.js → /sms/sw.js(scope /sms/)
+//   /sms/manifest.webmanifest · /sms/sw.js · /sms/icon-*.png 는 아래 express.static 이 public/sms/ 에서 보냄
+//   바꿀 글자를 못 찾으면 = 그 자리만 빼고 그대로 보냄(500 안 냄) + 로그 + 텔레그램 하루 1회(실서버만) — index.html 꼴이 바뀐 것(앱 아이콘·알림이 본 앱 쪽으로 붙을 수 있음 → 이 정규식 손질)
+const SMS_APP_HTML = { mtime: 0, html: '', warnDay: '' };
+function smsAppHtml() {
+    const fs = require('fs'), f = path.join(__dirname, 'public', 'index.html'), st = fs.statSync(f);   // server.js 꼭대기엔 fs 가 없음
+    if (SMS_APP_HTML.html && SMS_APP_HTML.mtime === st.mtimeMs) return SMS_APP_HTML.html;
+    let h = fs.readFileSync(f, 'utf8'); const miss = [];
+    const one = (re, to, name) => { if (re.test(h)) h = h.replace(re, to); else miss.push(name); };
+    one(/<html(?=[\s>])/i, '<html data-app="sms"', 'html');
+    one(/<head(?:\s[^>]*)?>/i, '$&\n    <base href="/">\n    <script>document.addEventListener("click",function(e){if(e.defaultPrevented||e.button)return;var a=e.target&&e.target.closest&&e.target.closest(\'a[href^="#"]\');if(!a||a.target)return;e.preventDefault();var x=a.getAttribute("href");if(x.length>1)location.hash=x.slice(1);});</script>', 'head');
+    one(/<link\b[^>]*\brel=["']manifest["'][^>]*>/i, '<link rel="manifest" href="/sms/manifest.webmanifest">', 'manifest');
+    one(/navigator\.serviceWorker\.register\(\s*['"]\/sw\.js['"][^)]*\)/, "navigator.serviceWorker.register('/sms/sw.js', { scope: '/sms/' })", 'sw');
+    if (miss.length) {
+        const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+        console.warn('[sms-app] index.html 에서 못 찾은 자리(그 자리 빼고 보냄):', miss.join(','));
+        if (SMS_APP_HTML.warnDay !== day) { SMS_APP_HTML.warnDay = day; if (process.env.RENDER) { const WHY = { html: '문자 모드 안 켜짐', head: '화면 파일 경로(base) 빠짐', manifest: '앱 설치가 본 앱으로 잡힘', sw: '알림이 본 앱 쪽으로 붙음' }; notifyTelegram(`⚠️ 문자 앱(/sms/) 화면: index.html 에서 못 찾은 자리 = ${miss.map(x => x + '(' + WHY[x] + ')').join(', ')} · 화면은 그대로 보냄 · server.js smsAppHtml 손질 필요`).catch(() => { }); } }
+    }
+    SMS_APP_HTML.mtime = st.mtimeMs; SMS_APP_HTML.html = h; return h;
+}
+app.get('/sms', (req, res) => {   // express 는 /sms 와 /sms/ 를 같은 길로 봄 → 원래 주소로 가름(/sms = /sms/ 로 보냄 · scope /sms/ 안에 들게)
+    const u = req.originalUrl, q = u.indexOf('?'), p = q < 0 ? u : u.slice(0, q);
+    if (p !== '/sms/') return res.redirect(301, '/sms/' + (q < 0 ? '' : u.slice(q)));
+    try { res.set('Cache-Control', 'no-cache'); res.type('html').send(smsAppHtml()); } catch (e) { res.status(500).send('문자 앱 화면을 못 읽었어요'); }
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === JWT 인증 미들웨어 ===
@@ -11326,7 +11353,7 @@ const invoiceAuto = require('./invoice-auto.js')(app, { pool, authMiddleware, ad
 // ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====
 //   켜기 = agent_office_config 'sms_gateway' {"enabled":true,"mode":"record"} (record → draft → auto 순 · auto 는 대표 「고」 뒤) · env SMSGATE_USER/PASS/SIGNING_KEY(Render) · webhook 등록 = POST /api/sms/register-webhooks(관리자 1회)
 //   무회귀: 설정 행이 없으면 webhook 은 받아 기록만 하고 아무 것도 보내지 않는다 · 다른 기능과 표를 공유하지 않음(delivery_shipments 에 buyer_phone 칸만 추가)
-const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,
+const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, push,   // #1062 push = 문자 앱 알림(push.sendApp) loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,
     // #610-G 발송 전 주문 보관(sms/preorders.js · 설정 sms_gateway.preorders 가 true 일 때만 60분 1회) — cafe24 는 const 가 뒤(10324행)라 지연 참조(TDZ)
     // #667 발주확인 전 주문도(네이버 NOT_YET · 쿠팡 ACCEPT) — 대표가 아침에 손으로 발주확인하기 전에 문자한 손님도 찾게. 이 줄에서만 켠다(행에 _x.placeOrderStatus · _status 가 실림)
     ordersBusy: () => _ordersBusy > 0,   // #667-b: 다른 곳이 주문을 조회 중이면 true(문자 수집 자신의 조회는 Core 직행이라 안 셈)

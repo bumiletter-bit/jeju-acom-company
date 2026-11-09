@@ -8,6 +8,10 @@
  * · 무엇을 보낼지는 agent_office_config 'push_scope' 로 고른다(기본 = 꼭 필요한 것만).
  * 🔴 손님 개인정보(이름·전체 번호·주소)는 푸시 본문에 넣지 않는다 — 잠금 화면에 그대로 뜨기 때문.
  *    (#707-B · 대표 10/15: 문자 알림(type 'sms')의 손님 글·봇 답 전문은 잠금 화면에 떠도 된다고 정함 → 문자만 본문 상한 300자 · 다른 type 은 120 그대로 · sms/index.js staffBody 가 적는 글 그대로)
+ * #1062(대표 11/9) 「아꼼이 문자」 앱(/sms/ · 회사폰·발주컴퓨터 PC) — 그 앱의 서비스 워커로 받은 구독은 label = 'sms-app'
+ *    · send() 는 sms-app 구독을 늘 건너뛴다(창구·결재·정산·종전 문자 알림이 문자 앱으로 가지 않게 · 같은 PC 중복 0)
+ *    · sendApp() 은 sms-app 구독에만 보낸다(sms/index.js appNotify · 손님 문자 1통마다 · 알림 종 표 안 씀) · push_scope.sms === false 면 안 보냄
+ *    · 문자 앱 제목은 가린 이름·가린 번호(「이*화 · 010-****-2485」 · 대표 11/9 지정 꼴)
  */
 'use strict';
 const webpush = require('web-push');
@@ -68,6 +72,24 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
     }
 
     const clip = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
+    const APP_LABEL = 'sms-app';   // #1062 문자 앱 구독 꼬리표(화면이 구독 body.label 로 보냄 · 값 고정)
+    const clipKeep = (s, n) => String(s == null ? '' : s).replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim().slice(0, n);   // 문자 앱 본문 = 줄바꿈은 살림(글 · 「주문: …」 두 줄)
+    // 구독 줄들로 실제 발송 — 성공 = last_ok_at · 404/410 = 그 줄 지움 · 그 밖 실패 = fail_count +1(종전 send 와 같은 처리)
+    async function pushTo(subs, payload, opts) {
+        let sent = 0, gone = 0;
+        for (const s of subs) {
+            try {
+                await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, opts || { TTL: 3600 });
+                sent++;
+                await pool.query(`UPDATE push_subscriptions SET last_ok_at = NOW(), fail_count = 0 WHERE id = $1`, [s.id]);
+            } catch (e) {
+                const code = e && e.statusCode;
+                if (code === 404 || code === 410) { await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [s.id]); gone++; }
+                else await pool.query(`UPDATE push_subscriptions SET fail_count = fail_count + 1 WHERE id = $1`, [s.id]);
+            }
+        }
+        return { sent, gone };
+    }
 
     // 한 사람의 모든 기기로 보낸다. 실패해도 절대 위로 던지지 않는다(알림 때문에 본 기능이 멈추면 안 된다).
     async function send(userId, { title, message, link, type }) {
@@ -75,30 +97,31 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
             if (!userId) return { sent: 0, skip: 'no-user' };
             if (type) { const sc = await scope(); if (sc[type] === false) return { sent: 0, skip: 'scope' }; }
             await init();
-            const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`, [userId])).rows;
+            const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1 AND label IS DISTINCT FROM $2`, [userId, APP_LABEL])).rows;   // #1062 문자 앱 구독은 여기서 안 보냄(sendApp 몫)
             if (!subs.length) return { sent: 0, skip: 'no-sub' };
             const payload = JSON.stringify({ title: clip(title, 60) || '제주아꼼이네', body: clip(message, type === 'sms' ? 300 : 120), link: clip(link, 60) || '' });   // #707-B(대표 10/15): 문자(type 'sms') 본문만 120 → 300(손님 글·봇 답이 실림 · 잠금 화면에 떠도 된다 = 대표 · 문자 한정) · 다른 type·제목·link 상한은 그대로
-            let sent = 0, gone = 0;
-            for (const s of subs) {
-                try {
-                    await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600 });
-                    sent++;
-                    await pool.query(`UPDATE push_subscriptions SET last_ok_at = NOW(), fail_count = 0 WHERE id = $1`, [s.id]);
-                } catch (e) {
-                    const code = e && e.statusCode;
-                    if (code === 404 || code === 410) { await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [s.id]); gone++; }
-                    else await pool.query(`UPDATE push_subscriptions SET fail_count = fail_count + 1 WHERE id = $1`, [s.id]);
-                }
-            }
-            return { sent, gone };
+            return await pushTo(subs, payload);
         } catch (e) { console.error('[push] 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
+    }
+    // #1062 문자 앱(label 'sms-app') 구독에만 — { title, message, link, tag } · 실패해도 던지지 않음 · urgency high(폰이 쉬고 있어도 빨리)
+    async function sendApp(userId, { title, message, link, tag }) {
+        try {
+            if (!userId) return { sent: 0, skip: 'no-user' };
+            const sc = await scope(); if (sc.sms === false) return { sent: 0, skip: 'scope' };
+            await init();
+            const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1 AND label = $2`, [userId, APP_LABEL])).rows;
+            if (!subs.length) return { sent: 0, skip: 'no-sub' };
+            const payload = JSON.stringify({ title: clip(title, 60) || '아꼼이 문자', body: clipKeep(message, 300), link: clip(link, 60) || '', tag: clip(tag, 40) || '', app: 'sms' });
+            return await pushTo(subs, payload, { TTL: 3600, urgency: 'high' });
+        } catch (e) { console.error('[push] 문자 앱 보내기 실패(무시):', e.message); return { sent: 0, error: e.message }; }
     }
 
     // ── 화면에서 쓰는 길 ──
     app.get('/api/push/key', authMiddleware, async (req, res) => {
         try {
             await init();
-            const n = (await pool.query(`SELECT COUNT(*)::int AS c FROM push_subscriptions WHERE user_id = $1`, [req.user.id])).rows[0].c;
+            const app = req.query && req.query.label === APP_LABEL;   // #1062 문자 앱 화면은 ?label=sms-app 으로 자기 구독만 셈 · 본 앱 = 문자 앱 구독 뺀 수
+            const n = (await pool.query(`SELECT COUNT(*)::int AS c FROM push_subscriptions WHERE user_id = $1 AND ${app ? 'label = $2' : 'label IS DISTINCT FROM $2'}`, [req.user.id, APP_LABEL])).rows[0].c;
             res.json({ key: vapid.publicKey, subscribed: n > 0, devices: n });
         } catch (e) { res.status(500).json({ error: '푸시 설정을 읽지 못했습니다' }); }
     });
@@ -111,8 +134,8 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
             await pool.query(
                 `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, label)
                  VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, fail_count = 0`,
-                [req.user.id, String(s.endpoint).slice(0, 700), String(keys.p256dh).slice(0, 200), String(keys.auth).slice(0, 100), clip(req.headers['user-agent'], 120)]);
+                 ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, fail_count = 0${s.label === APP_LABEL ? ', label = EXCLUDED.label' : ''}`,
+                [req.user.id, String(s.endpoint).slice(0, 700), String(keys.p256dh).slice(0, 200), String(keys.auth).slice(0, 100), s.label === APP_LABEL ? APP_LABEL : clip(req.headers['user-agent'], 120)]);   // #1062 문자 앱 = 'sms-app' · 그 밖 = UA(종전)
             res.json({ message: '이 기기로 알림을 받습니다' });
         } catch (e) { res.status(500).json({ error: '알림 받기를 켜지 못했습니다' }); }
     });
@@ -120,7 +143,7 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
         try {
             const ep = String((req.body && req.body.endpoint) || '');
             if (ep) await pool.query(`DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2`, [ep, req.user.id]);
-            else await pool.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [req.user.id]);
+            else await pool.query(`DELETE FROM push_subscriptions WHERE user_id = $1 AND ${req.body && req.body.label === APP_LABEL ? 'label = $2' : 'label IS DISTINCT FROM $2'}`, [req.user.id, APP_LABEL]);   // #1062 endpoint 없이 끄기 = 그 앱 구독만
             res.json({ message: '이 기기 알림을 껐습니다' });
         } catch (e) { res.status(500).json({ error: '끄지 못했습니다' }); }
     });
@@ -152,5 +175,5 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
     }
     if (process.env.RENDER) { const t = setInterval(deliver, 10000); if (t.unref) t.unref(); }
 
-    return { send, init, deliver };
+    return { send, sendApp, init, deliver };
 };

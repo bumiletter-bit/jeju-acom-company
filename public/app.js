@@ -222,6 +222,7 @@ function onLoginSuccess() {
     updateUserUI();
     init();
     startNotiPolling();
+    if (akmIsSmsApp()) smsAppStart();   // #1062 「아꼼이 문자」 앱 = 문자 창만
     notiApplyHash();   // #576 푸시 알림으로 열린 경우 그 알림의 창으로
 }
 
@@ -302,7 +303,7 @@ function checkAuth() {
             //   수동 로그인·로그아웃 후 재로그인은 종전대로 메인에서 시작. 권한 밖 메뉴는 switchPage의 기존 가드가 처리.
             try {
                 const savedPage = localStorage.getItem('akm_last_page');
-                if (savedPage && document.getElementById('page-' + savedPage)) {
+                if (savedPage && !akmIsSmsApp() && document.getElementById('page-' + savedPage)) {   // #1062 문자 앱은 복원 없이 문자 창
                     switchPage(savedPage);
                     if (savedPage === 'inquiry') {
                         const t = localStorage.getItem('akm_inq_tab');
@@ -365,7 +366,7 @@ function switchPage(pageName) {
     document.getElementById(`page-${pageName}`).classList.add('active');
 
     // 지시 #407(대표 확장 지시): 새로고침 시 「지금 보던 메뉴」로 복원 — 전 메뉴 공통(문의 관리는 내부 탭까지)
-    try { localStorage.setItem('akm_last_page', pageName); } catch (_) {}
+    if (!akmIsSmsApp()) try { localStorage.setItem('akm_last_page', pageName); } catch (_) {}   // #1062 문자 앱은 본 앱의 「보던 메뉴」를 안 덮음(같은 로그인 저장소)
 
     if (pageName === 'schedule') renderScheduleCalendar().catch(console.error);
     if (pageName === 'rankings') renderRankingsPage().catch(console.error);
@@ -1254,6 +1255,46 @@ function notiApplyHash() {
 }
 // 앱이 이미 열려 있을 때 푸시를 누르면 sw.js 가 해시만 바꾼다(새로고침 없음) → 그때도 같은 길로
 window.addEventListener('hashchange', () => { if (currentUser) notiApplyHash(); });
+
+// ── #1062 「아꼼이 문자」 앱(/sms/) — 서버가 <html data-app="sms"> 를 붙여 index.html 을 보냄(워커2 계약) ──
+//   화면만 바꿈(권한·API 그대로) = 에이전트 오피스 › 손님 연락 › 문자 창을 바로 열고 늘 열어 둠(닫기·뒤로가기로 닫히면 다시 엶) · 메뉴·채널 탭 숨김(css)
+//   첫 줄 안내 + 「알림 받기」 단추(종 판의 #noti-push 단추를 그대로 누름 → 구독 body 에 label 'sms-app')
+function akmIsSmsApp() { return document.documentElement.dataset.app === 'sms'; }
+function smsAppStart() {
+    if (smsAppStart.on) return; smsAppStart.on = true;
+    document.body.classList.add('akm-sms-app');
+    const hashSms = /[?&]sms=\d+/.test(location.hash);   // 알림으로 열림 = notiApplyHash 가 그 대화를 엶(이 길은 창만 지킴)
+    if (document.getElementById('page-agent-office') && !document.getElementById('page-agent-office').classList.contains('active')) { try { switchPage('agent-office'); } catch (_) { /* 메뉴 못 바꿔도 아래에서 다시 */ } }
+    let tries = 0;
+    const open = () => {
+        if (document.body.classList.contains('sms-win-open')) { smsAppNote(); return; }
+        const d = window.AkmAoDesk;
+        if (!(d && typeof d.openInbox === 'function' && d.openInbox('sms'))) { if (++tries <= 120) setTimeout(open, 150); else smsAppFail(); return; }   // ao-desk.js·문자 요약이 늦게 와도(최대 18초) · 그래도 못 열면 안내 띠
+        tries = 0; smsAppNote(); const f = document.getElementById('sms-app-fail'); if (f) f.remove();
+    };
+    setTimeout(open, hashSms ? 1500 : 60);
+    new MutationObserver(() => { if (!document.body.classList.contains('sms-win-open')) setTimeout(() => { if (!document.body.classList.contains('sms-win-open')) open(); }, 120); })
+        .observe(document.body, { attributes: true, attributeFilter: ['class'] });   // 뒤로가기·닫기로 문자 창이 닫히면 다시(문자 밖 화면으로 안 나감)
+}
+function smsAppFail() {   // #1062 문자 창을 18초 안에 못 엶 = 메뉴 숨긴 빈 화면에서 멈추지 않게 안내 + [새로고침]
+    if (document.getElementById('sms-app-fail')) return;
+    const n = document.createElement('div'); n.id = 'sms-app-fail'; n.className = 'sms-app-note'; n.setAttribute('role', 'alert');
+    n.style.cssText = 'position:fixed;left:12px;right:12px;top:12px;z-index:9999;margin:0';
+    n.innerHTML = '<span class="sms-app-note-t">문자 창을 못 열었어요 · 새로고침해 주세요</span><button type="button" class="desk-btn sm sms-app-push">새로고침</button>';
+    n.querySelector('button').addEventListener('click', () => location.reload());
+    document.body.appendChild(n);
+}
+function smsAppNote() {
+    const win = document.querySelector('#desk-sms .sms-win'); if (!win || document.getElementById('sms-app-note')) return;
+    const n = document.createElement('div'); n.className = 'sms-app-note'; n.id = 'sms-app-note';
+    n.innerHTML = '<span class="sms-app-note-t">답은 이 앱에서 보내 주세요 · 폰 메시지 앱에서 보낸 글은 기록이 안 남아요</span><button type="button" class="desk-btn sm sms-app-push" id="sms-app-push">알림 받기</button><span class="sms-app-push-s" id="sms-app-push-s" role="status"></span>';
+    const head = win.querySelector('.desk-tool-head'); if (head && head.nextSibling) win.insertBefore(n, head.nextSibling); else win.prepend(n);
+    const src = document.getElementById('noti-push-btn'), b = document.getElementById('sms-app-push'), s = document.getElementById('sms-app-push-s');
+    const mirror = () => { if (!src) { b.hidden = true; return; } const t = src.textContent.trim(); b.textContent = t === '끄기' ? '알림 끄기' : t === '켜기' ? '알림 받기' : t; b.disabled = src.disabled; const sub = document.getElementById('noti-push-sub'); s.textContent = sub && src.textContent.trim() !== '켜기' ? sub.textContent : ''; };
+    if (src) { new MutationObserver(mirror).observe(document.getElementById('noti-push') || src, { subtree: true, childList: true, characterData: true, attributes: true }); }
+    b.addEventListener('click', () => { if (src && !src.disabled) src.click(); });
+    mirror(); if (typeof akPushRefresh === 'function') akPushRefresh();
+}
 
 // ── #678(대표 10/12 「정산관리 누르고 정산현황이든 하나 누르고 다음 탭 누를 경우도 다 뒤로가기로」) 폰 뒤로가기 = 바로 전 화면 ──
 //   메뉴 이동·메뉴 안 탭 전환을 기록(history)에 쌓는다 → 뒤로가기 1번 = 직전 탭/직전 메뉴(앞으로가기도) · 떠 있는 공통 창(.modal-overlay · 알림 종 판 · 이전 알림 · 달력 · 폰 사이드바)이 있으면 그 창만 닫힌다.
@@ -14999,12 +15040,12 @@ setupNaverTimerCard();
         try {
             const perm = await Notification.requestPermission();
             if (perm !== "granted") return paint("off", "알림을 허용해 주셔야 폰으로 보낼 수 있어요.");
-            const { key } = await api("/api/push/key");
+            const { key } = await api(akmIsSmsApp() ? "/api/push/key?label=sms-app" : "/api/push/key");   // #1062 문자 앱 = 자기 구독만 셈(워커2 계약)
             if (!key) return paint("off", "알림 열쇠를 받지 못했어요. 잠시 뒤 다시 눌러 주세요.");
             const reg = await navigator.serviceWorker.ready;
             let s = await reg.pushManager.getSubscription();
             if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
-            await api("/api/push/subscribe", "POST", s.toJSON());
+            await api("/api/push/subscribe", "POST", akmIsSmsApp() ? Object.assign(s.toJSON(), { label: 'sms-app' }) : s.toJSON());   // #1062 문자 앱 구독 = label 'sms-app'(서버가 문자 알림만 보냄 · 본 앱은 종전 그대로)
             paint("on", "켰습니다. 시험 알림을 보냅니다.");
             const t = await api("/api/push/test", "POST", {});
             paint("on", t.message || "시험 알림을 보냈어요.");
@@ -15017,7 +15058,7 @@ setupNaverTimerCard();
         try {
             const s = await sub();
             if (s) { await api("/api/push/unsubscribe", "POST", { endpoint: s.endpoint }); await s.unsubscribe(); }
-            else await api("/api/push/unsubscribe", "POST", {});
+            else await api("/api/push/unsubscribe", "POST", akmIsSmsApp() ? { label: 'sms-app' } : {});   // #1062 문자 앱 끄기 = 문자 앱 구독만
             paint("off", "이 기기 알림을 껐어요.");
         } catch (e) { paint("on", "끄지 못했어요. 다시 눌러 주세요."); }
     }

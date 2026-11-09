@@ -1,0 +1,16 @@
+{
+  "id": "/sms/",
+  "name": "아꼼이 문자",
+  "short_name": "아꼼이 문자",
+  "description": "제주아꼼이네 회사폰 문자 — 손님 문자 받기·답하기",
+  "start_url": "/sms/",
+  "scope": "/sms/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4F46E5",
+  "icons": [
+    { "src": "/sms/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/sms/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/sms/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
