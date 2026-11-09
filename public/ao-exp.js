@@ -524,6 +524,9 @@
     function onPop() {
         if (!X.layer) return;
         if (X.ignorePop) { X.ignorePop = false; return; }   // 판을 ×·Esc 로 닫으며 걷은 칸
+        // #1066-b(대표 폰 11/9) 공통 달력(akm-date)을 열면 app.js(#678)가 그 위에 akmM 칸을 쌓고 닫을 때 history.back() 으로 걷는다 → 그 popstate 는 남의 칸
+        //   = 지금 칸에 우리 표식(판 = xpDay · 창 = xpExp)이 아직 있으면 무시(종전 = 방문일을 고르면 수정 판째 날짜 판이 닫혔음)
+        { const s = (() => { try { return history.state || {}; } catch (_) { return {}; } })(); if (X.dayPushed ? s.xpDay : s.xpExp) return; }
         if (X.dayPushed) { X.dayPushed = false; if (X.day) closeDay(true); return; }   // 뒤로가기 1번 = 명단 판만
         close(true);
     }
