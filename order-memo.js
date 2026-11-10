@@ -777,7 +777,7 @@ function mount(app, deps) {
         const key = s(req.query.key, 40).trim(), np = PRE_LK ? PRE_LK.normalizePhone(key) : dg(key);
         if (!/^0\d{8,11}$/.test(np)) throw err(400, '입력삭제 번호(구매자 전화번호)를 주세요');
         let orders = [], src = 'memo';
-        try { orders = (await pool.query("SELECT channel, order_key, product_order_no, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 ORDER BY paid_at DESC NULLS LAST LIMIT 40", [np])).rows; }
+        try { orders = (await pool.query("SELECT channel, order_key, product_order_no, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 ORDER BY paid_at DESC NULLS LAST LIMIT 200", [np])).rows; }
         catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; src = 'none'; }
         const rows = (await pool.query(`SELECT r.id, r.entry_id, r.kind, r.cells, r.state, to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS entry_created_at FROM order_memo_rows r JOIN order_memo_entries e ON e.id = r.entry_id WHERE r.state = 'open' AND r.kind = 'cash'`)).rows;
         const h = pairHint(orders.map(o => ({ option: o.option_text, qty: o.qty })), rows, np);
@@ -870,6 +870,8 @@ function mount(app, deps) {
     //        ② = 그 표가 비었으면(수집 꺼짐·배포 직후) 문자용 sms_preorders(7일 · 이름 전체·주소 없음 · #610-G) — 종전 꼴 그대로
     //   매칭 = 숫자만 · 구매자 번호 = as buyer · 받는 분 번호 = as recv · 자사몰 주문번호(YYYYMMDD-NNNNNNN) · 네이버 상품주문번호 등 긴 숫자 = as order · 개인정보 = 응답에만(로그·감사 0)
     const PLAT_CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, CH_PLAT = { naver: '네이버', coupang: '쿠팡', cafe24: '자사몰' };
+    const LK_LIMIT = 50;   // #1101 한 번호 발송 전 주문 목록 상한(종전 20)
+    const totOf = async (tbl, okey, where, args) => { const t = (await pool.query(`SELECT count(*)::int AS rows, count(DISTINCT ${okey})::int AS n, COALESCE(sum(COALESCE(qty, 1)), 0)::int AS q FROM ${tbl} WHERE channel = ANY($1::text[]) AND ${where}`, args)).rows[0] || {}; return { rows: t.rows || 0, n: t.n || 0, q: t.q || 0 }; };   // #1101 잘리기 전 전체(같은 where · 작은 집계 1번)
     app.get('/api/order-memo/lookup', authMiddleware, wrap(async (req, res) => {
         if (req.user.role === 'accountant') throw err(403, '세무사 계정은 볼 수 없어요');   // 손님 이름·주소(워커3 점검)
         const key = s(req.query.key, 40).trim(), plat = s(req.query.plat, 10).trim();
@@ -879,14 +881,15 @@ function mount(app, deps) {
         const d = phone ? np : d0;   // 번호 = 문자 쪽과 같은 정규화(+82 → 0)
         if (!phone && !mall && !orderNo) throw err(400, '전화번호(0으로 시작 9~12자리) 또는 주문번호를 주세요');
         const kv = mall ? key : d;
-        let matches = [], cov = null, src = 'none';
+        let matches = [], cov = null, src = 'none', tot = { rows: 0, n: 0, q: 0 };
         try {
             const have = Number((await pool.query('SELECT count(*)::int AS n FROM order_memo_preorders')).rows[0].n);
             if (have > 0) {
                 src = 'memo';
                 const where = phone ? '(buyer_digits = $2 OR recv_digits = $2)' : mall ? "channel = 'cafe24' AND split_part(order_key, '|', 1) = $2" : '(split_part(order_key, \'|\', 1) = $2 OR product_order_no = $2)';
                 const rows = (await pool.query("SELECT channel, order_key, product_order_no, buyer_name, buyer_digits, recv_name, recv_digits, addr, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS paid"
-                    + ' FROM order_memo_preorders WHERE channel = ANY($1::text[]) AND miss = 0 AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
+                    + ' FROM order_memo_preorders WHERE channel = ANY($1::text[]) AND miss = 0 AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT ' + LK_LIMIT, [ch, kv])).rows;
+                if (rows.length) tot = await totOf('order_memo_preorders', "COALESCE(NULLIF(product_order_no, ''), split_part(order_key, '|', 1))", 'miss = 0 AND ' + where, [ch, kv]);
                 matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
                     buyer_name: r.buyer_name || null, recv_name: r.recv_name || null, recv_initial: (String(r.recv_name || '').match(/[가-힣A-Za-z]/) || [''])[0], addr: r.addr || null,
                     option: r.option_text || '', qty: r.qty || null, order_no: r.product_order_no || String(r.order_key || '').split('|')[0], pno: r.product_order_no || null, paid_at: r.paid,   // #938 pno = 상품주문번호(쿠팡은 이게 없으면 주문번호 줄로 못 나눔 · order_key 앞 토막 = 상자 번호)
@@ -898,8 +901,9 @@ function mount(app, deps) {
             try {
                 const where = phone ? '(buyer_digits = $2 OR recipient_digits = $2)' : mall ? "channel = 'cafe24' AND split_part(order_key, '|', 1) = $2" : "split_part(order_key, '|', 1) = $2";
                 const rows = (await pool.query("SELECT channel, order_key, buyer_digits, recipient_digits, recipient_initial, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS paid"
-                    + ' FROM sms_preorders WHERE channel = ANY($1::text[]) AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT 20', [ch, kv])).rows;
+                    + ' FROM sms_preorders WHERE channel = ANY($1::text[]) AND ' + where + ' ORDER BY paid_at DESC NULLS LAST LIMIT ' + LK_LIMIT, [ch, kv])).rows;
                 src = 'sms';
+                if (rows.length) tot = await totOf('sms_preorders', "split_part(order_key, '|', 1)", where, [ch, kv]);
                 matches = rows.map(r => ({ plat: CH_PLAT[r.channel] || r.channel, as: phone ? (r.buyer_digits === d ? 'buyer' : 'recv') : 'order',
                     buyer_name: null, recv_name: null, recv_initial: r.recipient_initial || '', addr: null,   // 이름 전체·주소 = 그 표에 없음(#610-G)
                     option: r.option_text || '', qty: r.qty || null, order_no: String(r.order_key || '').split('|')[0], paid_at: r.paid,
@@ -909,7 +913,7 @@ function mount(app, deps) {
         }
         if (phone && !matches.length) refreshIfMiss([d]).catch(() => {});   // #936 [넣기]·카드 번호 찾기에서 주문 없음 = 즉시 조회(응답은 종전 그대로 · 다음 조회·목록부터)
         const days = 7;
-        res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches,
+        res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches, total: tot.n, total_qty: tot.q, limit: LK_LIMIT, cut: tot.rows > matches.length,   // #1101 cut = 최근 LK_LIMIT 줄만 보냄 · total = 화면 머리와 같은 주문 묶음 수(상품주문번호 또는 order_key 앞 토막) · total_qty = qty 없으면 1
             message: matches.length ? '' : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
             coverage: { days, source: src, last_seen: cov ? cov.last_seen : null,
                 note: '발송 전 주문 = 결제 7일 안 · 60분마다 모음(문자 수집기와 같은 회차) · 발송·취소된 주문은 빠짐' } });

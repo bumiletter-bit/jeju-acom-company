@@ -1837,7 +1837,8 @@
         if (!L || L.state === 'busy') return '<p class="om-lk" role="status" data-k="busy">주문 찾는 중…</p>';
         if (L.state === 'err') return '<p class="om-lk" role="alert" data-k="warn">주문을 찾지 못했어요(연결 오류) · 카드를 닫고 다시 해 주세요</p>';
         const os = ceOrders(r); if (!os.length) return '<p class="om-lk" role="status" data-k="warn">이 번호의 발송 전 주문을 못 찾았어요 · 선물하기 주문은 받는 분 번호로 넣어 주세요 — 7일 지난 주문·예약 주문은 여기서 안 보여요</p>';   // #1038 선물하기 = 구매자 번호 없음 → 받는 분 번호로 찾음(lookup 은 둘 다 찾음)
-        return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b><ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); const rv = String(o.recv || '').trim(), ad = String(o.addr || '').trim(), pd = o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : '';   // #1100 받는 분·주소 있으면 두 줄(1줄 = 이름 · 주소 앞부분 · 2줄 = 판매처 · 품목 · 박스 · 결제일 · 주문번호는 [고치기] 판 머리) · 둘 다 없으면 종전 꼴
+        const cut = L.cut && L.cut.n ? `<p class="om-ordn om-ce-cut" role="note">이 번호 발송 전 주문 총 ${L.cut.n}건 · ${L.cut.q}박스 — 최근 ${L.cut.lim || 50}건만 보여요 · 나머지는 입력삭제(현금 줄 짝) 또는 최종발주에서</p>` : '';   // #1101
+        return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b>${cut}<ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); const rv = String(o.recv || '').trim(), ad = String(o.addr || '').trim(), pd = o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : '';   // #1100 받는 분·주소 있으면 두 줄(1줄 = 이름 · 주소 앞부분 · 2줄 = 판매처 · 품목 · 박스 · 결제일 · 주문번호는 [고치기] 판 머리) · 둘 다 없으면 종전 꼴
             const tH = rv || ad ? `<span class="om-ce-t two"><span class="om-ce-who">${rv ? `<b>${esc(rv)}</b>` : ''}${rv && ad ? ' · ' : ''}${ad ? esc(ad) : ''}</span><span class="om-ce-sub">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스${pd}</span></span>` : `<span class="om-ce-t">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스 · ${esc(o.id)}${pd}</span>`;
             return `<li class="om-ce-o">${tH}${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
     }
@@ -1984,7 +1985,7 @@
         const res = await API.lookup(String(r.key).trim());   // 셋 다 한 번에 · 판매처를 바꿔 누르면 받아 둔 결과로 거름(호출 0)
         if (OM.card !== c || r._lkSeq !== seq) return;
         const i = c.rows.indexOf(r); if (i < 0) return;
-        r._lk = res.ok && res.body ? { state: 'done', key, matches: Array.isArray(res.body.matches) ? res.body.matches : [] } : { state: 'err', key, matches: [] };
+        r._lk = res.ok && res.body ? { state: 'done', key, matches: Array.isArray(res.body.matches) ? res.body.matches : [], cut: res.body.cut === true ? { n: Number(res.body.total) || 0, q: Number(res.body.total_qty) || 0, lim: Number(res.body.limit) || 0 } : null } : { state: 'err', key, matches: [] };   // #1101 cut = 서버가 최근 n건만 보냄(옛 서버 = 칸 없음 → null)
         {   // #1061-c 0건 = 즉시 주문 조회(#936)를 기다려 「주문 찾는 중…」 그대로 다시(번호당 최대 3회 · 약 8초 · 번호 바꾸면 처음부터)
             if (r._lkTryKey !== key) { r._lkTryKey = key; r._lkTry = 0; }
             if (r._lk.state === 'done' && !r._lk.matches.length && isSzRow(r) && /^0\d{8,11}$/.test(key) && r._lkTry < LK_RETRY.length) {   // 사이즈·과수 줄만(입력삭제·날짜·보내는이 줄 = 종전 1회 · 입력삭제 [저장] 안 막힘)
