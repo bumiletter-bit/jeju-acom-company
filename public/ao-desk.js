@@ -1763,14 +1763,37 @@
     //   자료: 서버 history(#654 · 최근 60일 · 최신순 · 최대 20건)가 있으면 그것 — 가장 위 1건을 보여 주고 나머지는 「구매이력 n건 더보기」로 같은 틀로 펼친다(그 대화를 보는 동안 기억).
     //         history 가 없으면(옛 서버) 종전 order(판정에 쓴 최근 14일 1건)로. 송장 = 전체 번호(누르면 복사 · [조회] = 우리 배송조회 새 창) · 옛 응답이면 「끝 1234」.
     //   #681(대표 10/13 폴드7 실물 「1개만 나오고 +n건 · 접어서 볼 때도 가려」): 「1건」 = 송장 1개(상자 1개). 한 주문에 송장이 2개면 2건으로 나눠, 접힌 판에는 맨 위 1건만 낮게(품목은 한 줄 말줄임) + 머리 줄 오른쪽 「+n건 더보기」
+    // #1097(대표 폴드7 「자판 열면 말풍선 1개」) 터치 기기 = 상품 이름 앞머리만 화면에서 줄임 · 구매이력 줄 합침 · 답 칸 초점 때 판 한 줄로(PC 마우스는 바이트 그대로)
+    //   줄이는 것 = 「…상품선택: 」·「1. 」·「(제철)」·「고당도 」(맨 앞만) · 「/ 상품 및 과수: 」 꼴 칸 이름 → 띄어쓰기(숫자로 시작하는 칸 이름 = 체험 「/ 00월: 11」 은 그대로). 선물용·가정용·kg·과수·품목 낱말은 그대로 · 원문(title·발주메모·검색)은 안 바뀜
+    const smsTouchUi = () => window.matchMedia('(pointer: coarse)').matches;
+    const smsShortOpt = s => { const t0 = String(s || ''); const t = t0.replace(/^\s*[^:\/]{0,20}상품\s*선택\s*:\s*/, '').replace(/^\s*\d{1,2}\s*\.\s+/, '').replace(/^\s*\(제철\)\s*/, '').replace(/^\s*고당도\s*/, '').replace(/\s*\/(?!\s*\d)\s*[^:\/]{1,12}:\s*/g, ' ').replace(/\s{2,}/g, ' ').trim(); return t || t0; };
+    function smsBuyMini(o, n) {   // #1097 답 칸 초점 때 보이는 한 줄(「발송 전 · 11/11 · 타이벡감귤 가정용 - 3kg ▾」) — 누르면 판 전체
+        if (!o || typeof o !== 'object') return '';
+        let st, dt;
+        if (o.pre) { st = '발송 전'; const m = /\d{1,2}\/\d{1,2}/.exec(String(o.ship_plan || '')); const pd = smsKd(o.paid_at); dt = m ? m[0] : pd ? '결제 ' + (pd.getUTCMonth() + 1) + '/' + pd.getUTCDate() : ''; }
+        else { st = String(o.status_text || o.status_label || '').trim() || (o.delivered ? '배송완료' : ''); dt = o.ship_date ? mdOf(o.ship_date).replace(/^0/, '').replace(/\/0/, '/') : ''; }
+        const it = smsShortOpt(o.option_text) + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '');
+        const segs = [st ? `<b>${esc(st)}</b>` : '', esc(dt), esc(it.trim())].filter(Boolean).join(' · ');
+        return segs ? `<button type="button" class="sms-buy-mini" id="sms-buy-mini" aria-expanded="false" aria-label="구매이력 펼치기"><span class="sms-buy-mini-t">${segs}${n > 1 ? ` <small>외 ${nfmt(n - 1)}건</small>` : ''}</span><span class="sms-buy-mini-i" aria-hidden="true">▾</span></button>` : '';
+    }
     function smsBuyUnits(o) {
         if (!o || typeof o !== 'object') return [];
+        const T = smsTouchUi();
         const row = (k, name, html, key, tip) => html ? `<div class="sms-buy-r r-${k}${key ? ' key' : ''}"><dt>${name}</dt><dd data-k="${k}"${key ? ' class="key"' : ''}${tip ? ` title="${tip}"` : ''}>${html}</dd></div>` : '';
         const badge = (text, k) => text ? `<span class="desk-badge" data-k="${k}">${esc(text)}</span>` : '';
-        const role = o.role === 'buyer' ? '<small class="sms-buy-role">이 번호가 주문한 건</small>' : o.role === 'both' ? '' : o.role === 'recipient' ? '<small class="sms-buy-role">이 번호가 받는 건</small>' : '';
-        const item = esc((o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '') + (Number(o.boxes) > 1 ? ' · ' + nfmt(o.boxes) + '상자' : ''));
+        const role = o.role === 'buyer' ? (T ? '' : '<small class="sms-buy-role">이 번호가 주문한 건</small>') : o.role === 'both' ? '' : o.role === 'recipient' ? '<small class="sms-buy-role">이 번호가 받는 건</small>' : '';
+        const qtyTail = (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '') + (Number(o.boxes) > 1 ? ' · ' + nfmt(o.boxes) + '상자' : '');
+        const item = esc((o.option_text || '') + qtyTail), itemV = T ? esc(smsShortOpt(o.option_text) + qtyTail) : item;
         const rName = String(o.recipient_name || '').trim(), rInit = String(o.recipient_initial || '').trim();
         const who = esc(rName ? (rName.length === 1 ? rName + '**' : rName) : (rInit ? rInit + '**' : ''));
+        if (o.pre && T) {   // #1097 터치 = 「발송 예정 11/11 · 결제 11/10 · 받는 분 홍**」 한 줄 + 품목 · 「안내 아직 발송 전이에요」 줄 뺌
+            const pd = smsKd(o.paid_at), paid = pd ? esc((pd.getUTCMonth() + 1) + '/' + pd.getUTCDate() + (o.paid_known === false ? '쯤' : '')) : '';
+            let k = '', dt = '', main = '';
+            if (o.ship_plan) { k = 'plan'; dt = '발송 예정'; main = esc(String(o.ship_plan).slice(0, 20)) + (paid ? ` <small>결제 ${paid}</small>` : ''); }
+            else if (paid) { k = 'paid'; dt = '결제'; main = paid; }
+            if (who) { if (main) main += ` <small>받는 분 ${who}</small>`; else { k = 'who'; dt = '받는 분'; main = who; } }
+            return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">` + row(k, dt, main, k !== 'who') + row('item', '품목', itemV, false, item) + '</dl></div>'];
+        }
         if (o.pre) {
             const pd = smsKd(o.paid_at);
             return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">`
@@ -1787,12 +1810,16 @@
         const st = String(o.status_text || o.status_label || '').trim() || (o.delivered ? '배송완료' : '');
         // #657 송장별 품목·상태(서버 boxes_detail) → #681 송장마다 따로 한 건(상태 배지 하나 · 발송일 거래처 · 송장 [조회] · 받는 분 · 그 상자 품목). 「n/m상자」 = 같은 주문의 몇째 상자
         const bd = (Array.isArray(o.boxes_detail) ? o.boxes_detail : []).map(b => ({ n: String((b && b.tracking) == null ? '' : b.tracking).replace(/[^0-9]/g, ''), opt: String((b && b.option_text) || '').trim(), qty: Number(b && b.qty) || 0, st: String((b && (b.status_text || b.status_label)) || '').trim() || (b && b.delivered ? '배송완료' : '') })).filter(b => /^[0-9]{10,12}$/.test(b.n));
-        const unit = (s, trk, it, nth, of) => `<div class="sms-buy-i"><div class="sms-buy-s">${badge(s || '상태 확인 전', stK(s))}${role}</div><dl class="sms-buy-g">`
-            + row('ship', '발송일', o.ship_date || of ? (o.ship_date ? esc(mdOf(o.ship_date)) : '') + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') + (of ? ` <small class="sms-buy-nth">${nth}/${of}상자</small>` : '') : '', true)
-            + row('trk', '송장', trk) + row('who', '받는 분', who) + row('item', '품목', it, false, it) + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
-        if (bd.length >= 2) return bd.map((b, i) => unit(b.st || st, `<span class="sms-trks">${trk1(b.n)}</span>`, b.opt ? esc(b.opt + (b.qty > 1 ? ' × ' + nfmt(b.qty) : '')) : (item || '품목 확인 전'), i + 1, bd.length));
-        if (trks.length >= 2) return trks.map((n, i) => unit(st, `<span class="sms-trks">${trk1(n)}</span>`, item, i + 1, trks.length));   // 상자별 자료가 없는 응답 = 송장만 나눔(품목·상태는 주문 것)
-        return [unit(st, trkHtml, item)];
+        const unit = (s, trk, it, nth, of, itV) => {
+            const ship = o.ship_date || of ? (o.ship_date ? esc(mdOf(o.ship_date)) : '') + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') + (of ? ` <small class="sms-buy-nth">${nth}/${of}상자</small>` : '') : '';
+            const whoIn = T && ship && who;   // #1097 터치 = 받는 분을 발송일 줄 끝으로(발송일이 없으면 종전 줄)
+            return `<div class="sms-buy-i"><div class="sms-buy-s">${badge(s || '상태 확인 전', stK(s))}${role}</div><dl class="sms-buy-g">`
+                + row('ship', '발송일', whoIn ? ship + ` <small>받는 분 ${who}</small>` : ship, true)
+                + row('trk', '송장', trk) + (whoIn ? '' : row('who', '받는 분', who)) + row('item', '품목', T && itV ? itV : it, false, it) + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
+        };
+        if (bd.length >= 2) return bd.map((b, i) => unit(b.st || st, `<span class="sms-trks">${trk1(b.n)}</span>`, b.opt ? esc(b.opt + (b.qty > 1 ? ' × ' + nfmt(b.qty) : '')) : (item || '품목 확인 전'), i + 1, bd.length, b.opt ? esc(smsShortOpt(b.opt) + (b.qty > 1 ? ' × ' + nfmt(b.qty) : '')) : itemV));
+        if (trks.length >= 2) return trks.map((n, i) => unit(st, `<span class="sms-trks">${trk1(n)}</span>`, item, i + 1, trks.length, itemV));   // 상자별 자료가 없는 응답 = 송장만 나눔(품목·상태는 주문 것)
+        return [unit(st, trkHtml, item, undefined, undefined, itemV)];
     }
     function smsBuyRender() {
         const box = document.getElementById('sms-order'), d = SMS.thread; if (!box || !d) return;
@@ -1808,11 +1835,24 @@
             const line = String((ow && ow.line) || t.order_hint || '').trim();   // 칸이 없는 옛 응답은 서버가 지어 준 한 줄
             if (line) html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 14일</small></div><div class="sms-buy-i"><dl class="sms-buy-g">${`<div class="sms-buy-r"><dt>요약</dt><dd data-k="line">${esc(line)}</dd></div>`}</dl></div>`;
         }
+        if (html && list.length && smsTouchUi()) html = smsBuyMini(hasHist ? d.history.find(x => smsBuyUnits(x).length) : o, list.length) + html;   // #1097 터치만 = 답 칸 초점 때 보일 한 줄(평소엔 CSS 로 숨김)
         box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1); box.classList.toggle('open', list.length > 1 && SMS.buyOpen.has(SMS.open)); smsBuyLyr();   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
         const sig = html || 'none:' + days;
         if (box.dataset.sig === sig) return;   // 폴링마다 다시 그리지 않는다(더보기 누르던 초점 유지)
         box.dataset.sig = sig;
         box.innerHTML = html || `<b>구매이력 없음</b> <small>이 번호로 찾은 최근 ${days}일 주문이 없어요</small>`;
+        smsMiniAria();
+    }
+    function smsMiniAria() { const b = document.getElementById('sms-buy-mini'), card = $('desk-sms'); if (!b || !card) return; const on = card.classList.contains('sms-buy-full'); b.setAttribute('aria-expanded', String(on)); b.setAttribute('aria-label', on ? '구매이력 한 줄로 접기' : '구매이력 펼치기'); }
+    // #1097 ①② 터치 기기에서 답 칸에 초점 = 자판이 뜸 → #desk-sms.sms-ta-on(구매이력 판 한 줄 · 창 머리 줄 숨김) · 초점이 빠지면 원래대로. 기준 = 폭 아님(펼친 폴드 880 도)
+    function smsTaSync() {
+        const card = $('desk-sms'); if (!card) return;
+        const ta = document.getElementById('sms-text');
+        const on = !!ta && document.activeElement === ta && (smsTouchUi() || (window.matchMedia('(any-pointer: coarse)').matches && smsKbOn()));
+        if (card.classList.contains('sms-ta-on') === on) return;
+        card.classList.toggle('sms-ta-on', on); if (!on) card.classList.remove('sms-buy-full');
+        smsMiniAria();
+        const ms = document.getElementById('sms-msgs'); if (on && ms) requestAnimationFrame(() => { ms.scrollTop = ms.scrollHeight; });
     }
     const smsSig = v => JSON.stringify(v, (k, x) => (k === 'staff_read_at' ? undefined : x));   // #655: 읽은 시각만 바뀐 응답은 같은 것으로 본다(쓰는 중 다시 그리지 않게)
     const smsAway = () => document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || Date.now() - SMS.actAt > 120000;
@@ -2044,6 +2084,7 @@
     function smsVvNow() {
         SMS.vvRaf = 0;
         const card = $('desk-sms'); if (!card) return;
+        smsTaSync();   // #1097 대화를 접어 답 칸이 사라진 때도(초점 빠짐 사건이 안 올 수 있음)
         const vv = window.visualViewport;
         const want = (!vv || !(SMS.open || SMS.neu.on)) ? '' : [Math.round(vv.height), Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)), Math.max(0, Math.round(vv.offsetTop))].join(',');
         if (want === (SMS.vvSig || '')) return;   // 같은 값이면 손대지 않는다(자판이 떠 있는 동안 스크롤 사건마다 다시 배치하면 화면이 떨린다)
@@ -2175,6 +2216,7 @@
             if (e.target.closest('#sms-new-back, #sms-new-x')) { smsNewClose(true); return; }
             { const g = e.target.closest('#sms-new-goto'); if (g) { smsThreadOpen(Number(g.dataset.id)); return; } }
             if (e.target.closest('#sms-th-back')) { smsThreadClose(true); return; }
+            if (e.target.closest('#sms-buy-mini')) { const c = $('desk-sms'); c.classList.toggle('sms-buy-full'); smsMiniAria(); return; }   // #1097 한 줄 ↔ 판 전체(답 칸 초점은 그대로 = 아래 mousedown)
             const th = e.target.closest('.sms-thumb'); if (th) { if (!th.disabled) smsView(th.dataset.img, th); return; }
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
             if (e.target.closest('#sms-done')) { smsDone(); return; }
@@ -2197,6 +2239,9 @@
         window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
+        list.addEventListener('focusin', e => { if (e.target.id === 'sms-text') smsTaSync(); });   // #1097
+        list.addEventListener('focusout', e => { if (e.target.id === 'sms-text') setTimeout(smsTaSync, 0); });
+        list.addEventListener('mousedown', e => { if (e.target.closest('#sms-buy-mini') && document.activeElement && document.activeElement.id === 'sms-text') e.preventDefault(); });   // 한 줄을 눌러도 답 칸 초점(자판) 유지
         list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
         list.addEventListener('keydown', e => { if ((e.target.id === 'sms-text' || e.target.id === 'sms-new-text') && e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (e.target.id === 'sms-text') smsAct('send'); else smsNewSend(); } });
         $('desk-sms').addEventListener('mousedown', e => { if (e.target === $('desk-sms')) smsCloseCard(); });   // 창 바깥(어두운 곳) 누름 = 닫기

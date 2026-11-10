@@ -2306,3 +2306,18 @@ html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after {
     .sms-reply { gap: 6px; padding: 6px 10px 8px; }
     .sms-reply-row .desk-btn { min-height: 36px; padding-top: 0; padding-bottom: 0; font-size: 13px; }
 }
+/* ── #1097(대표 11/10 폴드7 펼친 화면 「자판 열면 말풍선 1개」) 터치 기기에서 답 칸 초점 때만(#desk-sms.sms-ta-on · JS 가 pointer:coarse 로 붙임 · 폭 무관) ──
+   구매이력 판 = 한 줄(.sms-buy-mini · 누르면 판 전체 = .sms-buy-full) · 창 머리 줄(손님 연락·문자 보내기·🔔·☀) 숨김 · 초점이 빠지면 원래대로 · PC 마우스는 클래스가 안 붙어 변화 0 */
+.sms-buy-mini { display: none; }
+#desk-sms.sms-ta-on .desk-tool-head { display: none; }
+#desk-sms.sms-ta-on .sms-pane .sms-order.sms-buy:not(.none) { padding: 3px 8px; }
+#desk-sms.sms-ta-on:not(.sms-buy-full) .sms-pane .sms-order.sms-buy:not(.none):has(> .sms-buy-mini) { max-height: none; overflow: hidden; }   /* 한 줄 단추가 그려진 판만(터치 겸용 PC 처럼 단추가 없으면 판 그대로) */
+#desk-sms.sms-ta-on:not(.sms-buy-full) .sms-pane .sms-order.sms-buy:not(.none):has(> .sms-buy-mini) > :not(.sms-buy-mini) { display: none; }
+#desk-sms.sms-ta-on .sms-buy-mini { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 30px; margin: 0; padding: 2px 4px; border: 0; border-radius: 8px; background: transparent; color: var(--d-ink); font: inherit; font-size: 12px; line-height: 1.3; text-align: left; cursor: pointer; }
+#desk-sms.sms-ta-on.sms-buy-full .sms-buy-mini { margin-bottom: 3px; }
+.sms-buy-mini-t { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.sms-buy-mini-t b { margin: 0; color: var(--d-accent, #4f46e5); font-weight: 800; }
+.sms-buy-mini-t small { color: var(--d-sub); font-size: 11px; }
+.sms-buy-mini-i { flex: none; color: var(--d-sub); font-size: 12px; }
+#desk-sms.sms-buy-full .sms-buy-mini-i { transform: rotate(180deg); }
+.sms-buy-mini:focus-visible { outline: 2px solid var(--d-accent, #4f46e5); outline-offset: 1px; }
