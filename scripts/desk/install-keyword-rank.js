@@ -10,7 +10,7 @@
 //       wscript 로 vbs 한 장 → vbs 가 창 없이 node(이 파일 --tick)를 띄워 끝날 때까지 기다린다(install-ship-upload.js 와 같은 꼴 · 경로에 한글이 있어 vbs·xml 은 UTF-16).
 // --tick 규칙 = launcher.js rankMaybe 와 같게: 설정 keyword_rank.enabled === true 일 때만 · KST 가 설정 time(기본 09:30) 지났을 때만 ·
 //       하루 표시 파일 ~/.akkome/keyword-rank.json 을 rankMaybe 와 함께 쓴다(오늘 이미 돈 날이면 건너뜀 → 노트북 창구가 아직 살아 있어도 같은 날 두 번 돌 일이 거의 없다 · 같은 분에 둘이 동시에 읽는 틈은 남으니 등록은 전환 날 노트북 창구를 내린 뒤) ·
-//       결과는 ~/.akkome/logs/keyword-rank-YYYY-MM-DD.log(rankMaybe 와 같은 자리) · 20분 넘으면 자식 트리째 끈다(aside 포함). DB 는 설정 한 줄 읽기만(쓰기는 keyword-rank.js 의 종전 저장 그대로).
+//       결과는 ~/.akkome/logs/keyword-rank-YYYY-MM-DD.log(rankMaybe 와 같은 자리) · 55분(#1088 잠금 기다림 35분 + 수집 20분) 넘으면 자식 트리째 끈다(aside 포함). DB 는 설정 한 줄 읽기만(쓰기는 keyword-rank.js 의 종전 저장 그대로).
 const fs = require('fs'), os = require('os'), path = require('path'); const { execFileSync, spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const TASK = '아꼼이-키워드-순위';
@@ -79,7 +79,7 @@ async function tick() {
     let ch;
     try { ch = spawn(process.execPath, [SCRIPT, '--apply'], { cwd: ROOT, stdio: ['ignore', fd, fd], windowsHide: true }); } finally { fs.closeSync(fd); }
     const msg = await new Promise(resolve => {
-        const kill = setTimeout(() => { try { execFileSync('taskkill', ['/PID', String(ch.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch (e) { /* 이미 끝 */ } resolve('20분 넘어 끔(자식 트리 · aside 포함)'); }, 20 * 60000);
+        const kill = setTimeout(() => { try { execFileSync('taskkill', ['/PID', String(ch.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch (e) { /* 이미 끝 */ } resolve('55분 넘어 끔(자식 트리 · aside 포함)'); }, 55 * 60000);   // #1088 잠금 기다림 최대 35분 + 수집 20분
         ch.on('error', e => { clearTimeout(kill); resolve('띄우기 실패: ' + e.message); });
         ch.on('exit', code => { clearTimeout(kill); resolve(`끝(exit ${code}) · 로그 ${outPath}`); });
     });

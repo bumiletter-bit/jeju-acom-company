@@ -9,11 +9,12 @@
 //     → status '완료'(끝줄 「— 나스 VM 어사이드 처리」) · 실패 = 1회 '대기'로 되돌려 다시 → 두 번째도 실패면 '오류' + 사유
 //   한 번에 하나: 어사이드 잠금 ~/.akkome/exp-phone-auto.lock 공유(체험 번호 틱과 같은 파일 · 1분마다 mtime 갱신 = 15분 stale 판정에 안 걸림) ·
 //     키워드 순위 도는 중(~/.akkome/keyword-rank.json 오늘·결과 없음 = exp-phone-auto krBusy) 쉼 · 키워드 09:30 창 = claude 길 09:20~09:45 · 순위 갈래 09:10~09:45 쉼(상한만큼 앞당김 · 지시는 대기에 남음) · 잠금 잡기 = 'wx'
+//   #1088 쉼 창(09:10·09:20~09:45) 전부 없앰 · 키워드 순위와 겹침 = 같은 잠금 줄 세우기(keyword-rank.js 가 잠금을 최대 35분 기다림 · 순위 갈래는 KR_LOCK_HELD=1 로 부모 잠금 안 기다림)
 //   지시당 상한 10분(claude) · 20분(순위 · 포인트 지급) → 자식 트리째 끔(Windows taskkill /T /F)
 //   #1056-a 포인트 보상 지급 갈래 = 본문이 「포인트 (보상) 지급」으로 시작(isPoint) → claude 길 그대로 + 프롬프트 규칙 ①에 포인트지급 화면 [회원검색]·[추가]·[확인]만 허용 · [절차] 블록(업무지식 절) · 상한 20분 · 09:10~09:45 쉼
 //     실패 재집기(같은 줄 하루 2회)는 절차 (c) 「오늘 같은 아이디 지급 줄 있으면 지급 X」가 중복을 막음
 //   #1082 포인트 갈래 = 소넷(FAST_MODEL · 10분) 먼저 → 실패(시간 초과·오류·빈 결과)면 Opus 1회(20분 · 글머리 RETRY_NOTE = 오늘 지급 줄 먼저 확인 · 애매하면 멈춤)
-//     → 그래도 실패면 대기로 안 되돌리고 오류(실행 최대 2번 = 종전과 같음) · 이 갈래는 09:00~09:45 쉼(소넷+Opus 30분) · 아이디+주문번호 둘 다 있으면 찾기 건너뛰고 대조만(b-0)
+//     → 그래도 실패면 대기로 안 되돌리고 오류(실행 최대 2번 = 종전과 같음) · #1087 이 갈래는 쉼 창 없음(아무 때나) · 아이디+주문번호 둘 다 있으면 찾기 건너뛰고 대조만(b-0)
 //   #1083 배송지 변경 갈래(isAddr · 네이버만) = 같은 소넷 → Opus 1회 · [고객 배송지 정보수정]·주소 검색·[저장]만 허용 · 멈춤 조건(ADDR_STEPS e) ·
 //     오늘 최종발주 나갔나 = 실DB 읽기(final_order_marks 오늘 · 「[최종발주]」 오늘 줄) → 저장했으면 답에 「⚠ 오늘 발주 나감 → 거래처 연락」 한 줄
 //   #1082-② 센터 로그인 유지(keepMaybe) = 쉬는 동안 30분마다 센터 첫 화면 탭 새로고침(claude 0) · 로그인 화면 = 「간편 로그인」 1회 · 2단계·폰 승인 = 멈춤 + 텔레그램(서버 하루 1통) + 3시간 쉼
@@ -43,7 +44,7 @@ const POINT_LIMIT_MS = Number(process.env.VM_POINT_LIMIT_MS) || 20 * 60000;   //
 const MODEL = process.env.VM_MODEL || 'claude-opus-5-5';
 // #1082 포인트·#1083 배송지 갈래 = 먼저 소넷(빠름) → 실패(시간 초과·오류·빈 결과)면 같은 지시를 Opus 로 1회(재시도 글머리에 「중복 확인 먼저」) · 그 밖 지시는 종전 MODEL 그대로
 const FAST_MODEL = process.env.VM_FAST_MODEL || 'claude-sonnet-5-5';
-const FAST_LIMIT_MS = Number(process.env.VM_FAST_LIMIT_MS) || 10 * 60000;   // 소넷 상한(실건 5~7분) · 이어 Opus 20분 = 합 30분 → 이 두 갈래는 09:00 부터 쉼(SKIP_FAST)
+const FAST_LIMIT_MS = Number(process.env.VM_FAST_LIMIT_MS) || 10 * 60000;   // 소넷 상한(실건 5~7분) · 이어 Opus 20분 · #1087 이 두 갈래는 쉼 창 없음(skipWhy)
 const ADDR_LIMIT_MS = Number(process.env.VM_ADDR_LIMIT_MS) || 20 * 60000;    // #1083 배송지 변경 Opus 재시도 상한
 // #1082-② 센터 로그인 유지 = 러너가 쉬는 동안 30분마다 센터 탭 가벼운 새로고침(claude 안 부름 · aside MCP 직접) · 0 = 끔
 const KEEP_MS = process.env.VM_CENTER_KEEP_MS != null && process.env.VM_CENTER_KEEP_MS !== '' ? Number(process.env.VM_CENTER_KEEP_MS) : 30 * 60000;
@@ -55,8 +56,8 @@ const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
 // claude 작업 폴더 = 늘 ~/.akkome/vm-out/<지시번호>(리포 밖 = 리포 CLAUDE.md 안 실림 · .env 있는 C:\akm-vm 도 피함 · aside MCP 는 user 설정이라 그대로)
 const TOUCH_MS = Number(process.env.VM_TOUCH_MS) || 60000;   // 도는 동안 잠금 mtime·vm_heartbeat(busy) 갱신 간격
 const MAX_TRIES = 2;   // 첫 실패 = 대기로 한 번 되돌림 · 두 번째 실패 = 오류
-// 키워드 순위 09:30 창 피하기 = 상한만큼 앞당김(claude 10분 → 09:20 · 순위 20분 → 09:10)
-const SKIP_CLAUDE = ['09:20', '09:45'], SKIP_RANK = ['09:10', '09:45'], SKIP_FAST = ['09:00', '09:45'];   // #1082 SKIP_FAST = 소넷 10분 + Opus 20분
+// (#1088 뒤 러너는 안 씀 · inSkip 은 시험 호환으로만 남김) 옛 키워드 09:30 창 = claude 09:20 · 순위 09:10
+const SKIP_CLAUDE = ['09:20', '09:45'], SKIP_RANK = ['09:10', '09:45'];   // #1088 쉼 창 전부 없앰(skipWhy = 빈 글 · 줄 세우기 = 잠금)
 // 정해진 명령 갈래: 「[VM]」 뒤 본문이 이 꼴의 짧은 한 마디일 때만(「키워드 순위 관리 화면 고쳐줘」 처럼 다른 일이 섞이면 claude 길)
 const RANK_RE = /^(?:키워드\s*)?순위\s*(?:확인|다시|재수집|수집|돌려|체크)?\s*(?:다시)?\s*(?:해\s*줘|해\s*주세요|해|좀|부탁(?:해)?|요)?[\s.!?~]*$/;
 const FROM_DESK = '창구 → VM';   // 창구가 승인 뒤 넘긴 줄의 created_by
@@ -97,7 +98,7 @@ const isFast = content => isPoint(content) || isAddr(content);   // 소넷 → O
 // ── 쉼 판단(어사이드 한 번에 하나) ──
 function krBusy() { try { return require('./exp-phone-auto.js').krBusy(); } catch (e) { return false; } }
 // k = kstNow() 꼴(UTC 칸에 KST) · rank = 순위 갈래면 09:10 부터 · 아니면 09:20 부터
-function inSkip(k, rank) { const w = rank === 'fast' ? SKIP_FAST : rank ? SKIP_RANK : SKIP_CLAUDE; const hm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0'); return hm >= w[0] && hm < w[1]; }
+function inSkip(k, rank) { const w = rank ? SKIP_RANK : SKIP_CLAUDE; const hm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0'); return hm >= w[0] && hm < w[1]; }
 function lockBusy() { try { return fs.existsSync(LOCK) && Date.now() - fs.statSync(LOCK).mtimeMs < LOCK_STALE_MS; } catch (e) { return false; } }
 function busyWhy() { if (krBusy()) return '키워드 순위 도는 중'; if (lockBusy()) return '어사이드 잠금(체험 번호 틱 등)'; return ''; }
 const LOCK_MARK = () => 'vm-watch:' + process.pid;
@@ -244,11 +245,11 @@ function killTree(pid) {
     if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch (e) { /* 이미 끝 */ } }
     else { try { process.kill(-pid, 'SIGKILL'); } catch (e) { try { process.kill(pid, 'SIGKILL'); } catch (_) { /* 이미 끝 */ } } }
 }
-function run(bin, args, { input, limitMs, cwd, onTick }) {
+function run(bin, args, { input, limitMs, cwd, onTick, env }) {
     return new Promise(resolve => {
         let cmd = bin, a = args;
         if (/\.js$/i.test(bin)) { cmd = process.execPath; a = [bin, ...args]; }   // 시험용 가짜 실행 파일
-        let ch; try { ch = spawn(cmd, a, { cwd: cwd || ROOT, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+        let ch; try { ch = spawn(cmd, a, { cwd: cwd || ROOT, env: env || process.env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
         catch (e) { return resolve({ code: -1, out: '', err: '띄우기 실패: ' + e.message, timeout: false }); }
         let out = '', err = '', done = false, timeout = false;
         const fin = code => { if (done) return; done = true; clearTimeout(t); clearInterval(touch); resolve({ code, out, err, timeout }); };
@@ -386,7 +387,7 @@ async function doFast(db, o) {
 async function doRank(db, o) {
     const startedAt = Date.now();
     const script = process.env.VM_RANK_SCRIPT || path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js');
-    const r = await run(process.env.VM_NODE_BIN || process.execPath, [script, '--apply'], { limitMs: RANK_LIMIT_MS, onTick: () => heartbeat(db, 'busy', o.id) });
+    const r = await run(process.env.VM_NODE_BIN || process.execPath, [script, '--apply'], { limitMs: RANK_LIMIT_MS, onTick: () => heartbeat(db, 'busy', o.id), env: { ...process.env, KR_LOCK_HELD: '1' } });   // #1088 잠금은 러너가 이미 잡음 → keyword-rank 가 제 부모 잠금을 기다리지 않게
     if (r.timeout) return { ok: false, why: `키워드 순위 ${Math.round(RANK_LIMIT_MS / 60000)}분 넘어 끔` };
     let last = null; try { last = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'keyword_rank_last'`)).rows[0] || {}).value || null; } catch (e) { /* 아래에서 */ }
     const fresh = last && Date.parse(last.at || '') >= startedAt - 5000;
@@ -416,7 +417,7 @@ async function handle(db, id) {
     return { id: o.id, did: true, ok: res.ok, status: out.status || out.reason, rank };
 }
 // ── #1082-② 센터 로그인 유지(claude 0 · aside MCP 직접 · keyword-rank.js Aside) ──
-//   러너가 쉴 때(집을 지시 0) 마지막 센터 사용 30분 뒤 → 쉼 창(09:10~09:45)·키워드·잠금 피해 잠금 잡고 → 센터 첫 화면 탭(없으면 엶) 새로고침
+//   러너가 쉴 때(집을 지시 0) 마지막 센터 사용 30분 뒤 → 키워드(krBusy)·잠금 피해(#1088 쉼 창 없음) 잠금 잡고 → 센터 첫 화면 탭(없으면 엶) 새로고침
 //   → 로그인 화면이면 「간편 로그인」 단추 1회 → 2단계·폰 승인·보안 확인 화면이면 멈춤 + 텔레그램(서버 하루 1통) + 3시간 안 누름
 //   지급·배송지 화면은 열지 않음(센터 첫 화면 탭만) · aside.exe 없는 PC(노트북·검증) = 아무것도 안 함
 const ASIDE_EXE = process.env.ASIDE_EXE || path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Aside', 'CLI', 'current', 'aside.exe');
@@ -469,7 +470,7 @@ async function keepMaybe(force) {
         if (st.phone_at && now - Date.parse(st.phone_at) < KEEP_PHONE_BACKOFF_MS) return null;
         if (st.at && now - Date.parse(st.at) < KEEP_MS) return null;
     }
-    if (inSkip(kstNow(), true) || busyWhy()) return null;   // 09:10~09:45 · 키워드 도는 중 · 남의 잠금
+    if (busyWhy()) return null;   // 키워드 도는 중 · 남의 잠금(#1088 09:10~09:45 쉼 창 없앰)
     if (!asideFactory && !fs.existsSync(ASIDE_EXE)) return null;   // VM 아닌 PC
     if (!lockTake()) return null;
     let r;
@@ -485,13 +486,15 @@ async function keepMaybe(force) {
     }
     return r;
 }
+// #1087 포인트·배송지 쉼 없음 → #1088 모든 갈래 쉼 없음
+//   #1088(대표 「쉬는 시간 다 없애고 줄 세우기로」) = 모든 갈래 쉼 창 없음 · 겹침은 잠금 줄 세우기(키워드 순위도 같은 잠금을 기다림 · keyword-rank.js krLockWait) + krBusy(키워드 도는 중엔 새로 안 집음)
+function skipWhy(content, k) { return ''; }   // eslint-disable-line no-unused-vars
 // 한 번 보기: 쉼 판단 → 집을 것 → 잠금 → 처리
 async function pollOnce(db) {
     const why = busyWhy(); if (why) return { skipped: why };
     const id = await pick(db); if (!id) { const k = await keepMaybe(); return k ? { idle: true, keep: k.state } : { idle: true }; }
     const content = ((await db.query(`SELECT content FROM pending_orders WHERE id = $1`, [id])).rows[0] || {}).content;
-    const long = isFast(content) ? 'fast' : isRank(content);   // 상한 20분 갈래(순위) = 09:10 부터 · #1082 소넷+Opus 갈래(포인트·배송지) = 09:00 부터 쉼(상한만큼 앞당김)
-    if (inSkip(kstNow(), long)) return { skipped: (long === 'fast' ? '09:00' : long ? '09:10' : '09:20') + '~09:45 키워드 순위 창', id };   // 지시는 대기에 남음
+    const why2 = skipWhy(content, kstNow()); if (why2) return { skipped: why2, id };   // 지시는 대기에 남음
     if (!lockTake()) return { skipped: '잠금 못 잡음' };
     try { return await handle(db, id); } finally { lockFree(); }
 }
@@ -519,4 +522,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, SKIP_FAST, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };

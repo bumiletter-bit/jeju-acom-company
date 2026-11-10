@@ -40,6 +40,11 @@
 //       node scripts/desk/keyword-rank.js --date 2026-10-28 --keywords 귤,제주귤 --pc   (--pc = 파워링크 PC 화면도 같이 읽어 표에 · --mobile-only 반대)
 //       node scripts/desk/keyword-rank.js --list          (#1001 어사이드·쓰기 0 · 오늘 모을 키워드 목록만 출력)
 //       env ASIDE_EXE(aside.exe 경로) · KR_PAGE_WAIT_MS(요청 사이 · 기본 1500)
+//   #1088 어사이드 줄 세우기 = 어사이드를 쓰기 전에 ~/.akkome/exp-phone-auto.lock(VM 러너·체험 번호 틱과 같은 파일)을 'wx' 로 잡는다
+//       → 잡혀 있으면 30초마다 다시 · 최대 35분(VM 소넷 10 + Opus 20 상한) 기다림 → 넘으면 로그 남기고 그냥 돎(순위 안 빠뜨림)
+//       → 도는 동안 1분마다 mtime 갱신(15분 stale 판정 같음) → 끝나면(성공·실패·예외 다) 풀기 · 기다린 시간 = 로그 + keyword_rank_last.lock_wait_ms
+//       env KR_LOCK_HELD=1 = 부모(VM 러너 순위 갈래)가 이미 잡음 → 기다리지 않음 · KR_LOCK_WAIT_MS · KR_LOCK_POLL_MS(시험용)
+//       잠금 파일이 없는 PC(나스 창구 등) = 바로 잡고 바로 풂(기다림 0)
 'use strict';
 const path = require('path');
 const fs = require('fs');
@@ -68,6 +73,41 @@ const DEFAULT_CFG = {
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ───────── #1088 어사이드 잠금 줄 세우기(vm-watch.js·exp-phone-auto.js 와 같은 파일·같은 stale 판정)
+const KR_LOCK = path.join(os.homedir(), '.akkome', 'exp-phone-auto.lock'), KR_LOCK_STALE_MS = 15 * 60000;
+const KR_LOCK_WAIT_MS = Number(process.env.KR_LOCK_WAIT_MS) || 35 * 60000, KR_LOCK_POLL_MS = Number(process.env.KR_LOCK_POLL_MS) || 30000, KR_LOCK_TOUCH_MS = Number(process.env.KR_LOCK_TOUCH_MS) || 60000;
+const krLockMark = () => 'keyword-rank:' + process.pid;
+function krLockTake() {
+    try {
+        fs.mkdirSync(path.dirname(KR_LOCK), { recursive: true });
+        if (fs.existsSync(KR_LOCK)) { if (Date.now() - fs.statSync(KR_LOCK).mtimeMs < KR_LOCK_STALE_MS) return false; try { fs.unlinkSync(KR_LOCK); } catch (e) { /* 남이 먼저 지움 */ } }   // 15분 넘은 낡은 잠금만 지움
+        const fd = fs.openSync(KR_LOCK, 'wx'); try { fs.writeSync(fd, krLockMark()); } finally { fs.closeSync(fd); }
+        return true;
+    } catch (e) { return false; }
+}
+function krLockTouch() { try { if (fs.readFileSync(KR_LOCK, 'utf8') === krLockMark()) { const t = new Date(); fs.utimesSync(KR_LOCK, t, t); } } catch (e) { /* 무시 */ } }
+function krLockFree() { try { if (fs.readFileSync(KR_LOCK, 'utf8') === krLockMark()) fs.unlinkSync(KR_LOCK); } catch (e) { /* 무시 */ } }
+// 잠금 잡기(기다림) → { took, waited_ms, gave_up, held }
+async function krLockWait(log) {
+    if (process.env.KR_LOCK_HELD === '1') return { took: false, held: 'parent', waited_ms: 0 };
+    const t0 = Date.now(); let told = false;
+    while (!krLockTake()) {
+        const waited = Date.now() - t0;
+        if (waited >= KR_LOCK_WAIT_MS) { log(`#1088 어사이드 잠금 ${Math.round(waited / 60000)}분 기다려도 안 풀림(${(() => { try { return fs.readFileSync(KR_LOCK, 'utf8'); } catch (e) { return '?'; } })()}) — 순위 안 빠뜨리게 그냥 돎`); return { took: false, waited_ms: waited, gave_up: true }; }
+        if (!told) { log(`#1088 어사이드 잠금 잡혀 있음(${(() => { try { return fs.readFileSync(KR_LOCK, 'utf8'); } catch (e) { return '?'; } })()}) — ${Math.round(KR_LOCK_POLL_MS / 1000)}초마다 다시 · 최대 ${Math.round(KR_LOCK_WAIT_MS / 60000)}분`); told = true; }
+        await sleep(KR_LOCK_POLL_MS);
+    }
+    const waited = Date.now() - t0;
+    if (waited > 1000) log(`#1088 어사이드 잠금 잡음 · ${Math.round(waited / 1000)}초 기다림`);
+    return { took: true, waited_ms: waited };
+}
+// 잠금 안에서 fn 실행(성공·실패·예외 다 풀기 · 도는 동안 mtime 갱신)
+async function withKrLock(log, fn) {
+    const lk = await krLockWait(log);
+    const touch = lk.took ? setInterval(krLockTouch, KR_LOCK_TOUCH_MS) : null;
+    try { return await fn(lk); } finally { if (touch) clearInterval(touch); if (lk.took) krLockFree(); }
+}
 const kstNow = () => new Date(Date.now() + 9 * 3600e3);
 const kstDate = () => kstNow().toISOString().slice(0, 10);
 const norm = s => String(s || '').replace(/\s+/g, '').toLowerCase();
@@ -514,26 +554,30 @@ async function main() {
     const storePl = cfg.powerlink_source === 'pc' ? 'pc' : 'mobile';
     log(`#910 키워드 순위 ${args.apply ? '--apply' : '--dry'} · 날짜 ${date} · 키워드 ${cfg.keywords.length}개 · 설정 ${fromDb ? 'DB' : '기본값'} · 스토어 ${cfg.store.names.join('/')} · max_rank ${cfg.max_rank} · 파워링크 ${cfg.powerlink_source}${readPc && readMobile ? '(모바일·PC 둘 다 읽음)' : ''}`);
 
-    const aside = new Aside(ASIDE_EXE, log);
     const rows = [], errors = [];
     let blocked = null;
-    try {
-        const s = await aside.start();
-        log(`어사이드 MCP 연결 ${(s.server || {}).name || ''} ${(s.server || {}).version || ''} · 도구 ${s.tools.join(',')} · ${Date.now() - t0}ms`);
-        const c = await collectRows({ aside, cfg, readMobile, readPc, storePl, log, verbose: args.verbose });
-        rows.push(...c.rows); errors.push(...c.errors); blocked = c.blocked;
-    } catch (e) {
-        log('✗ 어사이드 연결·실행 실패: ' + e.message);
-        for (const keyword of cfg.keywords) if (!rows.find(r => r.keyword === keyword)) { rows.push({ keyword, shopping: null, ad: null, powerlink: null, error: e.message }); errors.push({ keyword, error: e.message }); }
-    } finally {
-        await aside.stop({ keepTabs: !!blocked }).catch(() => { });
-    }
+    const lk = await withKrLock(log, async lk => {   // #1088 어사이드 줄 세우기(VM 러너·체험 틱과 같은 잠금)
+        const aside = new Aside(ASIDE_EXE, log);
+        try {
+            const s = await aside.start();
+            log(`어사이드 MCP 연결 ${(s.server || {}).name || ''} ${(s.server || {}).version || ''} · 도구 ${s.tools.join(',')} · ${Date.now() - t0}ms`);
+            const c = await collectRows({ aside, cfg, readMobile, readPc, storePl, log, verbose: args.verbose });
+            rows.push(...c.rows); errors.push(...c.errors); blocked = c.blocked;
+        } catch (e) {
+            log('✗ 어사이드 연결·실행 실패: ' + e.message);
+            for (const keyword of cfg.keywords) if (!rows.find(r => r.keyword === keyword)) { rows.push({ keyword, shopping: null, ad: null, powerlink: null, error: e.message }); errors.push({ keyword, error: e.message }); }
+        } finally {
+            await aside.stop({ keepTabs: !!blocked }).catch(() => { });
+        }
+        return lk;
+    });
 
     console.log('\n' + table(rows, readPc && readMobile));
     const ok = errors.length === 0 && rows.length > 0 && !blocked;
     // 읽기 실패 키워드는 DB 줄로 안 넣는다(errors 에만) — 전체 실패 날은 auto 줄 0 → 서버 10:00 「미수집」 알림이 살고 · 같은 날 재실행이 앞 회차 좋은 값을 NULL 로 안 덮음
     const last = { date, at: new Date().toISOString(), ok, rows: rows.filter(r => !r.error).map(r => ({ keyword: r.keyword, shopping: r.shopping, ad: r.ad, powerlink: r.powerlink })), errors, powerlink_source: storePl, took_ms: Date.now() - t0, blocked: blocked ? Object.assign({ at: new Date().toISOString() }, blocked) : null };
     if (!args.keywords) last.auto = autoInfo;
+    if (lk && lk.waited_ms > 1000) { last.lock_wait_ms = lk.waited_ms; if (lk.gave_up) last.lock_gave_up = true; }   // #1088 기다린 시간 한 줄
     if (krResetNotified(prevLast, date)) last.notified_date = '';
 
     if (args.apply) {
@@ -550,6 +594,6 @@ async function main() {
 }
 
 if (require.main === module) {
-    main().catch(e => { console.error('실패:', e && e.stack || e); process.exit(1); });
+    main().catch(e => { console.error('실패:', e && e.stack || e); krLockFree(); process.exit(1); });
 }
-module.exports = { Aside, rankShopping, rankPowerlink, matchStore, matchStoreHost, readConfig, DEFAULT_CFG, computeAutoKeywords, collectRows, krResetNotified, JS_BLOCK_CHECK, KR_CAP };
+module.exports = { krLockWait, krLockTake, krLockFree, withKrLock, KR_LOCK, Aside, rankShopping, rankPowerlink, matchStore, matchStoreHost, readConfig, DEFAULT_CFG, computeAutoKeywords, collectRows, krResetNotified, JS_BLOCK_CHECK, KR_CAP };

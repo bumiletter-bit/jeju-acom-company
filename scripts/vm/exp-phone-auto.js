@@ -11,7 +11,7 @@
 //
 // 사용: node scripts/vm/exp-phone-auto.js --once        (작업 스케줄러 「아꼼이-체험번호-자동」 이 10분마다 · 한 틱 돌고 끝)
 //       node scripts/vm/exp-phone-auto.js --once --dry  (읽기만 · PUT·miss 0 · 화면에서 읽은 칸을 끝 4자리로 찍음 = 첫 실화면 꼴 확인용)
-//       --force-window = 08~21시·09:25~09:45 창 무시(시험용 · 서버 창은 그대로)
+//       --force-window = 08~21시 창 무시(#1088 09:25~09:45 창 없앰)(시험용 · 서버 창은 그대로)
 //   환경(.env · main 안에서 dotenv 먼저) = EXP_AUTO_API(예 https://event.akkome.com) · EXP_AUTO_TOKEN · ASIDE_EXE(없으면 %LOCALAPPDATA%\Aside\CLI\current\aside.exe)
 //   종료 코드 = 0 정상(건너뜀 포함) · 2 일부 실패·멈춤(보안 확인·miss·서버 오류) · 1 스크립트 오류
 'use strict';
@@ -24,7 +24,7 @@ const BIZ = '1258756';
 const LIST_URL = no => `https://partner.booking.naver.com/bizes/${BIZ}/booking-list-view?keyword=${encodeURIComponent(no)}`;
 const PAGE_WAIT_MS = 6000;           // #997 실측 = 6초 뒤 목록이 그려짐
 const TICK_BUDGET_MS = 6 * 60000;    // 작업 도구가 8분에 끔 → 6분 넘으면 남은 줄은 다음 틱
-const LOCAL_WINDOW = { hours: [8, 21], skip: ['09:25', '09:45'] };   // 서버 설정이 정본 · 서버에 묻기 전에 걸러 헛호출을 줄임
+const LOCAL_WINDOW = { hours: [8, 21], skip: null };   // #1088 09:25~09:45 건너뛰기 없앰(키워드 순위와 겹침 = 잠금 줄 세우기 · 잠금 잡혀 있으면 그 틱 건너뜀 종전 그대로)   // 서버 설정이 정본 · 서버에 묻기 전에 걸러 헛호출을 줄임
 const LOCK = path.join(os.homedir(), '.akkome', 'exp-phone-auto.lock');
 const LOCK_STALE_MS = 15 * 60000;
 // 화면 칸 이름(머리글 · 같은 줄 안 글자) — 이용고객(방문자) vs 예약자 · 🔴 실화면 미확인(11/6) → 첫 --dry 결과로 맞춤
@@ -123,7 +123,7 @@ function parseRow(row, no) {
 }
 
 // 키워드 순위(install-keyword-rank.js · launcher.js rankMaybe)가 띄우기 전에 {day} 를 적고 끝나면 {day, result} 로 덮음 → 오늘 + result 없음 = 도는 중
-//   25분 넘은 표식은 죽은 것으로 봄(launcher 가 20분에 끔 · 그날 내내 막히지 않게)
+//   60분 넘은 표식은 죽은 것으로 봄(#1088 키워드가 잠금을 최대 35분 기다린 뒤 20분 돎 = install-keyword-rank 55분 상한 · 그날 내내 막히지 않게)
 const KR_STATE = path.join(os.homedir(), '.akkome', 'keyword-rank.json');
 function krBusy(nowMs) {
     try {
@@ -131,7 +131,7 @@ function krBusy(nowMs) {
         const now = nowMs == null ? Date.now() : nowMs, today = new Date(now + 9 * 3600e3).toISOString().slice(0, 10);
         if (!j || j.day !== today || j.result != null) return false;
         const at = Date.parse(j.at || '');
-        return !(at && now - at > 25 * 60000);
+        return !(at && now - at > 60 * 60000);
     } catch (e) { return false; }
 }
 function lockTake() {

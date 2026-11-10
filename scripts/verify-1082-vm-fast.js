@@ -69,7 +69,12 @@ function units() {
 
     console.log('\n[2] 쉼 창');
     const k = hm => new Date(Date.UTC(2026, 10, 10, Number(hm.slice(0, 2)), Number(hm.slice(3))));
-    ok('fast 09:00 쉼', W.inSkip(k('09:00'), 'fast')); ok('fast 08:59 안 쉼', !W.inSkip(k('08:59'), 'fast')); ok('fast 09:44 쉼', W.inSkip(k('09:44'), 'fast')); ok('fast 09:45 안 쉼', !W.inSkip(k('09:45'), 'fast'));
+    // #1087 포인트·배송지 = 쉼 창 없음(아무 때나) · 그 밖은 종전
+    for (const hm of ['09:00', '09:15', '09:30', '09:44']) ok('#1087 포인트 ' + hm + ' 안 쉼', W.skipWhy('[VM] 포인트 지급 1,000 아이디 abc', k(hm)) === '');
+    ok('#1087 배송지 09:30 안 쉼', W.skipWhy('[VM] 배송지 변경 2026110170868221 → 제주시 연동 1', k('09:30')) === '');
+    // #1088 모든 갈래 쉼 없음(줄 세우기 = 잠금)
+    for (const hm of ['09:10', '09:20', '09:30', '09:44']) ok('#1088 그 밖 claude ' + hm + ' 안 쉼', W.skipWhy('[VM] 체험 예약 화면 봐줘', k(hm)) === '');
+    for (const hm of ['09:10', '09:30']) ok('#1088 순위 갈래 ' + hm + ' 안 쉼', W.skipWhy('[VM] 순위 다시', k(hm)) === '');
     ok('순위 09:10 그대로 · 09:09 안 쉼', W.inSkip(k('09:10'), true) && !W.inSkip(k('09:09'), true));
     ok('claude 09:20 그대로 · 09:19 안 쉼', W.inSkip(k('09:20'), false) && !W.inSkip(k('09:19'), false));
 
@@ -234,8 +239,7 @@ async function keeptests(db) {
     W._setKeep(fakeAside, async reason => { told.push(reason); return true; });
     const reset = () => { try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } };
     const kst = new Date(Date.now() + 9 * 3600e3), hm = kst.toISOString().slice(11, 16);
-    const inWin = W.inSkip(kst, true);
-    if (inWin) { console.log('  (지금 ' + hm + ' = 09:10~09:45 쉼 창 → 쉼 확인만)'); reset(); ok('쉼 창 안 = 아무것도 안 함', await W.keepMaybe() === null && seen.length === 0); return; }
+    void hm;   // #1088 keepMaybe 쉼 창 없음 = 아무 시각에도 돎
     reset();
     const k1 = await W.keepMaybe();
     ok('처음 = 돎 · ok', k1 && k1.state === 'ok' && seen.length >= 1, k1);
