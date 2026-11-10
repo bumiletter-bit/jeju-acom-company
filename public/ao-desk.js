@@ -1816,14 +1816,36 @@
     }
     const smsSig = v => JSON.stringify(v, (k, x) => (k === 'staff_read_at' ? undefined : x));   // #655: 읽은 시각만 바뀐 응답은 같은 것으로 본다(쓰는 중 다시 그리지 않게)
     const smsAway = () => document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || Date.now() - SMS.actAt > 120000;
+    // #1095 대화 하나 열 때 걸리는 시간 재기(재기만 · 동작 변화 0): 직접 펼칠 때만(뒤에서 다시 받는 quiet 제외) 받기·그리기 ms + 서버 Server-Timing total + 글·사진 수
+    //   → POST /api/sms/perf(fetch keepalive · 실패 무시 · 기다리지 않음). 사진은 받을 때마다 장당 ms·바이트를 모아 한 번에(kind 'img').
+    const PERF = { st: new Map(), img: [], imgT: 0 };
+    try {
+        if (typeof PerformanceObserver === 'function') new PerformanceObserver(l => {
+            l.getEntries().forEach(e => { if (!/\/api\/sms\/threads\/\d+(\?|$)/.test(e.name)) return; const s = (e.serverTiming || []).find(x => x.name === 'total'); if (s) { PERF.st.set(e.name, s.duration); if (PERF.st.size > 30) PERF.st.delete(PERF.st.keys().next().value); } });
+        }).observe({ type: 'resource', buffered: false });
+    } catch (_) { /* 못 재면 서버 칸만 비움 */ }
+    function perfSrv(path) {
+        const name = location.origin + path; if (PERF.st.has(name)) return PERF.st.get(name);
+        try { const a = performance.getEntriesByName(name), e = a[a.length - 1], s = e && (e.serverTiming || []).find(x => x.name === 'total'); return s ? s.duration : null; } catch (_) { return null; }
+    }
+    function perfPost(body) {
+        try { fetch('/api/sms/perf', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify(body) }).catch(() => {}); } catch (_) { /* 기록 실패는 무시 */ }
+    }
+    const perfBase = () => ({ app: document.body.classList.contains('akm-sms-app'), ua: String(navigator.userAgent || '').slice(0, 60) });
+    function perfImg(rec) {
+        PERF.img.push(Object.assign({ kind: 'img', thread_id: SMS.open || null }, rec, perfBase()));
+        clearTimeout(PERF.imgT); PERF.imgT = setTimeout(() => { const items = PERF.img.splice(0, 20); if (items.length) perfPost({ items }); }, 1500);
+    }
     async function smsThread(quiet) {
         const id = SMS.open; if (!id) return;
         const seq = ++SMS.tseq; SMS.tbusy = true; SMS.thAt = Date.now();
+        const pfOn = !quiet && !SMS.thread, pf0 = pfOn ? performance.now() : 0; let pf1 = 0;   // #1095
         let d, err = '';
         // #635: 뒤에서 다시 받을 때(quiet) 자리를 비운 것 같으면 읽음으로 바꾸지 않는다(peek) — 화면이 가려짐 · 창이 초점을 잃음 · 2분 넘게 조작(키·누름·터치·휠) 없음.
         //   사무실 PC 에 대화를 펼쳐 둔 채 자리를 비워도 그 사이 온 글은 안 읽음으로 남는다 · 돌아와 조작하면 다음 폴링에서 읽음. 직접 펼칠 때·답 보낸 직후는 늘 읽음.
         const peek = !!quiet && smsAway();
         try { d = await api('/api/sms/threads/' + id + (peek ? '?peek=1' : '')); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
+        if (pfOn) pf1 = performance.now();
         if (seq !== SMS.tseq || SMS.open !== id) return;
         SMS.tbusy = false;
         if (!err && !(d && d.thread && Array.isArray(d.messages))) err = (d && d.error) || '불러오지 못했어요';
@@ -1880,10 +1902,19 @@
         smsSync();
         if (!SMS.items || !SMS.items.some(x => x.id === id && x.status === t.status)) { SMS.sig = ''; smsRenderList(); }
         else smsRenderList();   // 읽음·안 읽음 수가 바뀌었으면 그 줄 배지도 바로(바뀐 것이 없으면 다시 그리지 않는다)
+        if (pfOn) {   // #1095 그리기 끝 = 다음 그림틀 · 서버 시간은 자원 기록이 들어온 뒤(조금 띄움)
+            const msgs = d.messages.length, imgs = d.messages.reduce((n, m) => n + (Array.isArray(m.image_ids) ? m.image_ids.length : 0), 0), path = '/api/sms/threads/' + id;
+            requestAnimationFrame(() => { const pf2 = performance.now(); setTimeout(() => perfPost(Object.assign({ kind: 'open', thread_id: id, net_ms: Math.round(pf1 - pf0), render_ms: Math.round(pf2 - pf1), server_ms: perfSrv(path), msgs, imgs }, perfBase())), 400); });
+        }
     }
     // 사진은 로그인 표를 붙여 받아야 해서 img 주소로 바로 못 쓴다 → 받아서 붙인다(한 번 받은 것은 카드를 닫을 때까지 재사용)
     function smsImg(id) {
-        if (!SMS.imgs.has(id)) SMS.imgs.set(id, (async () => { const r = await fetch('/api/sms/images/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }); if (!r.ok) throw new Error('사진을 불러오지 못했어요'); return URL.createObjectURL(await r.blob()); })());
+        if (!SMS.imgs.has(id)) SMS.imgs.set(id, (async () => {
+            const q0 = performance.now();   // #1095 장당 받는 시간·바이트(기록만)
+            const r = await fetch('/api/sms/images/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }); if (!r.ok) { perfImg({ img_id: Number(id) || null, net_ms: Math.round(performance.now() - q0), ok: false }); throw new Error('사진을 불러오지 못했어요'); }
+            const b = await r.blob(); perfImg({ img_id: Number(id) || null, net_ms: Math.round(performance.now() - q0), bytes: b.size });
+            return URL.createObjectURL(b);
+        })());
         return SMS.imgs.get(id);
     }
     function smsImgs() {

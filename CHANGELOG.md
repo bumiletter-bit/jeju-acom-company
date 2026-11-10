@@ -1,3 +1,10 @@
+## v5.9.750 (2026-11-10) — #1095 문자 대화 열기 시간 재기(동작 변화 0)
+
+- 대표 「다른 문자 대화 열 때 좀 느려진 느낌」 · 총괄 실DB 실측 = 쿼리 수 ms·서버 왕복 0.2초 → 폰 쪽 실측.
+- 워커1 · sms/index.js GET /api/sms/threads/:id 응답 머리 Server-Timing(db·hist·hint·total · JSON 바이트 그대로) + POST /api/sms/perf(숫자만 · 번호·글 0 · agent_office_config sms_perf 최근 100건 · sms_perf_off true 면 204) · ao-desk.js 직접 펼칠 때만 net/render/server ms · 사진 장당 ms·bytes(1.5초 묶음) · keepalive · await 없음.
+- 검증 서버 17/17 · 화면 9/9 · 워커2 점검 막을 것 0 · 캐시 ao-desk.js 110.
+- 🔴 다 재고 나면 sms_perf_off true 로 끄기. 🔵 사진 기록은 열어 둔 대화의 새 사진도 남음 · 열기 실패 땐 기록 0.
+
 ## v5.9.749 (2026-11-10) — #1094 문자 글씨 = 원래의 80%(오른쪽 말풍선·답 칸 75→80 · 왼쪽 목록도 80)
 
 - 워커2 · ao-desk.css 숫자만 · 말풍선 14.5→11.6 · 답 칸 PC 11.6 / 폰 12.8 · 목록 번호 14.5→11.6 · 요약 13→10.4 · 시간 12→9.6 · 마지막 글 13.5→10.8 · 「나:」 12.5→10 · 찾기 칸·단추·칩 그대로 · verify-1093 390·880 밝음 22/22 · 총괄 diff 직접 확인(숫자 바꿈뿐) · 캐시 css 85.

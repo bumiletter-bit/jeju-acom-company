@@ -1301,13 +1301,17 @@ module.exports = function mountSms(app, deps) {
         const id = parseInt(req.params.id, 10); if (!id) return res.status(400).json({ ok: false, error: 'id' });
         // #635: 여는 순간 읽음(staff_read_at = now · updated_at 은 안 건드림) — ?peek=1 이면 읽음으로 안 바꿈(상태만 다시 볼 때)
         const peek = String(req.query.peek || '') === '1';
+        const pt0 = process.hrtime.bigint(), pms = a => Number(process.hrtime.bigint() - a) / 1e6;   // #1095 단계별 시간(응답 머리 Server-Timing 만 · JSON 은 그대로)
         const t = (await pool.query(peek ? `SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1` : `UPDATE sms_threads SET staff_read_at = now() WHERE id = $1 RETURNING *, 0 AS unread`, [id])).rows[0]; if (!t) return res.status(404).json({ ok: false, error: '없는 대화예요' });
         const ms = (await pool.query(`SELECT m.id, m.direction, m.kind, m.body, m.sender, m.state, m.bucket, m.rule_kind, m.event_at, m.sent_at, m.fail_reason, m.send_after,
             COALESCE((SELECT array_agg(i.id ORDER BY i.id) FROM sms_images i WHERE i.message_id = m.id AND i.purged_at IS NULL AND i.data IS NOT NULL), '{}') AS image_ids
             FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id LIMIT 300`, [id])).rows;
+        const pDb = pms(pt0), pt1 = process.hrtime.bigint();
         const cH = await cfg(); let hist = { items: [], more: false };
         try { hist = await staffHistory(t.phone_digits, cH); } catch (e) { log.error('[문자] 구매이력 읽기 실패(무시):', e.message); }   // #654 실패해도 대화는 열린다
+        const pHist = pms(pt1), pt2 = process.hrtime.bigint();
         if (!t.order_hint) await saveHint(t, hist);   // #672 받은 뒤에 주문이 생긴 번호 — 여는 순간 목록 줄 글도 고친다
+        try { res.set('Server-Timing', `db;dur=${pDb.toFixed(1)}, hist;dur=${pHist.toFixed(1)}, hint;dur=${pms(pt2).toFixed(1)}, total;dur=${pms(pt0).toFixed(1)}`); } catch (_) { /* 머리 못 붙여도 응답은 그대로 */ }
         res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
     }));
     // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 60건(#657 · 종전 20).
@@ -1518,6 +1522,28 @@ module.exports = function mountSms(app, deps) {
         typingSweep(); const me = Number(req.user && req.user.id), threads = {};
         for (const tid of _typing.keys()) { const a = typingOf(tid, me); if (a.length) threads[String(tid)] = a; }
         res.json({ ok: true, ttl_sec: Math.round(typingTtl() / 1000), threads });
+    }));
+    // #1095 대화 열기·사진 받기 걸린 시간(화면이 보냄 · 재기만) → agent_office_config 'sms_perf' 최근 100건 고리. 숫자 칸만 받는다(손님 번호·글 저장 0).
+    //   끄기 = 설정 키 'sms_perf_off' 가 true 면 받지 않고 204(30초 캐시) · 실패해도 화면 흐름과 무관(늘 204)
+    const PERF_MAX = 100; let _perfOff = null, _perfOffAt = 0;
+    const perfNum = (v, max) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(max, Math.round(n * 10) / 10) : null; };
+    function perfRow(b, uid) {
+        if (!b || typeof b !== 'object') return null;
+        const kind = b.kind === 'img' ? 'img' : 'open';
+        return { at: new Date().toISOString(), kind, user_id: Number(uid) || null, thread_id: perfNum(b.thread_id, 1e10), img_id: kind === 'img' ? perfNum(b.img_id, 1e10) : undefined,
+            net_ms: perfNum(b.net_ms, 600000), server_ms: perfNum(b.server_ms, 600000), render_ms: perfNum(b.render_ms, 600000), msgs: perfNum(b.msgs, 10000), imgs: perfNum(b.imgs, 10000),
+            bytes: kind === 'img' ? perfNum(b.bytes, 1e9) : undefined, ok: b.ok === false ? false : undefined, app: b.app === true, ua: String(b.ua || '').replace(/[^\x20-\x7e]/g, '').slice(0, 60) };
+    }
+    app.post('/api/sms/perf', authMiddleware, wrap(async (req, res) => {
+        try {
+            if (_perfOff === null || Date.now() - _perfOffAt > 30000) { _perfOff = (await naverCfgGet('sms_perf_off')) === true; _perfOffAt = Date.now(); }
+            if (_perfOff) return res.status(204).end();
+            const b = req.body || {}, list = Array.isArray(b.items) ? b.items.slice(0, 20) : [b];
+            const rows = list.map(x => perfRow(x, req.user && req.user.id)).filter(Boolean);
+            if (rows.length) await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('sms_perf', $1::jsonb)
+                ON CONFLICT (key) DO UPDATE SET value = (SELECT COALESCE(jsonb_agg(e ORDER BY n), '[]'::jsonb) FROM (SELECT e, n FROM jsonb_array_elements(CASE WHEN jsonb_typeof(agent_office_config.value) = 'array' THEN agent_office_config.value ELSE '[]'::jsonb END || EXCLUDED.value) WITH ORDINALITY AS x(e, n) ORDER BY n DESC LIMIT ${PERF_MAX}) s), updated_at = NOW()`, [JSON.stringify(rows)]);
+        } catch (e) { log.error('[문자] 시간 기록 실패(무시):', e.message); }
+        res.status(204).end();
     }));
     // 설정 보기·바꾸기(관리자 · 모드 전환은 여기서 — 첫 자동 발송(auto) 전환은 대표 「고」 뒤)
     app.get('/api/sms/config', authMiddleware, wrap(async (req, res) => { const c = await cfg(true); res.json(Object.assign({}, c, { gateway_env: { user: !!gwEnv().user, pass: !!gwEnv().pass, signing_key: !!(process.env.SMSGATE_SIGNING_KEY || process.env.SMSGATE_WEBHOOK_SECRET) }, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), ai_note: !!aiNote, followup: !!followup, selfcheck: !!selfcheck, photo_test: !!photoTest, preorders: !!preorders } })); }));
