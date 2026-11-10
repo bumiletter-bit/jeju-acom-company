@@ -2285,3 +2285,24 @@ html[data-app="sms"] body:not(.sms-win-open) .app::after { content: "문자 불�
 html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after { background: #151a33; color: #c7cce6; }
 /* #1062-e 문자 앱 기기 캐시로 먼저 그린 동안 「새로 고치는 중…」 작은 알약(서버 값이 오면 사라짐) */
 .sms-app-stale { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9500; padding: 4px 12px; border-radius: 999px; background: rgba(17, 24, 39, .78); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
+/* ── #1096(대표 11/10 폴드7 겉화면 「손님 글 칸 넓게」) 폰(≤720)만 — 구매이력 판·[지우기][답 보내기] 줄을 낮춰 대화 칸을 넓힌다 · 글은 줄바꿈으로 전부 보임(말줄임 0) · PC·880 변화 0 · 송장·[조회] 누르는 자리 44px 는 위 ::after 그대로 ── */
+@media (max-width: 720px) {
+    .sms-pane .sms-order.sms-buy { padding: 4px 8px 4px; }
+    .sms-pane .sms-buy .sms-buy-h { margin: 0 2px 3px; min-height: 16px; line-height: 1.2; }
+    .sms-pane .sms-buy .sms-buy-h b { font-size: 11.5px; }
+    .sms-pane .sms-buy .sms-buy-h small { font-size: 10.5px; white-space: normal; }
+    .sms-pane .sms-buy .sms-buy-h .sms-buy-more:not(.next) { min-height: 16px; font-size: 11px; }
+    .sms-pane .sms-buy .sms-buy-i { padding: 3px 8px; gap: 0 6px; border-radius: 8px; line-height: 1.25; }
+    .sms-pane .sms-buy .sms-buy-rest, .sms-pane .sms-buy .sms-buy-rest > .sms-buy-i, .sms-pane .sms-buy .sms-buy-i + .sms-buy-i { margin-top: 4px; }
+    .sms-pane .sms-buy .desk-badge { padding: 1px 6px; font-size: 10px; line-height: 1.25; }
+    .sms-pane .sms-buy .sms-buy-role, .sms-pane .sms-buy .sms-buy-r dt, .sms-pane .sms-buy .sms-buy-r dd small { font-size: 10.5px; }
+    .sms-pane .sms-buy .sms-buy-r dd { font-size: 11px; line-height: 1.25; }
+    .sms-pane .sms-buy .sms-buy-r dd.key { font-size: 11.5px; }
+    .sms-pane .sms-buy .sms-box-it { font-size: 11px; }
+    .sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { min-height: 21px; }
+    .sms-pane .sms-buy .sms-trk { padding: 0 6px; border-radius: 6px; font-size: 11px; }
+    .sms-pane .sms-buy .sms-trk-go { padding: 0 5px; font-size: 10.5px; }
+    .sms-pane .sms-buy.has-more:not(.open) .sms-buy-r.r-item dd { overflow: visible; text-overflow: clip; white-space: normal; }   /* 접힌 판 맨 위 1건 품목도 줄바꿈으로 전부(폰은 title 을 못 봄) */
+    .sms-reply { gap: 6px; padding: 6px 10px 8px; }
+    .sms-reply-row .desk-btn { min-height: 36px; padding-top: 0; padding-bottom: 0; font-size: 13px; }
+}
