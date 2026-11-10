@@ -11,7 +11,7 @@ async function claim(id) {
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
            AND NOT (pending_orders.content LIKE '[VM]%')   -- #1042: 「[VM]」 머리 지시는 작성자 무관 전부 VM 러너 몫(창구는 안 집음 · 대표 11/6)
-         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload, to_jsonb(pending_orders)->>'file_name' AS file_name`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
+         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload, to_jsonb(pending_orders)->>'file_name' AS file_name, to_jsonb(pending_orders)->'image_more' AS image_more`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
     if (!c.rows.length) return { ok: false, reason: '이미 처리 중이거나 없는 지시입니다' };
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
@@ -31,7 +31,7 @@ async function claim(id) {
         // #561-b(대표 10/6 「승인 거치게 하도록」): 승인 없이 바로 실행하는 것은 대표 계정뿐 — 관리자 계정이라도 대표가 아니면(조가영 과장) 직원과 같이 승인 대기
         if (u) fromRole = (u.role === 'admin' && u.position === '대표') ? 'admin' : 'staff';
     }
-    let imagePath = null, filePath = null;
+    let imagePath = null, filePath = null, imagePaths = null;
     if (o.image_data) {
         const m = String(o.image_data).match(/^data:([^;]+);base64,(.+)$/s);
         if (m) {
@@ -48,6 +48,19 @@ async function claim(id) {
             } else {
                 imagePath = path.join(dir, `${id}.${ext}`);
                 fs.writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
+                // #1104 글 + 사진 여러 장 = 한 지시 → 둘째 장부터 「번호_2.확장자」… · image_paths = 전부(첫 장 포함)
+                if (Array.isArray(o.image_more) && o.image_more.length) {
+                    imagePaths = [imagePath];
+                    o.image_more.forEach((im, k) => {
+                        const mm = String((im && im.data) || '').match(/^data:([^;]+);base64,(.+)$/s);
+                        if (!mm) return;
+                        const ex = (/(png|jpe?g|webp|gif)/i.exec((im && im.mime) || mm[1]) || ['', 'png'])[1].replace('jpeg', 'jpg');
+                        const p = path.join(dir, `${id}_${k + 2}.${ex}`);
+                        fs.writeFileSync(p, Buffer.from(mm[2], 'base64'));
+                        imagePaths.push(p);
+                    });
+                    if (imagePaths.length < 2) imagePaths = null;
+                }
             }
         }
     }
@@ -97,7 +110,7 @@ async function claim(id) {
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {
-        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: 저장소 루트에서 node -e 로 require("exceljs")(xlsx) 또는 require("xlsx-js-style")(xls 포함 · 없을 수 있음)로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
+        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(imagePaths ? { image_paths: imagePaths, image_hint: `사진 ${imagePaths.length}장이 한 지시입니다 — image_paths 를 전부 Read 로 본 뒤 함께 읽어 한 번에 처리하세요(image_path = 첫 장)` } : {}), ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: 저장소 루트에서 node -e 로 require("exceljs")(xlsx) 또는 require("xlsx-js-style")(xls 포함 · 없을 수 있음)로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         remember: await rememberList(),   // #551: 관리자가 「기억해」라고 한 업무 기준 — 문서보다 최근 결정이므로 문서와 다르면 이쪽을 따른다
         recent_talk: prev,

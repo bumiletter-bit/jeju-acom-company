@@ -516,7 +516,9 @@
     }
     const ICON_FILE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
     const fileChip = (name, size, xAttr) => `<div class="desk-filechip"><span class="desk-filechip-ic">${ICON_FILE}</span><span class="desk-filechip-name">${esc(name)}</span><span class="desk-filechip-size">${esc(sizeText(size))}</span><button type="button" ${xAttr} aria-label="첨부 파일 빼기">×</button></div>`;
-    const attMeta = o => o.file_name ? ' · 📎 ' + esc(o.file_name) : o.has_image ? ' · 이미지 첨부' : '';
+    const imgCount = o => 1 + (Number(o.more_images) || 0);   // #1104 글 + 사진 여러 장 한 지시 = 장수
+    const imgLabel = o => imgCount(o) > 1 ? `이미지 ${imgCount(o)}장 첨부` : '이미지 첨부';
+    const attMeta = o => o.file_name ? ' · 📎 ' + esc(o.file_name) : o.has_image ? ' · ' + imgLabel(o) : '';
     function addFiles(files) {
         const good = files.filter(attachOk), doc = good.find(isDoc);
         if (doc) {   // 파일은 1개만 — 여러 개를 골랐거나 이미지가 붙어 있었으면 첫 파일만 남긴다
@@ -541,6 +543,7 @@
         box.innerHTML = S.images.map((im, i) => im.file ? fileChip(im.name, im.size, `data-i="${i}"`) : `<div class="desk-thumb"><img src="${im.data}" alt="첨부 ${i + 1}"><button type="button" data-i="${i}" aria-label="첨부 ${i + 1} 빼기">×</button></div>`).join('');
     }
 
+    const SETTLE_TXT = /정산|발주\s*수량|발송\s*목록|올려\s*줘|올려\s*주세요/;   // #1104 = 창구 fast.js SETTLE_WORDS 와 같은 낱말(정산 판독 길은 장마다 1건 그대로)
     async function send() {
         if (S.sending) return;
         const input = $('desk-input');
@@ -552,7 +555,17 @@
         const newIds = [];
         const idOf = r => r && r.order && r.order.id;
         try {
-            if (S.images.length) {
+            // #1104(대표 11/11) 글 + 사진 2장↑ = 지시 1건(창구가 한 번에 읽음) · 글 없음(정산 판독)·정산 글·파일·1장 = 종전대로 장마다 1건
+            const many = S.images.length >= 2 && !!content && !S.images.some(x => x.file) && !SETTLE_TXT.test(content);
+            if (many) {
+                const imgs = S.images.slice();
+                if (imgs.reduce((a, im) => a + String(im.data || '').length, 0) > 36000000) throw new Error('사진 합계가 너무 커요 (모두 합쳐 약 25MB 이내로 올려 주세요)');
+                let res;   // #1104-b 첫 장을 image_data 로 또 싣지 않음(서버 = images[0]) · 413 = 본문 상한(40MB) 넘음
+                try { res = await api('/api/agent-office/orders', 'POST', { content, images: imgs.map(im => ({ data: im.data, mime: im.mime })) }); }
+                catch (e) { if (e && e.status === 413) throw new Error('사진이 너무 커요 · 장수를 줄여 주세요'); throw e; }
+                newIds.push(idOf(res));
+                showToast(`지시를 보냈어요(사진 ${imgs.length}장)`);
+            } else if (S.images.length) {
                 const imgs = S.images.slice();
                 for (const im of imgs) newIds.push(idOf(await api('/api/agent-office/orders', 'POST', im.file
                     ? { content: content || '첨부한 파일을 확인해줘', image_data: im.data, image_mime: im.mime, file_name: im.name }
@@ -3053,7 +3066,7 @@
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
                     <span>${o.id}번</span>${o.reply_to ? `<span class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</span>` : ''}<span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-                    ${o.file_name ? `<span>📎 ${esc(o.file_name)}</span>` : o.has_image ? '<span>이미지 첨부</span>' : ''}
+                    ${o.file_name ? `<span>📎 ${esc(o.file_name)}</span>` : o.has_image ? `<span>${imgLabel(o)}</span>` : ''}
                     ${S.tab === 'mine' && ((!ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status)) || ENDABLE.includes(o.status)) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 채팅 종료" title="채팅 종료">×</button>` : ''}</div>
                 <p class="desk-q">${esc(o.content)}</p>
                 ${resultHtml(o)}

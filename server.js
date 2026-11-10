@@ -46,6 +46,9 @@ pool.on('error', (e) => { try { console.error('[DB] 쉬는 연결 오류(계속 
 
 app.disable('x-powered-by');   // #610 검토: 서버 종류 노출 안 함
 app.use('/api/track-order', express.json({ limit: '2kb' }));   // #610 손님 셀프 조회(공개)는 작은 본문만 — 전역 15MB 파서 앞에
+// #1104 지시 접수(POST /api/agent-office/orders 그 주소만) = 사진 최대 6장 한 번에 → 40MB · 그 밖은 아래 전역 15MB 그대로
+const _deskOrderJson = express.json({ limit: '40mb' });
+app.use('/api/agent-office/orders', (req, res, next) => (req.method === 'POST' && req.path === '/') ? _deskOrderJson(req, res, next) : next());
 app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/sms/webhook')) req.rawBody = buf.toString('utf8'); } }));   // #610 문자 webhook 서명 검증용 원문(그 라우트만)
 app.use((req, res, next) => { const h = String(req.headers['x-forwarded-host'] || req.hostname || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, ''); if (req.path === '/' && h === String(process.env.EVENT_HOST || 'event.akkome.com').toLowerCase()) return res.redirect(302, '/lucky.html'); next(); });   // #708: 이벤트 주소(event.akkome.com)로 들어온 「/」는 손님 이벤트 페이지로(express.static 이 index.html 을 내보내기 전에) · 다른 Host·경로는 무접촉
 app.use('/media', express.static(path.join(__dirname, 'public', 'media'), { maxAge: '1d' }));   // #832(총괄 10/24) 홈 영상(public/media · 파일 이름에 _v2 꼴 버전) = Cache-Control public, max-age=86400 · 다른 정적 파일·index.html 은 아래 종전 규칙(max-age=0) 그대로
@@ -911,6 +914,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS file_name TEXT`);   // #543 파일 첨부 이름(이미지면 NULL)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_more JSONB`);   // #1104 글+사진 2장↑ 한 지시 = 둘째 장부터 [{data,mime}] (첫 장은 image_data 그대로)
     // #469 클코 창구: 요청자 계정(완료 알림 대상) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
     // #469-c: 요청자가 「내 지시」 목록에서 지운 표시(전체 지시·기록은 그대로) — additive
@@ -10935,7 +10939,7 @@ async function dbRetentionCount(cfg) {
     const one = async (sql, p) => (await pool.query(sql, p)).rows[0];
     const rf = await one(`SELECT count(*)::int AS n, COALESCE(sum(COALESCE(size_bytes, octet_length(data))), 0)::bigint AS bytes
                             FROM report_files WHERE purged_at IS NULL AND created_at < NOW() - make_interval(days => $1::int)`, [cfg.report_days]);
-    const im = await one(`SELECT count(*)::int AS n, COALESCE(sum(octet_length(image_data)), 0)::bigint AS bytes
+    const im = await one(`SELECT count(*)::int AS n, COALESCE(sum(octet_length(image_data) + COALESCE(octet_length(image_more::text), 0)), 0)::bigint AS bytes
                             FROM pending_orders WHERE image_data IS NOT NULL AND status = ANY($2::text[])
                              AND COALESCE(processed_at, created_at) < NOW() - make_interval(days => $1::int)`, [cfg.image_days, cfg.image_statuses]);
     const logs = {};
@@ -10978,7 +10982,7 @@ async function dbRetentionRunJob(job, cfg) {
     }
     if (job === 'image') {
         const r = await pool.query(
-            `UPDATE pending_orders SET image_data = NULL
+            `UPDATE pending_orders SET image_data = NULL, image_more = NULL
               WHERE id IN (SELECT id FROM pending_orders WHERE image_data IS NOT NULL AND status = ANY($2::text[])
                              AND COALESCE(processed_at, created_at) < NOW() - make_interval(days => $1::int) ORDER BY id LIMIT ${DB_RET_BATCH.image})`, [cfg.image_days, cfg.image_statuses]);
         return r.rowCount || 0;
@@ -15445,7 +15449,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden, COALESCE(o.hist_hidden, false) AS hist_hidden,
-                    (o.image_data IS NOT NULL AND o.file_name IS NULL) AS has_image, o.file_name, o.reply_to,
+                    (o.image_data IS NOT NULL AND o.file_name IS NULL) AS has_image, o.file_name, o.reply_to, COALESCE(jsonb_array_length(o.image_more), 0) AS more_images,
                     (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false${deskNoTestSql('c', req.user.id)}) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
              FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
@@ -15633,22 +15637,37 @@ app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/
         const content = String(req.body?.content || '').trim();
         // 정산관리 이미지 첨부 (대표 7/20): 이미지가 있으면 content는 비어도 허용 (기본 지시문 대체)
         const att = req.body?.file_name ? deskAttachOf(req.body) : null;   // #543: 파일 이름이 오면 파일 첨부(허용 종류만) · 없으면 종전 이미지 경로 그대로
-        const imageData = att ? att.data : (typeof req.body?.image_data === 'string' ? req.body.image_data : '');
-        const imageMime = att ? att.mime : String(req.body?.image_mime || '').slice(0, 40);
+        // #1104(대표 11/11) 글 + 사진 2~6장 = 지시 1건(images 배열 · 첫 장 = image_data · 나머지 = image_more) · 파일 첨부·사진 1장·배열 없음 = 종전 그대로
+        const multi = !att && Array.isArray(req.body?.images) && req.body.images.length >= 2 ? req.body.images : null;
+        if (multi) {
+            if (multi.length > 6) throw { status: 400, message: '이미지는 한 번에 6장까지 보낼 수 있어요' };
+            let tot = 0;
+            for (const im of multi) {
+                const d = im && typeof im.data === 'string' ? im.data : '';
+                if (!/^data:image\/[^;,]*;base64,/.test(d)) throw { status: 400, message: '여러 장은 이미지만 보낼 수 있어요' };
+                if (d.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
+                tot += d.length;
+            }
+            if (tot > 36_000_000) throw { status: 400, message: '사진 합계가 너무 큽니다 (모두 합쳐 약 25MB 이내로 올려주세요)' };
+        }
+        const imageData = multi ? multi[0].data : att ? att.data : (typeof req.body?.image_data === 'string' ? req.body.image_data : '');
+        const imageMime = multi ? String(multi[0].mime || '').slice(0, 40) : att ? att.mime : String(req.body?.image_mime || '').slice(0, 40);
+        const imageMore = multi ? multi.slice(1).map(im => ({ data: im.data, mime: String(im.mime || '').slice(0, 40) })) : null;
         if (!content && !imageData) throw { status: 400, message: '지시 내용을 입력해주세요' };
         const engine = await aoEngine();
         const maxLen = engine === 'desk' ? 2000 : 500;
         if (content.length > maxLen) throw { status: 400, message: `지시는 ${maxLen}자 이내로 입력해주세요` };
         if (imageData && imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
         const effText = content || (imageData ? (att && att.fileName ? '[파일 첨부] 확인해줘' : '[이미지 첨부] 오늘 정산관리에 올려줘') : '');
-        const row = (await pool.query(
-            `INSERT INTO pending_orders (content, image_data, image_mime, file_name, created_by, created_by_id, status) VALUES ($1, $2, $3, $7, $4, $5, $6) RETURNING *`,
+        const row = (await pool.query(imageMore
+            ? `INSERT INTO pending_orders (content, image_data, image_mime, file_name, created_by, created_by_id, status, image_more) VALUES ($1, $2, $3, $7, $4, $5, $6, $8::jsonb) RETURNING *`
+            : `INSERT INTO pending_orders (content, image_data, image_mime, file_name, created_by, created_by_id, status) VALUES ($1, $2, $3, $7, $4, $5, $6) RETURNING *`,
             [effText, imageData || null, imageData ? imageMime : null,
              `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null,
-             engine === 'desk' ? '처리중' : '대기', (att && att.fileName) || null])).rows[0];
+             engine === 'desk' ? '처리중' : '대기', (att && att.fileName) || null].concat(imageMore ? [JSON.stringify(imageMore)] : []))).rows[0];
         await writeAudit({
             action: 'create', targetType: 'pending_order', targetId: row.id,
-            changes: { after: { content: effText, status: row.status, has_image: !!imageData } }, // 이미지 원문은 audit 미기록 (용량)
+            changes: { after: { content: effText, status: row.status, has_image: !!imageData, ...(imageMore ? { images: imageMore.length + 1 } : {}) } }, // 이미지 원문은 audit 미기록 (용량) · #1104 여러 장이면 장수만
             source: 'agent_office', actor: adminActor(req),
         });
         if (engine === 'desk') {

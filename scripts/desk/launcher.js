@@ -606,6 +606,7 @@ async function dupParent(o, p) {
             AND a.reply_to IS NOT DISTINCT FROM b.reply_to AND COALESCE(a.file_name, '') = COALESCE(b.file_name, '')
             AND md5(COALESCE(a.payload::text, '')) = md5(COALESCE(b.payload::text, ''))
             AND ((a.image_data IS NULL AND b.image_data IS NULL) OR md5(a.image_data::text) = md5(b.image_data::text))
+            AND md5(COALESCE((to_jsonb(a)->'image_more')::text, '')) = md5(COALESCE((to_jsonb(b)->'image_more')::text, ''))   -- #1104-b 글+사진 여러 장 = 둘째 장부터도 같아야 같은 지시(1장 지시 = 둘 다 빈 값 = 종전 · 칸 없는 DB 에서도 안 죽게 to_jsonb)
           ORDER BY a.id DESC LIMIT 1`, [o.id, DUP_SEC]);
     return r.rows[0] || null;
 }
