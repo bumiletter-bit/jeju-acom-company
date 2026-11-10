@@ -14,7 +14,8 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
     if (!up) { srv.kill(); throw new Error('가짜 서버가 안 떴어요'); }
     const { chromium } = require('playwright');
     const browser = await chromium.launch();
-    const cases = [[{ width: 390, height: 844 }, true, ''], [{ width: 390, height: 844 }, true, 'dark'], [{ width: 880, height: 900 }, false, ''], [{ width: 880, height: 900 }, false, 'dark'], [{ width: 1280, height: 900 }, false, ''], [{ width: 1280, height: 900 }, false, 'dark']];
+    const ALL = [[{ width: 390, height: 844 }, true, ''], [{ width: 390, height: 844 }, true, 'dark'], [{ width: 880, height: 900 }, false, ''], [{ width: 880, height: 900 }, false, 'dark'], [{ width: 1280, height: 900 }, false, ''], [{ width: 1280, height: 900 }, false, 'dark']];
+    const cases = process.env.ALL1093 ? ALL : ALL.filter(([v, , t]) => !t && v.width !== 1280);   // #1094 작은 수정 = 390·880 밝음만(ALL1093=1 이면 전부)
     try {
         for (const [vw, phone, theme] of cases) {
             const label = vw.width + (theme ? ' 야간' : ' 밝음');
@@ -35,12 +36,14 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 const fs = el => el ? parseFloat(getComputedStyle(el).fontSize) : null, lh = el => el ? getComputedStyle(el).lineHeight : null;
                 const bub = document.querySelector('#sms-msgs .sms-msg.in .sms-bub') || document.querySelector('#sms-msgs .sms-bub'), out = document.querySelector('#sms-msgs .sms-msg.out .sms-bub');
                 const ta = document.getElementById('sms-text'), time = document.querySelector('#sms-msgs .sms-msg small'), last = document.querySelector('#sms-list .sms-last');
-                return { bub: fs(bub), bubLh: lh(bub), out: fs(out), ta: fs(ta), taLh: lh(ta), time: fs(time), last: fs(last), cust: !!document.getElementById('sms-cust'), dark: document.documentElement.dataset.aoTheme || '', sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) };
+                return { bub: fs(bub), bubLh: lh(bub), out: fs(out), ta: fs(ta), taLh: lh(ta), time: fs(time), last: fs(last), row: (() => { const r = document.querySelector('#sms-list .sms-item > .sms-row'); const g = q => { const e = r && r.querySelector(q); return e ? parseFloat(getComputedStyle(e).fontSize) : null; }; return { tail: g('.sms-tail'), hint: g('.sms-hint'), time: g('.sms-time'), last: g('.sms-last'), out: (() => { const e = document.querySelector('#sms-list .sms-out'); return e ? parseFloat(getComputedStyle(e).fontSize) : null; })() }; })(), q: (() => { const e = document.getElementById('sms-q'); return e ? parseFloat(getComputedStyle(e).fontSize) : null; })(), cust: !!document.getElementById('sms-cust'), dark: document.documentElement.dataset.aoTheme || '', sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) };
             });
-            ok(m.bub === 10.875 && (m.out == null || m.out === 10.875), `[${label}] 말풍선 글씨 10.875px(손님 ${m.bub} · 우리·봇 ${m.out}) · 줄 간격 ${m.bubLh}`);
-            ok(m.ta === (phone ? 12 : 10.875), `[${label}] 답 칸 글씨 ${m.ta}px(기대 ${phone ? '12 = 16×0.75' : '10.875 = 14.5×0.75'}) · 줄 간격 ${m.taLh}`);
+            ok(m.bub === 11.6 && (m.out == null || m.out === 11.6), `[${label}] #1094 말풍선 글씨 11.6px = 14.5×0.8(손님 ${m.bub} · 우리·봇 ${m.out}) · 줄 간격 ${m.bubLh}`);
+            ok(m.ta === (phone ? 12.8 : 11.6), `[${label}] #1094 답 칸 글씨 ${m.ta}px(기대 ${phone ? '12.8 = 16×0.8' : '11.6 = 14.5×0.8'}) · 줄 간격 ${m.taLh}`);
             ok(m.time === 11.5, `[${label}] 시간 글씨 그대로 11.5px(${m.time})`);
-            ok(m.last != null && m.last > 11, `[${label}] 왼쪽 목록 글씨 그대로(${m.last}px)`);
+            console.log('     목록 줄 실측 = ' + JSON.stringify(m.row) + ' · 찾기 칸 ' + m.q + 'px');
+            ok(m.row.tail === 11.6 && m.row.hint === 10.4 && m.row.time === 9.6 && m.row.last === 10.8 && (m.row.out == null || m.row.out === 10), `[${label}] #1094 목록 = 번호 11.6 · 요약 ${m.row.hint} · 시간 ${m.row.time} · 마지막 글 ${m.row.last} · 「나:」 ${m.row.out}(원래의 80%)`);
+            ok(m.q != null && m.q >= 13, `[${label}] 찾기 칸 글씨 그대로(${m.q}px)`);
             ok(!m.cust, `[${label}] 「손님 글」 띠(#sms-cust) 없음`);
             ok(m.sw <= vw.width, `[${label}] 가로 넘침 없음(${m.sw} ≤ ${vw.width})`);
             if (theme) ok(m.dark === 'dark', `[${label}] 야간 테마 켜짐`);

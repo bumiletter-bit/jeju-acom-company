@@ -909,15 +909,15 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-list > .desk-empty { border-bottom: 1px solid var(--d-line); }
 .sms-item { border-bottom: 1px solid var(--d-line); min-width: 0; }
 .sms-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "tail hint badge time" "last last last last" "out out out out" "tags tags tags tags"; align-items: center; gap: 4px 10px; width: 100%; min-height: 44px; padding: 12px 8px; border: 0; border-radius: 10px; background: none; color: var(--d-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color 160ms var(--d-ease); }
-.sms-row:hover { background: var(--d-soft); }
+.sms-row:hover { background: var(--d-soft); }   /* #1094(대표 폴드7) 목록 글씨 원래의 80% = 번호 14.5→11.6 · 요약 13→10.4 · 시간 12→9.6 · 마지막 글 13.5→10.8 · 「나:」 12.5→10 */
 .sms-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
 .sms-item.open > .sms-row { background: var(--d-soft); }
 .sms-item.open > .sms-row .sms-tail { color: var(--d-accent); }
-.sms-tail { grid-area: tail; font-size: 14.5px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.sms-hint { grid-area: hint; min-width: 0; color: var(--d-sub); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-tail { grid-area: tail; font-size: 11.6px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sms-hint { grid-area: hint; min-width: 0; color: var(--d-sub); font-size: 10.4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sms-row > .desk-badge { grid-area: badge; }
-.sms-time { grid-area: time; color: var(--d-sub); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.sms-last { grid-area: last; min-width: 0; color: var(--d-sub); font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sms-time { grid-area: time; color: var(--d-sub); font-size: 9.6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sms-last { grid-area: last; min-width: 0; color: var(--d-sub); font-size: 10.8px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sms-item.unread .sms-last { color: var(--d-ink); font-weight: 600; }
 /* #635(대표 10/11 「폰 문자함처럼」): 안 읽음 배지(알약 숫자와 같은 빨강) · 「나:」 머리 · 사람 몫 사유 알약 · 빈 목록의 [이전 대화 보기] */
 .sms-row > .sms-un { grid-area: badge; }
@@ -926,7 +926,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-list > .sms-none { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .sms-none .desk-btn { min-height: 44px; }
 .sms-pic { font-style: normal; display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); font-size: 11.5px; font-weight: 700; line-height: 19px; vertical-align: 1px; }
-.sms-out { grid-area: out; min-width: 0; color: var(--d-sub); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-out { grid-area: out; min-width: 0; color: var(--d-sub); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sms-tags { grid-area: tags; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .sms-tag { font-style: normal; padding: 1px 8px; border-radius: 999px; background: var(--d-accent-soft); color: var(--d-accent); font-size: 11.5px; font-weight: 700; }
 .sms-by { color: var(--d-sub); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -953,8 +953,8 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-msgs:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
 .sms-msg { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; gap: 3px; max-width: 78%; min-width: 0; }
 .sms-msg.out { align-items: flex-end; align-self: flex-end; }
-.sms-bub { padding: 9px 12px; border: 1px solid var(--d-line); border-radius: 14px; background: var(--d-soft); font-size: 10.875px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.sms-msg.out .sms-bub { background: var(--d-accent-soft); border-color: #D8DBFF; }   /* #1093 .sms-bub 글씨 14.5 → 10.875(75% · 대표 폴드7) */
+.sms-bub { padding: 9px 12px; border: 1px solid var(--d-line); border-radius: 14px; background: var(--d-soft); font-size: 11.6px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sms-msg.out .sms-bub { background: var(--d-accent-soft); border-color: #D8DBFF; }   /* #1093·#1094 .sms-bub 글씨 14.5 → 11.6(원래의 80% · 대표 폴드7) */
 .sms-msg[data-s="failed"] .sms-bub { background: #FEECEB; border-color: #FECDCA; }
 .sms-msg small { color: var(--d-sub); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .sms-msg[data-s="failed"] small { color: #B42318; font-weight: 700; }
@@ -988,7 +988,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-text { width: 100%; min-height: 76px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; }
 .sms-text::placeholder { color: var(--d-sub); }
 .sms-text:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
-.sms-reply .sms-text { font-size: 10.875px; }   /* #1093(대표 폴드7) 답 칸(초안이 들어가는 칸) 글씨 75% = 14.5 → 10.875 · 줄 간격은 배수라 따라감 · 새 문자 판 칸은 그대로 */
+.sms-reply .sms-text { font-size: 11.6px; }   /* #1093·#1094(대표 폴드7) 답 칸(초안이 들어가는 칸) 글씨 원래의 80% = 14.5 → 11.6 · 줄 간격은 배수라 따라감 · 새 문자 판 칸은 그대로 */
 .sms-reply-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sms-reply-row .desk-btn { flex: none; min-height: 44px; }
 .sms-reply-row .desk-btn:disabled { opacity: .5; cursor: default; }
@@ -1043,7 +1043,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .sms-msgs { flex: 1 1 auto; min-height: 0; max-height: none; }
     .sms-msg { max-width: 86%; }
     .sms-text { min-height: 64px; font-size: 16px; }
-    .sms-reply .sms-text { font-size: 12px; }   /* #1093 폰 답 칸 16 → 12(75%) */
+    .sms-reply .sms-text { font-size: 12.8px; }   /* #1093·#1094 폰 답 칸 16 → 12.8(원래의 80%) */
     .sms-reply-row .desk-btn.primary { flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { .sms-row { transition: none; } .sms-thread { animation: none; } }
