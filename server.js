@@ -6862,6 +6862,12 @@ function inQuietWindow(cfg, hhmm) {
     return s <= e ? (hhmm >= s && hhmm < e) : (hhmm >= s || hhmm < e);   // 자정 걸침(21:30~07:30) 지원
 }
 async function alertQuietNow() { return inQuietWindow(await alertQuietCfg(), kstHHMM()); }
+// #1103(대표 11/11) 야간에도 바로 보낼 알림 종류 = alert_quiet.night_pass 배열(예 ['talk','inquiry','qna']) · 없거나 배열 아니면 종전 alertQuietNow 그대로
+async function alertQuietFor(kind) {
+    const cfg = await alertQuietCfg();
+    if (Array.isArray(cfg.night_pass) && cfg.night_pass.includes(kind)) return false;
+    return inQuietWindow(cfg, kstHHMM());
+}
 // 야간 억제분 누적 (대표 7/27 확장) — 신규주문·취소반품·정산은 이벤트성이라 브리핑용으로 DB에 카운트(재시작 안전), 브리핑 발송 시 리셋
 async function alertNightAcc(kind, n) {
     try {
@@ -6993,7 +6999,7 @@ setInterval(async () => {
             queue.push({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response), id: h.id, uid: h.user_id == null ? null : String(h.user_id) });   // #1074 id·uid = 보내기 직전 직원 답 확인용
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
-        const quiet = await alertQuietNow();
+        const quiet = await alertQuietFor('talk');   // #1103 night_pass 에 talk 있으면 밤에도 바로
         let lastAlert = st.last_alert || null;
         if (!quiet && queue.length) {   // (queue 가 #1074 거름으로 비면 아래 batch 가 빈 배열 = 0통)
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
@@ -7159,6 +7165,7 @@ app.put('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, asy
                 briefing_time: hhmmOk(qIn.briefing_time) ? qIn.briefing_time : cur2.briefing_time,
                 reminder_min: Math.min(720, Math.max(15, parseInt(qIn.reminder_min) || cur2.reminder_min)),
             };
+            if (Array.isArray(cur2.night_pass)) nextQ.night_pass = cur2.night_pass;   // #1103 화면 저장이 night_pass 를 지우지 않게(화면 칸 없음 = 기존 값 보존)
             await naverCfgSet('alert_quiet', nextQ);
         }
         await writeAudit({ action: 'alert_settings', targetType: 'telegram_alert', targetId: null,
@@ -8986,8 +8993,8 @@ async function collectInquiry() {
             }
             await new Promise(r => setTimeout(r, 350));
         }
-        // 대표 7/27 알림 개선: 상황별 분리 + 야간 조용 (오류 알림은 항상)
-        if (!(await alertQuietNow())) {
+        // 대표 7/27 알림 개선: 상황별 분리 + 야간 조용 (오류 알림은 항상) · #1103 night_pass 에 inquiry 있으면 밤에도 바로
+        if (!(await alertQuietFor('inquiry'))) {
             if (inqPosted > 0 && await alertEnabled('autodone')) tgSendBlocks(inqDone).catch(() => {});   // #1069 건수 한 줄 → 건마다 한 통(🟦 · 끝나길 안 기다림 = 수집 시간 종전)
             if (inqStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': inqStaff, '채널': '고객문의' }));
         }
@@ -9649,8 +9656,8 @@ async function collectQna() {
     }
     // 90일 경과분 물리 정리 (원본은 네이버에 있음 — 고객문의와 동일 정책)
     await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
-    // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상)
-    if (!(await alertQuietNow())) {
+    // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상) · #1103 night_pass 에 qna 있으면 밤에도 바로
+    if (!(await alertQuietFor('qna'))) {
         if (posted > 0 && await alertEnabled('autodone')) tgSendBlocks(qnaDone).catch(() => {});   // #1069 건마다 한 통(🟩)
         if (needStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': needStaff, '채널': '상품문의' }));
     }
