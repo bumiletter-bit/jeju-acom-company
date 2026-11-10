@@ -32,6 +32,9 @@ const VISITOR_RE = /이용\s*고객|이용자|방문자|방문\s*고객/;
 const BOOKER_RE = /예약자|예약\s*고객|신청자/;
 const STATUS_RE = /(확정|취소|이용완료|노쇼|신청|대기|미확정)/;
 const PHONE_RE = /01[016789][-\s]?\d{3,4}[-\s]?\d{4}/g;
+// #1106 외국 이름(띄어쓰기·20자 넘음 · 예 「Oyungerel Oyuntsetseg」) = 라틴·키릴 글자 낱말 여럿(40자까지 · 숫자 없음) · 한국 이름은 종전 꼴이 먼저 맞으므로 결과 그대로
+const FN_L = 'A-Za-z\\u00C0-\\u024F\\u0400-\\u04FF';
+const FOREIGN_NAME = `[${FN_L}][${FN_L} .'\\-]{0,38}[${FN_L}.]`;
 
 const tail4 = p => p ? '…' + String(p).replace(/\D/g, '').slice(-4) : '-';
 const maskName = s => { const a = [...String(s || '')]; return a.length ? a[0] + '*'.repeat(Math.max(0, a.length - 1)) : '-'; };
@@ -96,7 +99,11 @@ function parseRow(row, no) {
     const wc = (Array.isArray(row.cells) ? row.cells : []).find(c => /이용\s*일시|이용\s*일|방문\s*일/.test(c.h));   // 머리글 칸이 있으면 그 칸 · 없으면 예약번호 뒤 첫 날짜(그 앞은 신청 일시일 수 있음)
     out.visit_seen = parseWhen(wc ? wc.t : text.slice(Math.max(0, text.indexOf(no))));
     const phoneIn = s => { const m = String(s || '').match(PHONE_RE); return m ? m[0].replace(/\D/g, '') : null; };
-    const nameIn = s => { const t = String(s || '').replace(PHONE_RE, ' ').replace(/[()·|,]/g, ' ').trim().split(/\s+/).filter(x => /^[가-힣A-Za-z]{2,10}$/.test(x) && !STATUS_RE.test(x)); return t[0] || null; };
+    const nameIn = s => {
+        const c = String(s || '').replace(PHONE_RE, ' ').replace(/[()·|,]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (new RegExp('^' + FOREIGN_NAME + '$').test(c) && /\s/.test(c)) return c;   // #1106 칸 글자가 외국 이름 낱말 여럿뿐이면 통째로
+        const t = c.split(/\s+/).filter(x => /^[가-힣A-Za-z]{2,10}$/.test(x) && !STATUS_RE.test(x)); return t[0] || null;
+    };
     const cells = Array.isArray(row.cells) ? row.cells : [];
     const vc = cells.find(c => VISITOR_RE.test(c.h)), bc = cells.find(c => BOOKER_RE.test(c.h));
     if (vc || bc) {
@@ -107,8 +114,8 @@ function parseRow(row, no) {
         const sc = cells.find(c => /상태/.test(c.h)); if (sc) { const s = STATUS_RE.exec(sc.t); if (s) out.status_seen = s[1]; }
         return out;
     }
-    const lv = new RegExp('(?:' + VISITOR_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10})\\s*(' + PHONE_RE.source + ')').exec(text);
-    const lb = new RegExp('(?:' + BOOKER_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10})\\s*(' + PHONE_RE.source + ')').exec(text);
+    const lv = new RegExp('(?:' + VISITOR_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10}|' + FOREIGN_NAME + ')\\s*(' + PHONE_RE.source + ')').exec(text);
+    const lb = new RegExp('(?:' + BOOKER_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10}|' + FOREIGN_NAME + ')\\s*(' + PHONE_RE.source + ')').exec(text);
     if (lv || lb) {
         out.how = 'labels';
         if (lv) out.visitor_phone = lv[2].replace(/\D/g, '');
@@ -117,7 +124,7 @@ function parseRow(row, no) {
         return out;
     }
     // #997 꼴 = 「확정 홍길동 010-1234-5678 1396624487 26.11.09.(일) 12:30 …」
-    const m = new RegExp(STATUS_RE.source + '\\s+([^\\s\\d]{1,20}?)\\s+(' + PHONE_RE.source + ')\\s+' + String(no)).exec(text);
+    const m = new RegExp(STATUS_RE.source + '\\s+([^\\s\\d]{1,20}?|' + FOREIGN_NAME + ')\\s+(' + PHONE_RE.source + ')\\s+' + String(no)).exec(text);   // #1106 종전 한 낱말 꼴 먼저 · 안 맞으면 외국 이름(띄어쓰기)
     if (m) { out.how = 'line'; out.status_seen = m[1]; out.name_seen = m[2]; out.booker_phone = m[3].replace(/\D/g, ''); }
     return out;
 }

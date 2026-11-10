@@ -264,7 +264,7 @@ function autoCheck(row, body) {
     const p = autoPickPhone(body);
     if (!p) return no('phone', '번호 꼴이 아니에요(010 으로 시작하는 10~11자리)');
     if (body.phone != null && String(body.phone).replace(/\D/g, '') && String(body.phone).replace(/\D/g, '') !== p.phone) return no('phone_pick', '보낸 번호가 고르기 규칙(이용고객 먼저)과 달라요');
-    return { ok: true, phone: p.phone, picked: p.picked, name: autoNameNorm(body.name_seen) };
+    return { ok: true, phone: p.phone, picked: p.picked, name: String(body.name_seen || '').trim().replace(/\s+/g, ' ').replace(/님$/, '') };   // #1106-b 저장값 = 띄어쓰기 살림(외국 이름) · 대조는 autoNameNorm 그대로
 }
 // 시간 창 = hours [시작,끝) KST 시 · skip [HH:MM, HH:MM) 은 건너뜀(키워드 순위 09:30 어사이드) · k = kstNow() 꼴(UTC 칸에 KST)
 function autoInWindow(c, k) {
