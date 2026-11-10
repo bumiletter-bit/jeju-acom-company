@@ -1795,7 +1795,12 @@
     }
     // #1025 판 그리기 = 줄 본판(r._bx · x '') + 다른 품목 주문 판(r._xo[주문].bx · x = 주문번호) 같은 꼴 · data-x 로 구분
     const bxGet = (r, x) => !r ? null : x ? (r._xo && r._xo[x] && r._xo[x].bx) || null : r._bx;
-    function boxPanelHtml(r, ri) { boxEditInit(r); return r._bx ? bxPanel(r._bx, ri, '') : ''; }
+    function bxHintFill(r) {   // #1100 고치기로 다시 연 박스별 줄(주문 못 고른 판) = 이미 받은 찾기 결과에서 같은 주문번호의 받는 분·주소 → 흐린 글씨(값 아님 · 추가 호출 0)
+        const bx = r && r._bx; if (!bx || !bx.o || bx.recv || bx.addr || !r._lk || r._lk.state !== 'done') return;
+        const x = ((r._lk.matches) || []).find(m => String(m.pno || m.order_no || '') === String(bx.o)); if (!x) return;
+        bx.recv = x.recv_name || ''; bx.addr = x.addr || '';
+    }
+    function boxPanelHtml(r, ri) { boxEditInit(r); bxHintFill(r); return r._bx ? bxPanel(r._bx, ri, '') : ''; }
     const xboxPanelHtml = (r, ri) => Object.keys(r._xo || {}).map(o => r._xo[o].bx ? bxPanel(r._xo[o].bx, ri, o) : '').join('');
     function bxPanel(bx, ri, x) {
         const kind = boxKindOf(bx), X = x ? ` data-x="${esc(x)}"` : '', id = (i, k) => `om-bx-${ri}${x ? 'x' + digits(x).slice(-8) : ''}-${i}-${k}`;
@@ -1806,7 +1811,7 @@
         return `<div class="om-boxes" role="group" aria-label="박스별 카드 · ${bx.qty}박스">
             <div class="om-boxes-h"><b>${x ? esc(optBrief(bx.option)) + ' ' : ''}${bx.ce ? bx.qty + '박스 고치기' : '박스별 ' + bx.qty + '박스'}</b><span>빈칸 = 주문 그대로</span>${bx.qty > 1 ? `<button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}"${X}>전부 박스 1과 같게</button>` : ''}<button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}"${X}>${bx.ce ? '고치기 닫기' : '박스별 안 함'}</button></div>
             ${bx.ce ? `<label class="om-bx-date"><span>발송일</span><input data-cact="cedate" data-ri="${ri}"${X} value="${esc(bx.date ? md(bx.date) : '')}" placeholder="그대로 · 예) 11/8" inputmode="numeric" aria-label="이 주문 발송일"></label>` : ''}
-            ${x && !bx.ce ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
+            ${x && bx.ce ? `<p class="om-ordn">주문번호 ${esc(x)}</p>` : ''}${x && !bx.ce ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
             ${bx.arr.map((b, i) => `<fieldset class="om-boxrow${b.s ? ' off' : ''}"><legend>박스 ${i + 1}</legend>
               <div class="om-bx-top">${tailH(b, i)}${bx.qty === 1 ? '<span class="om-bx-hint">안 보내려면 발송일을 뒤로 넣어 주세요</span>' : `<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}"${X} data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label>`}</div>
               <div class="om-bx-g"><div class="om-bx-f om-bx-o"><span id="${id(i, 'o')}-l">품목</span><button type="button" class="om-combo" data-cact="bxopt" data-ri="${ri}"${X} data-bi="${i}" aria-labelledby="${id(i, 'o')}-l" aria-haspopup="dialog"><span>${b.o ? esc(shortOpt(b.o)) : '<i>주문 그대로</i>'}</span>${ICON_DOWN}</button></div>${f(b, i, 'n', '받는 분', bx.recv || '주문 그대로', ' maxlength="20"')}${f(b, i, 'p', '받는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'p2', '번호2', '주문 그대로', ' inputmode="tel" maxlength="14"')}${f(b, i, 'a', '주소', bx.addr || '주문 그대로', ' maxlength="200"')}${f(b, i, 'm', '배송메세지', '주문 그대로', ' maxlength="300"')}${f(b, i, 'sn', '보내는 분', '주문 그대로', ' maxlength="20"')}${f(b, i, 'sp', '보내는 분 번호', '주문 그대로', ' inputmode="tel" maxlength="14"')}</div></fieldset>`).join('')}
@@ -1832,7 +1837,9 @@
         if (!L || L.state === 'busy') return '<p class="om-lk" role="status" data-k="busy">주문 찾는 중…</p>';
         if (L.state === 'err') return '<p class="om-lk" role="alert" data-k="warn">주문을 찾지 못했어요(연결 오류) · 카드를 닫고 다시 해 주세요</p>';
         const os = ceOrders(r); if (!os.length) return '<p class="om-lk" role="status" data-k="warn">이 번호의 발송 전 주문을 못 찾았어요 · 선물하기 주문은 받는 분 번호로 넣어 주세요 — 7일 지난 주문·예약 주문은 여기서 안 보여요</p>';   // #1038 선물하기 = 구매자 번호 없음 → 받는 분 번호로 찾음(lookup 은 둘 다 찾음)
-        return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b><ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); return `<li class="om-ce-o"><span class="om-ce-t">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스 · ${esc(o.id)}${o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : ''}</span>${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
+        return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b><ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); const rv = String(o.recv || '').trim(), ad = String(o.addr || '').trim(), pd = o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : '';   // #1100 받는 분·주소 있으면 두 줄(1줄 = 이름 · 주소 앞부분 · 2줄 = 판매처 · 품목 · 박스 · 결제일 · 주문번호는 [고치기] 판 머리) · 둘 다 없으면 종전 꼴
+            const tH = rv || ad ? `<span class="om-ce-t two"><span class="om-ce-who">${rv ? `<b>${esc(rv)}</b>` : ''}${rv && ad ? ' · ' : ''}${ad ? esc(ad) : ''}</span><span class="om-ce-sub">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스${pd}</span></span>` : `<span class="om-ce-t">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스 · ${esc(o.id)}${pd}</span>`;
+            return `<li class="om-ce-o">${tH}${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
     }
     function ceGo() {   // 꼬리표 번호 → 그 번호 고객정보수정 카드(줄 하나 = 찾기 열쇠 · 저장 안 함)
         const te = $('om-tp-tel'), d = digits(te.value);
