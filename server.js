@@ -7051,14 +7051,11 @@ async function inquiryAlertTick() {
                 const ordOn = await alertEnabled('order') && Number(acc.order) > 0, ksOn = await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0;
                 if (ordOn || ksOn) lines.push('🛒 ' + [ordOn ? `주문 ${acc.order}건` : '', ksOn ? `알림톡 ${acc.kakaosend}건 발송` : ''].filter(Boolean).join(' · '));
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
-                if (await alertEnabled('kakaosend')) {   // 지시 #68 C6 → #334: 실패·보류·차단도 함께 (종전엔 성공 건수만 떠서 밤사이 실패를 놓쳤음)
-                    const kf = Number(acc.kakaosend_fail) || 0, kh = Number(acc.kakaosend_hold) || 0, kb = Number(acc.kakaosend_block) || 0;
-                    if (kf + kh + kb > 0) {
-                        const sub = [];
-                        if (kf > 0) sub.push(`❌ 실패 ${kf}건`);
-                        if (kh > 0) sub.push(`⏸ 보류 ${kh}건`);
-                        if (kb > 0) sub.push(`🚫 번호없음 ${kb}건`);
-                        lines.push(`⚠️ 알림톡 ${sub.join(' · ')} — [알림 발송 이력]에서 확인`);
+                if (await alertEnabled('kakaosend')) {   // 지시 #68 C6 → #334: 밤사이 실패도 함께 (종전엔 성공 건수만 떠서 밤사이 실패를 놓쳤음)
+                    // #1090(대표 11/10): 보류(8시대)·번호없음(선물하기 등)은 텔레그램에 안 실음 = 실패만 · 화면 [알림 발송 이력]·DB 기록은 그대로
+                    const kf = Number(acc.kakaosend_fail) || 0;
+                    if (kf > 0) {
+                        lines.push(`⚠️ 알림톡 ❌ 실패 ${kf}건 — [알림 발송 이력]에서 확인`);
                         const fails = (await naverCfgGet('alert_night_kakao_fail')) || [];
                         for (const f of fails) lines.push(`   ❌ ${f}`);
                     }
@@ -8244,7 +8241,7 @@ async function collectOrderNew() {
     // #334(대표 8/10): 야간 실패·보류·차단도 아침 브리핑에 실으려면 이 값들이 함수 스코프에 있어야 한다
     //   (종전엔 try 블록 지역변수라 야간엔 sent 건수만 누적 → 밤사이 실패가 아침에 안 보였음)
     let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '', kakaoAny = false;
-    let kakaoFailN = 0, kakaoHoldN = 0, kakaoBlockN = 0, kakaoFailRows = [];
+    let kakaoFailN = 0, kakaoFailRows = [];
     if (await alertEnabled('kakaosend')) {
         try {
             // 🔴 경과 분은 반드시 DB에서 계산할 것 — last_run_at은 timestamp WITHOUT time zone이라
@@ -8263,14 +8260,12 @@ async function collectOrderNew() {
             const g = {}; for (const row of ks) g[row.status] = row.n;
             kakaoSentN = g['sent'] || 0;
             const failedN = (g['failed'] || 0) + (g['token-failed'] || 0);
-            const holdN = g['hold-0809'] || 0;
-            const blockN = (g['no-tel'] || 0) + (g['gift-masked'] || 0);
-            kakaoFailN = failedN; kakaoHoldN = holdN; kakaoBlockN = blockN;
-            if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
+            // #1090(대표 11/10): 보류(hold-0809)·번호없음(no-tel·gift-masked)은 텔레그램에서 뺌 = 실패만 · 화면·DB 기록은 그대로
+            kakaoFailN = failedN;
+            if (kakaoSentN + failedN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
                 // #522(대표 10/5 「편하게·깔끔하게」): 문제가 없으면 한 줄(「신규 주문 N건 · 알림톡 M건 발송」), 실패·보류·번호없음이 있을 때만 둘째 줄. 0이 줄줄이 나오던 「성공·실패·보류·차단」 줄과 「(5.1시간)」 표기를 없앴다.
                 kakaoAny = true;
-                const prob = [failedN > 0 ? `실패 ${failedN}` : '', holdN > 0 ? `보류 ${holdN}` : '', blockN > 0 ? `번호없음 ${blockN}` : ''].filter(Boolean);
-                if (prob.length) kakaoLines.push(`⚠️ 알림톡 ${prob.join(' · ')} — [알림 발송 이력]에서 확인`);
+                if (failedN > 0) kakaoLines.push(`⚠️ 알림톡 실패 ${failedN} — [알림 발송 이력]에서 확인`);
                 if (failedN > 0) {
                     const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
                         WHERE created_at >= NOW() - make_interval(mins => $1) AND mode='real' AND status IN ('failed','token-failed')
@@ -8282,14 +8277,12 @@ async function collectOrderNew() {
         } catch (_) { /* 요약 집계 실패해도 신규주문 알림은 정상 발송 (무회귀) */ }
     }
     if (await alertQuietNow()) {   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
-        const ordOnN = await alertEnabled('order');   // #1070 신규주문 알림 꺼짐 = 주문·발송 건수 안 모음(실패·보류·번호없음은 종전대로)
+        const ordOnN = await alertEnabled('order');   // #1070 신규주문 알림 꺼짐 = 주문·발송 건수 안 모음(실패는 종전대로 · #1090 보류·번호없음은 안 모음)
         if (paid.length > 0 && ordOnN) await alertNightAcc('order', paid.length);
         if (kakaoSentN > 0 && ordOnN) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
-        // #334(대표): 밤사이 실패·보류·차단도 아침에 보이게 — 건수 누적 + 실패 사유 최대 5건 보관.
+        // #334(대표): 밤사이 실패도 아침에 보이게(#1090 보류·번호없음은 뺌) — 건수 누적 + 실패 사유 최대 5건 보관.
         //   카운터 누적 방식이라 시간대 변환이 개입하지 않는다(#333에서 데인 함정 회피).
         if (kakaoFailN > 0) await alertNightAcc('kakaosend_fail', kakaoFailN);
-        if (kakaoHoldN > 0) await alertNightAcc('kakaosend_hold', kakaoHoldN);
-        if (kakaoBlockN > 0) await alertNightAcc('kakaosend_block', kakaoBlockN);
         if (kakaoFailRows.length) {
             try {
                 const prev = (await naverCfgGet('alert_night_kakao_fail')) || [];
@@ -8297,7 +8290,7 @@ async function collectOrderNew() {
             } catch (_) { /* 상세 보관 실패해도 건수는 남는다 */ }
         }
     } else if (!(await alertEnabled('order'))) {
-        // #1070(대표 11/9 「특이사항은 어차피 다 오니 신규주문 알림톡 발송은 끄기」) 신규주문 알림 꺼짐 = 건수 한 줄 0통 · 실패·보류·번호없음 줄이 있을 때만 그 줄들
+        // #1070(대표 11/9 「특이사항은 어차피 다 오니 신규주문 알림톡 발송은 끄기」) 신규주문 알림 꺼짐 = 건수 한 줄 0통 · 실패 줄이 있을 때만 그 줄들(#1090 보류·번호없음만이면 0통)
         if (kakaoLines.length) notifyTelegram(`🔴 알림톡 특이사항\n${kakaoLines.join('\n')}`);
     } else if (paid.length > 0) {
         const base = (await alertText('order', { '건수': paid.length })) + (kakaoSentN > 0 ? ` · 알림톡 ${kakaoSentN}건 발송` : '');
