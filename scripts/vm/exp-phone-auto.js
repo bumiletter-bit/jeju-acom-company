@@ -182,10 +182,11 @@ async function main() {
             const tag = `#${it.id} 예약 ${it.order_no} · ${it.visit_date} ${it.visit_time} · ${maskName(it.name_masked)}`;
             let got;
             try {
-                got = await aside.replJson('#1040 예약자 읽기', `const t = await openTab(${JSON.stringify(LIST_URL(it.order_no))}); await new Promise(r => setTimeout(r, ${PAGE_WAIT_MS}));
+                // #1106 { } 블록으로 감쌈 = 어사이드 repl 은 최상위 const·let 을 세션 내내 들고 있어 한 틱 둘째 줄부터 「Identifier 't' has already been declared」로 멈췄음(11/11 08:00·08:10 로그 · 틱마다 1줄만 처리)
+                got = await aside.replJson('#1040 예약자 읽기', `{ const t = await openTab(${JSON.stringify(LIST_URL(it.order_no))}); await new Promise(r => setTimeout(r, ${PAGE_WAIT_MS}));
 let out; try { out = await t.evaluate(() => ${JS_READ(it.order_no)}); } catch (e) { out = { error: String(e && e.message || e).slice(0, 200) }; }
 if (!(out && out.blocked)) { try { await closeTab(t); } catch (e) {} }   // 보안 확인·로그인 화면 = 탭을 남겨 대표가 VM 어사이드에서 바로 풂(keyword-rank blocked 꼴)
-console.log(JSON.stringify(out));`);
+console.log(JSON.stringify(out)); }`);
             } catch (e) { log(`${tag} · 어사이드 오류 ${e.message.slice(0, 120)}`); bad++; break; }   // 어사이드 자체 문제 = 이 틱 멈춤(다음 틱 재시도 · 알림은 안 보냄 = 잠깐 끊김이 흔함)
             if (got && got.blocked) { log(`${tag} · 멈춤 ${got.blocked} ${got.url || ''}`); await miss(0, (got.blocked === 'login' ? '어사이드 네이버 로그인 풀림 — VM 어사이드에 열어 둔 탭에서 다시 로그인(대표 폰 인증)' : '네이버 보안 확인 화면 — VM 어사이드에 열어 둔 탭에서 풀어 주세요') + ' · partner.booking.naver.com 예약자관리(booking-list-view)', got.blocked); bad++; break; }   // 서버가 사유의 7자리↑ 숫자를 지우므로 업체 번호 없이 화면 이름만
             if (!got || got.error) { log(`${tag} · 화면 읽기 실패 ${got && got.error || ''}`); await miss(it.id, '예약자관리 화면을 읽지 못함'); bad++; continue; }
