@@ -7033,6 +7033,14 @@ async function inquiryAlertTick() {
         const cfg = await alertQuietCfg();
         const hhmm = kstHHMM();
         const todayKst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        // #1091 야간에 보관한 반품·교환 덩이 = 야간 끝 + briefing_time 지나면 한 번에(브리핑 설정과 무관) · 먼저 비우고 보냄(두 번 안 감)
+        if (!inQuietWindow(cfg, hhmm) && hhmm >= cfg.briefing_time) {
+            try {
+                const nb = await naverCfgGet('alert_night_claim_blocks');
+                if (Array.isArray(nb) && nb.length) { await naverCfgSet('alert_night_claim_blocks', []); await claimSendPacked(nb); }
+            } catch (e) { console.error('[야간 반품 알림] 실패:', e.message); }
+        }
+        try { await kakaoStallCheck(); } catch (e) { console.error('[알림톡 멈춤 점검] 실패:', e.message); }   // #1092
         // ① 아침 브리핑 — 하루 1회 (첫 가동 날은 발송 없이 기준일만 기록: 배포 직후 오후에 '밤사이' 오발송 방지)
         if (hhmm >= cfg.briefing_time) {
             const st = await naverCfgGet('alert_briefing_state');
@@ -7051,15 +7059,7 @@ async function inquiryAlertTick() {
                 const ordOn = await alertEnabled('order') && Number(acc.order) > 0, ksOn = await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0;
                 if (ordOn || ksOn) lines.push('🛒 ' + [ordOn ? `주문 ${acc.order}건` : '', ksOn ? `알림톡 ${acc.kakaosend}건 발송` : ''].filter(Boolean).join(' · '));
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
-                if (await alertEnabled('kakaosend')) {   // 지시 #68 C6 → #334: 밤사이 실패도 함께 (종전엔 성공 건수만 떠서 밤사이 실패를 놓쳤음)
-                    // #1090(대표 11/10): 보류(8시대)·번호없음(선물하기 등)은 텔레그램에 안 실음 = 실패만 · 화면 [알림 발송 이력]·DB 기록은 그대로
-                    const kf = Number(acc.kakaosend_fail) || 0;
-                    if (kf > 0) {
-                        lines.push(`⚠️ 알림톡 ❌ 실패 ${kf}건 — [알림 발송 이력]에서 확인`);
-                        const fails = (await naverCfgGet('alert_night_kakao_fail')) || [];
-                        for (const f of fails) lines.push(`   ❌ ${f}`);
-                    }
-                }
+                // #1092(대표 11/10): 알림톡 실패 줄 없앰(건별 실패는 화면 [알림 발송 이력]만 · 고장 의심은 kakaoBrokenAlert 가 따로 바로 알림)
                 if (await alertEnabled('confirmneed') && Number(acc.confirmneed) > 0) lines.push(`🛒 알림톡 발송 실패 ${acc.confirmneed}건 — 수기 발주확인 필요`);   // 지시 #92
                 if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
                 if (await alertEnabled('autodone')) {
@@ -8240,8 +8240,8 @@ async function collectOrderNew() {
     //   (틱은 60초 단위라 실제 간격이 주기보다 최대 1분 길다 — 고정 창이면 그만큼 매번 새어나감)
     // #334(대표 8/10): 야간 실패·보류·차단도 아침 브리핑에 실으려면 이 값들이 함수 스코프에 있어야 한다
     //   (종전엔 try 블록 지역변수라 야간엔 sent 건수만 누적 → 밤사이 실패가 아침에 안 보였음)
-    let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '', kakaoAny = false;
-    let kakaoFailN = 0, kakaoFailRows = [];
+    // #1092(대표 11/10): 건별 실패 줄·「🔴 알림톡 특이사항」 없앰 = 성공 건수만 · 고장 의심(전부 실패·토큰·폭주·90분 0건)은 kakaoBrokenAlert
+    let kakaoSentN = 0, kakaoAny = false;
     if (await alertEnabled('kakaosend')) {
         try {
             // 🔴 경과 분은 반드시 DB에서 계산할 것 — last_run_at은 timestamp WITHOUT time zone이라
@@ -8253,58 +8253,31 @@ async function collectOrderNew() {
             const sinceLast = Math.max(0, Number(t.since_min) || 0);
             // 타이머를 껐다 켰거나 장기 정지 후 재개한 경우 과거분이 통째로 딸려오지 않게 주기의 2배로 클램프
             const winMin = Math.round(Math.min(Math.max(sinceLast, ivMin), ivMin * 2));
-            const winLabel = winMin >= 60 ? `${Math.round(winMin / 6) / 10}시간` : `${winMin}분`;
-            kakaoWinLabel = winLabel;
             const ks = (await pool.query(`SELECT status, COUNT(*)::int AS n FROM kakao_notify_log
                 WHERE created_at >= NOW() - make_interval(mins => $1) AND mode IN ('real','hold','skip') GROUP BY status`, [winMin])).rows;
             const g = {}; for (const row of ks) g[row.status] = row.n;
             kakaoSentN = g['sent'] || 0;
-            const failedN = (g['failed'] || 0) + (g['token-failed'] || 0);
-            // #1090(대표 11/10): 보류(hold-0809)·번호없음(no-tel·gift-masked)은 텔레그램에서 뺌 = 실패만 · 화면·DB 기록은 그대로
-            kakaoFailN = failedN;
-            if (kakaoSentN + failedN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
-                // #522(대표 10/5 「편하게·깔끔하게」): 문제가 없으면 한 줄(「신규 주문 N건 · 알림톡 M건 발송」), 실패·보류·번호없음이 있을 때만 둘째 줄. 0이 줄줄이 나오던 「성공·실패·보류·차단」 줄과 「(5.1시간)」 표기를 없앴다.
-                kakaoAny = true;
-                if (failedN > 0) kakaoLines.push(`⚠️ 알림톡 실패 ${failedN} — [알림 발송 이력]에서 확인`);
-                if (failedN > 0) {
-                    const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
-                        WHERE created_at >= NOW() - make_interval(mins => $1) AND mode='real' AND status IN ('failed','token-failed')
-                        ORDER BY id DESC LIMIT 5`, [winMin])).rows;
-                    kakaoFailRows = fr.map(f => `${f.receiver_masked || '-'} ${String(f.error || '').slice(0, 80)}`);
-                    for (const line of kakaoFailRows) kakaoLines.push(`  ❌ ${line}`);
-                }
-            }
+            if (kakaoSentN > 0) kakaoAny = true;   // 0건 구간은 알림톡 줄 생략 (#215) · #522 한 줄 꼴 그대로
         } catch (_) { /* 요약 집계 실패해도 신규주문 알림은 정상 발송 (무회귀) */ }
     }
     if (await alertQuietNow()) {   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
-        const ordOnN = await alertEnabled('order');   // #1070 신규주문 알림 꺼짐 = 주문·발송 건수 안 모음(실패는 종전대로 · #1090 보류·번호없음은 안 모음)
+        const ordOnN = await alertEnabled('order');   // #1070 신규주문 알림 꺼짐 = 주문·발송 건수 안 모음 · #1092 실패 누적(kakaosend_fail) 없앰
         if (paid.length > 0 && ordOnN) await alertNightAcc('order', paid.length);
         if (kakaoSentN > 0 && ordOnN) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
-        // #334(대표): 밤사이 실패도 아침에 보이게(#1090 보류·번호없음은 뺌) — 건수 누적 + 실패 사유 최대 5건 보관.
-        //   카운터 누적 방식이라 시간대 변환이 개입하지 않는다(#333에서 데인 함정 회피).
-        if (kakaoFailN > 0) await alertNightAcc('kakaosend_fail', kakaoFailN);
-        if (kakaoFailRows.length) {
-            try {
-                const prev = (await naverCfgGet('alert_night_kakao_fail')) || [];
-                await naverCfgSet('alert_night_kakao_fail', prev.concat(kakaoFailRows).slice(0, 5));
-            } catch (_) { /* 상세 보관 실패해도 건수는 남는다 */ }
-        }
     } else if (!(await alertEnabled('order'))) {
-        // #1070(대표 11/9 「특이사항은 어차피 다 오니 신규주문 알림톡 발송은 끄기」) 신규주문 알림 꺼짐 = 건수 한 줄 0통 · 실패 줄이 있을 때만 그 줄들(#1090 보류·번호없음만이면 0통)
-        if (kakaoLines.length) notifyTelegram(`🔴 알림톡 특이사항\n${kakaoLines.join('\n')}`);
+        // #1070(대표 11/9) 신규주문 알림 꺼짐 = 0통 · #1092(11/10) 「🔴 알림톡 특이사항」도 없앰(고장 의심은 kakaoBrokenAlert 가 따로)
     } else if (paid.length > 0) {
         const base = (await alertText('order', { '건수': paid.length })) + (kakaoSentN > 0 ? ` · 알림톡 ${kakaoSentN}건 발송` : '');
-        notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
+        notifyTelegram(base);
     } else if (kakaoAny) {
         // 신규 결제 0건이어도 알림톡 결과가 있으면(소급 발송 시간대 등) 요약만 발송 — 1회 1통 원칙 유지
-        const head = `📨 알림톡 ${kakaoSentN}건 발송`;
-        notifyTelegram(kakaoLines.length ? `${head}\n${kakaoLines.join('\n')}` : head);
+        notifyTelegram(`📨 알림톡 ${kakaoSentN}건 발송`);
     }
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
 
 // #1072(대표 11/9) 반품·교환 신청자 칸 — 상세 조회 한 건에서 requestChannel(새 꼴 currentClaim.return|exchange 먼저 · 옛 return|exchange 다음) · 값 뜻은 문서에 없어 지금은 모으기·꼬리 표시만(거르기는 실값 확인 뒤 별건)
-function claimReqInfo(it) {
+function claimObjOf(it) {   // #1091 claimReqInfo 에서 떼어 냄(동작 같음) = { c, po, kind, cl }
     const c = (it && (it.content || it)) || {};
     const po = c.productOrder || (it && it.productOrder) || c;
     const cur = c.currentClaim || (it && it.currentClaim) || (po && po.currentClaim) || {};   // #1072-c productOrder 층도 봄
@@ -8313,6 +8286,10 @@ function claimReqInfo(it) {
     if (cl) kind = 'RETURN'; else if ((cl = pick(cur.exchange))) kind = 'EXCHANGE';
     else if (Object.keys(cur).length) cl = null;   // 새 꼴 응답(currentClaim 에 키 있음 · 예: 취소만) = 옛 칸으로 안 내려감(지난 반품 값 섞임 방지)
     else if ((cl = pick(c.return || (it && it.return) || (po && po.return)))) kind = 'RETURN'; else if ((cl = pick(c.exchange || (it && it.exchange) || (po && po.exchange)))) kind = 'EXCHANGE';
+    return { c, po, kind, cl };
+}
+function claimReqInfo(it) {
+    const { po, kind, cl } = claimObjOf(it);
     const rc = cl ? (cl.requestChannel != null ? cl.requestChannel : cl.claimRequestChannel) : null;   // #1072-c 칸 이름 다른 꼴 하나 더
     const ch = rc != null ? String(rc).trim().slice(0, 40) : '';
     return { poid: String((po && po.productOrderId) || '').slice(-4), kind, ch, reason: cl ? String(cl.returnReason || cl.exchangeReason || '').slice(0, 40) : '' };
@@ -8333,6 +8310,77 @@ function claimKeysOf(it) {
     const po = base.productOrder || (it && it.productOrder);
     if (po && typeof po === 'object') out.productOrderClaimKeys = Object.keys(po).filter(k => /claim|return|exchange|request|channel/i.test(k)).slice(0, 30);
     return out;
+}
+// #1091(대표 11/10) 반품·교환 텔레그램 = 건마다 한 덩이(상세 조회 응답 그대로 · 호출 추가 0)
+//   칸 이름 = 공식 문서 「상품 주문 정보 구조체」(currentClaim.return: returnReason·returnDetailedReason·requestQuantity·requestChannel · exchange: exchangeReason·exchangeDetailedReason · productOrder: productName·productOption·quantity·productOrderId · order: ordererName·orderDate)
+//   사유 코드 한글 = 아래 표(문서에 값 목록 없음 = 네이버 화면 글 기준 추정) · 설정 claim_reason_labels {코드: 한글} 가 우선 · 표에 없는 코드 = 코드 그대로
+const CLAIM_REASON_KO = {
+    INTENT_CHANGED: '구매 의사 취소', SIMPLE_INTENT_CHANGED: '단순 변심', COLOR_AND_SIZE: '색상·사이즈 변경', WRONG_ORDER: '다른 상품 잘못 주문',
+    MISTAKE_ORDER: '주문 실수', PRODUCT_UNSATISFIED: '서비스·상품 불만족', DELAYED_DELIVERY: '배송 지연', SOLD_OUT: '상품 품절',
+    DROPPED_DELIVERY: '배송 누락', NOT_YET_DELIVERY: '미배송', BROKEN: '상품 파손', INCORRECT_INFO: '상품 정보 상이',
+    WRONG_DELIVERY: '오배송', WRONG_OPTION: '다른 옵션 배송', ETC: '기타',
+};
+const CLAIM_TAIL = '→ 판매자센터 › 반품·교환 관리';
+function claimShort(v, n) { const t = String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
+function claimTelMask(v) { return String(v == null ? '' : v).replace(/01[016789][\s.\-]?\d{3,4}[\s.\-]?(\d{4})/g, '010-****-$1'); }   // 손님 글 속 휴대폰 번호 = 끝 4자리만(tgMask 는 하이픈 번호를 못 가림)
+function claimDay(v) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? `${m[1]}-${m[2]}-${m[3]}` : ''; }
+// o = { isExp(po)→bool, labels{신청값:한글}, reasonLabels{코드:한글}, kindHint{상품주문번호:'RETURN'|'EXCHANGE'}, visit(옵션 글, 주문 ms)→{month,day,time} }
+function claimDetailBlock(it, o) {
+    o = o || {};
+    const { c, po, kind: k0, cl } = claimObjOf(it);
+    const od = c.order || (it && it.order) || (po && po.order) || {};
+    const poid = String((po && po.productOrderId) || '').trim();
+    const kind = k0 || (o.kindHint && o.kindHint[poid]) || 'RETURN';
+    const exp = !!(o.isExp && o.isExp(po));
+    const L = (o.labels && typeof o.labels === 'object') ? o.labels : {};
+    const ch = cl ? String(cl.requestChannel != null ? cl.requestChannel : (cl.claimRequestChannel != null ? cl.claimRequestChannel : '')).trim() : '';
+    const who = ch ? (typeof L[ch] === 'string' && L[ch].trim() ? L[ch].trim().slice(0, 20) : ch.slice(0, 20)) : '';
+    const whoTxt = who ? ` · ${who} 신청` : '';
+    const head = exp ? `🟪🎟️ 체험 취소·반품${whoTxt}` : kind === 'EXCHANGE' ? `🟧 교환 요청${whoTxt}` : `🟥 반품 요청${whoTxt}`;
+    const fields = [];
+    const buyer = tgMask(claimShort(od.ordererName, 30), 60);   // 대표 11/10 = 이 알림만 이름 전체(가림 예외) · 숫자만 가림
+    if (buyer) fields.push(['구매자', buyer]);
+    const pname = tgMask(claimShort(po.productName, 30), 80), popt = exp ? '' : tgMask(claimShort(po.productOption, 70), 120);   // 체험 = 옵션 글 길어 뺌(방문 일시는 「체험」 줄)
+    const qn = Number(cl && cl.requestQuantity) || Number(po.quantity) || 0;
+    const goods = [pname, popt].filter(Boolean).join(' / ');
+    if (goods || qn) fields.push(['상품', goods + (qn ? `${goods ? ' · ' : ''}${qn}개` : '')]);
+    const code = cl ? String((kind === 'EXCHANGE' ? cl.exchangeReason : cl.returnReason) || cl.returnReason || cl.exchangeReason || '').trim() : '';
+    const RL = (o.reasonLabels && typeof o.reasonLabels === 'object') ? o.reasonLabels : {};
+    const rko = code ? (typeof RL[code] === 'string' && RL[code].trim() ? RL[code].trim() : (CLAIM_REASON_KO[code] || code)).slice(0, 40) : '';
+    const detRaw = cl ? String((kind === 'EXCHANGE' ? cl.exchangeDetailedReason : cl.returnDetailedReason) || cl.returnDetailedReason || cl.exchangeDetailedReason || '') : '';
+    const det = tgMask(claimTelMask(claimShort(detRaw, 120)), 200);
+    if (rko || det) fields.push(['사유', [rko, det ? `"${det}"` : ''].filter(Boolean).join(' ')]);
+    const day = claimDay(od.orderDate || od.paymentDate);
+    if (day || poid) fields.push(['주문', [day, poid].filter(Boolean).join(' · ')]);
+    if (exp) {
+        let vs = '';
+        try {
+            const v = o.visit ? o.visit(po.productOption, Date.parse(od.orderDate || od.paymentDate || '') || null) : null;
+            if (v && v.month && v.day) vs = `${v.month}/${v.day}${v.time ? ' ' + v.time : ''} 방문 · `;
+        } catch (_) { vs = ''; }
+        fields.push(['체험', vs + '체험 예약 화면에서 자동 제외']);
+    }
+    return tgBlock(head, fields, CLAIM_TAIL);
+}
+// 덩이 이어 붙이기 · 한 통 4,000자 넘으면 다음 통(덩이 하나는 tgBlock 이 4,000 안으로 자름)
+function claimPack(blocks) {
+    const SEP = '\n\n────────\n\n', out = [];
+    let cur = '';
+    for (const b of blocks) {
+        if (!b) continue;
+        if (cur && cur.length + SEP.length + b.length > TG_HTML_MAX) { out.push(cur); cur = ''; }
+        cur = cur ? cur + SEP + b : b;
+    }
+    if (cur) out.push(cur);
+    return out;
+}
+async function claimSendPacked(blocks) {
+    const msgs = claimPack(blocks), res = [];
+    for (let i = 0; i < msgs.length; i++) {
+        if (i) await new Promise(r => setTimeout(r, 1100));   // 텔레그램 같은 방 초당 1통
+        res.push(await notifyTelegram(msgs[i], { html: true, keepNums: true }));
+    }
+    return res;
 }
 function claimReqTag(infos, labels) {   // 「(신청: 값 n건 · 값 m건)」 · 값 하나도 없으면 '' · labels = {값: 한글}(#1072-b · 없으면 원래 글자)
     const cnt = new Map(), L = (labels && typeof labels === 'object') ? labels : {};
@@ -8364,10 +8412,11 @@ async function collectClaim() {
     }
     await pool.query(`DELETE FROM naver_claim_alerted WHERE alerted_at < NOW() - INTERVAL '180 days'`);
     if (fresh.length > 0 && await alertEnabled('claim')) {
-        if (await alertQuietNow()) await alertNightAcc('claim', fresh.length);  // 야간엔 아침 브리핑으로
-        else {
+        // #1091(대표 11/10) 낮·밤 둘 다 상세 조회 1회 → 건마다 덩이 · 낮 = 바로 · 야간 = alert_night_claim_blocks 에 보관 → 야간 끝(briefing_time) 한 번에(브리핑 꺼져도) · 조회 실패 = 종전 건수 한 줄(낮)·건수 누적(야간)
+        const quiet = await alertQuietNow();
+        {
             // #775-A 체험(배송 없는) 상품의 반품 = 방문 날짜 변경·취소 문의일 가능성 → 알림 끝에 「(체험 n건)」 표시만(알림은 그대로) · 상품 번호는 변경 목록에 없어 상세조회 1회 · 실패하면 표시 없이
-            let expTag = '', reqTag = '', sendN = fresh.length;
+            let expTag = '', reqTag = '', sendN = fresh.length, blocks = null;
             try {
                 const ids = fresh.map(x => String(x.productOrderId || '')).filter(Boolean).slice(0, 100);
                 if (ids.length) {
@@ -8402,9 +8451,31 @@ async function collectClaim() {
                             } catch (_) { /* 모음은 보조 */ }
                         }
                     } catch (_) { reqTag = ''; }
+                    try {   // #1091 건마다 덩이 · 실패하면 종전 한 줄
+                        let labels = {}, reasonLabels = {};
+                        try { const lv = await naverCfgGet('claim_channel_labels'); if (lv && typeof lv === 'object' && !Array.isArray(lv)) labels = lv; } catch (_) { labels = {}; }
+                        try { const rv = await naverCfgGet('claim_reason_labels'); if (rv && typeof rv === 'object' && !Array.isArray(rv)) reasonLabels = rv; } catch (_) { reasonLabels = {}; }
+                        const kindHint = {}; for (const x of fresh) { const id = String(x.productOrderId || ''); if (id) kindHint[id] = claimKindOf(x); }
+                        let visit = null; try { visit = require('./experience.js')._t.parseStoreOption; } catch (_) { visit = null; }
+                        const o = { isExp: po => isExperienceOrder(po, expIds), labels, reasonLabels, kindHint, visit };
+                        const bl = items.map(it => claimDetailBlock(it, o)).filter(Boolean);
+                        const missing = sendN - bl.length;   // 응답에 없던 건(상세 못 읽음) = 놓침 0 으로 한 덩이
+                        if (missing > 0) bl.push(tgBlock(`🟥 반품·교환 ${missing}건 · 상세 못 읽음`, [], CLAIM_TAIL));
+                        blocks = bl;
+                    } catch (_) { blocks = null; }
                 }
-            } catch (_) { /* 표시 보조 — 실패해도 알림은 그대로 */ }
-            if (sendN > 0) notifyTelegram(await alertText('claim', { '건수': sendN }) + expTag + reqTag);   // #1072-b 다 걸러지면 0통
+            } catch (_) { /* 표시 보조 — 실패해도 알림은 그대로 */ blocks = null; }
+            if (sendN > 0) {   // #1072-b 다 걸러지면 0통
+                if (blocks && blocks.length) {
+                    if (quiet) {
+                        try {
+                            const prev = (await naverCfgGet('alert_night_claim_blocks')) || [];
+                            await naverCfgSet('alert_night_claim_blocks', (Array.isArray(prev) ? prev : []).concat(blocks).slice(-40));   // 상한 40덩이(넘으면 오래된 것부터 버림 · 센터에 다 있음)
+                        } catch (_) { await alertNightAcc('claim', sendN); }   // 보관 실패 = 종전 건수 누적
+                    } else await claimSendPacked(blocks);
+                } else if (quiet) await alertNightAcc('claim', sendN);   // 조회 실패 = 종전(아침 브리핑 건수)
+                else notifyTelegram(await alertText('claim', { '건수': sendN }) + expTag + reqTag);
+            }
         }
     }
     return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
@@ -8448,6 +8519,48 @@ async function naverConfirmOrders(ids) {
 //    지시 #92 (대표 철칙 공식 변경): 발송 '성공' 건만 네이버 발주확인 자동 실행 — KAKAO_NOTIFY 스위치 종속(OFF=시뮬레이션만·실상태변경 0건).
 //      발송 실패·미발송 건은 상태 유지(수기 발주확인) + confirm_status='manual-needed' + 텔레그램 통지(confirmneed·야간 준수).
 //      자사몰(카페24)은 결제 즉시 N20 배송준비중 자동 진입이라 발주확인 개념 없음 — 예외. 쿠팡은 쿠팡 주문 수집기 신설과 함께 2차(이번 범위 아님).
+// #1092(대표 11/10 「선물하기 보류·번호없음·건별 실패는 안 와도 됨 · API 끊김이나 안내가 계속 안 나갈 때만」) 알림톡 고장 의심 알림
+//   까닭 = burst(실패 5+ · 실패 > 성공) · token(알리고 토큰 실패) · allfail(한 주기 성공 0 · 실패 2+) · stall(낮 결제 주문 있는데 90분 발송 0 · 하루 1통)
+//   같은 까닭 3시간 안 = 안 보냄 · 상태 = 설정 kakao_broken_alert {까닭: ISO 시각, stall_day}
+function kakaoBrokenWhy(x) {
+    const done = Number(x && x.done) || 0, failed = Number(x && x.failed) || 0, tok = Number(x && x.tokFailed) || 0;
+    if (failed >= 5 && failed > done) return { key: 'burst', text: `이번 주기 실패 ${failed}건 / 성공 ${done}건` };
+    if (tok > 0) return { key: 'token', text: `알리고 인증(토큰) 실패 ${tok}건` };
+    if (done === 0 && failed >= 2) return { key: 'allfail', text: `이번 주기 ${failed}건 전부 실패(성공 0)` };
+    return null;
+}
+const KAKAO_BROKEN_GAP_MS = 3 * 3600 * 1000;
+async function kakaoBrokenAlert(key, text, opts) {
+    try {
+        const st = (await naverCfgGet('kakao_broken_alert')) || {};
+        const last = st[key] ? Date.parse(st[key]) : 0;
+        if (last && Date.now() - last < KAKAO_BROKEN_GAP_MS) return 'dup';
+        const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        if (opts && opts.daily && st.stall_day === today) return 'daily';
+        st[key] = new Date().toISOString();
+        if (opts && opts.daily) st.stall_day = today;
+        await naverCfgSet('kakao_broken_alert', st);   // 먼저 적고 보냄(틱 겹쳐도 두 번 안 감)
+        notifyTelegram(`🚨 알림톡 고장 의심 — ${text} · [알림 발송 이력] 확인`);
+        return 'sent';
+    } catch (e) { console.error('[알림톡 고장 알림] 실패:', e.message); return 'err'; }
+}
+// ③ 낮(09:00~19:59 KST · 08시대 = hold-0809 라 뺌) 결제 주문(20~90분 전 · 받는 분 번호 있음 · 8시대 결제·체험/입장 옵션 뺌)이 있는데 최근 90분 sent 0 = 「안내가 계속 안 나감」 · 10분마다 · 하루 1통
+let _kakaoStallAt = 0;
+async function kakaoStallCheck() {
+    if (!kakaoNotify.switchOn()) return 'off';
+    if (Date.now() - _kakaoStallAt < 10 * 60 * 1000) return 'wait';
+    _kakaoStallAt = Date.now();
+    const hh = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+    if (hh < 9 || hh >= 20) return 'hours';
+    const r = (await pool.query(`SELECT
+        (SELECT COUNT(*)::int FROM order_memo_preorders WHERE miss = 0 AND recv_digits <> ''
+            AND paid_at >= NOW() - INTERVAL '90 minutes' AND paid_at <= NOW() - INTERVAL '20 minutes'
+            AND EXTRACT(HOUR FROM paid_at AT TIME ZONE 'Asia/Seoul') <> 8
+            AND COALESCE(option_text, '') !~ '체험|입장') AS paid,
+        (SELECT COUNT(*)::int FROM kakao_notify_log WHERE status = 'sent' AND created_at >= NOW() - INTERVAL '90 minutes') AS sent`)).rows[0] || {};
+    if (Number(r.paid) > 0 && Number(r.sent) === 0) return kakaoBrokenAlert('stall', `최근 90분 결제 주문 ${r.paid}건 · 알림톡 발송 0건`, { daily: true });
+    return 'ok';
+}
 async function collectKakaoNotify() {
     const now = Date.now();
     const cp = await naverCfgGet('kakao_notify_checkpoint');
@@ -8470,7 +8583,7 @@ async function collectKakaoNotify() {
     const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     const expIds = await experienceProductIds(); let experienceSkipped = 0;   // #775-A
-    let done = 0, failed = 0;
+    let done = 0, failed = 0, tokFailed = 0;
     const sentReal = [], manualKeys = [], simulated = [];   // 지시 #92: 발주확인 대상 분류
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
         if (i > 0) await new Promise(r => setTimeout(r, 350));
@@ -8593,6 +8706,7 @@ async function collectKakaoNotify() {
                      message, res.mode, res.status, res.error || null]);
                 if (res.status === 'sent') done++;
                 else if (res.mode === 'real') failed++;
+                if (res.status === 'token-failed') tokFailed++;   // #1092 알리고 인증 실패 = 고장 의심
                 // 지시 #92 분류: 실발송 성공 → 발주확인 대상 / 실발송 실패 → 수기 / dry-run → 시뮬레이션 표기
                 if (res.mode === 'real' && res.status === 'sent') sentReal.push(orderKey);
                 else if (res.mode === 'real') manualKeys.push(orderKey);
@@ -8615,8 +8729,10 @@ async function collectKakaoNotify() {
     // C6 → 지시 #215: 3분 주기 건별(묶음) 즉시 알림 제거 — 60분 신규주문 알림(collectOrderNew)에 직전 1시간 요약으로 병기.
     //   야간 억제 누적(kakaosend)도 60분 지점에서 일괄 처리(이중 집계 방지). 아래는 #215 예외 라인만 유지:
     //   "문제는 시끄럽게" — 실패가 성공을 넘는 폭주(실패 5건+)는 60분 기다리지 않고 즉시 오류 알림.
-    if (kakaoNotify.switchOn() && failed >= 5 && failed > done) {
-        notifyTelegram(`🚨 알림톡 실패 폭주 감지 — 이번 주기 실패 ${failed}건 / 성공 ${done}건. 알림 발송 이력 화면 확인 요망 (#214 롤백 기준 검토)`);
+    // #1092(대표 11/10) 고장 났을 때만 = ①폭주(실패 5+ · 실패 > 성공) ②알리고 토큰 실패 ③한 주기 전부 실패(성공 0 · 실패 2+) · 같은 까닭 3시간 안 재발 안 보냄
+    if (kakaoNotify.switchOn()) {
+        const why = kakaoBrokenWhy({ done, failed, tokFailed });
+        if (why) await kakaoBrokenAlert(why.key, why.text);
     }
     // ── 지시 #92: 발송 성공 → 발주확인 자동 실행 (실패·미발송은 상태 유지 = 현행 수기) ──
     let confirmed = 0, confirmFailed = 0;
@@ -15971,17 +16087,18 @@ async function telegramChatId() {
         return _tgChatId;
     } catch (e) { return null; }
 }
-function tgMask(text, max) {
+function tgMask(text, max, keepNums) {   // #1091 keepNums = 숫자 가림 안 함(반품·교환 알림만 · 그 알림은 손님 글·상품 글을 미리 tgMask 로 가림 · 상품주문번호만 그대로)
     // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙
     // 🔴 #340(대표 지시 2026-08-10): 회원ID처럼 **글자·@·.·_·-에 붙은 숫자는 식별자**이므로 가리지 않는다.
     //    종전엔 룰렛 당첨 알림의 회원ID(4790625123@k)가 통째로 ●●●가 되어 누구에게 쿠폰을 줘야 하는지
     //    알 수 없었다(실사고). 금액(19800원·1,234,567)·전화번호(01012345678)는 그대로 가려진다.
-    return String(text || '')
-        .replace(/(?<![A-Za-z@._\-0-9])(?:\d{1,3}(?:,\d{3}){2,}|\d{5,})(?![A-Za-z@._\-0-9])/g, '●●●')
+    const t = String(text || '');
+    return (keepNums ? t : t.replace(/(?<![A-Za-z@._\-0-9])(?:\d{1,3}(?:,\d{3}){2,}|\d{5,})(?![A-Za-z@._\-0-9])/g, '●●●'))
         .slice(0, max || 400);   // #1069 HTML 문의·톡톡 알림만 4,096(그 밖 종전 400)
 }
 async function notifyTelegram(text, opts) {
     const html = !!(opts && opts.html);   // #1069 문의·톡톡 알림만 HTML(<b>) · 400 이면 평문으로 1번 다시
+    const keepNums = !!(html && opts && opts.keepNums);   // #1091 반품·교환 알림만(HTML 일 때만)
     // 지시 #50-5: 일시 네트워크 오류 재시도 1회 (run #64 완료 알림이 배포 셧다운 순간 'fetch failed'로 유실된 사고 대응)
     const sendOnce = async () => {
         if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return 'off';
@@ -15994,8 +16111,8 @@ async function notifyTelegram(text, opts) {
             body: JSON.stringify(pm ? { chat_id: chatId, text: t, parse_mode: pm } : { chat_id: chatId, text: t }),
             signal: AbortSignal.timeout(TG_TIMEOUT_MS),   // #794 텔레그램이 응답을 안 주면 10초에 끊음(재시도 1회 포함 최대 약 25초 · 던지지 않고 audit 만 — 호출부 동작 무변경)
         });
-        let res = html ? await post(tgMask(text, 4096), 'HTML') : await post(tgMask(text), null);
-        if (html && res.status === 400) res = await post(tgMask(tgPlain(text), 4096), null);   // #1069 HTML 꼴 거절 = 평문 1번
+        let res = html ? await post(tgMask(text, 4096, keepNums), 'HTML') : await post(tgMask(text), null);
+        if (html && res.status === 400) res = await post(tgMask(tgPlain(text), 4096, keepNums), null);   // #1069 HTML 꼴 거절 = 평문 1번
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return 'sent';
     };

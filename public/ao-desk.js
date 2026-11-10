@@ -1709,7 +1709,7 @@
         const li = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
         if (!li) { if (smsHistAt() === 'th') smsHistBack(1); return; }
         const x = (SMS.items || []).find(i => i.id === id) || {};
-        SMS.open = id; SMS.thread = null; SMS.custFold = false; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
+        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
         SMS.openAt = Math.max(0, (SMS.items || []).findIndex(i => i.id === id)); SMS.openRow = x.id ? x : null;
         { const un = li.querySelector('.sms-un'); if (un) un.remove(); li.classList.remove('unread'); li.dataset.un = '0'; }   // #635 여는 순간 읽음(서버도 GET 에서 읽음으로)
         const th = document.createElement('div');
@@ -1721,7 +1721,6 @@
             + `<div class="sms-typing" id="sms-typing" role="status" aria-live="polite" hidden></div>`
             + `<div class="sms-draft" id="sms-draft" hidden>봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.</div>`
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
-            + `<div class="sms-cust" id="sms-cust" role="button" tabindex="0" title="누르면 접거나 펼쳐요" hidden></div>`   // #1078 답 칸에 초점 있을 때만 · 손님 글
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
             + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
@@ -1878,7 +1877,7 @@
                 }
                 else SMS.newDraft = dt;
             } }
-        smsSync(); smsCustSync();
+        smsSync();
         if (!SMS.items || !SMS.items.some(x => x.id === id && x.status === t.status)) { SMS.sig = ''; smsRenderList(); }
         else smsRenderList();   // 읽음·안 읽음 수가 바뀌었으면 그 줄 배지도 바로(바뀐 것이 없으면 다시 그리지 않는다)
     }
@@ -1919,7 +1918,7 @@
     }
     // #1078(대표 11/9 「추천으로 고」 · 폴드7: 탭 토글로 칸이 줄었다 늘었다 · 자판 뜨면 손님 글이 밀려 안 보임) — #1067-b 탭 토글은 뺐다
     //   ① 답 칸 높이 = 글 길이 따라 저절로(최소 = 원래 칸 · 최대 = 자판 없을 때 원래 2배·화면 60% 상한 / 자판 떠 있을 때 4줄) · 넘치면 칸 안 스크롤 · 값은 안 바꾸고 높이만
-    //   ② 답 칸에 초점이 오면 바로 위에 「손님 글」 띠(우리가 마지막으로 보낸 글 뒤 손님 글 · 없으면 마지막 손님 글 1개 · 4줄 넘치면 띠 안 스크롤) · 띠 누르면 접힘/펼침(답 칸 초점 그대로) · 초점 빠지면 숨김
+    //   ② (#1093 대표 「위 대화와 중복 · 불필요」로 「손님 글」 띠는 뺌)
     //   ③ 자판이 뜨면(visualViewport) 창을 남은 높이에 맞추고 대화는 맨 아래(smsVvNow · sms-kb-on)
     const smsKbOn = () => { const vv = window.visualViewport; return !!vv && window.innerHeight - vv.height > 120; };
     function smsGrowSync() {
@@ -1933,24 +1932,6 @@
         const max = smsKbOn() ? Math.max(base, Math.round(lh * 4 + frame)) : Math.max(base, Math.min(base * 2, Math.round(vh * 0.6)));
         const need = ta.scrollHeight + (ta.offsetHeight - ta.clientHeight);
         ta.style.height = Math.min(need, max) + 'px'; ta.scrollTop = st;
-    }
-    // ② 손님 글 띠
-    function smsCustText() {
-        const ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [];
-        let lastOut = -1; ms.forEach((m, i) => { if (m.direction === 'out' && m.state !== 'cancelled') lastOut = i; });
-        const one = m => { const b = String(m.body || '').trim(), pic = Array.isArray(m.image_ids) && m.image_ids.length; return b ? (pic ? b + ' 📷' : b) : (pic ? '📷 사진' : ''); };
-        let ins = ms.slice(lastOut + 1).filter(m => m.direction !== 'out').map(one).filter(Boolean);
-        if (!ins.length) { const li = ms.filter(m => m.direction !== 'out').map(one).filter(Boolean); ins = li.length ? [li[li.length - 1]] : []; }
-        return ins.join('\n');
-    }
-    function smsCustSync() {
-        const ta = document.getElementById('sms-text'), band = document.getElementById('sms-cust'); if (!ta || !band) return;
-        const ae = document.activeElement, on = (ae === ta || ae === band) && window.matchMedia('(pointer: coarse)').matches, txt = on ? smsCustText() : '';   // #1078-b 터치 기기만(PC 는 자판이 화면을 안 가려 띠가 필요 없고 첫 클릭 때 칸이 밀림) · 띠에 초점이 있어도(키보드 Enter/Space) 그대로
-        band.hidden = !txt;
-        if (!txt) return;
-        if (band.dataset.t !== txt) { band.dataset.t = txt; band.innerHTML = '<b>손님 글</b>' + esc(txt); band.scrollTop = band.scrollHeight; }
-        band.classList.toggle('fold', !!SMS.custFold);
-        band.setAttribute('aria-expanded', SMS.custFold ? 'false' : 'true');
     }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
@@ -2179,15 +2160,10 @@
                     const b = document.getElementById('sms-buy-more'); if (b && mb) b.focus({ preventScroll: true }); return;
                 }
             }   // #653 구매이력 더보기·접기
-            if (e.target.closest('#sms-cust')) { SMS.custFold = !SMS.custFold; smsCustSync(); return; }   // #1078 띠만 접힘/펼침
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
         window.addEventListener('resize', () => { if (document.getElementById('sms-text')) smsGrowSync(); }, { passive: true });
-        list.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('#sms-cust')) e.preventDefault(); });   // #1078 손님 글 띠 누름이 답 칸 초점(폰 자판)을 뺏지 않게
-        list.addEventListener('focusin', e => { if (e.target.id === 'sms-text') smsCustSync(); });
-        list.addEventListener('focusout', e => { if (e.target.id === 'sms-text' || e.target.id === 'sms-cust') setTimeout(smsCustSync, 250); });
-        list.addEventListener('keydown', e => { if (e.target.id === 'sms-cust' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); SMS.custFold = !SMS.custFold; smsCustSync(); } });   // #1078-b 키보드로 접기·펴기   // #1078 초점 빠지면 띠 숨김(0.25초 뒤 · 바로 숨기면 [보내기] 누르는 도중 칸이 움직여 누름이 빗나갈 수 있음)   // #1067 폭이 바뀌면 줄바꿈이 달라져 펼친 높이 다시
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
         list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
