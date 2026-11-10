@@ -13,6 +13,7 @@
 //   지시당 상한 10분(claude) · 20분(순위 · 포인트 지급) → 자식 트리째 끔(Windows taskkill /T /F)
 //   #1056-a 포인트 보상 지급 갈래 = 본문이 「포인트 (보상) 지급」으로 시작(isPoint) → claude 길 그대로 + 프롬프트 규칙 ①에 포인트지급 화면 [회원검색]·[추가]·[확인]만 허용 · [절차] 블록(업무지식 절) · 상한 20분 · 09:10~09:45 쉼
 //     실패 재집기(같은 줄 하루 2회)는 절차 (c) 「오늘 같은 아이디 지급 줄 있으면 지급 X」가 중복을 막음
+//   #1089 첫 실행 모델·상한 = Opus 20분(FAST_MODEL · env 로 소넷 되돌림) · 아래 「소넷」 글은 #1082 때 기록
 //   #1082 포인트 갈래 = 소넷(FAST_MODEL · 10분) 먼저 → 실패(시간 초과·오류·빈 결과)면 Opus 1회(20분 · 글머리 RETRY_NOTE = 오늘 지급 줄 먼저 확인 · 애매하면 멈춤)
 //     → 그래도 실패면 대기로 안 되돌리고 오류(실행 최대 2번 = 종전과 같음) · #1087 이 갈래는 쉼 창 없음(아무 때나) · 아이디+주문번호 둘 다 있으면 찾기 건너뛰고 대조만(b-0)
 //   #1083 배송지 변경 갈래(isAddr · 네이버만) = 같은 소넷 → Opus 1회 · [고객 배송지 정보수정]·주소 검색·[저장]만 허용 · 멈춤 조건(ADDR_STEPS e) ·
@@ -43,8 +44,8 @@ const RANK_LIMIT_MS = Number(process.env.VM_RANK_LIMIT_MS) || 20 * 60000;
 const POINT_LIMIT_MS = Number(process.env.VM_POINT_LIMIT_MS) || 20 * 60000;   // #1056-a 포인트 보상 지급 갈래(센터 로그인·주문 대조·지급 · 실건 약 15분)
 const MODEL = process.env.VM_MODEL || 'claude-opus-5-5';
 // #1082 포인트·#1083 배송지 갈래 = 먼저 소넷(빠름) → 실패(시간 초과·오류·빈 결과)면 같은 지시를 Opus 로 1회(재시도 글머리에 「중복 확인 먼저」) · 그 밖 지시는 종전 MODEL 그대로
-const FAST_MODEL = process.env.VM_FAST_MODEL || 'claude-sonnet-5-5';
-const FAST_LIMIT_MS = Number(process.env.VM_FAST_LIMIT_MS) || 10 * 60000;   // 소넷 상한(실건 5~7분) · 이어 Opus 20분 · #1087 이 두 갈래는 쉼 창 없음(skipWhy)
+const FAST_MODEL = process.env.VM_FAST_MODEL || 'claude-opus-5-5';   // #1089(대표 「큰 차이 없으면 오퍼스로」 · 실측 #3558 소넷이 더 느리고 10분 상한이 지급 직후를 끊음) 첫 실행 = Opus · env VM_FAST_MODEL=claude-sonnet-5-5 로 되돌림
+const FAST_LIMIT_MS = Number(process.env.VM_FAST_LIMIT_MS) || 20 * 60000;   // #1089 첫 실행 상한 20분(종전 포인트 상한) · 이어 재시도 Opus 20분 · #1087 이 두 갈래는 쉼 창 없음(skipWhy)
 const ADDR_LIMIT_MS = Number(process.env.VM_ADDR_LIMIT_MS) || 20 * 60000;    // #1083 배송지 변경 Opus 재시도 상한
 // #1082-② 센터 로그인 유지 = 러너가 쉬는 동안 30분마다 센터 탭 가벼운 새로고침(claude 안 부름 · aside MCP 직접) · 0 = 끔
 const KEEP_MS = process.env.VM_CENTER_KEEP_MS != null && process.env.VM_CENTER_KEEP_MS !== '' ? Number(process.env.VM_CENTER_KEEP_MS) : 30 * 60000;
@@ -93,7 +94,7 @@ function isAddr(content) {
     if (!(/배송지|받는\s*곳/.test(b) || (/주소/.test(b) && (ORDER_NO_RE.test(b) || PHONE_RE.test(b))))) return false;
     return !(ADDR_ASK.test(b) && !ORDER_NO_RE.test(b) && !/→|->/.test(b));
 }
-const isFast = content => isPoint(content) || isAddr(content);   // 소넷 → Opus 1회 갈래
+const isFast = content => isPoint(content) || isAddr(content);   // 첫 실행(FAST_MODEL · #1089 Opus) → 실패면 Opus 1회 갈래
 
 // ── 쉼 판단(어사이드 한 번에 하나) ──
 function krBusy() { try { return require('./exp-phone-auto.js').krBusy(); } catch (e) { return false; } }
@@ -372,13 +373,13 @@ async function doFast(db, o) {
     const first = await claudeOnce(db, o, FAST_MODEL, FAST_LIMIT_MS, promptFor(o, { limitMs: FAST_LIMIT_MS, sentToday, retry: again }), cwd);
     let res = first, used = FAST_MODEL;
     if (!first.ok) {
-        log(`#${o.id} 소넷 실패 → Opus 로 1회 다시 · ${clean(first.why, 120)}`);
-        await appendStep(db, o.run_id, 'error', '↩️ 소넷 실패 — Opus 로 한 번 더(이미 된 일인지 먼저 확인): ' + clean(first.why, 200));
+        log(`#${o.id} 첫 실행(${FAST_MODEL}) 실패 → Opus 로 1회 다시 · ${clean(first.why, 120)}`);
+        await appendStep(db, o.run_id, 'error', '↩️ 첫 실행 실패 — Opus 로 한 번 더(이미 된 일인지 먼저 확인): ' + clean(first.why, 200));
         await audit(db, 'vm_fast_retry', o.id, { from: FAST_MODEL, to: MODEL, why: clean(first.why, 200) });
         const lim = addr ? ADDR_LIMIT_MS : POINT_LIMIT_MS;
         res = await claudeOnce(db, o, MODEL, lim, promptFor(o, { limitMs: lim, sentToday, retry: true }), cwd);
         used = MODEL;
-        if (!res.ok) res = { ok: false, noRetry: true, why: `소넷·Opus 둘 다 실패 — 사람 확인 필요(앞 시도가 ${addr ? '저장' : '지급'}까지 갔는지 센터에서 먼저 확인) · 소넷: ${clean(first.why, 120)} · Opus: ${clean(res.why, 150)}` };
+        if (!res.ok) res = { ok: false, noRetry: true, why: `두 번 다 실패 — 사람 확인 필요(앞 시도가 ${addr ? '저장' : '지급'}까지 갔는지 센터에서 먼저 확인) · 첫 실행: ${clean(first.why, 120)} · 재시도: ${clean(res.why, 150)}` };
     }
     if (res.ok && addr && sentToday && /^\s*✅/.test(res.answer) && !res.answer.includes('오늘 발주 나감')) res.answer = res.answer.replace(/^[^\n]*/, m => m + '\n' + SENT_LINE);
     if (res.ok) keepWrite({ at: new Date().toISOString() });   // 센터를 방금 썼음 = 로그인 유지 틱 30분 뒤로

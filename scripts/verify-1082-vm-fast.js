@@ -13,7 +13,9 @@ fs.writeFileSync(FAKE, `
 const fs = require('fs'); let input = ''; process.stdin.on('data', d => input += d); process.stdin.on('end', () => {
   const args = process.argv.slice(2); const model = args[args.indexOf('--model') + 1];
   const mode = JSON.parse(fs.readFileSync(${JSON.stringify(MODE)}, 'utf8'));
-  const kind = /sonnet/.test(model) ? 'sonnet' : 'opus';
+  // #1089 첫 실행도 Opus → 모드 열쇠는 모델이 아니라 순서(sonnet = 이 시험의 첫 실행 · opus = 재시도)
+  const nth = (() => { try { return fs.readFileSync(${JSON.stringify(CALLS)}, 'utf8').split('\\n').filter(Boolean).length; } catch (e) { return 0; } })();
+  const kind = nth === 0 ? 'sonnet' : 'opus';
   fs.appendFileSync(${JSON.stringify(CALLS)}, JSON.stringify({ model, retry: /\\[다시 시도 · 중요\\]/.test(input), sent: /오늘 최종발주 = 이미 나감/.test(input), mins: (/⑥이 일은 지시당 (\\d+)분/.exec(input) || [])[1], allowed: args[args.indexOf('--allowedTools') + 1] }) + '\\n');
   const m = mode[kind] || 'ok';
   if (m === 'fail') { console.error('fake fail'); process.exit(1); }
@@ -65,7 +67,7 @@ function units() {
     ok('포인트 먼저(주소 낱말 섞여도 포인트 갈래)', W.isPoint('[VM] 포인트 지급 3000 주소 변경 보상') && !W.isAddr('[VM] 포인트 지급 3000 주소 변경 보상'));
     ok('포인트 = isFast', W.isFast('[VM] 아이디 saygoodjod 포인트 보상 5,000'));
     ok('일반 지시 = isFast 아님', !W.isFast('[VM] 체험 예약 화면 봐줘') && !W.isFast('[VM] 순위 확인'));
-    ok('소넷 모델 = claude-sonnet-5-5 · 종전 = claude-opus-5-5', W.FAST_MODEL === 'claude-sonnet-5-5' && W.MODEL === 'claude-opus-5-5');
+    ok('#1089 첫 실행 모델 = claude-opus-5-5 · 상한 20분(시험 env 2.5초 · 기본값은 코드에서) · 재시도 = claude-opus-5-5', W.FAST_MODEL === 'claude-opus-5-5' && W.MODEL === 'claude-opus-5-5' && /VM_FAST_LIMIT_MS\) \|\| 20 \* 60000/.test(fs.readFileSync(require('path').join(__dirname, 'vm', 'vm-watch.js'), 'utf8')));
 
     console.log('\n[2] 쉼 창');
     const k = hm => new Date(Date.UTC(2026, 10, 10, Number(hm.slice(0, 2)), Number(hm.slice(3))));
@@ -138,7 +140,7 @@ async function dbtests() {
     clearCalls(); mode({ sonnet: 'ok', opus: 'ok', answer: '✅ 포인트 3,000원 지급 완료' });
     const p1 = await add('[VM] 포인트 지급 주문번호 2026110539641061 3,000 · 사유 타이벡 감귤 보상처리');
     const r1 = await W.handle(db, p1); let c = calls();
-    ok('포인트 = 소넷 1번만 · 완료', r1.ok && (await row(p1)).status === '완료' && c.length === 1 && c[0].model === 'claude-sonnet-5-5' && !c[0].retry, { r1, c });
+    ok('포인트 = 소넷 1번만 · 완료', r1.ok && (await row(p1)).status === '완료' && c.length === 1 && c[0].model === W.FAST_MODEL && !c[0].retry, { r1, c });
     ok('도구 = 어사이드 둘만(종전과 같음)', c[0].allowed === 'mcp__aside__repl,mcp__aside__exec');
     ok('센터 유지 상태 = 방금 사용으로 적힘', !!JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')).at);
 
@@ -146,7 +148,7 @@ async function dbtests() {
     clearCalls(); mode({ sonnet: 'fail', opus: 'ok', answer: '✅ 포인트 3,000원 지급 완료(opus)' });
     const p2 = await add('[VM] 아이디 saygoodjod 포인트 보상 5,000');
     const r2 = await W.handle(db, p2); c = calls();
-    ok('소넷 실패 → Opus 1회 · 완료', r2.ok && (await row(p2)).status === '완료' && c.length === 2 && c[0].model === 'claude-sonnet-5-5' && c[1].model === 'claude-opus-5-5', c);
+    ok('소넷 실패 → Opus 1회 · 완료', r2.ok && (await row(p2)).status === '완료' && c.length === 2 && c[0].model === W.FAST_MODEL && c[1].model === 'claude-opus-5-5', c);
     ok('Opus 재시도 프롬프트 = 「다시 시도」 글머리(첫 시도엔 없음 · 분 수는 [3]에서)', c[1].retry && !c[0].retry, c);
     ok('audit vm_fast_retry 남음', /desk_claim,vm_fast_retry,desk_respond/.test(await auditOf(p2)), await auditOf(p2));
 
@@ -167,7 +169,7 @@ async function dbtests() {
     const p5 = await add('[VM] 포인트 지급 4,000 아이디 kk1');
     const r5 = await W.handle(db, p5); const s5 = await row(p5); c = calls();
     ok('둘 다 실패 = 바로 오류(대기 되돌림 0) · 실행 2번', !r5.ok && s5.status === '오류' && c.length === 2 && !/vm_retry/.test(await auditOf(p5)), { s5: s5.status, c: c.length, a: await auditOf(p5) });
-    ok('오류 글 = 둘 다 실패 · 센터에서 지급까지 갔는지 먼저 확인', /소넷·Opus 둘 다 실패/.test(s5.result.error) && /지급까지 갔는지/.test(s5.result.error), s5.result.error);
+    ok('오류 글 = 둘 다 실패 · 센터에서 지급까지 갔는지 먼저 확인', /두 번 다 실패/.test(s5.result.error) && /지급까지 갔는지/.test(s5.result.error), s5.result.error);
     ok('오류 줄 다시 안 집음', await W.pick(db) === null);
 
     // ⑥ 소넷 「사람 확인 필요」 답 = 정상 답 → 재시도 없음
@@ -177,7 +179,7 @@ async function dbtests() {
     ok('멈춤 답(사람 확인 필요) = Opus 재시도 0 · 완료', c.length === 1 && (await row(p6)).status === '완료', c);
 
     // ⑦ 그 밖 지시 = Opus 그대로 · 실패 = 대기 1회(종전)
-    clearCalls(); mode({ sonnet: 'ok', opus: 'fail' });
+    clearCalls(); mode({ sonnet: 'fail', opus: 'fail' });
     const o7 = await add('[VM] 체험 예약 화면 봐줘');
     const r7 = await W.handle(db, o7); c = calls();
     ok('그 밖 지시 = Opus 1번 · 실패 = 대기로(종전 그대로)', !r7.ok && (await row(o7)).status === '대기' && c.length === 1 && c[0].model === 'claude-opus-5-5' && !c[0].retry, { c, s: (await row(o7)).status });
@@ -190,7 +192,7 @@ async function dbtests() {
     const p8 = await add('[VM] 포인트 지급 2,000 아이디 rr8');
     fs.writeFileSync(W.STATE, JSON.stringify({ [p8]: { n: 1, at: new Date().toISOString() } }));
     await W.handle(db, p8); c = calls();
-    ok('다시 집힌 줄 = 소넷 첫 실행에도 「다시 시도」 글머리', c.length === 1 && c[0].model === 'claude-sonnet-5-5' && c[0].retry, c);
+    ok('다시 집힌 줄 = 소넷 첫 실행에도 「다시 시도」 글머리', c.length === 1 && c[0].model === W.FAST_MODEL && c[0].retry, c);
     clearCalls();
     const p9 = await add('[VM] 포인트 지급 2,000 아이디 rr9');
     await W.handle(db, p9); c = calls();
@@ -201,7 +203,7 @@ async function dbtests() {
     const a1 = await add('[VM] 배송지 변경 주문번호 2026110170868221 → 제주시 서흘길 9, 3층');
     ok('발주 표 없음 = 안 나감', await W.finalSentToday(db) === false);
     await W.handle(db, a1); c = calls(); let ra = await row(a1);
-    ok('배송지 = 소넷 · 안 나감 줄 · 거래처 줄 없음', c.length === 1 && c[0].model === 'claude-sonnet-5-5' && !c[0].sent && !ra.result.answer.includes('오늘 발주 나감'), { c, a: ra.result.answer });
+    ok('배송지 = 소넷 · 안 나감 줄 · 거래처 줄 없음', c.length === 1 && c[0].model === W.FAST_MODEL && !c[0].sent && !ra.result.answer.includes('오늘 발주 나감'), { c, a: ra.result.answer });
     await pg.exec(`CREATE TABLE final_order_marks (ship_date DATE PRIMARY KEY, indiv JSONB NOT NULL DEFAULT '[]', hold JSONB NOT NULL DEFAULT '[]', updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_by TEXT)`);
     ok('표만 있고 오늘 줄 없음 = 안 나감', await W.finalSentToday(db) === false);
     await pg.exec(`INSERT INTO final_order_marks (ship_date, updated_at) VALUES (CURRENT_DATE - 3, now() - interval '3 days')`);
