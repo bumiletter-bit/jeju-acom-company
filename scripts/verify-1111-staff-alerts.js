@@ -64,7 +64,7 @@ const at = s => Date.parse(s + '+09:00');   // 'YYYY-MM-DDTHH:MM' 한국 시각 
     const now = at('2026-11-11T09:00');
     const it = [
         { ch: 'talk', id: 'a', title: '톡톡 손님 1234', last_at: new Date(at('2026-11-11T05:30')).toISOString(), last_text: '송장번호 알려주세요' },
-        { ch: 'sms', id: '9', title: '문자 …5678', last_at: new Date(at('2026-11-10T21:00')).toISOString(), last_text: '귤이 물러서 왔어요' },
+        { ch: 'sms', id: '9', title: '…5678', last_at: new Date(at('2026-11-10T21:00')).toISOString(), last_text: '귤이 물러서 왔어요' },
         { ch: 'qna', id: 'q1', title: '타이벡', last_at: new Date(at('2026-11-11T07:00')).toISOString(), last_text: '언제 와요' },
         { ch: 'inquiry', id: 'i1', title: '황금향', last_at: new Date(at('2026-11-11T06:01')).toISOString(), last_text: '주소 변경' }];
     const s1 = SA.staleUnanswered(it, now, { stale_hours: 3 }, ['talk:a', 'talk:zz']);

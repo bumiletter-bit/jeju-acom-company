@@ -111,7 +111,7 @@ function staleUnanswered(items, nowMs, cfg, prevKeys) {
 function staleText(r, slot) {
     if (!r.items.length) return r.done ? { title: `미답변 문의 정리됨 (${slot})`, message: `지난번 알린 ${r.done}건이 모두 처리됐어요. 남은 것 없음.`, level: 'info' } : null;
     const head = ['talk', 'sms', 'qna', 'inquiry'].filter(c => r.by[c]).map(c => `${CH_KO[c]} ${r.by[c]}`).join(' · ');
-    const top = r.items.slice(0, 3).map(x => `ㆍ${CH_KO[x.ch]} ${clip(x.title, 20)} · ${kstHM(Date.parse(x.last_at))}${kstDate(Date.parse(x.last_at)) !== kstDate(Date.now()) ? '(' + md(kstDate(Date.parse(x.last_at))) + ')' : ''} · 「${clip(x.last_text, 24)}」`);
+    const top = r.items.slice(0, 3).map(x => `ㆍ${String(x.title || '').startsWith(CH_KO[x.ch]) ? '' : CH_KO[x.ch] + ' '}${clip(x.title, 20)} · ${kstHM(Date.parse(x.last_at))}${kstDate(Date.parse(x.last_at)) !== kstDate(Date.now()) ? '(' + md(kstDate(Date.parse(x.last_at))) + ')' : ''} · 「${clip(x.last_text, 24)}」`);
     const flow = (r.done || r.remain) ? `지난번 뒤 처리 ${r.done}건 · 아직 남음 ${r.remain}건 · 새로 ${r.fresh}건\n` : '';
     return { title: RED + `${r.hours}시간 넘게 답 안 한 문의 ${r.items.length}건 (${slot})`, message: flow + head + '\n' + top.join('\n') + (r.items.length > 3 ? `\n… 외 ${r.items.length - 3}건` : '') + '\n→ 손님 연락 미처리에서 답하기', level: 'alert' };
 }
@@ -277,9 +277,9 @@ async function openItems(deps) {   // 지금 아무도 답 안 한 문의(톡톡
     if (typeof ib._talkThreads === 'function') for (const t of await ib._talkThreads({ scope: 'open' })) out.push({ ch: 'talk', id: t.id, title: t.title, last_at: t.last_at, last_text: t.last_text });
     if (typeof ib._postThreads === 'function') for (const c of ['qna', 'inquiry']) for (const t of await ib._postThreads(c, { scope: 'open' })) out.push({ ch: c, id: t.id, title: t.title, last_at: t.last_at, last_text: t.last_text });
     const s = (await deps.pool.query(`SELECT id, phone_digits, last_in_at, last_in_text FROM sms_threads
-        WHERE status IN ('new','staff_needed','draft') AND last_in_at IS NOT NULL AND (last_out_at IS NULL OR last_out_at < last_in_at)
+        WHERE status NOT IN ('closed','ignored') AND (staff_why IS NOT NULL OR draft_text IS NOT NULL) AND last_in_at IS NOT NULL AND (last_out_at IS NULL OR last_out_at < last_in_at)
           AND last_in_at > now() - interval '14 days' AND COALESCE(phone_digits, '') NOT LIKE '0999%' ORDER BY last_in_at`)).rows;
-    for (const r of s) out.push({ ch: 'sms', id: String(r.id), title: '문자 …' + String(r.phone_digits || '').slice(-4), last_at: new Date(r.last_in_at).toISOString(), last_text: r.last_in_text || '' });
+    for (const r of s) out.push({ ch: 'sms', id: String(r.id), title: '…' + String(r.phone_digits || '').slice(-4), last_at: new Date(r.last_in_at).toISOString(), last_text: r.last_in_text || '' });
     return out;
 }
 
