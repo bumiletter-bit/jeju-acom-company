@@ -5107,6 +5107,47 @@ button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { ou
     .rv-chip { flex: none; min-height: 44px; }
     .rv-seg .settlement-tab { min-height: 44px; }
 }
+/* #1110-4c 채팅 미리보기 = 네이버 톡톡 대화방 꼴(대표 11/11 · 이 칸 안에서만 톡톡 색 = 인디고 가이드 예외 · 색은 전부 .rv-talk 범위 변수 → 야간에도 그대로) */
+.rv-talk { --rvc-bg: #9DB6D8; --rvc-ink: #16202E; --rvc-sub: #23364F; --rvc-link: #0A3A8C; --rvc-me: #FFFFFF; --rvc-bot: #CFE6FB; --rvc-pill: #3E5677; --rvc-pill-ink: #FFFFFF; --rvc-chip: #E3ECF7; --rvc-line: rgba(22, 32, 46, .14); --rvc-bar: #FFFFFF; --rvc-field: #EEF1F5; --rvc-skip: #EDF2F8; --rvc-err: #FDECEA; --rvc-err-ink: #B42318; --rvc-ph: #5B6677; --rvc-foot: #4A5568; --rvc-ava: #DCE6F2; --rvc-ava-ink: #7E93B0; --rvc-pill-hover: #33496A; --rvc-ring: rgba(62, 86, 119, .22);
+    padding: 0; overflow: hidden; background: var(--rvc-bg); border-color: var(--rvc-line); }
+.rv-talk .rv-top { margin: 0; padding: 10px 14px; background: var(--rvc-bg); border-bottom: 1px solid var(--rvc-line); }
+.rv-talk .rv-top .rv-h { color: var(--rvc-ink); font-size: 15px; }
+.rv-talk .rv-seg { background: none; border: 0; padding: 0; }
+.rv-talk .rv-seg .settlement-tab { background: var(--rvc-chip); color: var(--rvc-ink); border: 0; border-radius: 999px; box-shadow: none; }
+.rv-talk .rv-seg .settlement-tab.active { background: var(--rvc-pill); color: var(--rvc-pill-ink); }
+.rv-talk .rv-seg .settlement-tab:focus-visible, .rv-talk .rv-link:focus-visible, .rv-talk #rv-send:focus-visible { outline: 2px solid var(--rvc-ink); outline-offset: 2px; }
+.rv-talk .rv-log { background: var(--rvc-bg); border: 0; border-radius: 0; padding: 14px; gap: 12px; }
+.rv-talk .rv-empty { color: var(--rvc-sub); }
+.rv-row { display: flex; min-width: 0; }
+.rv-row.me { align-items: flex-start; gap: 8px; }
+.rv-row.bot { flex-direction: column; align-items: flex-end; }
+.rv-row.sys { justify-content: center; }
+.rv-ava { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--rvc-ava); color: var(--rvc-ava-ink); display: grid; place-items: center; overflow: hidden; }
+.rv-col { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; flex: 1 1 auto; }
+.rv-who { font-size: 12px; color: var(--rvc-sub); margin: 0 0 4px 2px; }
+.rv-talk .rv-msg { max-width: 82%; border-radius: 18px; padding: 10px 14px; font-size: 14px; border: 0; color: var(--rvc-ink); }
+.rv-talk .rv-msg.me { align-self: flex-start; background: var(--rvc-me); color: var(--rvc-ink); border-radius: 4px 18px 18px 18px; }
+.rv-talk .rv-msg.bot { align-self: flex-end; background: var(--rvc-bot); color: var(--rvc-ink); border: 0; border-radius: 18px 18px 4px 18px; }
+.rv-talk .rv-msg.wait { color: var(--rvc-sub); }
+.rv-talk .rv-msg.skip, .rv-talk .rv-msg.err { align-self: center; max-width: 92%; border: 0; border-radius: 14px; font-size: 12.5px; text-align: center; padding: 8px 14px; }
+.rv-talk .rv-msg.skip { background: var(--rvc-skip); color: var(--rvc-ink); }
+.rv-talk .rv-msg.err { background: var(--rvc-err); color: var(--rvc-err-ink); }
+.rv-talk .rv-meta { margin: 4px 2px 0; padding: 0; border: 0; font-size: 11.5px; line-height: 1.5; color: var(--rvc-sub); text-align: right; max-width: 92%; }
+.rv-talk .rv-msg .rv-meta { text-align: center; max-width: none; color: inherit; }
+.rv-talk .rv-link { color: var(--rvc-link); }
+.rv-talk .rv-msg.err .rv-link { color: var(--rvc-err-ink); }
+.rv-talk .rv-msg .rv-link { display: inline-block; padding: 6px 4px; }
+.rv-bottom { background: var(--rvc-bar); padding: 10px 12px 12px; border-top: 1px solid var(--rvc-line); }
+.rv-talk .rv-form { margin: 0; align-items: flex-end; }
+.rv-talk .rv-form textarea { background: var(--rvc-field); color: var(--rvc-ink); border: 1px solid transparent; border-radius: 20px; padding: 11px 16px; box-shadow: none; }
+.rv-talk .rv-form textarea::placeholder { color: var(--rvc-ph); }
+.rv-talk .rv-form textarea:focus { border-color: var(--rvc-pill) !important; outline: 0; box-shadow: 0 0 0 3px var(--rvc-ring) !important; }   /* theme.css 포커스 규칙이 !important 라 이 칸에서만 같은 세기로 */
+.rv-talk .rv-form textarea:disabled { opacity: .6; }
+.rv-talk #rv-send { background: var(--rvc-pill); color: var(--rvc-pill-ink); border: 0; border-radius: 999px; box-shadow: none; }
+.rv-talk #rv-send:hover:not(:disabled) { background: var(--rvc-pill-hover); }
+.rv-talk #rv-send:active:not(:disabled) { transform: scale(0.97); }
+.rv-talk #rv-foot { color: var(--rvc-foot); margin: 8px 4px 0; font-size: 11.5px; }
+@media (min-width: 861px) { .rv-talk .rv-msg { max-width: 72%; } }
 /* 문의 관리 탭 6개: 폭이 모자라면 줄바꿈 대신 가로로 밀기(늘 한 줄 · 넓은 화면에선 그대로 다 보임) */
 #page-inquiry > .settlement-tab-bar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 #page-inquiry > .settlement-tab-bar::-webkit-scrollbar { display: none; }

@@ -27,7 +27,7 @@ async function open(br, w, h, who, ls, rv) {
 }
 const vis = (page, sel) => page.evaluate(s => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(), cs = getComputedStyle(e); return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0; }, sel);
 const txt = (page, sel) => page.evaluate(s => (document.querySelector(s)?.textContent || '').replace(/\s+/g, ' ').trim(), sel);
-const logMsgs = page => page.evaluate(() => Array.from(document.querySelectorAll('#rv-log .rv-msg')).map(e => ({ cls: e.className.replace('rv-msg ', ''), t: e.textContent.replace(/\s+/g, ' ').trim() })));
+const logMsgs = page => page.evaluate(() => Array.from(document.querySelectorAll('#rv-log .rv-row')).map(r => { const e = r.querySelector('.rv-msg'); return { cls: e.className.replace('rv-msg ', ''), t: (e.classList.contains('me') ? e : r).textContent.replace(/\s+/g, ' ').trim() }; }));   // #1110-4c 줄(.rv-row) 단위 — 봇 줄은 말풍선 + 아래 작은 글
 const ask = async (page, text) => { await page.fill('#rv-text', text); await page.click('#rv-send'); await page.waitForFunction(() => !document.querySelector('#rv-log .rv-msg.wait'), null, { timeout: 8000 }); await page.waitForTimeout(150); };
 
 (async () => {
@@ -85,14 +85,30 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             await post('/__mock/set', { rv: { next: 'two' } }); await ask(page, '두 재료 <i>글</i>');
             ms = await logMsgs(page);
             ok(ms.length === 4 && ms[2].t === '두 재료 <i>글</i>' && /<b>굵게<\/b> 아님 & 그대로/.test(ms[3].t) && await page.evaluate(() => !document.querySelector('#rv-log .rv-msg b:not(.x)') || Array.from(document.querySelectorAll('#rv-log .rv-msg.bot b')).length === 0), tag + '답·질문의 태그 글자는 그대로 보임(끼워 넣기 0)', JSON.stringify(ms.slice(2)));
-            ok(/시나리오 16 · 시나리오 99/.test(ms[3].t) && await page.evaluate(() => { const last = Array.from(document.querySelectorAll('#rv-log .rv-msg.bot')).pop(); return last.querySelectorAll('button.rv-link').length === 1 && last.querySelector('.rv-meta span') != null; }), tag + '아는 번호만 링크 · 모르는 번호는 글자만');
+            ok(/시나리오 16 · 시나리오 99/.test(ms[3].t) && await page.evaluate(() => { const last = Array.from(document.querySelectorAll('#rv-log .rv-row.bot')).pop(); return last.querySelectorAll('button.rv-link').length === 1 && last.querySelector('.rv-meta span') != null; }), tag + '아는 번호만 링크 · 모르는 번호는 글자만');
             ok(await page.evaluate(() => /줄\s*$/.test(Array.from(document.querySelectorAll('#rv-log .rv-msg.bot')).pop().firstChild.textContent) && getComputedStyle(document.querySelector('#rv-log .rv-msg.bot')).whiteSpace.startsWith('pre')), tag + '줄바꿈 유지');
+            // #1110-4c 톡톡 대화방 꼴 — 밝은 화면·야간 둘 다 같은 색(이 칸은 톡톡 색 고정)
+            const shape = () => page.evaluate(() => { const q = s => document.querySelector(s), cs = e => getComputedStyle(e), R = e => e.getBoundingClientRect(); const log = q('#rv-log'), me = q('#rv-log .rv-row.me .rv-msg.me'), rows = Array.from(document.querySelectorAll('#rv-log .rv-row.bot')), row = rows[rows.length - 1], bot = row.querySelector('.rv-msg.bot'), meta = row.querySelector('.rv-meta'), L = R(log);
+                return { logBg: cs(log).backgroundColor, meBg: cs(me).backgroundColor, botBg: cs(bot).backgroundColor, ink: cs(bot).color, metaInk: cs(meta).color, link: cs(row.querySelector('.rv-link') || meta).color, bar: cs(q('.rv-bottom')).backgroundColor, field: cs(q('#rv-text')).backgroundColor, fieldInk: cs(q('#rv-text')).color, send: cs(q('#rv-send')).backgroundColor, sendInk: cs(q('#rv-send')).color, top: cs(q('.rv-top')).backgroundColor, tabOn: cs(q('#rv-pch .settlement-tab.active')).backgroundColor, tabOff: cs(q('#rv-pch .settlement-tab:not(.active)')).backgroundColor, foot: cs(q('#rv-foot')).color,
+                    meLeft: R(me).left - L.left < 70, botRight: L.right - R(bot).right < 24, meW: R(me).width / L.width, botW: R(bot).width / L.width, metaOut: meta.parentElement === row && R(meta).top >= R(bot).bottom - 1, ava: !!q('#rv-log .rv-row.me .rv-ava') && /손님/.test(q('#rv-log .rv-row.me .rv-who').textContent), sendH: R(q('#rv-send')).height, taH: R(q('#rv-text')).height, title: q('.rv-top .rv-h').textContent }; });
+            const TALK = { logBg: 'rgb(157, 182, 216)', meBg: 'rgb(255, 255, 255)', botBg: 'rgb(207, 230, 251)', ink: 'rgb(22, 32, 46)', metaInk: 'rgb(35, 54, 79)', link: 'rgb(10, 58, 140)', bar: 'rgb(255, 255, 255)', field: 'rgb(238, 241, 245)', fieldInk: 'rgb(22, 32, 46)', send: 'rgb(62, 86, 119)', sendInk: 'rgb(255, 255, 255)', top: 'rgb(157, 182, 216)', tabOn: 'rgb(62, 86, 119)', tabOff: 'rgb(227, 236, 247)', foot: 'rgb(74, 85, 104)' };
+            const sameColors = o => Object.keys(TALK).filter(k => o[k] !== TALK[k]).map(k => k + '=' + o[k]);
+            let sh = await shape();
+            ok(sameColors(sh).length === 0, tag + '#1110-4c 톡톡 색(바탕 회청·손님 흰색·봇 하늘색·입력 줄 흰 띠)', sameColors(sh).join(' '));
+            ok(sh.meLeft && sh.botRight && sh.ava && sh.metaOut && sh.title === '제주아꼼이네 미리보기', tag + '#1110-4c 손님 왼쪽(프로필·「손님」) · 봇 오른쪽 · 재료 줄은 말풍선 아래', JSON.stringify(sh));
+            ok(sh.meW <= 0.83 && sh.botW <= 0.83 && sh.sendH >= 44 && sh.taH >= 44, tag + '#1110-4c 말풍선 폭 82% 안 · 입력·보내기 44px', JSON.stringify({ meW: sh.meW, botW: sh.botW, sendH: sh.sendH, taH: sh.taH }));
+            await page.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await page.waitForTimeout(80);
+            sh = await shape();
+            ok(sameColors(sh).length === 0, tag + '#1110-4c 야간에도 이 칸은 톡톡 색 그대로', sameColors(sh).join(' '));
+            ok(await page.evaluate(() => Math.max(0, document.documentElement.scrollWidth - window.innerWidth)) === 0, tag + '#1110-4c 가로 넘침 0(대화 있는 채)');
+            await page.focus('#rv-text'); ok(await page.evaluate(() => getComputedStyle(document.getElementById('rv-text')).borderTopColor) === 'rgb(62, 86, 119)', tag + '#1110-4c 입력 칸 포커스 테두리도 톡톡 색(야간)'); await page.evaluate(() => document.getElementById('rv-text').blur());
+            await page.evaluate(() => document.documentElement.removeAttribute('data-ao-theme'));
             // 가격 즉답 · 넘김 · 오류 · 상한 · 준비 중
             await post('/__mock/set', { rv: { next: 'price' } }); await ask(page, '5kg 얼마예요?'); ms = await logMsgs(page);
             ok(/가격 바로 답\(AI 없이\)/.test(ms[ms.length - 1].t), tag + '가격 즉답 표시');
             ok(!/실제 답과 조금 다를/.test(ms[ms.length - 1].t), tag + '#1110-4b 톡톡 아닌 채널 = 그 안내 줄 없음');
             await page.evaluate(() => window.rvSetPch('sms')); await post('/__mock/set', { rv: { next: 'smsrule' } }); await ask(page, '귤이 물러서 왔어요'); ms = await logMsgs(page);
-            ok(/정해 둔 글\(AI 없이\)/.test(ms[ms.length - 1].t) && !/쓴 재료 표시 없음/.test(ms[ms.length - 1].t) && /정해 둔 <b>사과<\/b> 초안이 먼저예요/.test(ms[ms.length - 1].t) && await page.evaluate(() => { const last = Array.from(document.querySelectorAll('#rv-log .rv-msg.bot')).pop(); return !!last.querySelector('.rv-note') && !last.querySelector('.rv-note b'); }), tag + '#1110-4b 문자 불만 = 「정해 둔 글(AI 없이)」 + 안내 줄(글자 그대로)', JSON.stringify(ms[ms.length - 1]));
+            ok(/정해 둔 글\(AI 없이\)/.test(ms[ms.length - 1].t) && !/쓴 재료 표시 없음/.test(ms[ms.length - 1].t) && /정해 둔 <b>사과<\/b> 초안이 먼저예요/.test(ms[ms.length - 1].t) && await page.evaluate(() => { const last = Array.from(document.querySelectorAll('#rv-log .rv-row.bot')).pop(); return !!last.querySelector('.rv-note') && !last.querySelector('.rv-note b'); }), tag + '#1110-4b 문자 불만 = 「정해 둔 글(AI 없이)」 + 안내 줄(글자 그대로)', JSON.stringify(ms[ms.length - 1]));
             await page.evaluate(() => window.rvSetPch('qna'));
             await post('/__mock/set', { rv: { next: 'skip' } }); await ask(page, '감사합니다'); ms = await logMsgs(page);
             ok(ms[ms.length - 1].cls === 'skip' && /봇이 답하지 않아요/.test(ms[ms.length - 1].t) && /답변 재료에서 글 추가하기/.test(ms[ms.length - 1].t), tag + '넘김 = 호박 띠 + 재료 추가 링크', JSON.stringify(ms[ms.length - 1]));

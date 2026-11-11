@@ -14125,14 +14125,14 @@ function rvDrawLog() {
     const map = _scenNoMap || {};
     const chName = Object.fromEntries(RV_CH);
     el.innerHTML = RV.log.map((m, i) => {
-        if (m.who === 'me') return `<div class="rv-msg me">${escapeHtml(m.text)}</div>`;
-        if (m.state === 'wait') return `<div class="rv-msg bot wait" aria-busy="true">${m.slow ? '조금 더 걸리고 있어요…' : '답 만드는 중…'}</div>`;
-        if (m.state === 'skip') return `<div class="rv-msg skip"><b>봇이 답하지 않아요</b> · ${escapeHtml(m.text)}${m.why === 'no_material' ? `<div class="rv-meta"><button type="button" class="rv-link" onclick="switchInquiryTab('scenario')">답변 재료에서 글 추가하기</button></div>` : ''}</div>`;
-        if (m.state === 'err') return `<div class="rv-msg err">${escapeHtml(m.text)}${m.retry != null ? `<div class="rv-meta"><button type="button" class="rv-link" data-rv-retry="${m.retry}">다시 물어보기</button></div>` : ''}</div>`;
+        if (m.who === 'me') return `<div class="rv-row me"><span class="rv-ava" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="9" r="4" fill="currentColor"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" fill="currentColor"/></svg></span><div class="rv-col"><span class="rv-who">손님</span><div class="rv-msg me">${escapeHtml(m.text)}</div></div></div>`;   // #1110-4c 톡톡 대화방 꼴: 손님 = 왼쪽 흰 말풍선 · 봇 = 오른쪽 하늘색 · 재료·시간 줄은 말풍선 아래
+        if (m.state === 'wait') return `<div class="rv-row bot"><div class="rv-msg bot wait" aria-busy="true">${m.slow ? '조금 더 걸리고 있어요…' : '답 만드는 중…'}</div></div>`;
+        if (m.state === 'skip') return `<div class="rv-row sys"><div class="rv-msg skip"><b>봇이 답하지 않아요</b> · ${escapeHtml(m.text)}${m.why === 'no_material' ? `<div class="rv-meta"><button type="button" class="rv-link" onclick="switchInquiryTab('scenario')">답변 재료에서 글 추가하기</button></div>` : ''}</div></div>`;
+        if (m.state === 'err') return `<div class="rv-row sys"><div class="rv-msg err">${escapeHtml(m.text)}${m.retry != null ? `<div class="rv-meta"><button type="button" class="rv-link" data-rv-retry="${m.retry}">다시 물어보기</button></div>` : ''}</div></div>`;
         const links = (m.nos || []).map((no, k) => { const s = map['#' + no]; const label = '시나리오 ' + escapeHtml(String(no)); return s ? `<button type="button" class="rv-link" onclick="gotoScenario(${s.id})" title="${escapeHtml(s.name)} · 누르면 이 글을 고쳐요">${label}</button>` : `<span title="${escapeHtml((m.names || [])[k] || '')}">${label}</span>`; });
         const meta = [chName[m.ch] || '', m.source === 'price_direct' ? '가격 바로 답(AI 없이)' : '', m.source === 'sms_rule' ? '정해 둔 글(AI 없이)' : links.length ? '쓴 재료: ' + links.join(' · ') : '쓴 재료 표시 없음', m.ms ? (Math.round(m.ms / 100) / 10) + '초' : ''].filter(Boolean).join(' · ');
         const note = m.note || (m.ch === 'talk' ? '실제 답과 조금 다를 수 있어요(사진 요청 줄 생략 등).' : '');   // #1110-4b
-        return `<div class="rv-msg bot">${escapeHtml(m.text)}<div class="rv-meta">${meta}</div>${note ? `<div class="rv-meta rv-note">${escapeHtml(note)}</div>` : ''}</div>`;
+        return `<div class="rv-row bot"><div class="rv-msg bot">${escapeHtml(m.text)}</div><div class="rv-meta">${meta}</div>${note ? `<div class="rv-meta rv-note">${escapeHtml(note)}</div>` : ''}</div>`;
     }).join('');
     el.scrollTop = el.scrollHeight;
 }
