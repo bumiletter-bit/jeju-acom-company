@@ -416,6 +416,7 @@ function switchPage(pageName) {
     if (pageName === 'inquiry') {
         renderInquiryPage().catch(console.error);
         if (inquiryActiveTab === 'products') renderBotProducts().catch(console.error);
+        inqMatHeadLoad();   // #1110: 답변 재료 머리 — 자동 등록 스위치 상태 · 기간 있는 글 수
     }
     if (pageName === 'data' && currentUser?.role === 'admin') {
         renderUserList().catch(console.error);
@@ -12998,12 +12999,20 @@ async function renderInquiryPage() {
     inquiryScenarios = d.scenarios || [];
     _scenNoMap = null;   // 이름→번호 캐시 무효화 (저장·삭제 후 최신 반영)
     const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
-    document.getElementById('inquiry-count').textContent = `(${inquiryScenarios.length}건)`;
     const wrap = document.getElementById('inquiry-auto-reply-wrap');
     wrap.style.display = isAdmin ? 'inline-flex' : 'none';
     document.getElementById('inquiry-auto-reply-toggle').checked = d.auto_reply !== 'off';
+    drawInquiryList();
+    renderInquiryLogs().catch(console.error);
+}
+// #1110: 목록 그리기만(찾기 칸 = 이름·키워드·본문 · 화면 안 필터 — 서버 호출 없음)
+function drawInquiryList() {
+    const q = inqMatQ();
+    const list = q ? inquiryScenarios.filter(s => inqMatHit(q, [s.name, (s.keywords || []).join(' '), s.response, '#' + s.scenario_no])) : inquiryScenarios;
+    document.getElementById('inquiry-count').textContent = q ? `(${list.length} / ${inquiryScenarios.length}건)` : `(${inquiryScenarios.length}건)`;
+    inqMatHeadSync();
     // 대표 7/27: 행 아무 데나 눌러도 수정 화면이 열리게 (하나하나 보기 편하도록) — 사용 토글 칸만 행 클릭과 분리
-    const rows = inquiryScenarios.map(s => `
+    const rows = list.map(s => `
         <tr onclick="openScenarioEdit(${s.id})" style="cursor:pointer;" title="누르면 이 시나리오의 수정 화면이 열립니다">
             <td>${s.scenario_no}</td>
             <td>${escapeHtml(s.name)}</td>
@@ -13017,8 +13026,7 @@ async function renderInquiryPage() {
         </tr>`).join('');
     document.getElementById('inquiry-list').innerHTML = `
         <table class="data-table"><thead><tr><th>번호</th><th>시나리오명</th><th>채널</th><th>동작</th><th>사용</th><th></th></tr></thead>
-        <tbody>${rows || '<tr class="empty-row"><td colspan="6">등록된 시나리오가 없습니다.</td></tr>'}</tbody></table>`;
-    renderInquiryLogs().catch(console.error);
+        <tbody>${rows || `<tr class="empty-row"><td colspan="6">${q ? '찾는 글이 든 시나리오가 없어요.' : '등록된 시나리오가 없습니다.'}</td></tr>`}</tbody></table>`;
 }
 window.toggleScenario = async function(id, enabled) {
     try { await api(`/api/agent-office/scenarios/${id}`, 'PUT', { enabled }); showToast(enabled ? '✅ 사용 켬 완료' : '⏸ 사용 끔 완료', 'lime'); }
@@ -13114,12 +13122,22 @@ async function renderInquiryLogs(range) {
 // --- 판매현황·가격 탭 (bot_products — 스마트스토어 판매가, 봇 1분 캐시 자동 반영) ---
 let botProducts = [];
 let inquiryActiveTab = 'scenario';
+// #1110(대표 11/11): 톡톡·상품문의·고객문의 탭은 숨김(에이전트 오피스 › 손님 연락) — 옛 복원값·옛 링크로 들어오면 기본 탭(답변 재료)으로
+const INQ_HIDDEN_TABS = ['unanswered', 'qna', 'userinq'];
 window.switchInquiryTab = function(name) {
+    if (INQ_HIDDEN_TABS.includes(name) || !document.getElementById('inquiry-tab-' + name)) name = 'scenario';
     inquiryActiveTab = name;
     try { localStorage.setItem('akm_inq_tab', name); } catch (_) {}   // 지시 #407: 새로고침 복원용(문의 관리 한정)
     for (const t of ['scenario', 'products', 'notify', 'holiday', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {   /* #407: 알림 이력·발송 휴무일 독립 탭 */
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
+    }
+    {   // #1110: 「답변 재료」 = 시나리오(늘 쓰는 글) + 시기 지식(기간 있는 글) 두 칸 — 탭 단추는 하나, 머리(사용 설정·세그먼트·찾기)는 두 칸에서만
+        const mat = name === 'scenario' || name === 'season';
+        document.getElementById('inquiry-tab-btn-scenario').className = mat ? 'settlement-tab active' : 'settlement-tab';
+        const head = document.getElementById('inquiry-mat-head'); if (head) head.style.display = mat ? '' : 'none';
+        for (const k of ['scenario', 'season']) { const b = document.getElementById('inq-mat-seg-' + k); if (b) b.className = name === k ? 'settlement-tab active' : 'settlement-tab'; }
+        if (name === 'scenario') drawInquiryList();   // 찾기 글이 바뀐 채 넘어왔을 수 있음
     }
     syncInqLogCard();   // 지시 #181-1: 이력 카드 대상 전환·초기화(이전 탭 이력 잔류 차단) — 조회는 [조회] 눌렀을 때만
     if (name === 'products') renderBotProducts().catch(console.error);
@@ -13508,14 +13526,42 @@ window.toggleQnaAutoPost = async function(enabled) {
 };
 // '준비중' = 봇 미노출 (판매가 세팅 전 상태 — 품목별 금액 연동으로 자동 등록된 신규 품목)
 const BOTPROD_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
+// #1110 ③ 판매현황 찾기·상태 알약(화면 안 필터) — 기본 = 전체(판매중이 맨 위 · 대표 11/11) · 찾기 글이 있으면 상태와 무관하게 전체에서
+let bpFilter = '전체';
+const bpQ = () => String(document.getElementById('botprod-q')?.value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const bpDirty = () => !!document.querySelector('#botprod-list button[id^="botprod-save-"]:not([disabled])');
+window.setBotProdFilter = function(f) {
+    if (f === bpFilter) return;
+    if (bpDirty()) return showToast('⚠️ 저장 안 한 줄이 있어요 — 먼저 [저장]을 눌러 주세요');
+    bpFilter = f; drawBotProducts();
+};
 async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
+    drawBotProducts();
+    renderBotProductLogs().catch(console.error);
+    // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
+    // (지시 #407) 발송 휴무일·알림 발송 이력도 독립 탭으로 분리 — 각 탭 진입 시 switchInquiryTab이 렌더
+}
+function drawBotProducts() {
     const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
+    const q = bpQ();
+    const bpShown = q
+        ? botProducts.filter(p => (String(p.name || '') + ' ' + String(p.price || '') + ' ' + String(p.naver_product_no || '')).toLowerCase().replace(/\s+/g, ' ').includes(q))
+        : (bpFilter === '전체' ? botProducts : botProducts.filter(p => p.status === bpFilter));
+    {   // 상태 알약(건수) — 찾는 중에는 어느 알약도 켜지 않는다(전체에서 찾는 중)
+        const box = document.getElementById('botprod-filter');
+        if (box) box.innerHTML = ['전체', '판매중', '품절', '준비중', '시즌종료'].map(s => {
+            const n = s === '전체' ? botProducts.length : botProducts.filter(p => p.status === s).length;
+            return `<button type="button" class="settlement-tab${!q && bpFilter === s ? ' active' : ''}" aria-pressed="${!q && bpFilter === s}" onclick="setBotProdFilter('${s}')">${s} ${n}</button>`;
+        }).join('');
+        const found = document.getElementById('botprod-found');
+        if (found) found.textContent = q ? `전체 ${botProducts.length}개 중 ${bpShown.length}개` : '';
+    }
     // #483(대표 9/30 「두서없이 나온다 — 품목별로라도 나와야 입력하기 쉽다」): 화면 표시만 품목별로 묶는다(서버 순서·저장·삭제 무변경).
     //   품목 = 이름의 「 / 」 앞(예: 고당도 하우스감귤 · 과즙팡팡 황금향). 파는 중인 품목 묶음이 위, 품절·시즌종료만 남은 묶음이 아래.
     //   묶음 안에서는 준비중(가격 입력할 것) → 판매중 → 품절 → 시즌종료, 같은 상태는 이름순.
-    const BP_ST_ORD = { '준비중': 0, '판매중': 1, '품절': 2 };
+    const BP_ST_ORD = { '판매중': 0, '품절': 1, '준비중': 2 };   // #1110(대표 11/11): 판매중 → 품절 → 준비중 → 시즌종료(종전 = 준비중이 맨 앞)
     //   「 / 」가 없는 이름(「과수 및 크기: 제주산 레드키위 10kg(로얄과)」·「최상품 청귤(풋귤) 10kg」)은 앞 머리말(「…:」)과 무게 이하를 떼어 묶는다.
     const bpGroupOf = p => {
         const nm = String(p.name || '').trim();
@@ -13524,8 +13570,8 @@ async function renderBotProducts() {
         return g || nm;
     };
     const bpGroups = new Map();
-    for (const p of botProducts) { const g = bpGroupOf(p); if (!bpGroups.has(g)) bpGroups.set(g, []); bpGroups.get(g).push(p); }
-    const bpActive = list => list.some(p => p.status === '준비중' || p.status === '판매중');
+    for (const p of bpShown) { const g = bpGroupOf(p); if (!bpGroups.has(g)) bpGroups.set(g, []); bpGroups.get(g).push(p); }
+    const bpActive = list => -Math.min(...list.map(p => BP_ST_ORD[p.status] ?? 3));   // 묶음 자리 = 그 묶음에서 가장 앞선 상태(판매중이 든 묶음이 맨 위 · 큰 값이 앞)
     const bpOrdered = [...bpGroups.entries()]
         .sort((a, b) => (bpActive(b[1]) - bpActive(a[1])) || a[0].localeCompare(b[0], 'ko'))
         .map(([g, list]) => [g, list.slice().sort((x, y) => ((BP_ST_ORD[x.status] ?? 3) - (BP_ST_ORD[y.status] ?? 3)) || String(x.name).localeCompare(String(y.name), 'ko'))]);
@@ -13569,11 +13615,8 @@ async function renderBotProducts() {
     const rows = bpOrdered.map(([g, list]) => bpHead(g, list) + list.map(bpRow).join('')).join('');
     document.getElementById('botprod-list').innerHTML = `
         <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
-        <tbody>${rows || '<tr class="empty-row"><td colspan="7">등록된 품목이 없습니다.</td></tr>'}</tbody></table>
+        <tbody>${rows || `<tr class="empty-row"><td colspan="7">${!botProducts.length ? '등록된 품목이 없습니다.' : q ? '찾는 품목이 없어요. 글자를 줄여서 다시 찾아 보세요.' : `「${escapeHtml(bpFilter)}」 품목이 없어요.`}</td></tr>`}</tbody></table>
         <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡: 카카오 승인 템플릿(알리고)으로만 발송되므로 품목별 문구 입력이 아니라 준비 상태 뱃지로 표시 — ⚠️ 미설정에 마우스를 올리면 미비 항목이 보입니다. · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
-    renderBotProductLogs().catch(console.error);
-    // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
-    // (지시 #407) 발송 휴무일·알림 발송 이력도 독립 탭으로 분리 — 각 탭 진입 시 switchInquiryTab이 렌더
 }
 // --- 📬 알림 발송 이력 통합 (지시 #176) — 한 줄 = 한 주문. 주문안내·발송안내 두 칸이 각각 채워짐 ---
 //     구 2화면(#92 주문 알림톡·발주확인 이력 / #76 발송 안내 이력) 기능 전수 흡수: 발주확인 표기·수기 처리 필요만(→실패·보류 필터)·
@@ -13882,6 +13925,20 @@ async function renderSeasonKnowledge() {
     if (!el) return;
     const d = await api('/api/agent-office/season-knowledge');
     skRows = d.rows || [];
+    drawSeasonKnowledge();
+}
+// #1110: 그리기만(찾기 칸 = 품목·구간·본문 · 화면 안 필터) · 오늘 적용 중인 줄을 앞에(같은 묶음 안 순서는 서버 순서 그대로)
+function skTodayIn(r) {
+    const t = new Date(), md = String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    return (r.start_md <= r.end_md) ? (md >= r.start_md && md <= r.end_md) : (md >= r.start_md || md <= r.end_md);
+}
+function drawSeasonKnowledge() {
+    const el = document.getElementById('season-knowledge-list');
+    if (!el) return;
+    inqMatHeadSync();
+    const mq = inqMatQ();
+    const skShown = (mq ? skRows.filter(r => r.id === skEditingId || inqMatHit(mq, [r.item_key, r.label, r.knowledge, r.sell_match])) : skRows.slice())
+        .map((r, i) => [r, i]).sort((a, b) => (skTodayIn(b[0]) - skTodayIn(a[0])) || (a[1] - b[1])).map(x => x[0]);
     const today = new Date();
     const md = String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
     const inR = (m, s, e) => (s <= e) ? (m >= s && m <= e) : (m >= s || m <= e);
@@ -13905,9 +13962,9 @@ async function renderSeasonKnowledge() {
                         <option value="only_when_selling"${r.sell_rule === 'only_when_selling' ? ' selected' : ''}>판매중일 때만 이 행 사용</option>
                     </select>
                 </div>`;
-    const rows = skRows.map(r => {
+    const rows = skShown.map(r => {
         const now = inR(md, r.start_md, r.end_md);
-        const itemCell = `${escapeHtml(r.item_key)}${now ? ' <span class="pill" style="font-size:10px; background:#8CC63E; color:#fff;">오늘</span>' : ''}`;
+        const itemCell = `${now ? '<span class="pill" style="font-size:10px; background:#8CC63E; color:#fff;">오늘 적용 중</span> ' : ''}${escapeHtml(r.item_key)}`;
         if (skEditingId === r.id) {
             const p = skLabelParse(r.label);
             return `
@@ -13940,8 +13997,60 @@ async function renderSeasonKnowledge() {
     el.innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>품목</th><th>구간</th><th>기간(월/일 — 매년 반복)</th><th>이 시기의 맛·상태·안내</th><th></th></tr></thead><tbody>${rows}</tbody></table>
            <p class="text-muted" style="font-size:12px; margin-top:6px;">초록 행 = 오늘 날짜 구간 (지금 AI 답변에 들어가는 내용). [수정] → 날짜 칸 클릭 시 월/일 달력. 저장 즉시 3채널 반영(톡톡은 봇 캐시 최대 5분). 「판매 연동」 = 판매현황 판매중 상품 이름에 들어가는 낱말(여러 개는 | 로 · 예: 타이벡 / 노지황금향 · 공백 무시)이 맞으면 규칙대로 이 행을 넣거나 빼요(예: 타이벡 「오픈 예정」 행에 낱말 타이벡 + 판매중이면 숨김 → 타이벡 판매현황 행이 생기는 날 예정 글이 저절로 빠짐).</p>`
-        : '<p class="text-muted">등록된 시기 지식이 없습니다.</p>';
+        : `<p class="text-muted">${mq && skRows.length ? '찾는 글이 든 기간 글이 없어요.' : '등록된 시기 지식이 없습니다.'}</p>`;
 }
+// ── #1110 답변 재료 머리: 찾기 · [늘 쓰는 글 n][기간 있는 글 n · 오늘 적용 n] · 사용 설정(자동 등록 스위치) ──
+function inqMatQ() { return String(document.getElementById('inq-mat-q')?.value || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function inqMatHit(q, parts) { return parts.map(x => String(x == null ? '' : x)).join('\n').toLowerCase().replace(/[ \t]+/g, ' ').includes(q); }
+function inqMatHeadSync() {
+    const q = inqMatQ();
+    const nS = q ? inquiryScenarios.filter(s => inqMatHit(q, [s.name, (s.keywords || []).join(' '), s.response, '#' + s.scenario_no])).length : inquiryScenarios.length;
+    const kHit = q ? skRows.filter(r => inqMatHit(q, [r.item_key, r.label, r.knowledge, r.sell_match])) : skRows;
+    const a = document.getElementById('inq-mat-n-scenario'), b = document.getElementById('inq-mat-n-season'), f = document.getElementById('inq-mat-found');
+    if (a) a.textContent = String(nS);
+    if (b) b.textContent = kHit.length + ' · 오늘 적용 ' + kHit.filter(skTodayIn).length;
+    if (f) f.textContent = q ? `찾은 글: 늘 쓰는 글 ${nS} · 기간 있는 글 ${kHit.length}` : '';
+}
+let _inqSetSeq = 0;
+function inqSetDraw(kind, on, err) {   // kind = 'qna' | 'userinq' · 대표 = 스위치 · 그 밖 = 상태 알약만(종전 권한 그대로 — PUT 은 서버가 대표만 받음)
+    const el = document.getElementById('inq-set-' + kind); if (!el) return;
+    const label = kind === 'qna' ? '상품문의 자동 등록' : '고객문의 자동 등록';
+    const isOwner = (currentUser?.role === 'admin' && currentUser?.position === '대표');
+    if (err) { el.innerHTML = `${label} <span class="pill pill-off" title="${escapeHtml(String(err).slice(0, 80))}">상태를 못 읽었어요</span>`; return; }
+    const pill = on ? '<span class="pill pill-ok">켜짐</span>' : '<span class="pill pill-off">꺼짐 · 승인 모드</span>';
+    el.innerHTML = isOwner
+        ? `<label style="display:inline-flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="ui-switch" ${on ? 'checked' : ''} onchange="inqSetAutoPost('${kind}', this.checked)"> ${label}</label> ${pill}`
+        : `${label} ${pill}`;
+}
+async function inqMatHeadLoad() {
+    const seq = ++_inqSetSeq;
+    if (!skRows.length) renderSeasonKnowledge().catch(console.error);   // 「기간 있는 글 n · 오늘 적용 n」 숫자용(가벼움)
+    for (const [kind, url] of [['qna', '/api/agent-office/naver/qnas'], ['userinq', '/api/agent-office/naver/inquiries']]) {
+        api(url).then(d => { if (seq === _inqSetSeq) inqSetDraw(kind, !!d.auto_post); }).catch(e => { if (seq === _inqSetSeq) inqSetDraw(kind, false, e.message || '오류'); });
+    }
+}
+window.inqSetAutoPost = async function(kind, enabled) {
+    const url = kind === 'qna' ? '/api/agent-office/naver/qna-auto-post' : '/api/agent-office/naver/inquiry-auto-post';
+    try {
+        await api(url, 'PUT', { enabled });
+        showToast((kind === 'qna' ? '상품문의' : '고객문의') + (enabled ? ' 자동 등록을 켰어요' : ' 자동 등록을 껐어요 — 승인 모드'), 'lime');
+        inqSetDraw(kind, enabled);
+    } catch (e) { akmAlert(e.message); inqMatHeadLoad(); }
+};
+(function inqMatBindOnce() {
+    const bind = () => {
+        // 폰·터치 = 찾기 칸 닿는 높이 44px(#836 skTouch 와 같은 기준) · PC 는 종전 높이
+        if (typeof matchMedia === 'function' && matchMedia('(max-width:960px),(pointer:coarse)').matches) for (const id of ['inq-mat-q', 'botprod-q']) { const el = document.getElementById(id); if (el) el.style.minHeight = '44px'; }
+        let t = null;
+        document.getElementById('inq-mat-q')?.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { if (inquiryActiveTab === 'season') drawSeasonKnowledge(); else drawInquiryList(); }, 120); });
+        let t2 = null;
+        document.getElementById('botprod-q')?.addEventListener('input', (e) => {
+            clearTimeout(t2);
+            t2 = setTimeout(() => { if (bpDirty()) { showToast('⚠️ 저장 안 한 줄이 있어요 — 먼저 [저장]을 눌러 주세요'); return; } drawBotProducts(); }, 120);
+        });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();
+})();
 window.editSeasonKnow = function(id) { skEditingId = id; renderSeasonKnowledge().catch(console.error); };
 window.cancelSeasonKnow = function() { skEditingId = null; renderSeasonKnowledge().catch(console.error); };
 window.saveSeasonKnow = async function(id) {
