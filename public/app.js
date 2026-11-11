@@ -14062,8 +14062,42 @@ function rvInit() {
     rvEl('rv-form')?.addEventListener('submit', e => { e.preventDefault(); const ta = rvEl('rv-text'); const v = ta ? ta.value.trim() : ''; if (v && !RV.busy) { ta.value = ''; rvAsk(v); } });
     rvEl('rv-text')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); rvEl('rv-form')?.requestSubmit(); } });
     rvEl('rv-log')?.addEventListener('click', e => { const r = e.target.closest('[data-rv-retry]'); if (r && !RV.busy) { const q = RV.log[Number(r.dataset.rvRetry)]; if (q) rvAsk(q.text, true); } });
+    // #1110-4e 미리보기 칸을 누르면 카드가 화면 위쪽에 맞춰짐 · 폰 자판이 올라와 보이는 높이가 줄면 카드도 같이 줄어 입력 줄·마지막 말풍선이 보임(입력 칸 값은 안 건드림)
+    const chat = rvEl('rv-chat');
+    chat?.addEventListener('click', e => { if (!e.target.closest('.rv-link')) rvAlign(); });
+    chat?.addEventListener('focusin', () => rvAlign());
+    const onVV = () => { if (!chat || !chat.offsetParent) return; rvFit(); if (chat.contains(document.activeElement)) { rvLogEnd(); rvAlign(true); } };
+    window.addEventListener('resize', onVV);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', onVV);
 }
-function rvEnter() { rvInit(); rvDraw(); rvDrawLog(); if (!RV.stats && !RV.loading) rvLoad(); }
+function rvTopGap() {   // 화면 맨 위에 붙어 있는 머리(메뉴·종 단추 줄) 높이 — 없으면 0
+    let b = 0, e = document.elementFromPoint(Math.max(1, window.innerWidth / 2), 2);
+    while (e && e !== document.body && e !== document.documentElement) {
+        if (e.id === 'rv-chat') return 0;
+        const p = getComputedStyle(e).position;
+        if (p === 'fixed' || p === 'sticky') b = Math.max(b, e.getBoundingClientRect().bottom);
+        e = e.parentElement;
+    }
+    return b > 0 && b < window.innerHeight * 0.4 ? Math.round(b) : 0;
+}
+function rvFit() {   // 미리보기 카드 높이(--rv-h) — 폰 = 지금 보이는 높이 − 고정 머리 − 여백
+    const chat = rvEl('rv-chat'); if (!chat) return;
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    if (window.matchMedia('(max-width: 860px)').matches) { chat.style.setProperty('--rv-h', Math.max(260, Math.round(vh - rvTopGap() - 16)) + 'px'); return; }
+    const left = document.querySelector('#inquiry-tab-overview .rv-left');   // PC = 왼쪽 칸 높이만큼(화면보다 길어지지는 않게)
+    if (left && left.offsetHeight) chat.style.setProperty('--rv-h', Math.max(480, Math.min(left.offsetHeight, window.innerHeight - 24)) + 'px');
+}
+function rvLogEnd() { const el = rvEl('rv-log'); if (el) el.scrollTop = el.scrollHeight; }
+function rvAlign(instant) {
+    const chat = rvEl('rv-chat'); if (!chat || !chat.offsetParent) return;
+    rvFit();
+    const gap = rvTopGap() + 8;
+    if (Math.abs(chat.getBoundingClientRect().top - gap) < 4) return;
+    chat.style.scrollMarginTop = gap + 'px';
+    const calm = instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    chat.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
+}
+function rvEnter() { rvInit(); rvDraw(); rvDrawLog(); rvFit(); if (!RV.stats && !RV.loading) rvLoad(); }
 window.rvSetDays = function(d) { d = Number(d) === 30 ? 30 : 7; if (d === RV.days) return; RV.days = d; RV.stats = null; rvDraw(); rvLoad(); };
 window.rvSetCh = function(c) { RV.ch = c; rvDraw(); };
 window.rvSetPch = function(c) { if (RV.busy) return; RV.pch = c; rvDraw(); };
@@ -14118,6 +14152,7 @@ function rvDraw() {
     if (foot) foot.textContent = (RV.cap ? `오늘 남은 미리보기 ${RV.left == null ? RV.cap : RV.left}번 · ` : '') + '실제로 보내거나 기록하지 않아요. ' + (RV_PNOTE[RV.pch] || '');
     const send = rvEl('rv-send'), ta = rvEl('rv-text'); if (send) { send.disabled = RV.busy; send.textContent = RV.busy ? '만드는 중' : '물어보기'; if (RV.busy) send.setAttribute('aria-busy', 'true'); else send.removeAttribute('aria-busy'); } if (ta) ta.disabled = RV.busy;
     document.querySelectorAll('#rv-chips .rv-chip').forEach(b => { b.disabled = RV.busy; });
+    rvFit();
 }
 function rvDrawLog() {
     const el = rvEl('rv-log'); if (!el) return;
@@ -14145,7 +14180,7 @@ async function rvAsk(text, retry) {
     if (retry) RV.log = RV.log.filter(m => !(m.state === 'err' && m.retry === qi));
     const slot = { who: 'bot', state: 'wait', ch }; RV.log.push(slot);
     if (RV.log.length > 20) RV.log = RV.log.slice(-20);
-    RV.busy = true; rvDraw(); rvDrawLog();
+    RV.busy = true; rvDraw(); rvDrawLog(); rvAlign();
     const slowT = setTimeout(() => { if (slot.state === 'wait') { slot.slow = true; rvDrawLog(); } }, 15000);
     try { await scenNoMap(); } catch (_) { /* 번호 링크 없이도 답은 보인다 */ }
     let status = 0, j = null;

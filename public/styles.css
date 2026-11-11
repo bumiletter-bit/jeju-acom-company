@@ -5077,7 +5077,8 @@ button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { ou
 .rv-chip:disabled { opacity: .5; cursor: default; }
 .rv-mat-links { display: grid; gap: 6px; font-size: 13px; }
 .rv-link { color: var(--primary); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
-.rv-right { padding: 16px; margin: 0; display: flex; flex-direction: column; min-height: 420px; max-height: calc(100vh - 220px); position: sticky; top: 12px; }
+#rv-mat[hidden] { display: none; }   /* #1110-4e 「연결된 답변 재료」 카드 없앰(답변 재료 탭이 따로 있음) · id 는 남김 */
+.rv-right { padding: 16px; margin: 0; display: flex; flex-direction: column; height: var(--rv-h, calc(100vh - 220px)); min-height: 480px; position: sticky; top: 12px; }   /* #1110-4e 미리보기 칸 = 왼쪽 칸 높이만큼 길게(--rv-h = app.js rvFit · 종전 = 대화가 짧으면 420px) */
 .rv-log { flex: 1 1 auto; min-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
 .rv-empty { margin: auto; text-align: center; color: var(--text-mid); font-size: 13px; line-height: 1.6; }
 .rv-msg { max-width: 86%; border-radius: 14px; padding: 9px 12px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -5098,10 +5099,9 @@ button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { ou
 @media (max-width: 1100px) { .rv-grid { grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); } }
 @media (max-width: 860px) {
     .rv-grid { grid-template-columns: minmax(0, 1fr); }
-    .rv-right { position: static; max-height: none; min-height: 0; order: 2; }
-    .rv-log { min-height: 200px; max-height: 52vh; }
+    .rv-right { position: static; height: var(--rv-h, 72vh); min-height: 260px; order: 2; }   /* #1110-4e 폰 = 미리보기 카드가 화면 한 장(--rv-h = 보이는 높이 − 고정 머리 · app.js rvFit · 자판이 올라오면 같이 줄어 입력 줄이 보임) */
+    .rv-log { min-height: 0; }
     .rv-left { order: 1; }
-    #rv-mat { order: 3; }
     .rv-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
     .rv-chips::-webkit-scrollbar { display: none; }
     .rv-chip { flex: none; min-height: 44px; }

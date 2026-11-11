@@ -94,6 +94,7 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
                     meLeft: R(me).left - L.left < 70, botRight: L.right - R(bot).right < 24, meW: R(me).width / L.width, botW: R(bot).width / L.width, metaOut: meta.parentElement === row && R(meta).top >= R(bot).bottom - 1, ava: !!q('#rv-log .rv-row.me .rv-ava') && /손님/.test(q('#rv-log .rv-row.me .rv-who').textContent), sendH: R(q('#rv-send')).height, taH: R(q('#rv-text')).height, title: q('.rv-top .rv-h').textContent }; });
             const TALK = { logBg: 'rgb(157, 182, 216)', meBg: 'rgb(255, 255, 255)', botBg: 'rgb(207, 230, 251)', ink: 'rgb(22, 32, 46)', metaInk: 'rgb(35, 54, 79)', link: 'rgb(10, 58, 140)', bar: 'rgb(255, 255, 255)', field: 'rgb(238, 241, 245)', fieldInk: 'rgb(22, 32, 46)', send: 'rgb(62, 86, 119)', sendInk: 'rgb(255, 255, 255)', top: 'rgb(157, 182, 216)', tabOn: 'rgb(62, 86, 119)', tabOff: 'rgb(227, 236, 247)', foot: 'rgb(74, 85, 104)' };
             const sameColors = o => Object.keys(TALK).filter(k => o[k] !== TALK[k]).map(k => k + '=' + o[k]);
+            await page.mouse.move(2, 2); await page.waitForTimeout(250);   // #1110-4e 카드 높이가 고정이라 보내기 단추 위에 마우스가 남음(hover 색) → 치우고 잼
             let sh = await shape();
             ok(sameColors(sh).length === 0, tag + '#1110-4c 톡톡 색(바탕 회청·손님 흰색·봇 하늘색·입력 줄 흰 띠)', sameColors(sh).join(' '));
             ok(sh.meLeft && sh.botRight && sh.ava && sh.metaOut && sh.title === '제주아꼼이네 미리보기', tag + '#1110-4c 손님 왼쪽(프로필·「손님」) · 봇 오른쪽 · 재료 줄은 말풍선 아래', JSON.stringify(sh));
@@ -140,9 +141,28 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             ok(await page.evaluate(() => getComputedStyle(document.getElementById('inquiry-tab-scenario')).display !== 'none' && getComputedStyle(document.getElementById('inquiry-edit-card')).display !== 'none' && /#16/.test(document.getElementById('inquiry-edit-title').textContent) && getComputedStyle(document.getElementById('inquiry-mat-head')).display !== 'none'), tag + '「시나리오 16」 → 답변 재료 탭 그 글 편집 카드');
             await page.evaluate(() => window.switchInquiryTab('overview')); await page.waitForTimeout(300);
             ok((await logMsgs(page)).length === before && await page.evaluate(() => getComputedStyle(document.getElementById('inquiry-mat-head')).display === 'none'), tag + '돌아오면 대화 그대로 · 답변 재료 머리 숨김');
-            ok(/늘 쓰는 글 4개 보기/.test(await txt(page, '#rv-mat-links')) && /기간 있는 글 4개 보기\(오늘 적용 2\)/.test(await txt(page, '#rv-mat-links')), tag + '연결된 재료 수', await txt(page, '#rv-mat-links'));
-            await page.evaluate(() => document.querySelectorAll('#rv-mat-links .rv-link')[1].click()); await page.waitForTimeout(400);
-            ok(await page.evaluate(() => getComputedStyle(document.getElementById('inquiry-tab-season')).display !== 'none'), tag + '기간 있는 글 링크 → 그 칸');
+            // #1110-4e 「연결된 답변 재료」 카드 없음 · 미리보기 칸 크게 · 누르면 위쪽 정렬 · 자판 가정
+            ok(await vis(page, '#rv-mat') === false && await page.evaluate(() => !/연결된 답변 재료|늘 쓰는 글 \d+개 보기/.test(document.getElementById('inquiry-tab-overview').innerText)), tag + '#1110-4e 「연결된 답변 재료」 카드 없음');
+            const box = () => page.evaluate(() => { const R = s => document.querySelector(s).getBoundingClientRect(), c = R('#rv-chat'), l = R('#rv-log'), b = R('.rv-bottom'), left = R('.rv-left'), log = document.getElementById('rv-log'); const last = log.lastElementChild ? log.lastElementChild.getBoundingClientRect() : null;
+                return { ih: window.innerHeight, top: Math.round(c.top), bottom: Math.round(c.bottom), h: Math.round(c.height), logH: Math.round(l.height), leftH: Math.round(left.height), barBottom: Math.round(b.bottom), sendTop: Math.round(R('#rv-send').top), lastIn: last ? last.bottom <= l.bottom + 1 && last.bottom > l.top : null, logScroll: log.scrollHeight > log.clientHeight, atEnd: Math.abs(log.scrollHeight - log.clientHeight - log.scrollTop) < 2, sx: Math.max(0, document.documentElement.scrollWidth - window.innerWidth) }; });
+            let bx = await box();
+            if (w <= 860) ok(bx.logH >= bx.ih * 0.6 && bx.h <= bx.ih, tag + '#1110-4e 폰 대화 영역 = 화면 높이의 60% 이상 · 카드는 한 화면 안', JSON.stringify(bx));
+            else ok(bx.h >= 480 && (bx.h >= bx.leftH - 1 || bx.h >= bx.ih - 25) && bx.h <= bx.ih, tag + '#1110-4e PC 미리보기 칸 = 왼쪽 칸 높이 이상(대화가 짧아도 길게)', JSON.stringify(bx));
+            ok(bx.logScroll && bx.atEnd && bx.lastIn, tag + '#1110-4e 답이 쌓이면 대화 영역 안에서 스크롤 · 맨 아래(새 답)가 보임', JSON.stringify(bx));
+            const gap = await page.evaluate(() => { let b = 0, e = document.elementFromPoint(window.innerWidth / 2, 2); while (e && e !== document.body && e !== document.documentElement) { const p = getComputedStyle(e).position; if ((p === 'fixed' || p === 'sticky') && e.id !== 'rv-chat') b = Math.max(b, e.getBoundingClientRect().bottom); e = e.parentElement; } return b < window.innerHeight * 0.4 ? Math.round(b) : 0; });
+            const aligned = b => b.top >= gap && b.barBottom <= b.ih + 1 && (w > 860 || b.top <= gap + 14);   // PC = 카드가 통째로 화면 안(붙는 자리 12px · 더 밀 데가 없으면 그대로)
+            await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+            await page.click('#rv-log', { position: { x: 20, y: 20 } }); await page.waitForTimeout(900); bx = await box();
+            ok(aligned(bx), tag + '#1110-4e 대화 영역을 누르면 미리보기 카드가 화면 위쪽에 맞춰짐(입력 줄까지 한 화면)', JSON.stringify({ gap, ...bx }));
+            await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+            await page.evaluate(() => document.getElementById('rv-text').focus()); await page.waitForTimeout(900); bx = await box();
+            ok(aligned(bx), tag + '#1110-4e 입력 칸에 들어가도 위쪽 정렬', JSON.stringify({ gap, ...bx }));
+            await page.fill('#rv-text', '치는 중인 글'); await page.setViewportSize({ width: w, height: 480 }); await page.waitForTimeout(500); bx = await box();
+            ok(bx.ih === 480 && (w > 860 ? bx.sendTop < 480 : bx.barBottom <= 481) && bx.sendTop > 0 && (w > 860 || (bx.top >= gap && bx.lastIn && bx.atEnd)) && await page.inputValue('#rv-text') === '치는 중인 글' && bx.sx === 0, tag + '#1110-4e 자판 가정(보이는 높이 480) = 입력 줄·마지막 말풍선 보임 · 치던 글 그대로', JSON.stringify({ gap, ...bx }));
+            await page.setViewportSize({ width: w, height: h }); await page.fill('#rv-text', ''); await page.evaluate(() => document.getElementById('rv-text').blur()); await page.waitForTimeout(300);
+            await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200); const nAsk = (await logMsgs(page)).length;
+            await page.evaluate(() => { const c = document.querySelector('#rv-chips .rv-chip'); c.scrollIntoView({ block: 'center' }); c.click(); }); await page.waitForFunction(() => !document.querySelector('#rv-log .rv-msg.wait'), null, { timeout: 8000 }); await page.waitForTimeout(900); bx = await box();
+            ok((await logMsgs(page)).length >= Math.min(20, nAsk + 2) - 1 && aligned(bx) && bx.atEnd && bx.lastIn, tag + '#1110-4e 칩으로 물어도 미리보기로 스크롤 · 새 답이 맨 아래에 보임', JSON.stringify({ gap, ...bx }));
             // 닿는 크기(폰)
             if (w === 390) {
                 await page.evaluate(() => window.switchInquiryTab('overview')); await page.waitForTimeout(300);
