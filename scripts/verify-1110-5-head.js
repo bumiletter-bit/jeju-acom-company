@@ -31,7 +31,7 @@ function world(o = {}) {
         throw new Error('가짜 pool 이 모르는 SQL: ' + sql.slice(0, 90));
     } };
     const app = { get(p, ...h) { W.routes['GET ' + p] = h; }, post(p, ...h) { W.routes['POST ' + p] = h; } };
-    W.api = mount(app, Object.assign({ pool, authMiddleware: (req, res, next) => next(), now: () => W.now, token: () => 'tok',
+    W.api = mount(app, Object.assign({ pool, authMiddleware: (req, res, next) => next(), now: () => W.now, token: () => 'tok', isOwner: u => !!u && u.role !== 'accountant',   // #1122 시험용 대표 판정(#1110-5b 뒤 이력 길이 403 으로 닫혀 검증이 죽던 것 · 실서버는 server.js isOwnerUser · 세무사 403 은 guard 가 먼저)
         qnaGenerate: async () => W.genThrow ? Promise.reject(new Error('ai')) : (W.genOut === undefined ? { answer: '답 글', used: ['사이즈'] } : W.genOut),
         inquiryGenerate: async () => ({ answer: '고객문의 답', used: [] }),
         fetch: async () => ({ status: 200, ok: true, json: async () => ({ ok: true, skip: false, answer: '톡톡 답', source: 'ai', scenario_nos: ['16'], scenario_names: ['사이즈'] }), text: async () => '' }) }, o.deps || {}));

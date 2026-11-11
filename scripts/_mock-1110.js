@@ -65,7 +65,7 @@ http.createServer(async (req, res) => {
             const d30 = u.searchParams.get('days') === '30';
             const ch = d30 ? { talk: { total: 200, bot: 80, staff: 100, open: 20 }, qna: { total: 60, bot: 50, staff: 10, open: 0 }, inquiry: { total: 0, bot: 0, staff: 0, open: 0 }, sms: { total: 90, bot: 3, staff: 80, open: 7 } }
                 : { talk: { total: 50, bot: 20, staff: 25, open: 5 }, qna: { total: 40, bot: 33, staff: 7, open: 0 }, inquiry: { total: 0, bot: 0, staff: 0, open: 0 }, sms: null };
-            const all = { total: 0, bot: 0, staff: 0, open: 0 }; for (const k in ch) if (ch[k]) for (const f in all) all[f] += ch[k][f];
+            const all = { total: 0, bot: 0, staff: 0, open: 0 }; for (const k in ch) if (ch[k] && k !== 'sms') for (const f in all) all[f] += ch[k][f];   // #1122 서버처럼 문자 제외(가짜 응답엔 sms 칸을 남겨 옛 서버 꼴도 봄)
             return json(res, 200, { ok: true, days: d30 ? 30 : 7, from: '2026-11-05', to: '2026-11-11', channels: ch, all,
                 settings: { auto_reply: ST.auto_reply !== 'off', qna_auto_post: ST.qna_auto, inquiry_auto_post: ST.inq_auto, sms_mode: 'draft', talk_once_until_hour: 9 },
                 materials: { scenarios: ST.scenarios.length, season: ST.season.length, season_today: 2 }, preview: { left_today: ST.rv.cap - ST.rv.used, cap: ST.rv.cap } });

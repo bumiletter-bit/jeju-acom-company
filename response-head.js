@@ -3,7 +3,7 @@
  * 쓰는 법(server.js 장착 한 줄):
  *   require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate });
  *
- *   GET  /api/agent-office/response-stats?days=7|30   숫자(봇이 답함 / 직원이 답함 / 아직 안 답함 = 손님 대화 기준) + 사용 설정 상태 + 재료 수 + 미리보기 남은 횟수
+ *   GET  /api/agent-office/response-stats?days=7|30   숫자(봇이 답함 / 직원이 답함 / 아직 안 답함 = 손님 대화 기준 · 톡톡·상품문의·고객문의만 · 문자 제외 #1122) + 사용 설정 상태 + 재료 수 + 미리보기 남은 횟수
  *   POST /api/agent-office/response-preview { channel:'talk'|'qna'|'inquiry'|'sms', text, item? }   답만 만들어 돌려줌
  *
  * · 둘 다 로그인한 직원 전부(세무사 계정은 403). 사용 설정을 바꾸는 주소는 여기 없다(종전 PUT 3개 = 대표만).
@@ -22,6 +22,7 @@ const AD_RE = /https?:\/\/|www\.|\.(kr|com|net|co\.kr)\b|순위\s*올리|상위\
 const STAFF_ONLY = '[직원 직접답변]', ENTRY = '이 상품을 문의합니다.', ENTRY2 = '이 상품을 문의합니다';
 const entryOnly = m => !String(m || '').split('\n').map(s => s.replace(/^\[메시지\d+\]\s*/, '').trim()).filter(s => s && s !== ENTRY && s !== ENTRY2).length;
 const CHANNELS = ['talk', 'qna', 'inquiry', 'sms'];
+const STAT_CH = ['talk', 'qna', 'inquiry'];   // #1122(대표 11/11) 숫자(최근 응대)는 문자 제외 — 문자는 자동 답 없이 초안만이라 「봇이 답함」 셈이 뜻이 없음 · 미리보기(CHANNELS)엔 문자 그대로
 const MAX_TEXT = 1000, DEFAULT_CAP = 100, BOT_TIMEOUT_MS = 65000;
 const kstDay = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
@@ -78,24 +79,14 @@ module.exports = function mountResponseHead(app, deps) {
             FROM ${table} WHERE collected_at > NOW() - make_interval(days => $1::int)`, [days])).rows[0];
         return { total: r.bot + r.staff + r.open, bot: r.bot, staff: r.staff, open: r.open };
     }
-    async function smsStats(days) {
-        // 기간 안에 손님 글이 온 대화 · 사람 몫 판정 = sms/index.js HUMAN_SQL·OPEN_SQL 과 같은 뜻(사유 또는 초안 있음 · 끝남·무시 제외)
-        const r = (await pool.query(`
-            WITH act AS (SELECT DISTINCT thread_id FROM ${T.smsMessages} WHERE direction = 'in' AND event_at > NOW() - make_interval(days => $1::int) AND COALESCE(bucket, 'other') NOT IN ('otp', 'ad', 'carrier')),
-                 t AS (SELECT t.id, (t.status NOT IN ('closed', 'ignored') AND (t.staff_why IS NOT NULL OR t.draft_text IS NOT NULL)) AS open,
-                              (SELECT m.sender FROM ${T.smsMessages} m WHERE m.thread_id = t.id AND m.direction = 'out' AND m.state NOT IN ('cancelled', 'failed') ORDER BY m.id DESC LIMIT 1) AS last_out
-                       FROM ${T.smsThreads} t JOIN act a ON a.thread_id = t.id WHERE t.status <> 'ignored' AND t.phone_digits NOT LIKE '0999%')
-            SELECT count(*) FILTER (WHERE open)::int AS open, count(*) FILTER (WHERE NOT open AND last_out = 'bot')::int AS bot, count(*) FILTER (WHERE NOT open AND COALESCE(last_out, '') <> 'bot')::int AS staff FROM t`, [days])).rows[0];
-        return { total: r.bot + r.staff + r.open, bot: r.bot, staff: r.staff, open: r.open };
-    }
     const _cache = new Map();   // days → { at, v }
     async function counts(days) {
         const hit = _cache.get(days);
         if (hit && CACHE_MS > 0 && now() - hit.at < CACHE_MS) return hit.v;
         const one = async (name, fn) => { try { return await fn(); } catch (e) { log.error('[응대 현황] 셈 실패(' + name + '):', e.message); return null; } };
-        const [talk, qna, inquiry, sms] = await Promise.all([one('talk', () => talkStats(days)), one('qna', () => postStats(T.qnas, days)), one('inquiry', () => postStats(T.inquiries, days)), one('sms', () => smsStats(days))]);
-        const channels = { talk, qna, inquiry, sms };
-        const all = zero(); for (const k of CHANNELS) if (channels[k]) for (const f of ['total', 'bot', 'staff', 'open']) all[f] += channels[k][f];
+        const [talk, qna, inquiry] = await Promise.all([one('talk', () => talkStats(days)), one('qna', () => postStats(T.qnas, days)), one('inquiry', () => postStats(T.inquiries, days))]);
+        const channels = { talk, qna, inquiry };   // #1122 문자 셈(sms_threads) 없음
+        const all = zero(); for (const k of STAT_CH) if (channels[k]) for (const f of ['total', 'bot', 'staff', 'open']) all[f] += channels[k][f];
         const v = { channels, all };
         _cache.set(days, { at: now(), v });
         return v;

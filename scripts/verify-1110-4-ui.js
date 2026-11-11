@@ -51,9 +51,9 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             ok(/36%직원이 답함32건/.test(await txt(page, '#rv-nums')) && /5건아직 안 답함/.test(await txt(page, '#rv-nums')), tag + '직원 36% · 안 답함 5건');
             await page.evaluate(() => window.rvSetCh('talk')); ok(/40%봇이 답함20건/.test(await txt(page, '#rv-nums')) && /50%직원이 답함25건/.test(await txt(page, '#rv-nums')), tag + '톡톡 알약', await txt(page, '#rv-nums'));
             await page.evaluate(() => window.rvSetCh('inquiry')); ok(/최근 7일 손님 글이 없어요/.test(await txt(page, '#rv-nums')), tag + '0건 채널 빈 안내');
-            await page.evaluate(() => window.rvSetCh('sms')); ok(/이 채널 숫자를 못 읽었어요/.test(await txt(page, '#rv-nums')), tag + '못 읽은 채널(null) 안내');
+            await page.evaluate(() => window.rvSetCh('sms')); ok(/59%봇이 답함53건/.test(await txt(page, '#rv-nums')) && await page.evaluate(() => Array.from(document.querySelectorAll('#rv-ch .settlement-tab')).map(b => b.textContent).join('|') === '전체|톡톡|상품문의|고객문의' && document.querySelector('#rv-ch .settlement-tab.active').textContent === '전체'), tag + '#1122 문자 알약 없음(4개) · rvSetCh(sms) = 전체', await page.evaluate(() => Array.from(document.querySelectorAll('#rv-ch .settlement-tab')).map(b => b.textContent).join('|')));
             await page.evaluate(() => window.rvSetCh('all')); await page.evaluate(() => window.rvSetDays(30)); await page.waitForTimeout(400);
-            ok(/38%봇이 답함133건/.test(await txt(page, '#rv-nums')) && /27건아직 안 답함/.test(await txt(page, '#rv-nums')) && await page.evaluate(() => document.querySelector('#rv-days .settlement-tab.active').textContent === '30일'), tag + '30일 = 다시 읽어 다른 값', await txt(page, '#rv-nums'));
+            ok(/50%봇이 답함130건/.test(await txt(page, '#rv-nums')) && /20건아직 안 답함/.test(await txt(page, '#rv-nums')) && await page.evaluate(() => document.querySelector('#rv-days .settlement-tab.active').textContent === '30일'), tag + '30일 = 다시 읽어 다른 값', await txt(page, '#rv-nums'));
             await page.evaluate(() => window.rvSetDays(7)); await page.waitForTimeout(400);
             ok(/손님 대화 기준/.test(await txt(page, '#rv-range')) && /11\/05 ~ 11\/11/.test(await txt(page, '#rv-range')), tag + '기간·기준 한 줄', await txt(page, '#rv-range'));
             // ── 사용 설정(이 탭으로 옮김 · id 하나)

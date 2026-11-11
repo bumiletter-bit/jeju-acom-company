@@ -14102,7 +14102,7 @@ function rvAlign(instant) {
 }
 function rvEnter() { rvInit(); rvDraw(); rvDrawLog(); rvFit(); if (!RV.stats && !RV.loading) rvLoad(); }
 window.rvSetDays = function(d) { d = Number(d) === 30 ? 30 : 7; if (d === RV.days) return; RV.days = d; RV.stats = null; rvDraw(); rvLoad(); };
-window.rvSetCh = function(c) { RV.ch = c; rvDraw(); };
+window.rvSetCh = function(c) { RV.ch = c === 'sms' ? 'all' : c; rvDraw(); };   // #1122 문자 칸 없음
 window.rvSetPch = function(c) { if (RV.busy) return; RV.pch = c; rvDraw(); };
 async function rvLoad() {
     const hb = rvEl('rv-hist-btn'); if (hb) hb.hidden = !(currentUser?.role === 'admin' && currentUser?.position === '대표');   // #1110-5b 이력은 대표만(서버도 403)
@@ -14119,16 +14119,21 @@ async function rvLoad() {
     }
     rvDraw();
 }
+function rvAll(d) {   // #1122 「전체」 = 톡톡+상품문의+고객문의(화면에서 다시 합침 · 옛 서버 응답에 문자가 섞여 있어도 안 셈) · 채널 칸이 없으면 서버 합 그대로
+    if (!d || !d.channels) return d ? d.all : null;
+    const o = { total: 0, bot: 0, staff: 0, open: 0 }; for (const k of ['talk', 'qna', 'inquiry']) { const c = d.channels[k]; if (c) for (const f in o) o[f] += Number(c[f]) || 0; }
+    return o;
+}
 function rvDraw() {
     rvInit();
     rvSeg('rv-days', [[7, '7일'], [30, '30일']], RV.days, 'rvSetDays');
-    rvSeg('rv-ch', RV_CH, RV.ch, 'rvSetCh');
+    rvSeg('rv-ch', RV_CH.filter(([k]) => k !== 'sms'), RV.ch, 'rvSetCh');   // #1122(대표 11/11) 최근 응대 숫자는 문자 제외(초안만 · 자동 답 0) · 미리보기 탭(rv-pch)엔 문자 그대로
     rvSeg('rv-pch', RV_CH.slice(1), RV.pch, 'rvSetPch');
     const box = rvEl('rv-nums'), d = RV.stats; if (!box) return;
     const pct = (n, t) => t > 0 ? Math.round(n * 100 / t) : 0;
     if (!d) box.innerHTML = RV.statsErr ? '<p class="text-muted rv-note">숫자를 못 읽었어요. <button type="button" class="rv-link" onclick="rvLoad()">다시 읽기</button></p>' : '<p class="text-muted rv-note">숫자를 읽는 중이에요.</p>';
     else {
-        const c = RV.ch === 'all' ? d.all : (d.channels || {})[RV.ch];
+        const c = RV.ch === 'all' ? rvAll(d) : (d.channels || {})[RV.ch];
         if (!c) box.innerHTML = '<p class="text-muted rv-note">이 채널 숫자를 못 읽었어요.</p>';
         else if (!c.total) box.innerHTML = `<p class="text-muted rv-note">최근 ${d.days}일 손님 글이 없어요.</p>`;
         else box.innerHTML = `
@@ -14136,7 +14141,7 @@ function rvDraw() {
             <div class="rv-num"><b>${pct(c.staff, c.total)}%</b><span>직원이 답함</span><small>${c.staff}건</small></div>
             <button type="button" class="rv-num is-open" onclick="notiGo('agent-office?inbox=open')" title="에이전트 오피스 손님 연락에서 답해요"><b>${c.open}건</b><span>아직 안 답함</span><small>눌러서 답하러 가기</small></button>`;
     }
-    const rg = rvEl('rv-range'); if (rg) rg.textContent = d ? `${String(d.from || '').slice(5).replace('-', '/')} ~ ${String(d.to || '').slice(5).replace('-', '/')} · 손님 대화 기준 · 봇 답 뒤 직원이 다시 답한 대화는 「직원이 답함」으로 세요.` : '';
+    const rg = rvEl('rv-range'); if (rg) rg.textContent = d ? `${String(d.from || '').slice(5).replace('-', '/')} ~ ${String(d.to || '').slice(5).replace('-', '/')} · 손님 대화 기준 · 봇 답 뒤 직원이 다시 답한 대화는 「직원이 답함」으로 세요. 문자는 초안만이라 안 세요.` : '';
     const more = rvEl('rv-set-more');
     if (more) {
         const st = d && d.settings, bits = [];

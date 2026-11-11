@@ -62,8 +62,8 @@ const row = (id, o) => Object.assign({ id, message: '질문', answered: false, b
     let r = await W.call('GET /api/agent-office/response-stats', { query: {} });
     ok(r.code === 200 && r.body.ok && r.body.days === 7, '숫자 200 · 기본 7일', r.body);
     ok(JSON.stringify(r.body.channels.talk) === JSON.stringify({ total: 4, bot: 2, staff: 1, open: 1 }), '톡톡 = 봇 2 · 직원 1 · 안 답함 1(입장 글 빠짐)', r.body.channels.talk);
-    ok(JSON.stringify(r.body.channels.qna) === JSON.stringify({ total: 40, bot: 33, staff: 7, open: 0 }) && r.body.channels.inquiry.total === 9 && r.body.channels.sms.total === 71, '상품문의·고객문의·문자 합');
-    ok(JSON.stringify(r.body.all) === JSON.stringify({ total: 124, bot: 42, staff: 71, open: 11 }), '전체 = 채널 합', r.body.all);
+    ok(JSON.stringify(r.body.channels.qna) === JSON.stringify({ total: 40, bot: 33, staff: 7, open: 0 }) && r.body.channels.inquiry.total === 9 && !('sms' in r.body.channels), '상품문의·고객문의 합 · 문자 칸 없음(#1122)');
+    ok(JSON.stringify(r.body.all) === JSON.stringify({ total: 53, bot: 40, staff: 11, open: 2 }), '전체 = 톡톡+상품문의+고객문의 합(문자 제외 #1122)', r.body.all);
     ok(r.body.from === '2026-11-05' && r.body.to === '2026-11-11', '기간(KST 오늘 포함 7일)', r.body.from + '~' + r.body.to);
     ok(JSON.stringify(r.body.settings) === JSON.stringify({ auto_reply: true, qna_auto_post: true, inquiry_auto_post: false, sms_mode: 'draft', talk_once_until_hour: 9 }), '설정 상태', r.body.settings);
     ok(JSON.stringify(r.body.materials) === JSON.stringify({ scenarios: 63, season: 3, season_today: 1 }), '재료 수 · 오늘 적용(11-11 = 첫 줄만 · 해 넘는 구간 12-15~01-10 은 아님)', r.body.materials);
@@ -77,7 +77,7 @@ const row = (id, o) => Object.assign({ id, message: '질문', answered: false, b
     r = await W.call('GET /api/agent-office/response-stats', { user: { id: 9, role: 'accountant' } }); ok(r.code === 403, '세무사 403');
     W = world({ failTalk: true }); const eLog = console.error; console.error = () => { };
     r = await W.call('GET /api/agent-office/response-stats', {}); console.error = eLog;
-    ok(r.code === 200 && r.body.channels.talk === null && r.body.all.total === 120, '한 채널 실패 = 그 칸만 null · 나머지는 나옴', r.body.all);
+    ok(r.code === 200 && r.body.channels.talk === null && r.body.all.total === 49, '한 채널 실패 = 그 칸만 null · 나머지는 나옴', r.body.all);
     W = world({ cfg: { inquiry_auto_reply: 'off', sms_gateway: { enabled: false, mode: 'auto' }, bot_timing: { once_until_hour: true } } }); r = await W.call('GET /api/agent-office/response-stats', {});
     ok(JSON.stringify(r.body.settings) === JSON.stringify({ auto_reply: false, qna_auto_post: true, inquiry_auto_post: false, sms_mode: 'off', talk_once_until_hour: null }), '설정 기본값(칸 없음 = 상품문의 켜짐·고객문의 꺼짐) · 문자 꺼짐 · 이상한 값 = null', r.body.settings);
 
