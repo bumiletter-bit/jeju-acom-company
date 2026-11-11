@@ -836,3 +836,45 @@ html[data-ao-theme="dark"] .om-pxs-px > b { color: var(--d-sub); }
 .om-pend-t { display: block; margin-top: 2px; font-size: 12px; font-weight: 700; color: var(--d-warn); text-decoration: none; }
 .om-btn.om-pend-b { box-shadow: inset 0 0 0 1.5px var(--d-warn); color: var(--d-warn); }
 .om-acts.om-pend > span { color: var(--d-warn); font-weight: 600; }
+/* #1131(대표 11/11 폰 캡처) ④ 판 세 묶음 = 묶음마다 테두리 상자 + 아주 옅은 다른 바탕(주문 = 인디고 · 붙은 주소 줄 = 초록 · 현금 줄 붙이기 = 호박) · 줄 = 흰 표 안 얇은 실선(메모함 현금 줄 표 꼴)
+   · 제목 15px 굵게 / 둘째 제목 13.5px / 설명 12px 진한 회색(옅은 바탕 위 4.5:1 이상) · 오른쪽 조작 칸 = 줄마다 같은 오른쪽 선 · 후보 목록 높이 줄여 [이 줄도 주소 줄로][닫기] 가 목록 아래 온전히 · 동작·글자·마크업 무변경 */
+.om-pxs-wrap { --px-sub: #475467; --px-row: #E4E7EC; --px-tbl: var(--d-card);
+    --px-ord-bg: #F4F5FF; --px-ord-ln: #C7CCF7; --px-pair-bg: #F0FAF4; --px-pair-ln: #A9DFC0; --px-cash-bg: #FFF8E8; --px-cash-ln: #EBCB7C;
+    --px-pend-bg: #FFEFD2; --px-pend-fg: #B54708; }
+html[data-ao-theme="dark"] .om-pxs-wrap { --px-sub: #AEB4CB; --px-row: #2A3052; --px-tbl: #161A2E;
+    --px-ord-bg: #1C2146; --px-ord-ln: #3B4384; --px-pair-bg: #132820; --px-pair-ln: #2C5B45; --px-cash-bg: #282214; --px-cash-ln: #66521F;
+    --px-pend-bg: rgba(251, 191, 74, .16); --px-pend-fg: #FBBF4A; }
+.om-pair.om-pxs-wrap, html[data-ao-theme="dark"] .om-pair.om-pxs-wrap { background: none; box-shadow: none; padding: 0; gap: 10px; }
+.om-pxs-wrap .om-pxs-top { gap: 10px; }
+.om-pxs-wrap .om-pxs, .om-pxs-wrap .om-pxs-top > .om-norm { --px-ln: var(--px-ord-ln); margin: 0; padding: 10px 12px 12px; border: 1px solid var(--px-ln); border-radius: 10px; background: var(--px-ord-bg); gap: 6px; }
+.om-pxs-wrap .om-pxs-top > .om-pxs:first-child { border-top: 1px solid var(--px-ln); }   /* #1125 「첫 묶음 위 선 없음」 대신 상자 테두리 · 색 = 묶음마다 --px-ln */
+.om-pxs-wrap .om-pxs.om-pxs-paired { --px-ln: var(--px-pair-ln); border-color: var(--px-ln); background: var(--px-pair-bg); }
+.om-pxs-wrap .om-pxs.om-pxs-px { --px-ln: var(--px-cash-ln); border-color: var(--px-ln); background: var(--px-cash-bg); }
+.om-pxs-wrap .om-pxs-h { font-size: 15px; line-height: 1.35; }
+.om-pxs-wrap .om-pxs-h > span { font-weight: 800; }
+.om-pxs-wrap .om-pxs-px > b { font-size: 13.5px; font-weight: 600; color: var(--d-ink); line-height: 1.4; }
+.om-pxs-wrap .om-pxs-h small, .om-pxs-wrap .om-pxs-d, .om-pxs-wrap .om-pair-s, .om-pxs-wrap .om-pair-n { color: var(--px-sub); }
+.om-pxs-wrap .om-pxs-h small { font-size: 12px; }
+.om-pxs-wrap .om-pair-n.om-pxs-h { color: var(--d-ink); }   /* 「붙은 주소 줄」 제목은 p.om-pair-n 꼴 = 설명 색 규칙에서 빼냄 */
+.om-pxs-wrap .om-pxs-l, .om-pxs-wrap .om-pairx-b .om-pair-l { gap: 0; background: var(--px-tbl); border: 1px solid var(--px-row); border-radius: 8px; }
+.om-pxs-wrap .om-pxs-l > li, .om-pxs-wrap .om-pairx-b .om-pair-l > li { padding: 4px 10px; border-top: 1px solid var(--px-row); }
+.om-pxs-wrap .om-pxs-l > li:first-child, .om-pxs-wrap .om-pairx-b .om-pair-l > li:first-child { border-top: 0; }
+.om-pxs-wrap .om-pair-l .om-pxrow { padding: 4px 10px; border-top: 1px solid var(--px-row); }
+.om-pxs-wrap .om-pxs-l > .om-pxrow:first-child { border-top: 0; }
+.om-pxs-wrap .om-pxrow-a { min-width: 0; gap: 12px; }
+.om-pxs-wrap .om-pxrow-a .om-btn { min-width: 104px; }
+.om-pxs-wrap .om-pairx-b .om-pair-l { max-height: min(36vh, 300px); }
+.om-pxs-wrap .om-pxs-px > .om-acts { margin-top: 4px; }
+.om-pxs-wrap .om-pxrow.om-pxrow-pend { background: var(--px-pend-bg); border-radius: 0; padding-left: 10px; padding-right: 10px; }
+.om-pxs-wrap .om-pxrow-pend .om-pxrow-t { color: var(--d-ink); }
+.om-pxs-wrap .om-pend-t { color: var(--px-pend-fg); }
+.om-pxs-wrap .om-btn.om-pend-b { box-shadow: inset 0 0 0 1.5px var(--px-pend-fg); color: var(--px-pend-fg); }
+/* #1131-b 맨 위 요약 줄(입력삭제 번호 · 주문 n박스 ↔ 매칭된 주소 줄 m박스 · 배지) = 판에서 가장 먼저 눈에 · 묶음 번호 ①②③ = 작은 동그라미 */
+.om-pxs-sum { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--d-card); border: 1.5px solid var(--d-accent); }
+.om-pxs-sum-t { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 14px; color: var(--d-ink); line-height: 1.4; font-variant-numeric: tabular-nums; }
+.om-pxs-sum-t strong { font-size: 16px; font-weight: 800; letter-spacing: 0; }
+.om-pxs-sum-t > span:not(.om-badge) { font-weight: 600; }
+.om-pxs-sum-t .om-badge { cursor: default; }
+.om-pxs-sum-s { margin: 0; font-size: 12px; color: var(--px-sub); line-height: 1.45; }
+.om-pxs-no { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 999px; background: var(--d-accent); color: #fff; font-size: 12px; font-weight: 700; font-style: normal; line-height: 1; vertical-align: 2px; }
+html[data-ao-theme="dark"] .om-pxs-no { background: var(--d-accent-fill, #5B5BEA); }

@@ -62,7 +62,7 @@ const K = '010-5555-0001', KD = '01055550001', KC = '050-7777-0002', KCD = '0507
         ok(/3\/4/.test(await badgeOf(pg, K).textContent()), '처음 배지 3/4', await badgeOf(pg, K).textContent());
         await badgeOf(pg, K).click(); await pg.waitForSelector('.om-norm input[data-cact="normchk"]');
         const txt = await pg.textContent('.om-norm');
-        ok(txt.includes('이 번호의 주문 2건') && txt.includes('주문받는2') && txt.includes('서울 가짜구 주문로 2') && txt.includes('1박스'), '주문 목록 = 판매처·품목·수량·받는 분·주소', txt);
+        ok(txt.includes('주문 2건') && txt.includes('주문받는2') && txt.includes('서울 가짜구 주문로 2') && txt.includes('1박스'), '주문 목록 = 판매처·품목·수량·받는 분·주소', txt);
         { const li = pg.locator('.om-norm li.om-norm-li', { has: pg.locator('input[data-v="2099110300002"]') }); await li.locator(':scope > span').first().click(); ok(!(await pg.locator('.om-norm input[data-v="2099110300002"]').isChecked()) && !(await pg.textContent('#om-card-save')).includes('일반발송'), '#1119 C1 주문 글을 눌러도 일반발송 체크 안 켜짐', await pg.textContent('#om-card-save')); }
         await pg.locator('.om-norm input[data-v="2099110300002"]').check(); ok((await pg.textContent('#om-card-save')).includes('일반발송 1건'), '저장 단추에 표시', await pg.textContent('#om-card-save'));
         await pg.locator('#om-card [data-act="cancel"], #om-card .om-card-x, #om-card-x').first().click().catch(() => {}); await pg.waitForTimeout(150);
@@ -88,7 +88,7 @@ const K = '010-5555-0001', KD = '01055550001', KC = '050-7777-0002', KCD = '0507
         console.log('④ 쿠팡 = 같은 패턴(구매자 안심번호)');
         await pg.reload(); await pg.waitForFunction(() => !!window.AkmOrderMemo); await pg.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await pg.waitForSelector('#om-list .om-badge');
         await badgeOf(pg, KC).click(); await pg.waitForSelector('.om-norm input[data-cact="normchk"]');
-        const ct = await pg.textContent('.om-norm'); ok(ct.includes('이 번호의 주문 2건') && await pg.locator('.om-norm input[data-v="3100000077"]').count() === 1 && ct.includes('3박스'), '상자 2줄 한 주문 = 한 칸 · 수량 합 · 주문번호 체크', ct);
+        const ct = await pg.textContent('.om-norm'); ok(ct.includes('주문 2건') && await pg.locator('.om-norm input[data-v="3100000077"]').count() === 1 && ct.includes('3박스'), '상자 2줄 한 주문 = 한 칸 · 수량 합 · 주문번호 체크', ct);
         await pg.locator('.om-norm input[data-v="3100000079"]').check(); await pg.click('#om-card-save'); await pg.waitForFunction(() => { const c = document.getElementById('om-card'); return !c || c.hidden; }, null, { timeout: 8000 });
         const bc = await listB(cLineId); ok(bc.m === 3 && bc.normal === 1 && bc.state === 'ok', '쿠팡 배지 3/3 · 일반발송 1', bc);
         F = await forShip(true); ok(F.normal_orders.some(x => x.plat === '쿠팡' && x.orders.join() === '3100000079'), '쿠팡 for-ship = 주문번호', F.normal_orders);
