@@ -101,7 +101,7 @@ http.createServer(async (req, res) => {
         if (p === '/api/agent-office/season-waitlist' && M === 'GET') return json(res, 200, { rows: [], items: [] });
         if (p === '/api/agent-office/shipping-holidays' && M === 'GET') return json(res, 200, { rows: [], holidays: [] });
         if (p === '/api/agent-office/reward-grants' && M === 'GET') return json(res, 200, { rows: [], pending: 0 });
-        if (M === 'GET' && ['/api/schedules', '/api/rankings', '/api/keyword', '/api/settlements', '/api/prepayments'].some(x => p.startsWith(x))) return json(res, 200, []);   // 목록을 배열로 받는 화면(일정·순위)이 빈 객체에 넘어지지 않게
+        if (M === 'GET' && ['/api/schedules', '/api/rankings', '/api/keyword', '/api/settlements', '/api/prepayments', '/api/pricing', '/api/users'].some(x => p.startsWith(x))) return json(res, 200, []);   // 목록을 배열로 받는 화면(일정·순위)이 빈 객체에 넘어지지 않게
         return json(res, 200, M === 'GET' ? {} : { ok: true });
     }
     let file = OVERRIDE[p] || path.join(PUB, p === '/' ? 'index.html' : decodeURIComponent(p));
