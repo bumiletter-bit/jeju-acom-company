@@ -6913,14 +6913,21 @@ const NEEDS_MEMO_RE = new RegExp([
     '(?:발송|출고|배송|도착)\\s*(?:일|날짜)?\\s*(?:을|를|은|는)?\\s*\\d{1,2}\\s*(?:일|/)(?!\\s*(?:정도\\s*)?걸)',   // #1069-b 「배송 2일 걸리나요」 뺌                         // 발송을 12일로
     '(?:주소|배송지)\\s*(?:를|가|는|은)?\\s*(?:따로|각각|다르게|두\\s*군데|두\\s*곳|여러\\s*곳)',                 // 주소 따로
     '(?:나눠|나누어|따로|각각)\\s*(?:서)?\\s*(?:보내(?!\\s*주신|\\s*준)|발송(?!\\s*(?:되었|됐))|배송(?!\\s*(?:되었|됐))|받(?!았|은))',   // #1069-b 「각각 받았는데」 뺌                                         // 나눠서 보내 주세요
+    '보내는\\s*(?:이|분|사람)[^\\n?？]{0,25}?(?:변경|바꿔|바꾸|으로|로\\s*(?:해|부탁|적|써|넣|보내|발송))',   // #1108-D 보내는 분 김철수로 해 주세요 · 보내는 사람 변경 · 보내는이 홍길동으로
+    '[가-힣A-Za-z]{1,10}\\s*드림\\s*(?:으로|이라고|라고|로)',                                                 // #1108-D 「철수 드림으로」
+    '(?:월|화|수|목|금|토|일)(?:요일|욜)\\s*(?:에|날|쯤|까지)?\\s*(?:발송|출고|도착|받|보내)\\s*(?:을|를|으로|로)?\\s*(?:부탁|해\\s*주|해\\s*줘|희망|원해|원합|받고|해\\s*달|요청|맞춰)',   // #1108-D 수요일 발송 부탁 · 월요일 도착으로 받고 · 금요일 도착 희망(「금요일에 도착할까요?」 물음은 안 잡음)
 ].join('|'), 'i');
+// #1108-D 주소 변경 요청(취소·반품·환불·교환 말 없이) — 봇이 글로 답했으면 🟧 답변완료(메모 필요) + 「→ 배송지 수정」 · 봇이 못 답했으면 종전 🟨
+const ADDR_CHANGE_RE = /(배송지|주소)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소)/;
+const CLAIM_WORD_RE = /취소|반품|환불|교환/;
 function needsMemo(text) { return NEEDS_MEMO_RE.test(String(text || '')); }
 // #1069 텔레그램 HTML 알림(문의·톡톡만) — 본문 &<> 이스케이프 · <b> 굵게 · 4,000자 넘으면 가장 긴 칸부터 「…」(텔레그램 4,096 상한)
 function tgEsc(v) { return String(v == null ? '' : v).replace(/\r/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 const TG_HTML_MAX = 4000;
-function tgBlock(head, fields, tail) {   // head·tail = 글(굵게로 감쌈) · fields = [[머리, 값]] · 칸 사이 빈 줄
+function tgBlock(head, fields, tail, sub) {   // head·tail = 글(굵게로 감쌈) · fields = [[머리, 값]] · 칸 사이 빈 줄 · sub(#1108-D) = 머리 바로 아래 보통 글 한 줄(없으면 종전과 바이트 같음)
     const vals = fields.map(f => tgEsc(String(f[1] == null ? '' : f[1]).trim()));
-    const build = () => [`<b>${tgEsc(head)}</b>`].concat(fields.map((f, i) => `<b>${tgEsc(f[0])}:</b> ${vals[i]}`)).concat(tail ? [`<b>${tgEsc(tail)}</b>`] : []).join('\n\n');
+    // #1108-E head = { html } 이면 이미 만든 HTML 머리(🟥 + 낱말만 굵게) · 글자면 종전대로 통째 굵게
+    const build = () => [(head && typeof head === 'object' ? String(head.html) : `<b>${tgEsc(head)}</b>`) + (sub ? '\n' + tgEsc(sub) : '')].concat(fields.map((f, i) => `<b>${tgEsc(f[0])}:</b> ${vals[i]}`)).concat(tail ? [`<b>${tgEsc(tail)}</b>`] : []).join('\n\n');
     let out = build();
     for (let guard = 0; out.length > TG_HTML_MAX && guard < 20; guard++) {
         let k = 0; vals.forEach((v, i) => { if (v.length > vals[k].length) k = i; });
@@ -6943,8 +6950,15 @@ async function tgSendBlocks(blocks) {
     return res;
 }
 function qnaDoneBlock(kind, product, question, answer) {   // kind = '상품문의' | '고객문의'
-    return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', [['상품', product || '-'], ['문의', question], ['답변', answer]]);
+    // #1108-E 문의 글이 메모 거리(needsMemo)·주소 변경이면 머리 「답변완료 (*메모 필요*)」 + 톡톡 🟧 와 같은 꼬리 · 해당 없으면 종전 바이트
+    const q = String(question || ''), memo = needsMemo(q), addr = ADDR_CHANGE_RE.test(q) && !CLAIM_WORD_RE.test(q);
+    const fields = [['상품', product || '-'], ['문의', question], ['답변', answer]];
+    if (!memo && !addr) return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', fields);   // 손댈 것 없음 = 종전 바이트
+    const tail = [addr ? '→ 배송지 수정' : '', memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
+    return tgBlock(redHead('메모 필요', (kind === '상품문의' ? '상품문의' : '고객문의') + ' 답변완료'), fields, tail);
 }
+// #1108-E(대표 11/11 「봐야 되는 건은 빨강 · 낱말 통일」) 사람이 손대야 하는 문의 알림 머리 = 「🟥 <b>메모 필요|확인 필요</b> · 무엇」(텔레그램은 글자 색이 없어 🟥 + 굵게) · 손댈 것 없는 🟩🟦 는 종전 그대로
+function redHead(word, what) { return { html: `🟥 <b>${tgEsc(word)}</b> · ${tgEsc(what)}` }; }
 // #1074(대표 11/9 확정) 톡톡 알림 고르기 — null = 안 보냄 · { mode: 'staff'(🟨 직접 확인 필요) | 'memo'(🟧 답변완료 메모 필요), botLine, memo }
 //   · [쿨다운-무응답](직원 대화 중) = 안 보냄(요청형이어도) · 직원 답(staff_response·staff_at) 달린 줄 = 안 보냄
 //   · 봇이 답 못함([SKIP-무응답]·[AI에러…]) + 직원 신호·요청형·메모 거리 = 🟨 · 요청형 = 🟨(봇이 글로 답했으면 「봇:」 줄)
@@ -6957,15 +6971,17 @@ function talkPick(x) {
     const unanswered = br === '[SKIP-무응답]' || br.startsWith('[AI에러');
     const req = TALKTALK_REQUEST_RE.test(msg), memo = needsMemo(msg);
     if (unanswered) return (req || memo || NEEDS_STAFF_RE.test(msg)) ? { mode: 'staff', botLine: false, memo } : null;
+    if (botAnswered && ADDR_CHANGE_RE.test(msg) && !CLAIM_WORD_RE.test(msg)) return { mode: 'memo', botLine: true, memo, addr: true };   // #1108-D 주소 변경 = 봇이 답함 → 🟧 + 「→ 배송지 수정」
     if (req) return { mode: 'staff', botLine: botAnswered, memo };
     if (botAnswered && memo) return { mode: 'memo', botLine: true, memo: true };
     if (!botAnswered && memo) return { mode: 'staff', botLine: false, memo: true };   // 그 밖 대괄호 줄([이미지-무응답] 등 = 봇이 답 안 함) + 메모 거리 = [SKIP-무응답] 과 같게 🟨 + 메모 꼬리
     return null;
 }
-function talkBlock(ch, pick, message, botAnswer) {
-    const tail = pick.memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : '';
-    if (pick.mode === 'memo') return tgBlock(`🟧 ${ch} · 답변완료 (*메모 필요*)`, [['손님', message], ['봇', botAnswer]], tail);
-    return tgBlock(`🟨 ${ch} · 직접 확인 필요`, pick.botLine ? [['손님', message], ['봇', botAnswer]] : [['손님', message]], tail);
+function talkBlock(ch, pick, message, botAnswer, meta) {   // #1108-D meta = { id, at(「M/D HH:MM」 KST), item } → 머리 아래 「톡톡 #줄번호 · M/D HH:MM · 상품」 한 줄(없으면 종전 꼴)
+    const tail = [pick.addr ? '→ 배송지 수정' : '', pick.memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
+    const sub = meta ? [ch + (meta.id ? ' #' + meta.id : ''), meta.at || '', meta.item && meta.item !== '기타' ? meta.item : ''].filter(Boolean).join(' · ') : '';
+    if (pick.mode === 'memo') return tgBlock(redHead('메모 필요', `${ch} 답변완료`), [['손님', message], ['봇', botAnswer]], tail, sub);
+    return tgBlock(redHead('확인 필요', `${ch}(${pick.botLine ? '봇 답함 · 처리 필요' : '봇이 답 못함'})`), pick.botLine ? [['손님', message], ['봇', botAnswer]] : [['손님', message]], tail, sub);
 }
 let _ttReqBusy = false;
 setInterval(async () => {
@@ -6979,7 +6995,7 @@ setInterval(async () => {
             return;
         }
         const r = await pool.query(
-            `SELECT id, user_id, message, bot_response, staff_response, staff_at FROM message_logs
+            `SELECT id, user_id, message, bot_response, staff_response, staff_at, item, to_char(received_at + interval '9 hours', 'FMMM/FMDD HH24:MI') AS at_kst FROM message_logs
              WHERE id > $1 AND bot_response IS NOT NULL AND bot_response NOT IN ('[직원응답]','[직원 직접답변]')
              ORDER BY id ASC LIMIT 50`, [st.last_id]);
         if (!r.rows.length) { /* 신규 없음 — 야간 보류분 방출만 검사 */ }
@@ -7000,7 +7016,7 @@ setInterval(async () => {
             // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
             // #522(대표 10/5 「톡톡은 내용이 얼추 나오게 · 봇 답변도 보이게 · 편하게」): 라벨 한 줄 + 손님 글 150자 + 봇이 답한 건은 봇 답변 첫머리 80자. 매번 붙던 설명 4줄은 뺐다.
             // #1069(대표 11/9): 자르지 않음(4,000자 넘을 때만 「…」) · 건마다 한 통 · 색 머리(🟨 답 못함 · 🟧 답했지만 확인필요) · HTML 굵게 → 큐에는 다 만든 글 { h } 로
-            queue.push({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response), id: h.id, uid: h.user_id == null ? null : String(h.user_id) });   // #1074 id·uid = 보내기 직전 직원 답 확인용
+            queue.push({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response, { id: h.id, at: h.at_kst, item: h.item }), id: h.id, uid: h.user_id == null ? null : String(h.user_id) });   // #1074 id·uid = 보내기 직전 직원 답 확인용
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietFor('talk');   // #1103 night_pass 에 talk 있으면 밤에도 바로
@@ -9528,6 +9544,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
             ...(isMall ? [{ type: 'text', text: MALL_SYSTEM_NOTE }] : []),   // #565: 자사몰 챗일 때만 채널 안내 블록(네이버 쪽은 블록 2개 그대로)
             ...(isSms ? [{ type: 'text', text: require('./sms/ai-note.js').SMS_SYSTEM_NOTE }] : []),   // #610: 문자일 때만(공용 블록 글자는 무변경 · 캐시 유지)
             ...(isTalkDraft ? [{ type: 'text', text: require('./inbox-talk-draft-note.js').TALK_DRAFT_NOTE }] : []),   // #1107-D: 톡톡 초안일 때만
+            ...(!channel ? [{ type: 'text', text: require('./qna-memo-note.js').QNA_MEMO_NOTE }] : []),   // #1108-E: 상품문의(채널 없음)일 때만 = 메모로 처리하는 요청 확답
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -9692,9 +9709,12 @@ function inquiryBuildSystem(scenarios) {
 
 ## 요청형 문의 응대 — 접수는 여기서, 실행은 직원이 (지시 #111)
 - 배송지·옵션·연락처 변경, 취소, 추가 요청처럼 고객이 무언가를 바꿔달라고 요청+정보를 주는 문의에 적용:
-- 고객이 변경 정보(주소 등)를 함께 남겼으면 그 정보를 그대로 복창해 확인하세요 — "○○ 주소로 변경 요청 확인했습니다! 이 주소로 진행하면 될까요?"
-- "변경해드렸습니다"처럼 완료를 단정하는 표현은 절대 금지 — 실제 처리는 직원 확인 후에 이뤄집니다. "확인 후 변경 도와드리겠습니다" 흐름을 유지하세요.
+- 배송지 변경(#1108 대표 확정): 새 주소가 글에 다 있으면(도로명·지번 + 동·호수 등 상세 주소까지) 주소를 복창하지 말고 확답하세요 — "말씀하신 새 주소로 변경해드리겠습니다! (이미 발송된 뒤라면 따로 안내드릴게요)". 상세 주소(동·호수) 등 빠진 것이 있으면 빠진 것만 한 번 요청하세요 — 예: "상세 주소(동·호수)를 남겨주시면 확인 후 변경해드릴게요!"
+- 옵션·연락처 변경, 취소 등 그 밖의 요청: 고객이 남긴 정보를 그대로 복창한 뒤 "이대로 진행하면 될까요?"로 확인하세요.
+- 어느 경우든 "변경해드렸습니다"처럼 완료를 단정하는 표현은 절대 금지 — 실제 처리는 직원 확인 후에 이뤄집니다.
 - 발송 임박이거나 이미 발송된 주문의 변경 요청은 재료의 처리 안내대로 고객센터(직원) 연결을 안내하세요.
+
+${require('./qna-memo-note.js').INQUIRY_MEMO_BLOCK}
 
 ## 답변 작성 방법
 - 해당하는 시나리오가 1개면 그것을 기반으로 질문 맥락에 맞게 자연스럽게, 여러 개면 조합해 하나의 완전한 답변으로 작성하세요.

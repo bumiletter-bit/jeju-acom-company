@@ -45,7 +45,11 @@ function engine(src) {
         for (const [name, args] of cases) {
             const ra = await A.fn(...args), rb = await B.fn(...args);
             const ca = A.calls[A.calls.length - 1], cb = B.calls[B.calls.length - 1];
-            ok(JSON.stringify(ca) === JSON.stringify(cb) && JSON.stringify(ra) === JSON.stringify(rb), `${name} · 답 「${reply.slice(0, 8)}」 = 넘기는 값·답 바이트 같음`, JSON.stringify([ca && ca.system.length, cb && cb.system.length]));
+            // #1108-E 상품문의(채널 없음)만 「메모로 처리하는 요청」 블록 1개가 더 붙음 → 그 블록을 뺀 나머지가 바이트 같아야 함 · mall·sms 는 블록 수도 같아야 함
+            const memoNote = require(path.join(ROOT, 'qna-memo-note.js')).QNA_MEMO_NOTE, extra = !args[3];
+            const cbF = cb && Object.assign({}, cb, { system: cb.system.filter(b => b.text !== memoNote) });
+            const oldHad = ca && ca.system.some(b => b.text === memoNote);
+            ok(JSON.stringify(ca) === JSON.stringify(oldHad ? cb : cbF) && cb.system.length === ca.system.length + (extra && !oldHad ? 1 : 0) && JSON.stringify(ra) === JSON.stringify(rb), `${name} · 답 「${reply.slice(0, 8)}」 = 넘기는 값·답 바이트 같음${extra ? '(상품문의 메모 블록 1개 뺀 나머지)' : ''}`, JSON.stringify([ca && ca.system.length, cb && cb.system.length]));
         }
     }
     global.__reply = '사용시나리오: 반품\n네 고객님 반품접수 도와드리겠습니다.';
