@@ -1246,6 +1246,7 @@ module.exports = function mountSms(app, deps) {
     //   직원이 [이대로 보내기]·답·[처리함]·[끝내기] 하면 draft_text 가 비어 빠진다(종전 흐름). staff_why 를 'draft' 로 채우는 길은 안 씀 — 622행 잠금 판정(「draft + 사유 = 잠금」)에 걸려 #650 D(자동 모드의 초안 대기는 잠금 아님)가 깨진다.
     const HUMAN_SQL = `(t.staff_why IS NOT NULL OR t.draft_text IS NOT NULL)`;   // 사람 몫 = 사유 있음 또는 사람이 보내야 하는 초안(#695) · pub() 의 humanOf 와 같은 뜻
     const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND ${HUMAN_SQL} ${TEST_HIDE_T2}`;   // #664 목록(scope=open · 미처리) = 사람 몫(직원 확인 필요)만 — 끝난·무시 제외 · 안 읽음은 안 섞는다(읽어도 남고 · 직원이 답하거나 끝내면 빠짐) · #695 초안만 남은 대화 포함
+    const CUST_LAST_SQL = `COALESCE((SELECT max(m.id) FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND COALESCE(m.bucket, 'other') NOT IN ('otp','ad','carrier','greeting')), 0) > COALESCE((SELECT max(m.id) FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'out' AND m.state NOT IN ('cancelled','failed')), 0)`;   // #1109-b 손님 글이 마지막(아직 안 답함) · 감사 인사(greeting)는 받을 때 무시 갈래(491행)와 같이 셈에서 뺌
     // #661 「확인 필요 문의」 칸·손님 연락 창 숫자에 문자 미답변(scope=open 과 같은 식)을 내준다 — desk-inbox.js 의 고리로(server.js 무접촉)
     let _cardSms = async () => null;
     try {
@@ -1540,11 +1541,18 @@ module.exports = function mountSms(app, deps) {
             res.json({ ok: true, draft_text: ans.text, draft_kind: ans.kind || null, thread: pub(await withUnread(t.id)) });
         } finally { _drafting.delete(t.id); }
     }));
-    app.post('/api/sms/threads/:id/draft-clear', authMiddleware, wrap(async (req, res) => {   // #1109 ③ [지우기] = 눌러 만든 초안이면 서버 초안도 비움(화면이 그 초안을 기억할 때만 부름) · seen 과 다르면 안 지움
+    // #1109-b(대표 11/11 폴드7 「지우면 없어져야 해 · 초안 누르고 남기면 그대로 초안으로」) [지우기] = 답 칸 글이 지금 서버 초안 그대로면 서버 초안도 비움(누른 초안·봇 자동 초안 가리지 않음)
+    //   seen = 화면이 본 서버 초안 · 다르면(그 사이 다른 사람이 새 초안) 안 지움 · 지운 뒤 손님 글이 마지막(아직 안 답함)이면 미처리에 남게 사유 없을 때 no_draft(「직원 답 필요」)·staff_needed
+    //   우리 답이 마지막(이미 답함)이면 초안만 비움 = 초안 칩·미처리에서 빠짐 · 종전 「봇 자동 초안 대화는 안 비움」 가드는 이 꼴로 바꿈(워커3 점검 틈 = 지우면 미처리에서 사라짐 → no_draft 로 막음)
+    app.post('/api/sms/threads/:id/draft-clear', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         const seen = (req.body && typeof req.body.seen === 'string') ? req.body.seen : null; if (seen === null) return res.status(400).json({ ok: false, error: 'seen 이 필요해요' });
         const WS = `E' \\n\\r\\t'`;
-        const r = await pool.query(`UPDATE sms_threads SET draft_text = NULL, draft_kind = NULL, updated_at = now() WHERE id = $1 AND draft_text IS NOT NULL AND btrim(draft_text, ${WS}) = btrim($2::text, ${WS}) AND NOT (status = 'draft' AND staff_why IS NULL) RETURNING id`   /* 봇 자동 초안 대화 = 안 비움(사유도 초안도 없으면 미처리·손님 n 에서 빠짐 · 워커3 점검) */, [t.id, seen]);
+        const r = await pool.query(`UPDATE sms_threads t SET draft_text = NULL, draft_kind = NULL, updated_at = now(),
+            staff_why = CASE WHEN t.staff_why IS NULL AND t.status NOT IN ('closed','ignored') AND ${CUST_LAST_SQL} THEN 'no_draft' ELSE t.staff_why END,
+            status = CASE WHEN t.staff_why IS NULL AND t.status NOT IN ('closed','ignored') AND ${CUST_LAST_SQL} THEN 'staff_needed' ELSE t.status END
+            WHERE t.id = $1 AND t.draft_text IS NOT NULL AND btrim(t.draft_text, ${WS}) = btrim($2::text, ${WS}) RETURNING t.id, t.status, t.staff_why`, [t.id, seen]);
+        if (r.rowCount) await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { before: { status: t.status, staff_why: t.staff_why || null, draft_kind: t.draft_kind || null }, after: { draft_cleared: true, status: r.rows[0].status, staff_why: r.rows[0].staff_why || null } }, source: 'sms', actor: who(req) }).catch(() => { });
         res.json({ ok: true, cleared: r.rowCount > 0, thread: pub(await withUnread(t.id)) });
     }));
     app.post('/api/sms/threads/:id/handled', authMiddleware, wrap(async (req, res) => {

@@ -127,15 +127,42 @@ async function cleanup() {
           const a = await api('POST', `/api/sms/threads/${t6.id}/reply`, { text: '포인트 0,000원 지급 도와드리겠습니다' });
           const b = await api('POST', `/api/sms/send`, { phone: T + '0006', text: '포인트 0,000원 드려요' });
           ok(c.status === 200 && a.status === 200 && b.status === 200 && ![a, b, c].some(x => x.json.code === 'placeholder'), '자리표 남은 글 = [이대로 보내기]·답·새 문자 전부 보냄(막기 0)', JSON.stringify([c.status, a.status, b.status])); }
-        // 🔴 워커3 점검: 봇 자동 초안 대화(status draft · 사유 없음) → [초안 다시 만들기] → [지우기](draft-clear) = 서버 초안 안 비움(미처리·손님 n 에서 안 빠짐)
+        // #1109-b(대표 11/11 「지우면 없어져야 해 · 초안 누르고 남기면 그대로 초안으로」) [지우기] = 지금 서버 초안 그대로면 늘 서버 초안도 비움
+        //   ⓐ 안 답한 대화(봇 자동 초안 → 다시 만들기 → 지우기) = 초안 0 · 미처리에 남음(no_draft 「직원 답 필요」) — 종전 워커3 점검 틈(지우면 미처리에서 사라짐)을 이 꼴로 막음
         { setCfg({}); aiAnswer = { answer: '안녕하세요 고객님 ^^ 냉장 보관해 주세요.', used: [] };
           const P8 = T + '0008'; await say(P8, '귤 보관은 어떻게 해요?'); let t8 = await thread(P8);
           const ok8a = t8.status === 'draft' && !t8.staff_why && !!t8.draft_text;
           aiAnswer = { answer: '냉장고 채소칸에 두시면 오래 드실 수 있어요.', used: [] };
           const m8 = await api('POST', `/api/sms/threads/${t8.id}/draft`, {}); t8 = await thread(P8);
           const x8 = await api('POST', `/api/sms/threads/${t8.id}/draft-clear`, { seen: m8.json.draft_text }); t8 = await thread(P8);
-          const l8 = await api('GET', '/api/sms/threads?scope=open&limit=200');
-          ok(ok8a && m8.json.ok && x8.json.ok && x8.json.cleared === false && t8.draft_text === m8.json.draft_text && t8.status === 'draft' && (l8.json.items || []).some(x => x.id === t8.id && x.needs_staff === true), '🔴 자동 초안 대화 → 다시 만들기 → [지우기] = 서버 초안 그대로(cleared false) · 미처리에 남음', JSON.stringify({ a: ok8a, m: m8.json.ok, c: x8.json.cleared, s: t8.status, d: !!t8.draft_text })); }
+          const l8 = await api('GET', '/api/sms/threads?scope=open&limit=200'); const r8 = (l8.json.items || []).find(x => x.id === t8.id);
+          ok(ok8a && m8.json.ok && x8.json.ok && x8.json.cleared === true && !t8.draft_text && t8.status === 'staff_needed' && t8.staff_why === 'no_draft' && r8 && r8.needs_staff === true && r8.staff_why_label === '직원 답 필요' && !r8.draft_text, 'ⓐ 안 답한 대화 → 누름 → [지우기] = 초안 0 · 미처리 유지(no_draft 「직원 답 필요」)', JSON.stringify({ a: ok8a, c: x8.json.cleared, s: t8.status, w: t8.staff_why, d: !!t8.draft_text, r: r8 && { n: r8.needs_staff, l: r8.staff_why_label, d: !!r8.draft_text } })); }
+        //   ⓑ 이미 답한 대화(끝 7376 꼴 · 우리 답이 마지막) → 누름 = 초안 칩·미처리에 잡힘(누르고 남기면 그대로) → [지우기] = 칩·미처리 0 · 상태 그대로
+        { setCfg({}); aiAnswer = { answer: '네 감사합니다! 편안한 하루 되세요 ^^', used: [] };
+          const P11 = T + '0011'; await say(P11, '보내는분 홍길동으로 해주세요'); let t11 = await thread(P11);
+          await api('POST', `/api/sms/threads/${t11.id}/reply`, { text: '네 변경하여 발송 도와드리겠습니다' }); await new Promise(r => setTimeout(r, 600)); t11 = await thread(P11);
+          const s0 = t11.status, l0 = await api('GET', '/api/sms/threads?scope=open&limit=200'); const in0 = (l0.json.items || []).some(x => x.id === t11.id);
+          const m11 = await api('POST', `/api/sms/threads/${t11.id}/draft`, {});
+          const l1 = await api('GET', '/api/sms/threads?scope=open&limit=200'); const r1 = (l1.json.items || []).find(x => x.id === t11.id);
+          ok(!in0 && m11.json.ok && r1 && !!r1.draft_text, 'ⓑ 이미 답한 대화 = 미처리 밖 → 누르고 그대로 두면 초안 칩·미처리에 남음(대표 「남기면 그대로 초안으로」)', JSON.stringify({ s0, in0, m: m11.json.ok, r1: r1 && { d: !!r1.draft_text, n: r1.needs_staff } }));
+          const x11 = await api('POST', `/api/sms/threads/${t11.id}/draft-clear`, { seen: m11.json.draft_text + ' ' }); t11 = await thread(P11);
+          const l2 = await api('GET', '/api/sms/threads?scope=open&limit=200'); const in2 = (l2.json.items || []).some(x => x.id === t11.id);
+          const a2 = await api('GET', '/api/sms/threads?scope=all&limit=200'); const r2 = (a2.json.items || []).find(x => x.id === t11.id);
+          const sm = await api('GET', '/api/sms/summary');
+          ok(x11.json.cleared === true && !t11.draft_text && t11.status === s0 && !t11.staff_why && !in2 && r2 && !r2.draft_text && r2.needs_staff === false, 'ⓑ [지우기] = 초안 0 · 칩 0 · 미처리 0 · 상태 그대로(' + s0 + ')', JSON.stringify({ c: x11.json.cleared, s: t11.status, w: t11.staff_why, in2, r2: r2 && { d: !!r2.draft_text, n: r2.needs_staff }, sum: sm.json && sm.json.needs_staff })); }
+        //   ⓓ 우리 답 뒤 손님이 「감사합니다」(greeting)만 보낸 대화 → 누름 → [지우기] = 미처리로 안 바뀜(받을 때 무시 갈래와 같은 셈 · 워커1 점검)
+        { setCfg({}); aiAnswer = { answer: '네 감사합니다! 편안한 하루 되세요 ^^', used: [] };
+          const P13 = T + '0013'; await say(P13, '보내는분 김철수로 해주세요'); let t13 = await thread(P13);
+          await api('POST', `/api/sms/threads/${t13.id}/reply`, { text: '네 변경하여 발송 도와드리겠습니다' }); await new Promise(r => setTimeout(r, 600));
+          await say(P13, '감사합니다'); t13 = await thread(P13); const s13 = t13.status, g13 = (await pool.query(`SELECT bucket FROM sms_messages WHERE thread_id = $1 AND direction = 'in' ORDER BY id DESC LIMIT 1`, [t13.id])).rows[0].bucket;
+          const m13 = await api('POST', `/api/sms/threads/${t13.id}/draft`, {});
+          const x13 = await api('POST', `/api/sms/threads/${t13.id}/draft-clear`, { seen: m13.json.draft_text }); t13 = await thread(P13);
+          const l13 = await api('GET', '/api/sms/threads?scope=open&limit=200');
+          ok(g13 === 'greeting' && m13.json.ok && x13.json.cleared === true && !t13.draft_text && t13.status === s13 && t13.staff_why !== 'no_draft' && !(l13.json.items || []).some(x => x.id === t13.id), 'ⓓ 우리 답 뒤 「감사합니다」만 → 누름 → [지우기] = 초안 0 · 상태 그대로(' + s13 + ') · 미처리 0(no_draft 안 붙음)', JSON.stringify({ g13, c: x13.json.cleared, s: t13.status, w: t13.staff_why })); }
+        //   ⓒ 다른 사람이 그 사이 새 초안을 만든 경우(seen ≠ 지금 초안) = 안 지움 · (사람이 친 글만 있을 때는 화면이 서버를 안 부름 = verify-1109-ui)
+        { const P12 = T + '0012'; aiAnswer = { answer: '첫 초안입니다', used: [] }; await say(P12, '귤 언제 와요?'); let t12 = await thread(P12);
+          const x12 = await api('POST', `/api/sms/threads/${t12.id}/draft-clear`, { seen: '내가 본 옛 초안' }); const t12b = await thread(P12);
+          ok(x12.json.cleared === false && t12b.draft_text === t12.draft_text && t12b.status === t12.status && t12b.staff_why === t12.staff_why, 'ⓒ seen 다름 = 초안·상태·사유 그대로', JSON.stringify({ c: x12.json.cleared, s: t12b.status })); }
         // #1109 auto_draft_rule false = 규칙 글(주문 못 찾음 고정 문구 등)도 미리 안 만듦 · 미처리(no_draft) · 주문 찾기·주문 줄 그대로 · 누르면 종전 엔진(규칙 글)
         { setCfg({ auto_draft_rule: false, auto_draft_ai: false }); const P9 = T + '0009'; n0 = aiQs.length;
           await say(P9, '제 귤 언제 도착하나요?'); let t9 = await thread(P9);

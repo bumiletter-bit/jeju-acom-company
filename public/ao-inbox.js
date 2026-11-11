@@ -204,7 +204,7 @@
             + '<div class="sms-draft" id="inb-draft" hidden></div>'
             + `<label class="desk-sr" for="inb-text">${esc(c.ph)}</label>`
             + `<textarea class="sms-text" id="inb-text" rows="3" maxlength="${max}" placeholder="${esc(c.ph)}"${pub ? ' aria-describedby="inb-public"' : ''}></textarea>`
-            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="inb-clear" title="답 칸 글을 비워요(초안은 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="inb-len"></span>${mkd ? '<button type="button" class="desk-btn sms-mkdraft" id="inb-mkdraft">초안 만들기</button>' : ''}<button type="submit" class="desk-btn primary" id="inb-send" disabled>${esc(c.send)}</button></div>`;
+            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="inb-clear" title="답 칸 글을 비워요(초안 그대로면 초안도 지워요)" disabled>지우기</button><span class="sms-len" id="inb-len"></span>${mkd ? '<button type="button" class="desk-btn sms-mkdraft" id="inb-mkdraft">초안 만들기</button>' : ''}<button type="submit" class="desk-btn primary" id="inb-send" disabled>${esc(c.send)}</button></div>`;
         const ta = $('inb-text'); if (keep) ta.value = keep; else if (I.texts.has(I.open)) ta.value = I.texts.get(I.open);
     }
     const lockText = (d, done) => String(d.cannot_why || (done ? DONE_TEXT : '이 대화는 여기서 답을 보낼 수 없어요.'));
@@ -309,6 +309,15 @@
         I.tsig = ''; await loadThread(true);
         I.cAt = 0; loadList(true);
     }
+    // #1109-b(대표 11/11 「지우면 없어져야 해」) 톡톡 [지우기] = 칸 글이 지금 서버 초안 그대로면 서버 초안도 지움(문자 smsClearManual 과 같은 뜻) · 사람이 친 글·고친 글은 칸만
+    function clearServerDraft(v) {
+        const k = I.open, dt = curDraft().trim(); if (!k || I.ch !== 'talk' || !dt || String(v || '').trim() !== dt) return;
+        const id = k.slice(k.indexOf(':') + 1), seen = curDraft();
+        call('/api/inbox/threads/talk/' + encodeURIComponent(id) + '/draft-clear', 'POST', { seen }).then(r => {
+            if (!(r.ok && r.body && r.body.cleared) || I.open !== k || !I.thread) return;
+            I.thread.draft = null; I.tsig = ''; I.filled = k + '|'; I.newDraft = ''; sync(); I.cAt = 0; loadList(true);
+        }).catch(() => { });
+    }
     async function makeDraft() {
         const k = I.open; if (!k || I.ch !== 'talk' || I.sending || I.drafting || !I.thread) return;
         const id = k.slice(k.indexOf(':') + 1);
@@ -382,7 +391,7 @@
             if (t.closest('#inb-back') || t.closest('#inb-x')) { threadClose(true); return; }
             if (t.closest('#inb-done')) { markDone(); return; }
             if (t.closest('#inb-mkdraft')) { makeDraft(); return; }
-            if (t.closest('#inb-clear')) { const ta = $('inb-text'); if (ta && ta.value) { ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus({ preventScroll: true }); } return; }   // #1109 칸만 비움(문자 #853 과 같은 꼴)
+            if (t.closest('#inb-clear')) { const ta = $('inb-text'); if (ta && ta.value) { clearServerDraft(ta.value); ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus({ preventScroll: true }); } return; }   // #1109 칸만 비움(문자 #853 과 같은 꼴)
             if (t.closest('#inb-draft-new')) { const ta = $('inb-text'), dt = curDraft(); if (ta && dt) { ta.value = dt; I.fillText = dt; I.filled = I.open + '|' + dt; I.newDraft = ''; sync(); ta.focus({ preventScroll: true }); } return; }
             const th = t.closest('.sms-thumb'); if (th && th.dataset.view) { viewOpen(th.dataset.view, th); return; }
             if (t.closest('#inb-view') && t.id !== 'inb-view-img') { viewClose(); return; }

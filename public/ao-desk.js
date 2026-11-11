@@ -1736,7 +1736,7 @@
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
-            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="button" class="desk-btn sms-mkdraft" id="sms-mkdraft">초안 만들기</button><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
+            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(초안 그대로면 초안도 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="button" class="desk-btn sms-mkdraft" id="sms-mkdraft">초안 만들기</button><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
             + `</form>`;
         TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
         if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
@@ -2035,12 +2035,14 @@
         if (err) { showToast(err, '', 5000); smsSync(); return; }
         await smsThread(true);   // 같은 채우기 규칙(#635·#681)으로 칸·띠를 맞춤
     }
-    // #1109 ③ [지우기] = 칸의 글이 방금 눌러 만든 초안 그대로면 서버 초안도 비움(그 대화가 미처리로 다시 잡히지 않게) · 자동 초안·고친 글은 종전(칸만)
+    // #1109-b(대표 11/11 「지우면 없어져야 해」) [지우기] = 칸의 글이 지금 서버 초안(누른 초안·봇 자동 초안 가리지 않음) 그대로면 서버 초안도 비움 · 사람이 친 글·고친 글은 종전(칸만)
+    //   종전 = 방금 누른 초안을 기억할 때만(SMS.manual) → 다시 열기·새로 고침·앱 다시 띄움에 풀려 서버를 안 불렀음(실DB 끝 7376)
     function smsClearManual(v) {
-        const mm = SMS.manual, id = SMS.open; if (!mm || mm.id !== id || String(v || '').trim() !== mm.text.trim()) return;
+        const id = SMS.open, t = SMS.thread && SMS.thread.thread, dt = String((t && t.draft_text) || '').trim();
         SMS.manual = null;
-        fetch('/api/sms/threads/' + id + '/draft-clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ seen: mm.text }) })
-            .then(r => r.json()).then(j => { if (j && j.ok && j.cleared && SMS.open === id && SMS.thread && SMS.thread.thread && String(SMS.thread.thread.draft_text || '').trim() === mm.text.trim()) { SMS.thread.thread.draft_text = null; SMS.thread.thread.draft_kind = null; SMS.tsig = ''; smsSync(); } }).catch(() => { });
+        if (!id || !dt || String(v || '').trim() !== dt) return;
+        fetch('/api/sms/threads/' + id + '/draft-clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ seen: t.draft_text }) })
+            .then(r => r.json()).then(j => { if (j && j.ok && j.cleared && SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = null; SMS.thread.thread.draft_kind = null; SMS.tsig = ''; smsSync(); smsSummary(); smsList(true); S.inboxAt = 0; loadInbox(); } }).catch(() => { });
     }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;

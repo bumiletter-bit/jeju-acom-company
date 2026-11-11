@@ -441,6 +441,15 @@ module.exports = function mountInboxThreads(app, deps) {
         const c = chOf(req.params.ch); if (c !== 'talk') throw bad(400, '초안 만들기는 톡톡에서만 돼요(상품문의·주문문의는 수집할 때 만든 초안이 있어요)');
         res.json(await talkMakeDraft(String(req.params.id || ''), who(req)));
     }));
+    // #1109-b(대표 11/11 「지우면 없어져야 해」) 톡톡 [지우기] = 답 칸 글이 지금 서버 초안 그대로면 초안 줄도 지움(「초안」 칩·다시 열 때 채우기 사라짐) · 다르면(그 사이 새 초안) 안 지움 · 미처리(needs_reply)는 대화 글로 정해져 그대로
+    app.post('/api/inbox/threads/:ch/:id/draft-clear', authMiddleware, wrap(async (req, res) => {
+        const c = chOf(req.params.ch); if (c !== 'talk') throw bad(400, '초안 지우기는 톡톡에서만 돼요');
+        const tkey = String(req.params.id || ''); if (!/^[0-9a-f]{16}$/.test(tkey)) throw bad(404, '없는 대화예요');
+        const seen = req.body && typeof req.body.seen === 'string' ? req.body.seen : null; if (seen === null) throw bad(400, 'seen 이 필요해요');
+        const r = await pool.query(`DELETE FROM ${T.drafts} WHERE ch = 'talk' AND tkey = $1 AND btrim(body, E' \\n\\r\\t') = btrim($2::text, E' \\n\\r\\t') RETURNING tkey`, [tkey, seen]);
+        if (r.rowCount) { talkInvalidate(); if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: 'talk', id: tkey, draft_cleared: true } }, source: 'inbox_threads', actor: who(req) }).catch(() => { }); }
+        res.json({ ok: true, cleared: r.rowCount > 0 });
+    }));
 
     return { ensure, counts, keyOf, tables: T, _talkThreads: talkThreads, _postThreads: postThreads, _cardData: cardData, _botFails: botFails };
 };

@@ -166,6 +166,13 @@ async function api(method, url, body, user) {
         r = await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`); ok(r.json.draft === '시험 초안입니다.' && (await api('GET', '/api/inbox/threads?ch=talk&scope=all')).json.threads.find(x => x.id === kA).has_draft === true, '대화 응답 draft · 목록 has_draft');
         r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '고친 글', seen: '옛 초안' });
         ok(r.status === 409 && r.json.code === 'draft_changed' && r.json.draft === '시험 초안입니다.', '화면이 본 초안(seen)이 서버 초안과 다르면 409 + 지금 초안');
+        // #1109-b 톡톡 [지우기] = seen 이 지금 초안과 같을 때만 초안 줄 지움(앞뒤 빈칸 무시) · 다르면 그대로 · 상품문의 400 · seen 없으면 400 → 다시 만들어 아래 시험 이어감
+        const d1109 = (await pool.query(`SELECT src_id FROM ${TB.drafts} WHERE ch = 'talk' AND tkey = $1`, [kA])).rows[0];
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/draft-clear`, { seen: '옛 초안' }); ok(r.status === 200 && r.json.cleared === false && (await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`)).json.draft === '시험 초안입니다.', '#1109-b draft-clear seen 다름 = 그대로');
+        ok((await api('POST', `/api/inbox/threads/talk/${kA}/draft-clear`, {})).status === 400 && (await api('POST', `/api/inbox/threads/qna/990658001/draft-clear`, { seen: 'x' })).status === 400, '#1109-b draft-clear seen 없음·상품문의 = 400');
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/draft-clear`, { seen: '시험 초안입니다.\n' });
+        ok(r.status === 200 && r.json.cleared === true && (await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`)).json.draft === null && (await api('GET', '/api/inbox/threads?ch=talk&scope=all')).json.threads.find(x => x.id === kA).has_draft === false, '#1109-b draft-clear 같음 = 초안 지움 · 목록 「초안」(has_draft) false');
+        await pool.query(`INSERT INTO ${TB.drafts} (ch, tkey, body, src_id, made_by) SELECT ch, tkey, body, src_id, made_by FROM (VALUES ('talk', $1::varchar, '시험 초안입니다.'::text, $2::bigint, '검증'::varchar)) v(ch, tkey, body, src_id, made_by)`, [kA, d1109.src_id]); ok((await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`)).json.draft === '시험 초안입니다.', '#1109-b (시험 이어가기) 초안 줄 되돌림 = AI 셈 그대로');
         r = await api('POST', `/api/inbox/threads/talk/${kK}/send`, { text: '카카오로', seen: '아무 초안' }); ok(r.status === 400 && /카카오/.test(r.json.error), '보낼 수 없는 대화 판정이 seen 대조보다 먼저(400 사유 · 409 아님)');
         r = await api('POST', `/api/inbox/threads/qna/990658001/draft`); ok(r.status === 400, '상품문의에는 초안 만들기 없음(400)');
         r = await api('POST', `/api/inbox/threads/talk/${kK}/draft`); ok(r.status === 400 && gens.length === 1, '카카오 대화 초안 = 400(AI 호출 0)');

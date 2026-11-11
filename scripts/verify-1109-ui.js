@@ -63,6 +63,16 @@ function checkRow(m, label) {
             await pg.click('#sms-clear'); await pg.waitForTimeout(500);
             const lgc = (await (await fetch(B1 + '/__mock/log')).json()).log.filter(x => x.action === 'draft-clear');
             ok(await pg.inputValue('#sms-text') === '' && lgc.length === 1 && /누름 초안입니다/.test(lgc[0].body && lgc[0].body.seen) && await pg.evaluate(() => document.getElementById('sms-mkdraft').textContent) === '초안 만들기', `${L} [지우기] = 칸 비움 + 눌러 만든 서버 초안도 비움(draft-clear 1번 · 「초안 만들기」로)`, JSON.stringify(lgc));
+            if (!theme && v.w === 1280) {   // #1109-b 이 화면에서 누르지 않은 서버 초안(봇 자동 초안 · 다시 연 대화 = 실DB 끝 7376 꼴)도 [지우기] = 서버 초안 비움 · 목록 「초안」 칩 사라짐
+                await pg.locator('#sms-list .sms-item[data-id="1"] > .sms-row').click({ timeout: 5000 });
+                await pg.waitForFunction(() => /부패과가 나왔군요/.test((document.getElementById('sms-text') || {}).value || ''), null, { timeout: 6000 }).catch(() => { });
+                const c0 = (await (await fetch(B1 + '/__mock/log')).json()).log.filter(x => x.action === 'draft-clear').length;
+                await pg.click('#sms-clear'); await pg.waitForTimeout(900);
+                const lc = (await (await fetch(B1 + '/__mock/log')).json()).log.filter(x => x.action === 'draft-clear');
+                const chip = await pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-item[data-id="1"]'); return li ? /초안/.test(li.textContent) : null; });
+                ok(lc.length === c0 + 1 && /부패과가 나왔군요/.test(lc[lc.length - 1].body && lc[lc.length - 1].body.seen) && await pg.inputValue('#sms-text') === '' && chip === false, `${L} 누르지 않은 서버 초안도 [지우기] = draft-clear 1번 · 칸 비움 · 목록 「초안」 칩 사라짐`, JSON.stringify({ n: lc.length - c0, chip }));
+                await pg.locator('#sms-list .sms-item[data-id="6"] > .sms-row').click({ timeout: 5000 }); await pg.waitForTimeout(500);
+            }
             if (!theme && v.w === 1280) {   // #1109 자리표가 남아도 [답 보내기] 안 막음(대표) · 손으로 쓴 글을 [지우기] 하면 서버 초안 안 건드림
                 await post(B1, '/__mock/set', { draftPh: true, draftMs: 50 }); await pg.click('#sms-mkdraft');
                 await pg.waitForFunction(() => /0,000원/.test((document.getElementById('sms-text') || {}).value || ''), null, { timeout: 6000 }).catch(() => { });
@@ -100,6 +110,16 @@ function checkRow(m, label) {
             await pg.waitForSelector('#inb-mkdraft', { timeout: 6000 }); await pg.waitForTimeout(300);
             const ids = { clear: 'inb-clear', len: 'inb-len', mk: 'inb-mkdraft', send: 'inb-send' };
             const m = await measure(pg, ids); checkRow(m, L);
+            {   // #1109-b 톡톡 [지우기] = 칸 글이 서버 초안 그대로면 서버 초안도 지움 · 「초안」 칩 사라짐 / 고친 글이면 칸만
+                await pg.click('#inb-mkdraft'); await pg.waitForFunction(() => /봇 초안/.test((document.getElementById('inb-text') || {}).value || ''), null, { timeout: 6000 }).catch(() => { });
+                await pg.click('#inb-clear'); await pg.waitForTimeout(700);
+                const lg = (await (await fetch(B2 + '/__mock/log')).json()); const hit = lg.log.filter(x => x.op === 'draft-clear'); const tt = lg.threads.find(x => x.id === 't1');
+                ok(hit.length === 1 && hit[0].hit === true && tt && !tt.draft && await pg.inputValue('#inb-text') === '', `${L} 초안 그대로 [지우기] = 서버 초안도 지움(draft-clear 1번)`, JSON.stringify({ hit, d: tt && tt.draft }));
+                await pg.click('#inb-mkdraft'); await pg.waitForFunction(() => /봇 초안/.test((document.getElementById('inb-text') || {}).value || ''), null, { timeout: 6000 }).catch(() => { });
+                await pg.fill('#inb-text', '네 고객님 제가 고친 글이에요'); await pg.waitForTimeout(100); await pg.click('#inb-clear'); await pg.waitForTimeout(500);
+                const lg2 = (await (await fetch(B2 + '/__mock/log')).json()); const t2 = lg2.threads.find(x => x.id === 't1');
+                ok(lg2.log.filter(x => x.op === 'draft-clear').length === 1 && t2 && !!t2.draft, `${L} 고친 글 [지우기] = 칸만(서버 초안 그대로 · 다시 누르면 남김 = 「초안」)`, JSON.stringify({ n: lg2.log.filter(x => x.op === 'draft-clear').length, d: t2 && !!t2.draft }));
+            }
             await pg.fill('#inb-text', '보낼 글'); await pg.waitForTimeout(100);
             ok(await pg.isEnabled('#inb-clear'), `${L} 글 있으면 [지우기] 켜짐`);
             await pg.click('#inb-clear'); await pg.waitForTimeout(150);

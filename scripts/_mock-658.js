@@ -89,7 +89,7 @@ http.createServer(async (req, res) => {
             a.sort((x, y) => String(last(y).at).localeCompare(String(last(x).at)));
             return send(res, 200, { threads: a.map(row), counts: counts() });
         }
-        const mm = p.match(/^\/api\/inbox\/threads\/(talk|qna|inquiry)\/([^/]+)(?:\/(send|read|unread|draft))?$/);
+        const mm = p.match(/^\/api\/inbox\/threads\/(talk|qna|inquiry)\/([^/]+)(?:\/(send|read|unread|draft|draft-clear))?$/);
         if (mm) {
             const t = ST.threads.find(x => x.ch === mm[1] && x.id === decodeURIComponent(mm[2])), act = mm[3];
             if (!t) return send(res, 404, { error: '대화를 찾지 못했어요' });
@@ -102,6 +102,7 @@ http.createServer(async (req, res) => {
             const b = await body(req);
             if (act === 'read') { t.read = true; ST.log.push({ op: 'read', ch: t.ch, id: t.id }); return send(res, 200, { ok: true }); }
             if (act === 'unread') { t.read = false; ST.log.push({ op: 'unread', ch: t.ch, id: t.id }); return send(res, 200, { ok: true }); }
+            if (act === 'draft-clear') { const hit = !!t.draft && String(b.seen || '').trim() === String(t.draft).trim(); if (hit) t.draft = null; ST.log.push({ op: 'draft-clear', ch: t.ch, id: t.id, seen: b.seen, hit }); return send(res, 200, { ok: true, cleared: hit }); }   // #1109-b 톡톡 [지우기] = 서버 초안 그대로면 지움
             if (act === 'draft') {
                 if (t.ch !== 'talk') return send(res, 400, { error: '톡톡만 초안을 만들 수 있어요' });
                 if (ST.fail === 'draft') return send(res, 502, { ok: false, error: 'AI 호출에 실패했어요' });
