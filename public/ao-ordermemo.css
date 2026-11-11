@@ -681,6 +681,15 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 html[data-ao-theme="dark"] .om-pill.k-ok { background: rgba(61, 214, 140, .16); color: #7BE3AE; }
 html[data-ao-theme="dark"] .om-pill.k-short { background: #4A3A12; color: #FBBF4A; }
 html[data-ao-theme="dark"] .om-pill.k-over { background: rgba(240, 68, 56, .18); color: #FDA29B; }
+/* #1121-b(대표 11/11 · 폰 야간 캡처로 정정) 「맞춰진 상태 = 초록 알약」 — 사람이 더 할 일 없는 상태 배지는 알약 칸(바탕+테두리)을 「네이버 매칭완료」(.k-ok)와 똑같은 초록으로 · 글씨 색만 상태별
+   · k-ok(ok·allnormal)·매칭완료(.om-lbadge.k-ok)·「주문수정 n박스」(.k-box) = 바탕 그대로 + 초록 테두리 1px
+   · 개인결제창(.om-badge.k-pers) = 초록 알약 + 자주 글씨(--d-ch-inquiry-fg · 초록 바탕 위 밝음 10.8:1 · 야간 9.0:1) · 대기류(.om-badge.k-later = split·normal_later·normal_split) = 초록 알약 + 남색 글씨(--d-ch-sms-fg · 8.8:1 · 야간 8.7:1)
+   · 문제 상태(short·over·unk = 확인필요·주문 확인 중) = 종전 그대로 · 옆 날짜 알약(.om-pill.k-later 류)은 .om-badge 가 아니라 안 걸림 · 야간 바탕 = k-ok 야간 값과 같은 rgba · 테두리 var(--d-ok) 는 야간 #3DD68C 저절로 */
+.om-ml .om-badge.k-ok, .om-ml .om-lbadge.k-ok, .om-ml .om-ml-h .om-pill.k-box { box-shadow: inset 0 0 0 1px var(--d-ok); }
+.om-ml .om-badge.k-pers, .om-ml .om-badge.k-later { background: #D1FADF; box-shadow: inset 0 0 0 1px var(--d-ok); }
+.om-ml .om-badge.k-pers { color: var(--d-ch-inquiry-fg); }
+.om-ml .om-badge.k-later { color: var(--d-ch-sms-fg); }
+html[data-ao-theme="dark"] .om-ml .om-badge.k-pers, html[data-ao-theme="dark"] .om-ml .om-badge.k-later { background: rgba(61, 214, 140, .16); }
 @media (max-width: 960px), (pointer: coarse) { .om-ml .om-badge { min-height: 44px; } }
 /* #1023 메모 줄 = 상태 글(매칭·입력삭제 n/m·날짜) 줄 글 위 작게 한 줄 · 줄 글 색 = 매칭완료 초록 · 확인필요 빨강(색 = k-ok·k-over 와 같은 값 · 야간 아래) */
 .om-ml-b { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }

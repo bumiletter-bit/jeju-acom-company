@@ -239,7 +239,12 @@ function indivBadge(line, rows, orders, base, opt) {
     const now = ordNo ? addr.filter(r => (sd(r) || null) === (lsd0 || null)) : addr.filter(r => !sd(r) || !base || sd(r) === base), later = ordNo ? [] : addr.filter(r => sd(r) && base && sd(r) > base);   // #938 주문번호 줄 = 같은 발송일 주소 줄만
     const n = now.reduce((t, r) => t + q(r.cells[5]), 0), laterN = later.reduce((t, r) => t + q(r.cells[5]), 0);
     const b = { m: od.length ? od.reduce((t, o) => t + q(o.qty), 0) : nmN ? 0 : null, normal: nmN, n, unsure: addr.filter(r => r.sure === false).reduce((t, r) => t + q(r.cells[5]), 0), later: laterN, later_date: later.map(sd).sort()[0] || null, service: mine.filter(r => r.service).length, pre: od.length > 0 && od.every(o => o.pre === true), item_diff: false, state: 'unknown' };
+    // #1121 opt.solo = 전화번호 키 입력삭제 줄이 그 번호에 하나뿐(pickForShip splitPlan 과 같은 조건) · ship_now = 줄 날짜가 뒤인데 오늘 주소 줄 있음 = 다음 발주에 주문 발송처리 · split_sent 찍힌 뒤 주문 사라짐 = sent_split(「발송처리 끝」 중립)
+    const ss = !ordNo && opt && opt.solo && line && line.checked && isDay(line.checked.split_sent) ? line.checked.split_sent : null;
+    if (!ordNo && opt && opt.solo && lsd0 && base && lsd0 > base && n > 0 && (!ss || ss === base)) b.ship_now = true;
+    if (ss) b.split_sent = ss;
     if (ch === 'cafe24' && od.length && od.every(o => q(o.qty) === 1 && pcMatch(o.option_text, cat) === false)) b.state = 'personal';
+    else if (ss && ss <= (base || ss) && !od.length) { b.state = 'sent_split'; delete b.ship_now; }
     else if (b.m == null) b.state = 'unknown';
     else if (nmN && !od.length && n + laterN === 0) b.state = 'allnormal';
     else if (nmN && !od.length && n === 0) b.state = 'normal_later';   // #970 점검 ⑤ 전부 일반발송 + 주소 줄은 전부 뒤 날짜(「0/0 매칭완료」 아님)
@@ -358,7 +363,7 @@ function cleanChecked(v) {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     if (!['네이버', '쿠팡', '자사몰'].includes(v.plat) || !['buyer', 'recv', 'order'].includes(v.as)) return null;
     const t = Date.parse(String(v.at || '')); const at = Number.isFinite(t) && t > Date.parse('2026-01-01') && t < Date.now() + 86400e3 ? new Date(t).toISOString() : new Date().toISOString();
-    const bd = dg(v.buyer); return Object.assign({ plat: v.plat, as: v.as, at }, /^0\d{8,11}$/.test(bd) ? { buyer: String(v.buyer).trim().slice(0, 20) } : {}, cleanShipMemo(v.ship_memo) ? { ship_memo: cleanShipMemo(v.ship_memo) } : {}, /^[\d-]{8,40}$/.test(String(v.pno || '').trim()) ? { pno: String(v.pno).trim() } : {});   // #958 pno = 번호 키 배송메모 줄의 고른 주문   // #938 buyer = 주문번호 줄(주문별 발송일로 나눠 저장)의 구매자 번호 → 주소 줄 짝·배지·추가 매칭은 이 번호로(K 는 늘 전화번호)
+    const bd = dg(v.buyer); return Object.assign({ plat: v.plat, as: v.as, at }, /^0\d{8,11}$/.test(bd) ? { buyer: String(v.buyer).trim().slice(0, 20) } : {}, cleanShipMemo(v.ship_memo) ? { ship_memo: cleanShipMemo(v.ship_memo) } : {}, /^[\d-]{8,40}$/.test(String(v.pno || '').trim()) ? { pno: String(v.pno).trim() } : {}, isDay(v.split_sent) ? { split_sent: v.split_sent } : {});   // #1121 첫날 발송처리 표식(줄 고쳐도 유지)   // #958 pno = 번호 키 배송메모 줄의 고른 주문   // #938 buyer = 주문번호 줄(주문별 발송일로 나눠 저장)의 구매자 번호 → 주소 줄 짝·배지·추가 매칭은 이 번호로(K 는 늘 전화번호)
 }
 // #1021 박스별 값 거름(순수) = 배열 1~20(#1027 1박스 주문도 · 종전 2~20) · 박스마다 아래 10칸만(전부 글자 · '' = 주문 그대로) · 탭·줄바꿈 → 빈칸 · s = '1'|'' · 번호 칸 = 숫자·하이픈만 · 바꾼 것 0(전부 빈 박스) = null
 const BOX_LIM = { t: 40, o: 120, n: 20, p: 14, p2: 14, a: 200, m: 300, s: 1, sn: 20, sp: 14 };
@@ -369,25 +374,55 @@ function cleanBoxes(v) {
     return out.some(o => Object.values(o).some(Boolean)) ? out : null;
 }
 // ── 최종발주용 고르기(순수 · 검증이 그대로 부름) ──
+// #1121(대표 11/11) 날짜 나눈 입력삭제 = 「주소 줄 중 가장 이른 날 = 주문 발송처리 날」 · 전화번호 키 입력삭제 줄이 그 번호에 하나뿐(#938 주문번호 줄·같은 번호 줄 2개 = 종전) · 줄 날짜가 뒤인데 짝 주소 줄(열림·sure·「!」 없음·서비스 X·K==번호) 중 오늘(날짜 없음 또는 = date) 박스가 있으면
+//   → 그 줄을 오늘 줄로 내보냄(글 머리 날짜만 오늘 M/D · 저장값 무변경) = 종전 「입력삭제 줄 오늘 + 주소 줄 일부 뒤 날짜」(B꼴) 길 그대로(v2·core·자동 송장 무변경) · 첫날 표식 checked.split_sent(POST /used 가 찍음 · used_on 으로 판정 금지 = 뒤 날짜 줄도 첫날 used_on 이 찍힘)
+//   split_sent < date = 첫날 발주에 넣었음(실제 발송처리 여부는 모름) → 줄은 원래 날짜 그대로(lines[].split_sent 꼬리표 + split_sent 칸) · 주문이 남아 있으면 종전대로 원래 날짜까지 뺌·그날 카드 · 주문이 없을 때 「주문 없음」 글만 최종발주가 「첫날 발송처리 끝」으로
+const SPLIT_HEAD = /^(\s*)\d{1,2}\/\d{1,2}(?=[\t ])/;
+function splitPlan(rows, date) {
+    const q = v => Math.max(0, parseInt(v, 10) || 0), sdOf = r => r && r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null;
+    const open = (rows || []).filter(r => r && r.state === 'open' && r.sure), ind = open.filter(r => isIndivLine({ kind: r.kind, key: r.line_key, note: r.note, line: r.line }));
+    const cnt = new Map(); ind.forEach(r => { const d = lineDigits(r); cnt.set(d, (cnt.get(d) || 0) + 1); });
+    const out = new Map();
+    ind.forEach(r => {
+        const d = dg(r.line_key), sd = sdOf(r);
+        const ss = r.checked && isDay(r.checked.split_sent) ? r.checked.split_sent : null;
+        if (lineBuyer(r) || !/^0\d{8,11}$/.test(d) || cnt.get(d) !== 1 || !sd || !(sd > date || (ss && ss < date)) || !SPLIT_HEAD.test(String(r.line || ''))) return;   // 표식 찍힌 뒤 = 줄 날짜가 오늘·지난 날이어도 뺌(뒤 날짜 날 「주문 없음」 안 뜨게)
+        const addr = open.filter(x => x.kind === 'cash' && Array.isArray(x.cells) && !x.service && !/[!！]/.test(String(x.cells[0] || '')) && dg(x.cells[10]) === d);
+        const now = addr.filter(x => !sdOf(x) || sdOf(x) === date), later = addr.filter(x => sdOf(x) && sdOf(x) > date);
+        const P = { k: d, today: now.reduce((t, x) => t + q(x.cells[5]), 0), later: later.reduce((t, x) => t + q(x.cells[5]), 0), later_date: later.map(sdOf).sort()[0] || null, later_items: later.map(x => ({ opt: String(x.cells[4] || ''), qty: q(x.cells[5]) })), orig_date: sd };
+        if (ss && ss < date) out.set(r.id, Object.assign(P, { drop: true, sent: ss }));
+        else if (ss === date || (!ss && P.today > 0)) out.set(r.id, P);
+    });
+    return out;
+}
 function pickForShip(rows, date) {
-    const lines = [], cash = [], waiting = [], held = [], shipMemos = [], shipWait = [], normalOrders = [], boxRows = [], boxWait = [];
-    for (const r of rows) {
+    const lines = [], cash = [], waiting = [], held = [], shipMemos = [], shipWait = [], normalOrders = [], boxRows = [], boxWait = [], splitSent = [];
+    const SP = splitPlan(rows, date);   // #1121
+    for (const r0 of rows) {
+        let r = r0;
         if (r.state !== 'open') continue;
-        const sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null;
+        let sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null;
         if (!r.sure) { held.push({ id: r.id, kind: r.kind, why: r.check_why || [] }); continue; }
+        const sp = r.kind === 'line' ? SP.get(r.id) : null;
+        if (sp && sp.drop) splitSent.push({ id: r.id, k: sp.k, date: sp.sent, later: sp.later, later_date: sp.later_date });   // #1121 첫날 표식 뒤 = 줄은 원래 날짜 그대로 내보냄(워커2 점검 · 표식 = 「발주에 넣음」이지 「발송처리됨」이 아님 → 빼면 첫날 발송처리 안 된 날 주문 통째 과발송) · 주문이 실제로 없을 때 글만 최종발주가 바꿈
+        if (sp && !sp.drop) { r = Object.assign({}, r, { line: String(r.line).replace(SPLIT_HEAD, (m0, sp0) => sp0 + md(date)) }); sd = date; }   // #1121 오늘 줄로(내보내기만)
         if (isBoxRow(r)) { if (sd && sd > date) boxWait.push({ id: r.id, ship_date: sd }); else if (sd && sd < date) held.push({ id: r.id, kind: 'line', why: ['지난 날짜예요'] }); else boxRows.push({ id: r.id, key: r.line_key, plat: r.plat, line: r.line, ship_date: sd, checked: r.checked || null, boxes: boxesOf(r) }); continue; }   // #1021 박스별 줄 = 메모 칸 밖(배송메모 줄과 같은 날짜 규칙)
         { const smt = r.kind === 'line' ? shipMemoOf(r) : '';   // #955 배송메모 줄 = 메모 칸 밖 · 뒤 날짜 = 그날까지 대기 · 지난 날짜 = 안 넣음
           if (smt) { if (sd && sd > date) shipWait.push({ id: r.id, ship_date: sd }); else if (sd && sd < date) held.push({ id: r.id, kind: 'line', why: ['지난 날짜예요'] }); else shipMemos.push({ id: r.id, key: r.line_key, plat: r.plat, text: smt, line: r.line, ship_date: sd, checked: r.checked || null }); continue; } }
         if (r.kind === 'line' && (!sd || sd === date)) { const nm = normalOrdersOf(r); if (nm.length) normalOrders.push({ id: r.id, key: r.line_key, plat: r.plat, line: r.line, buyer: lineDigits(r), orders: nm }); }   // #970
-        if (r.kind === 'line') lines.push({ id: r.id, line: r.line, ship_date: sd, checked: r.checked || null, state: !sd ? 'nodate' : sd === date ? 'today' : sd > date ? 'wait' : 'past' });
+        if (r.kind === 'line') lines.push(Object.assign({ id: r.id, line: r.line, ship_date: sd, checked: r.checked || null, state: !sd ? 'nodate' : sd === date ? 'today' : sd > date ? 'wait' : 'past' }, sp && !sp.drop ? { split: { k: sp.k, today: sp.today, later: sp.later, later_date: sp.later_date, later_items: sp.later_items, orig_date: sp.orig_date } } : {}, sp && sp.drop ? { split_sent: sp.sent } : {}));   // #1121 split = 첫날 발송처리로 내보낸 줄(최종발주 박스 카드·중간발주가 읽음)
         else if (!sd || sd === date) cash.push(r);
-        else if (sd > date) waiting.push({ id: r.id, kind: 'cash', ship_date: sd });
+        else if (sd > date) waiting.push({ id: r.id, kind: 'cash', ship_date: sd, k: dg(r.cells && r.cells[10]), qty: Math.max(0, parseInt(r.cells && r.cells[5], 10) || 0) });   // #1121 k·qty 칸 더함(종전 소비처 = 길이만)
         else held.push({ id: r.id, kind: 'cash', why: ['지난 날짜예요'] });
     }
+    { const have = new Set(splitSent.map(x => x.k)), m = new Map();   // #1121-b 번호 줄을 지운 뒤 = 주소 줄 표식(checked.split_done)으로 같은 칸
+      for (const r of rows) { if (r.state !== 'open' || r.kind !== 'cash' || !r.sure || !r.checked || !isDay(r.checked.split_done) || !(r.checked.split_done < date) || /[!！]/.test(String((r.cells || [])[0] || ''))) continue; const k = dg(r.cells && r.cells[10]); if (!k || have.has(k) || k !== dg(r.checked.k)) continue;
+          const sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null, g = m.get(k) || m.set(k, { id: null, k, date: r.checked.split_done, later: 0, later_date: null }).get(k); if (sd && sd > date) { g.later += Math.max(0, parseInt(r.cells[5], 10) || 0); if (!g.later_date || sd < g.later_date) g.later_date = sd; } }
+      m.forEach(v => splitSent.push(v)); }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
         cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
         cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
-        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, ids: lines.map(l => l.id).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
+        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, split_sent: splitSent, ids: lines.map(l => l.id).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부
 function pickClear(rows, date, all) {
@@ -558,6 +593,7 @@ function mount(app, deps) {
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null, boxes: r.kind === 'line' ? (Array.isArray(r.boxes) ? r.boxes : null) : undefined,   // #1021
         addr_ok: r.kind === 'cash' ? (r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : null) : undefined,   // #880-b 현금 줄만(파일·for-ship 엔 안 나감)
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,
+        split_done: r.kind === 'cash' && r.checked && isDay(r.checked.split_done) ? r.checked.split_done : undefined,   // #1121-b 번호 줄 지운 뒤 남은 주소 줄 = 「입력삭제 · 발송처리 끝」 알약
         pair_orig: r.kind === 'cash' ? (r.pair_orig || null) : undefined,   // #949
         exp_site: r.kind === 'cash' ? !!r.exp_site : undefined,   // #1003 체험장 현금 줄(화면 알약 「현금 · 체험장」만)
         service: r.kind === 'cash' ? !!r.service : undefined,   // #900 서비스 줄(indiv = false · 화면 알약 「서비스」)   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
@@ -661,7 +697,8 @@ function mount(app, deps) {
                 const ords = [...new Set(lines.concat(lbs).map(r => dg(r.line_key)).filter(k => !/^0/.test(k) && k.length >= 10))];   // #938 주문번호 줄(0 으로 안 시작 · 10자리↑)
                 let od = [], noTable = false; try { od = (await pool.query("SELECT channel, buyer_digits, product_order_no, split_part(order_key, '|', 1) AS okey, option_text, qty FROM order_memo_preorders WHERE miss = 0 AND (buyer_digits = ANY($1::text[]) OR regexp_replace(COALESCE(product_order_no, ''), '\\D', '', 'g') = ANY($2::text[]) OR regexp_replace(split_part(order_key, '|', 1), '\\D', '', 'g') = ANY($2::text[]))", [keys, ords])).rows; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; noTable = true; }
                 const cat = await catalogSet(today).catch(() => null);
-                lines.forEach(r => { const k = dg(r.line_key), isOrd = ords.includes(k); if (!isOrd) return badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === k), base, { catalog: cat }));
+                const soloN = new Map(); lines.filter(r => r.sure).forEach(r => { const d = lineDigits(r); soloN.set(d, (soloN.get(d) || 0) + 1); });   // #1121 그 번호 입력삭제 줄 수(주문번호 줄 = 구매자 번호로 셈)
+                lines.forEach(r => { const k = dg(r.line_key), isOrd = ords.includes(k); if (!isOrd) return badges.set(r.id, indivBadge(r, rows, od.filter(o => o.buyer_digits === k), base, { catalog: cat, solo: r.sure && !lineBuyer(r) && /^0\d{8,11}$/.test(k) && soloN.get(k) === 1 }));
                     const mine = od.filter(o => dg(o.product_order_no) === k || dg(o.okey) === k), buyer = lineDigits(r) !== k ? lineDigits(r) : (mine[0] ? mine[0].buyer_digits : '');   // #938 자사몰 「20261101-0001234」 꼴도 숫자로 · 한 주문 품목 여러 줄 = 합
                     badges.set(r.id, indivBadge(r, rows, mine, base, { catalog: cat, orderNo: k, buyer })); });
                 // #1019 메모 줄 배지 = 주문번호 줄은 그 주문 · 전화번호 줄은 구매자 번호 · 저장 1분 안 + 주문 0 = 「주문 확인 중」(입력삭제 즉시 조회와 같은 창)
@@ -695,7 +732,8 @@ function mount(app, deps) {
                 _boxes: 'boxes' in b ? cleanBoxes(b.boxes) : ((dg('key' in b ? b.key : cur.line_key) !== dg(cur.line_key) || String(('plat' in b ? b.plat : cur.plat) || '').trim() !== String(cur.plat || '').trim()) ? null : (Array.isArray(cur.boxes) ? cur.boxes : null)) };   // #1021 'boxes' 올 때만 바뀜(null = 지움) · 번호·판매처 바뀌면 비움(주문 열쇠가 달라짐 · checked 와 같이)
         if ('ship_date' in b && b.ship_date !== null && !isDay(b.ship_date)) throw err(400, '날짜는 YYYY-MM-DD 로 주세요');
         const r = checkRow(next, ctx);
-        let checked = null;   // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
+        let checked = cur.kind === 'cash' && r.kind === 'cash' && b.to_cash !== true && cur.checked && isDay(cur.checked.split_done) && dg((r.cells || [])[10]) === dg(cur.checked.k) && !/[!！]/.test(String((r.cells || [])[0] || '')) ? { split_done: cur.checked.split_done, k: dg(cur.checked.k) } : null;   // #1121-b 주소 줄 「발송처리 끝」 표식 = 번호(K)·「!」 그대로일 때만 유지
+        // #850-d 판매처 확인 표시 — 메모 줄만 · 번호(숫자)나 판매처가 바뀌면 비움(같은 요청에 새 값이 오면 그것) · 안 바뀌면 칸이 올 때만 바꿈
         if (cur.kind === 'line') { const moved = dg(r.key) !== dg(cur.line_key) || String(r.plat || '') !== String(cur.plat || ''); checked = 'checked' in b ? cleanChecked(b.checked) : (moved ? null : (cur.checked || null)); if (smNext) { const cc = cur.checked || {}, keep = moved ? {} : Object.assign({}, cc.buyer ? { buyer: cc.buyer } : {}, cc.pno ? { pno: cc.pno } : {}); checked = Object.assign({}, checked || { plat: r.plat, as: 'order', at: new Date().toISOString() }, keep, checked && checked.buyer ? { buyer: checked.buyer } : {}, checked && checked.pno ? { pno: checked.pno } : {}, { ship_memo: smNext }); } const curNm = normalOrdersOf(cur); if (curNm.length && !moved) checked = Object.assign({}, checked || cur.checked, { normal_orders: curNm }); }   // #970 줄 고침 = 일반발송 유지(번호·판매처를 바꾸면 버림)   // #958 번호·판매처를 고치면 buyer·pno 버림(요청에 새 값이 오면 그것) · 글만 고치면 그대로
         const row = (await pool.query(`UPDATE order_memo_rows SET kind=$2, ship_date=$3, line_key=$4, note=$5, plat=$6, line=$7, cells=$8, sure=$9, check_why=$10, src=$11, updated_at=NOW(), updated_by=$12, checked=$13, service=$14, pair_orig=$15, exp_site=$16, boxes=$17
             WHERE id=$1 AND state='open' RETURNING ${ROW_COLS}`, [cur.id, ...saveVals(r), actorName(req), checked ? JSON.stringify(checked) : null, svc, (() => { if (cur.kind !== 'cash' || b.to_cash === true) return null; const o = b.to_indiv === true ? cleanOrig({ a: (cur.cells || [])[0], b: (cur.cells || [])[1], k: (cur.cells || [])[10], d: cur.ship_date, ab: r.cells[1], ad: r.ship_date || null }) : cur.pair_orig; return o ? JSON.stringify(o) : null; })(), expSite, next.kind === 'line' && next._boxes ? JSON.stringify(next._boxes) : null])).rows[0];
@@ -855,7 +893,11 @@ function mount(app, deps) {
         const cur = await getRow(req.params.id);
         if (cur.state === 'cleared') return res.json({ ok: true, already: true });
         await pool.query(`UPDATE order_memo_rows SET state='cleared', cleared_at=NOW(), cleared_by=$2, updated_at=NOW(), updated_by=$2 WHERE id=$1`, [cur.id, actorName(req)]);
-        await audit(req, 'clear_one', cur.id, { kind: cur.kind });
+        // #1121-b 첫날 발송처리 끝난 입력삭제 줄(checked.split_sent)을 지움 = 남은 짝 주소 줄(「!」 없음·서비스 X·K==번호)에 「발송처리 끝(그날)」 표식 옮겨 적기(알약·최종발주 참고 줄용 · 양식·자동 송장 무변경)
+        let moved = 0; const ss = cur.kind === 'line' && cur.checked && isDay(cur.checked.split_sent) ? cur.checked.split_sent : null, d0 = dg(cur.line_key);
+        if (ss && /^0\d{8,11}$/.test(d0) && !lineBuyer(cur)) { const ids = (await pool.query(`SELECT id, cells, service FROM order_memo_rows WHERE state='open' AND kind='cash'`)).rows.filter(x => Array.isArray(x.cells) && !x.service && !/[!！]/.test(String(x.cells[0] || '')) && dg(x.cells[10]) === d0).map(x => x.id);
+            if (ids.length) moved = (await pool.query(`UPDATE order_memo_rows SET checked = COALESCE(checked, '{}'::jsonb) || jsonb_build_object('split_done', $2::text, 'k', $3::text) WHERE id = ANY($1::int[]) AND state='open'`, [ids, ss, d0])).rowCount; }
+        await audit(req, 'clear_one', cur.id, Object.assign({ kind: cur.kind }, moved ? { split_done: moved } : {}));
         res.json({ ok: true });
     }));
 
@@ -1091,7 +1133,13 @@ function mount(app, deps) {
         const r = b.undo
             ? await pool.query(`UPDATE order_memo_rows SET used_on=NULL WHERE id = ANY($1::int[]) AND state='open' AND used_on = $2::date`, [ids, date])
             : await pool.query(`UPDATE order_memo_rows SET used_on=$2::date WHERE id = ANY($1::int[]) AND state='open'`, [ids, date]);
-        await audit(req, b.undo ? 'used_undo' : 'used', null, { date, n: r.rowCount });
+        // #1121 이번에 「오늘 줄로 내보낸」 날짜 나눈 입력삭제 줄 = 첫날 표식 checked.split_sent(되돌리기 = 그날 표식만 지움)
+        let split = 0;
+        if (b.undo) split = (await pool.query(`UPDATE order_memo_rows SET checked = checked - 'split_sent' WHERE id = ANY($1::int[]) AND kind = 'line' AND checked->>'split_sent' = $2`, [ids, date])).rowCount;
+        else { const all = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' ORDER BY entry_id, id`)).rows, want = new Set(ids);
+            const sids = [...splitPlan(all, date)].filter(([id, p]) => want.has(id) && !p.drop).map(([id]) => id);
+            if (sids.length) split = (await pool.query(`UPDATE order_memo_rows SET checked = COALESCE(checked, '{}'::jsonb) || jsonb_build_object('split_sent', $2::text) WHERE id = ANY($1::int[]) AND state = 'open' AND kind = 'line'`, [sids, date])).rowCount; }
+        await audit(req, b.undo ? 'used_undo' : 'used', null, Object.assign({ date, n: r.rowCount }, split ? { split } : {}));
         res.json({ ok: true, n: r.rowCount });
     }));
 

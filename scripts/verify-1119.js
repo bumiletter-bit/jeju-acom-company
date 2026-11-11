@@ -85,11 +85,12 @@ const A3 = [['받는1', '010-3300-0001', '부산광역시 가짜구 일로 1'], 
       b = OM.indivBadge(nl, [cr(3), cr(60, D4)], [od(1)], D2, {}); ok(b.state === 'normal_split' && t(b) === '일반발송 1건 · 오늘 3박스 · 60박스 11/4 대기' && BK[b.state] === 'later', '🆕 일반발송 + 날짜 나눔 = 중립(종전 빨강 초과)', [b.state, t(b)]);
     }
 
-    console.log('Ⅱ 왕복 = 입력삭제 줄 11/4 + 주소 줄 받는1(날짜 뺌 = 11/2) + 3줄(11/4) · 주문 A3·B1');
+    // #1121(11/11) 그 번호 입력삭제 줄이 하나뿐이면 새 규칙(첫날 발송처리 · verify-1121) → 이 절은 #1119 길이 남는 꼴(같은 번호 입력삭제 줄 2개)로 봄
+    console.log('Ⅱ 왕복 = 입력삭제 줄 11/4(같은 번호 2줄 = #1121 밖) + 주소 줄 받는1(날짜 뺌 = 11/2) + 3줄(11/4) · 주문 A3·B1');
     const orders = [nv(PA, 3), nv(PB, 1)];
     { const E = await mk(Number(process.env.PORT1119) || 3469); try {
         const line = { kind: 'line', key: BUY, note: '입력o삭제x', plat: '네이버', ship_date: D4, line: ['11/4', BUY, '입력o삭제x', '네이버'].join('\t'), src: 'edit', checked: { plat: '네이버', as: 'buyer', at: new Date().toISOString() } };
-        const e = await E.call('POST', '/api/order-memo', { raw: '시험', rows: [line, cashRow('받는1', '010-3300-0001', '부산광역시 가짜구 일로 1'), cashRow('받는2', '010-3300-0002', '부산광역시 가짜구 이로 2'), cashRow('받는3', '010-3300-0003', '부산광역시 가짜구 삼로 3'), cashRow('받는4', '010-3300-0004', '부산광역시 가짜구 사로 4')] });
+        const e = await E.call('POST', '/api/order-memo', { raw: '시험', rows: [line, Object.assign({}, line), cashRow('받는1', '010-3300-0001', '부산광역시 가짜구 일로 1'), cashRow('받는2', '010-3300-0002', '부산광역시 가짜구 이로 2'), cashRow('받는3', '010-3300-0003', '부산광역시 가짜구 삼로 3'), cashRow('받는4', '010-3300-0004', '부산광역시 가짜구 사로 4')] });
         ok(e.s === 200, '저장', e.j);
         let R = await E.rows(); ok(R.filter(r => r.kind === 'cash' && r.ship_date === D4).length === 4, '저장 직후 = 주소 줄 4 전부 11/4(종전)', R.map(r => r.ship_date));
         const first = R.find(r => r.kind === 'cash' && r.cells[3] === '받는1');

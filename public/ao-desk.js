@@ -927,6 +927,7 @@
     }
     // ── #860 순수 도우미 시작(verify 가 떼어 실행) — 메모 줄 칸 읽기 = invoice-v2 parseLines · 주문 짝 = v2 matchKey(구매자 번호 전체 또는 주문번호 · 수취인 지정 줄은 이름까지) · 줄 고르기 = v2 applyLines rank(오늘 > 뒤 날짜 > 지난 날짜 > 날짜 없음)
     const QTY_PH = new Set(['01000000000', '0000000000', '00000000000']);
+    const QTY_INDIV = /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제/i;   // #1121 invoice-v2 parseLines indiv 와 같은 글자
     const qtyChOf = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;
     const qtyTel = (ch, r) => String((r || {})[ch === 'naver' ? '구매자연락처' : ch === 'cafe24' ? '주문자 휴대전화' : '구매자전화번호'] || '').replace(/\D/g, '');
     const qtyIds = r => { r = r || {}; return [r._orderId, r._pid, r['주문번호'], r['상품주문번호'], r._x && r._x.orderId, r._x && r._x.productOrderId].filter(Boolean).map(String); };
@@ -942,7 +943,7 @@
             const digits = key.replace(/\D/g, ''); if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) return null;
             const ch = qtyChOf(plat) || qtyChOf(note) || (/^\d{8}-\d{7}$/.test(key) ? 'cafe24' : 'naver'), rec = note.match(/수취인\s*[:：]?\s*([가-힣]{2,5})/), sd = x.ship_date || null;
             const state = x.state || 'nodate', rank = state === 'today' ? 0 : state === 'wait' ? 1e15 + Date.parse(sd) : state === 'past' ? 2e15 - Date.parse(sd) : 3e15;
-            return { key, digits, ch, recipient: rec ? rec[1] : null, partial: !rec && /\d+\s*건\s*중|만\s*\)|만$/.test(note), state, rank };   // partial = v2 와 같은 「부분 지정」(수취인 이름 없이 n건 중·만) → 확인 몫이라 안 뺌
+            return { key, digits, ch, recipient: rec ? rec[1] : null, partial: !rec && /\d+\s*건\s*중|만\s*\)|만$/.test(note), state, rank, indiv: QTY_INDIV.test(note), split: !!(x.split && x.split.k) };   // #1121 indiv = v2 parseLines 와 같은 「입력삭제」 낱말 · split = 서버가 날짜 나눈 입력삭제를 첫날 발송처리로 내보낸 줄(for-ship 새 칸 · 없으면 false) · partial = v2 와 같은 「부분 지정」(수취인 이름 없이 n건 중·만) → 확인 몫이라 안 뺌
         }).filter(Boolean);
     }
     function qtyOmOut(ch, r, ml) {   // 이 주문에 걸린 메모 줄 중 맨 앞(v2 rank)이 뒤 날짜 줄이면 = 이번 발송에서 빠짐(최종발주 「삭제완료 · n/n 발송분」과 같음)
@@ -950,13 +951,23 @@
         const c = ml.filter(l => l.ch === ch && ((l.digits.length >= 8 && !QTY_PH.has(l.digits) && tel === l.digits) || (l.key && ids.includes(l.key))) && (!l.recipient || recv === l.recipient));
         if (!c.length) return false; c.sort((a, b) => a.rank - b.rank); return c[0].state === 'wait' && !c[0].partial;
     }
+    // #1121 이 주문에 걸린 메모 줄 맨 앞(v2 rank)이 오늘 입력삭제 줄이면 = 그 구매자 번호(K칸 짝) · 아니면 ''
+    function qtyOmIndiv(ch, r, ml) {
+        const tel = qtyTel(ch, r), ids = qtyIds(r), recv = qtyRecv(ch, r);
+        if (!(tel.length >= 8 && !QTY_PH.has(tel))) return '';
+        const c = ml.filter(l => l.ch === ch && ((l.digits.length >= 8 && !QTY_PH.has(l.digits) && tel === l.digits) || (l.key && ids.includes(l.key))) && (!l.recipient || recv === l.recipient));
+        if (!c.length) return ''; c.sort((a, b) => a.rank - b.rank); return c[0].state === 'today' && c[0].indiv && !c[0].partial ? (c[0].split ? '!' + tel : tel) : '';   // '!' 머리 = 서버 split 줄(그날 주소 줄이 0 이어도 주문 수량 안 셈)
+    }
     // 현금 줄 중 더할 것: 「!」 = 주문 없는 현금 손님 → 더함 · 「!」 없음 = 입력삭제 주소 줄 → 그 구매자(K칸 번호) 주문이 집계에 있으면 박스가 이미 들어 있으니 안 더함(주문이 없으면 그 줄이 나가므로 더함)
-    const qtyCashPick = (rows, tels) => (rows || []).filter(r => r && r.qty > 0 && String(r.opt || '').trim() && (r.bang || !(r.digits && r.digits.length >= 8 && !QTY_PH.has(r.digits) && tels.has(r.digits))));
+    // #1121 indivTels = 오늘 입력삭제로 주문 수량을 안 센 구매자 번호 → 그 번호 주소 줄은 늘 더함(같은 번호 다른 주문이 집계에 있어도)
+    const qtyCashPick = (rows, tels, indivTels) => (rows || []).filter(r => r && r.qty > 0 && String(r.opt || '').trim() && (r.bang || (indivTels && r.digits && indivTels.has(r.digits)) || !(r.digits && r.digits.length >= 8 && !QTY_PH.has(r.digits) && tels.has(r.digits))));
     // 현금 줄 품목 → 그림 줄 이름·거래처(최종발주 partnerOf 와 같은 판정 · 꼬리를 떼고 단가표) · 이름은 최종발주 수량표처럼 옵션 글자 그대로(사이즈 꼬리 = 「이름 X사이즈로!」 줄)
     function qtyCashItem(opt, byPartner, core) {
         const o = String(opt || '').trim(); if (!o || !core) return null;
         const p = core.partnerOf(o, byPartner); return p ? { name: o, partner: p } : null;
     }
+    // #1121 집계할 것이 없을 때 안내(입력삭제 주문을 주소 줄로 세는데 그날 주소 줄이 0 이면 그 사실을 말함 · indiv 0 = 종전 글 그대로)
+    const qtyEmptyMsg = st => st && st.indiv ? `입력삭제 주문 ${st.indiv}건은 주소 줄로 세는데 오늘 주소 줄이 없어요.${st.out ? ` 나머지 ${st.out}건은 발주 메모함의 뒤 날짜 줄로 빠졌어요.` : ''}` : st && st.out ? '배송준비 주문이 모두 발주 메모함의 뒤 날짜 줄로 빠져 이번에 집계할 것이 없어요.' : '3채널 모두 배송준비 주문이 없어요.';
     // ── #860 순수 도우미 끝
     // #860(대표 10/26 「완벽한 중간발주 흐름」) 묶기 = 종전 본문 그대로 + 발주 메모함(미래 날짜 줄의 주문 뺌 · 현금 줄 더함) + 올린 현금파일. 메모함·파일이 없으면 종전과 같은 표
     function qtyBuild() {
@@ -966,7 +977,13 @@
         const st = { lines: om ? (om.lines || []).length : 0, wait: ml.filter(l => l.state === 'wait').length, out: 0, outQty: 0, cashRows: 0, cashSkip: 0, cashQty: 0 };
         // 채널별 (옵션 원문 + 손님 메모의 사이즈 요청 꼬리) → 수량
         const lines = [];
-        const add = (ch, opt, memo, qty, r) => { if (ml.length && qtyOmOut(ch, r, ml)) { st.out++; st.outQty += parseInt(qty) || 1; return; } let o = String(opt || ''); try { o = addSizeSuffix(o, String(memo || '').trim()); } catch (e) { /* 꼬리 없이 */ } lines.push({ ch, opt: o, qty: parseInt(qty) || 1 }); const d = qtyTel(ch, r); if (d) tels.add(d); };   // #860 메모함 미래 날짜 줄의 주문 = 뺌
+        // #1121 오늘 입력삭제 주문 = 주문 수량 대신 그날 주소 줄(「!」 없는 현금 줄 · K칸 = 구매자 번호) 박스로 셈 · 그 번호 주소 줄이 하나도 없으면 종전대로 주문 수량(조용히 0 안 됨)
+        const cashAll = (QTY.cash && Array.isArray(QTY.cash.rows) ? QTY.cash.rows : []).concat(omCash);   // 머리글이 틀린 파일 = rows 빈 배열(안 씀) · 빈 칸 있는 파일 = 행은 쓰고 한 줄에 ⚠️
+        const cashK = new Set(cashAll.filter(r => r && !r.bang && r.qty > 0 && String(r.opt || '').trim() && r.digits && r.digits.length >= 8 && !QTY_PH.has(r.digits)).map(r => r.digits)), indivTels = new Set();
+        st.indiv = 0; st.indivQty = 0;
+        const add = (ch, opt, memo, qty, r) => { if (ml.length && qtyOmOut(ch, r, ml)) { st.out++; st.outQty += parseInt(qty) || 1; return; }
+            const it0 = ml.length ? qtyOmIndiv(ch, r, ml) : '', it = it0.replace(/^!/, ''); if (it && (cashK.has(it) || it0[0] === '!')) { st.indiv++; st.indivQty += parseInt(qty) || 1; indivTels.add(it); return; }
+            let o = String(opt || ''); try { o = addSizeSuffix(o, String(memo || '').trim()); } catch (e) { /* 꼬리 없이 */ } lines.push({ ch, opt: o, qty: parseInt(qty) || 1 }); const d = qtyTel(ch, r); if (d) tels.add(d); };   // #860 메모함 미래 날짜 줄의 주문 = 뺌
         if (nv.ok) (nv.rows || []).forEach(r => add('naver', r['옵션정보'], r['배송메세지'], r['수량'], r));
         if (cf.ok) (cf.rows || []).forEach(r => add('cafe24', r['주문상품명(세트상품 포함)'], r['배송메시지'], r['수량'], r));
         if (cp.ok) (cp.rows || []).forEach(r => add('coupang', r['노출상품명(옵션명)'] || r['등록상품명'], r['배송메세지'], r['구매수(수량)'], r));
@@ -979,9 +996,8 @@
             map.set(name, (map.get(name) || 0) + g.qty);
         }
         // #860 현금 줄(올린 현금파일 행 뒤에 메모함 행 · 최종발주 omMergeCash 와 같은 순서) — 「!」 현금 손님 = 더함 · 입력삭제 주소 줄 = 그 구매자 주문이 이미 집계에 있으면 안 더함(박스 수 그대로)
-        const cashAll = (QTY.cash && Array.isArray(QTY.cash.rows) ? QTY.cash.rows : []).concat(omCash);   // 머리글이 틀린 파일 = rows 빈 배열(안 씀) · 빈 칸 있는 파일 = 행은 쓰고 한 줄에 ⚠️
         const cBlank = cashAll.filter(r => r && !(r.qty > 0 && String(r.opt || '').trim())).length; if (cBlank) umap.set('[현금] (품목 없음)', (umap.get('[현금] (품목 없음)') || 0) + cBlank);   // 품목·수량 빈 줄 = 미매칭 장에 줄 수로(조용히 안 버림)
-        const cAdd = qtyCashPick(cashAll, tels); st.cashRows = cashAll.length; st.cashSkip = cashAll.filter(r => !r.bang).length - cAdd.filter(r => !r.bang).length;
+        const cAdd = qtyCashPick(cashAll, tels, indivTels); st.cashRows = cashAll.length; st.cashSkip = cashAll.filter(r => !r.bang).length - cAdd.filter(r => !r.bang).length;
         cAdd.forEach(r => { const it = qtyCashItem(r.opt, aoInvoicePricingByPartner, window.FinalOrderCore); st.cashQty += r.qty;
             if (!it) { const k = `[현금] ${r.opt}`; umap.set(k, (umap.get(k) || 0) + r.qty); return; }
             map.set(it.name, (map.get(it.name) || 0) + r.qty); cashPart.set(it.name, it.partner); });
@@ -1020,7 +1036,7 @@
             if (!nv.ok && !cp.ok && !cf.ok) { qtyNote(`3채널 모두 불러오지 못했어요 · 네이버: ${nv.message} / 쿠팡: ${cp.message} / 자사몰: ${cf.message}`, 'err'); return; }
             ptxt.textContent = '거래처별로 묶어 그림을 만드는 중';
             QTY.src = { nv, cp, cf }; QTY.om = await omP;
-            if (!qtyBuild()) { qtyNote(QTY.stat && QTY.stat.out ? '배송준비 주문이 모두 발주 메모함의 뒤 날짜 줄로 빠져 이번에 집계할 것이 없어요.' : '3채널 모두 배송준비 주문이 없어요.', ''); return; }
+            if (!qtyBuild()) { qtyNote(qtyEmptyMsg(QTY.stat), ''); return; }
             const fails = [!nv.ok && '네이버: ' + nv.message, !cp.ok && '쿠팡: ' + cp.message, !cf.ok && '자사몰: ' + cf.message].filter(Boolean);
             const partial = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
             const cnt = x => x.ok ? nfmt(x.count != null ? x.count : (x.rows || []).length) : '실패';
@@ -1046,7 +1062,7 @@
     }
     function qtyOmLine() {
         const el = document.getElementById('qty-om'); if (!el) return; const s = QTY.stat || {}, om = QTY.om, mdd = d => (d ? (+d.slice(5, 7)) + '/' + (+d.slice(8, 10)) : '');
-        const memo = om ? `발주 메모함(${esc(mdd(om.date))} 발송 기준) 메모 ${nfmt(s.lines || 0)}줄 · 빠진 주문 ${nfmt(s.out || 0)}건 · 더한 현금 ${nfmt(s.cashQty || 0)}박스${s.cashSkip ? ` · 입력삭제 주소 줄 ${nfmt(s.cashSkip)}줄은 주문으로 셈` : ''}` : '발주 메모함을 불러오지 못해 메모함 없이 집계했어요';
+        const memo = om ? `발주 메모함(${esc(mdd(om.date))} 발송 기준) 메모 ${nfmt(s.lines || 0)}줄 · 빠진 주문 ${nfmt(s.out || 0)}건 · 더한 현금 ${nfmt(s.cashQty || 0)}박스${s.cashSkip ? ` · 입력삭제 주소 줄 ${nfmt(s.cashSkip)}줄은 주문으로 셈` : ''}${s.indiv ? ` · 오늘 입력삭제 주문 ${nfmt(s.indiv)}건은 주소 줄 박스로 셈` : ''}` :'발주 메모함을 불러오지 못해 메모함 없이 집계했어요';
         const file = QTY.cash ? (QTY.cash.ok ? ` · 현금파일 ${nfmt(QTY.cash.rows.length)}행` : (QTY.cash.rows || []).length ? ` · 현금파일 ${nfmt(QTY.cash.rows.length)}행(⚠️ ${esc(QTY.cash.error || '빈 칸 있음')})` : ' · 현금파일 ⚠️ 읽지 못함(13칸 양식 머리글 확인)') : '';
         el.innerHTML = `<span>${memo}${file}</span>${window.AkmOrderMemo ? '<button type="button" class="desk-btn sm" id="qty-om-open">메모함 열기</button>' : ''}`;
         const nt = document.getElementById('qty-cash-note'); if (nt) nt.textContent = QTY.cash ? (QTY.cash.ok ? `${QTY.cashName} · ${QTY.cash.rows.length}행(현금 ${QTY.cash.rows.filter(r => r.bang).length}행 · 그 밖 ${QTY.cash.rows.filter(r => !r.bang).length}행)` : `${QTY.cashName} · ⚠️ ${QTY.cash.error}`) : '현금, 입력삭제 건의 주소 줄이 적힌 엑셀(최종발주와 같은 13칸 양식) · 없으면 그냥 두세요';
