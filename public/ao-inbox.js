@@ -500,7 +500,10 @@ window.AkmPoint = (function () {
     const markDone = k => { try { const s = doneSet(); s.add(k); sessionStorage.setItem(DONE_KEY, JSON.stringify([...s].slice(-200))); } catch (e) { /* 저장 못 해도 이 화면 동안은 띠가 닫힘 */ } };
     const hash = s => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return (h >>> 0).toString(36); };
     // show({ form, ch:'talk'|'sms', key, sent, reason, note, build(amount, reason) → content })
+    // #1118(대표 11/11 「우선 베타로 전승범 계정만 · 다른 모두 안 나오게」) 대표 계정(관리자 + 직급 대표 = ao-desk.js isOwner 와 같은 뜻)만 띠 · 톡톡·문자 두 호출 모두 여기서 막힘 · 손으로 쓰는 지시는 종전 그대로
+    const isOwner = () => typeof currentUser !== 'undefined' && !!currentUser && currentUser.role === 'admin' && currentUser.position === '대표';
     function show(o) {
+        if (!isOwner()) return false;
         const amount = amountOf(o.sent); if (!amount || !o.form || !o.form.isConnected) return false;
         const dk = o.ch + ':' + o.key + ':' + hash(o.sent); if (doneSet().has(dk)) return false;
         const old = o.form.querySelector('.akm-point'); if (old) old.remove();
