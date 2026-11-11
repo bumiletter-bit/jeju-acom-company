@@ -44,4 +44,5 @@ async function main() {
     if (!j.dry) console.log(`저장 ${j.saved}줄(메모함 「확인」 줄 · 사람이 [고친 대로 저장] 해야 최종발주에 들어감)`);
     return 0;
 }
-main().then(c => process.exit(c || 0), e => { console.error(e); process.exit(1); });
+// 끝내기 = process.exitCode + 자연 종료(윈도우에서 fetch 연결이 닫히는 중에 process.exit() 하면 「Assertion failed: !(handle->flags & UV_HANDLE_CLOSING) … async.c」가 찍힘)
+main().then(c => { process.exitCode = c || 0; }, e => { console.error(e); process.exitCode = 1; });
