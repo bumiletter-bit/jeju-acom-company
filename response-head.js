@@ -41,7 +41,7 @@ function talkBin(x) {
 
 module.exports = function mountResponseHead(app, deps) {
     const { pool, authMiddleware } = deps;
-    const T = Object.assign({ logs: 'message_logs', qnas: 'naver_qnas', inquiries: 'naver_inquiries', smsThreads: 'sms_threads', smsMessages: 'sms_messages', scenarios: 'inquiry_scenarios', season: 'product_season_knowledge', config: 'agent_office_config' }, deps.tables || {});
+    const T = Object.assign({ logs: 'message_logs', qnas: 'naver_qnas', inquiries: 'naver_inquiries', smsThreads: 'sms_threads', smsMessages: 'sms_messages', scenarios: 'inquiry_scenarios', season: 'product_season_knowledge', config: 'agent_office_config', plog: 'response_preview_log' }, deps.tables || {});
     for (const k of Object.keys(T)) if (!/^[a-z0-9_]{3,60}$/.test(String(T[k]))) throw new Error('response-head: 표 이름이 이상해요 — ' + k);
     const now = deps.now || (() => Date.now());
     const doFetch = deps.fetch || (typeof fetch === 'function' ? fetch : null);
@@ -229,10 +229,53 @@ module.exports = function mountResponseHead(app, deps) {
         catch (e) { log.error('[응대 현황] 미리보기 실패(' + channel + '):', e && e.message); out = { status: 502, body: { ok: false, code: 'ai_error', error: '답을 만들지 못했어요(AI 오류) — 잠시 뒤 다시 물어봐 주세요' }, refund: false }; }
         finally { busy.delete(uid); }
         if (out.refund) await capGiveBack();
-        const left = await previewLeft();
-        res.status(out.status).json(Object.assign({ channel, ms: now() - t0 }, out.body, left));
+        const left = await previewLeft(); const ms = now() - t0;
+        res.status(out.status).json(Object.assign({ channel, ms }, out.body, left));
+        plogLast = plogAdd(req.user, channel, text, out, ms);
     }));
 
-    return { _talkBin: talkBin, _counts: counts, _settings: settings, _materials: materials, _previewLeft: previewLeft, tables: T };
+    // ───────── #1110-5 미리보기 이력(누가 · 무엇을 물었고 · 무슨 답이 나왔나) ─────────
+    // 표는 처음 기록할 때 만든다(initDB 무접촉 · 읽기만 하는 기동에서는 안 만들어짐) · 기록 실패는 미리보기 답을 막지 않는다 · 90일 보관
+    const PLOG_KEEP_DAYS = 90, PLOG_MAX = 2000;
+    let plogReady = null, plogCleanDay = '', plogLast = Promise.resolve();
+    const plogEnsure = () => plogReady || (plogReady = (async () => {
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${T.plog} (id BIGSERIAL PRIMARY KEY, user_id INTEGER, user_name TEXT, channel TEXT NOT NULL, question TEXT NOT NULL, answer TEXT, source TEXT, scenario_nos JSONB, ms INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS ${T.plog}_created_idx ON ${T.plog} (created_at DESC)`);
+    })().catch(e => { plogReady = null; throw e; }));
+    function plogRow(user, channel, text, out, ms) {
+        const b = (out && out.body) || {}; const good = out && out.status === 200 && b.ok;
+        const source = good ? (b.skip ? 'skip' : String(b.source || 'ai')) : 'error';
+        const answer = good ? (b.skip ? b.why_text : b.answer) : b.error;
+        const nos = good && !b.skip && Array.isArray(b.scenario_nos) ? b.scenario_nos.slice(0, 20).map(x => clip(String(x), 20)) : [];
+        const uid = Number(user && user.id);
+        return [Number.isInteger(uid) ? uid : null, clip(String((user && user.name) || ''), 60), channel, clip(String(text || ''), PLOG_MAX), clip(String(answer || ''), PLOG_MAX), clip(source, 30), JSON.stringify(nos), Math.max(0, Math.min(Math.round(Number(ms) || 0), 2000000000))];
+    }
+    async function plogAdd(user, channel, text, out, ms) {
+        try {
+            await plogEnsure();
+            await pool.query(`INSERT INTO ${T.plog} (user_id, user_name, channel, question, answer, source, scenario_nos, ms) VALUES ($1::int, $2::text, $3::text, $4::text, $5::text, $6::text, $7::jsonb, $8::int)`, plogRow(user, channel, text, out, ms));
+            const day = new Date(now() + 9 * 3600000).toISOString().slice(0, 10);
+            if (day !== plogCleanDay) { plogCleanDay = day; await pool.query(`DELETE FROM ${T.plog} WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')`, [PLOG_KEEP_DAYS]); }
+        } catch (e) { log.error('[응대 현황] 미리보기 이력 기록 실패:', e && e.message); }
+    }
+    app.get('/api/agent-office/response-preview-log', authMiddleware, guard(async (req, res) => {
+        const q = req.query || {};
+        const limit = Math.max(1, Math.min(Number.parseInt(q.limit, 10) || 50, 100));
+        const before = /^\d{1,18}$/.test(String(q.before || '')) ? String(q.before) : null;
+        const user = /^\d{1,9}$/.test(String(q.user || '')) ? Number(q.user) : null;
+        const channel = CHANNELS.includes(String(q.channel || '')) ? String(q.channel) : null;
+        let rows = [], users = [];
+        try {
+            rows = (await pool.query(`SELECT id, user_id, user_name, channel, question, answer, source, scenario_nos, ms, created_at FROM ${T.plog}
+                WHERE ($1::bigint IS NULL OR id < $1::bigint) AND ($2::int IS NULL OR user_id = $2::int) AND ($3::text IS NULL OR channel = $3::text)
+                ORDER BY id DESC LIMIT $4::int`, [before, user, channel, limit + 1])).rows;
+            if (!before) users = (await pool.query(`SELECT user_id AS id, max(user_name) AS name FROM ${T.plog} WHERE user_id IS NOT NULL GROUP BY user_id ORDER BY max(id) DESC LIMIT 50`)).rows;
+        } catch (e) { if (!(e && e.code === '42P01')) throw e; }   /* 표가 아직 없음(미리보기를 한 번도 안 씀) = 빈 목록 */
+        const more = rows.length > limit; if (more) rows = rows.slice(0, limit);
+        res.json({ ok: true, keep_days: PLOG_KEEP_DAYS, more, users: before ? undefined : users.map(u => ({ id: Number(u.id), name: u.name || '' })),
+            rows: rows.map(r => ({ id: Number(r.id), user_id: r.user_id, user_name: r.user_name || '', channel: r.channel, question: r.question, answer: r.answer || '', source: r.source || '', scenario_nos: Array.isArray(r.scenario_nos) ? r.scenario_nos : [], ms: r.ms, created_at: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at })) });
+    }));
+
+    return { _talkBin: talkBin, _counts: counts, _settings: settings, _materials: materials, _previewLeft: previewLeft, _plogWait: () => plogLast, _plogRow: plogRow, tables: T };
 };
 module.exports.talkBin = talkBin;

@@ -49,7 +49,7 @@ html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { 
 /* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
 html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
 
-/* ── styles.css 에서 옮긴 것 (983규칙) ── */
+/* ── styles.css 에서 옮긴 것 (1010규칙) ── */
 :where(html[data-ao-theme="dark"]) .btn-login { background: var(--d-accent-fill); color: #FFFFFF; border: none; }
 :where(html[data-ao-theme="dark"]) .btn-login:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); }
@@ -1042,6 +1042,35 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .rv-talk #rv-send { background: var(--rvc-pill); color: var(--rvc-pill-ink); border: 0; box-shadow: none; }
 :where(html[data-ao-theme="dark"]) .rv-talk #rv-send:hover:not(:disabled) { background: var(--rvc-pill-hover); }
 :where(html[data-ao-theme="dark"]) .rv-talk #rv-foot { color: var(--rvc-foot); }
+:where(html[data-ao-theme="dark"]) .rv-act { border: 0; background: var(--rvc-chip); color: var(--rvc-ink); }
+:where(html[data-ao-theme="dark"]) .rv-act:hover { background: var(--rvc-me); }
+:where(html[data-ao-theme="dark"]) .rv-act:focus-visible { outline: 2px solid var(--rvc-ink); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .pvl { border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text-dark); box-shadow: var(--shadow-md); }
+:where(html[data-ao-theme="dark"]) .pvl::backdrop { background: rgba(117, 144, 200, 0.51); }
+:where(html[data-ao-theme="dark"]) .pvl-head h2 { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .pvl-btn { border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .pvl-btn:hover:not(:disabled) { background: var(--bg); }
+:where(html[data-ao-theme="dark"]) .pvl-btn:focus-visible, :where(html[data-ao-theme="dark"]) .pvl-row:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .pvl-sub { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-filters { border-bottom: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .pvl-filters label { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-item { border-bottom: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .pvl-item.on { background: var(--bg); }
+:where(html[data-ao-theme="dark"]) .pvl-row { border: 0; background: none; color: inherit; }
+:where(html[data-ao-theme="dark"]) .pvl-row:hover { background: var(--bg); }
+:where(html[data-ao-theme="dark"]) .pvl-meta { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-who { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .pvl-ch { background: var(--primary-light); color: var(--primary-dark); }
+:where(html[data-ao-theme="dark"]) .pvl-pill-err { background: var(--d-soft); color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .pvl-q { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .pvl-a { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-lab { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-text { border: 1px solid var(--border); background: var(--card-bg); }
+:where(html[data-ao-theme="dark"]) .pvl-foot { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .pvl-empty { color: var(--text-mid); }
+@media (max-width: 720px) {
+    :where(html[data-ao-theme="dark"]) .pvl { border: 0; }
+}
 :where(html[data-ao-theme="dark"]) .noti-hist-item.unread.nh-alert { background: var(--d-soft); box-shadow: inset 4px 0 0 var(--danger, #F04438); }
 :where(html[data-ao-theme="dark"]) .noti-hist-item.unread.nh-alert:hover { background: rgba(230, 87, 76, 0.14); }
 :where(html[data-ao-theme="dark"]) .noti-hist-item.unread.nh-alert .nh-time { color: #F19A93; }

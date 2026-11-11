@@ -16,6 +16,7 @@ function seed() {
     ST = {
         user: { id: 1, username: 'owner', name: '전승범', role: 'admin', position: '대표' },
         log: [], gets: [], auto_reply: 'on', qna_auto: true, inq_auto: false,
+        plog: [],   // #1110-5 미리보기 이력 줄
         rv: { stats: 'ok', next: 'ok', used: 3, cap: 100, delay: 0 },   // #1110-4 응대 현황: stats = ok|404|500 · next = 다음 미리보기 응답 꼴
         notis: [],
         scenarios: [
@@ -43,12 +44,13 @@ function seed() {
 }
 seed();
 const json = (res, code, o) => { const b = Buffer.from(JSON.stringify(o)); res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': b.length, 'Cache-Control': 'no-store' }); res.end(b); };
+const jsonRaw = json;
 const readBody = req => new Promise(r => { let s = ''; req.on('data', d => s += d); req.on('end', () => { try { r(s ? JSON.parse(s) : {}); } catch (e) { r({}); } }); });
 
 http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'); const p = u.pathname, M = req.method;
     if (p === '/__mock/log') return json(res, 200, { log: ST.log, user: ST.user, gets: ST.gets });
-    if (p === '/__mock/set' && M === 'POST') { const b = await readBody(req); if (b.rv) Object.assign(ST.rv, b.rv); if (Array.isArray(b.notis)) ST.notis = b.notis; return json(res, 200, { ok: true }); }
+    if (p === '/__mock/set' && M === 'POST') { const b = await readBody(req); if (b.rv) Object.assign(ST.rv, b.rv); if (Array.isArray(b.notis)) ST.notis = b.notis; if (Array.isArray(b.plog)) ST.plog = b.plog; return json(res, 200, { ok: true }); }
     if (p === '/__mock/reset') { seed(); return json(res, 200, { ok: true }); }
     if (p === '/__mock/user' && M === 'POST') { const b = await readBody(req); ST.user = Object.assign({ id: 7, username: 'u', name: '시험', role: 'user', position: '사원' }, b); return json(res, 200, { ok: true, user: ST.user }); }
     if (p.startsWith('/api/')) {
@@ -68,8 +70,18 @@ http.createServer(async (req, res) => {
                 settings: { auto_reply: ST.auto_reply !== 'off', qna_auto_post: ST.qna_auto, inquiry_auto_post: ST.inq_auto, sms_mode: 'draft', talk_once_until_hour: 9 },
                 materials: { scenarios: ST.scenarios.length, season: ST.season.length, season_today: 2 }, preview: { left_today: ST.rv.cap - ST.rv.used, cap: ST.rv.cap } });
         }
+        if (p === '/api/agent-office/response-preview-log' && M === 'GET') {   // #1110-5 미리보기 이력(가짜 · ST.plog = 새 것이 뒤)
+            if (ST.user.role === 'accountant') return json(res, 403, { ok: false, error: '이 화면을 볼 수 없는 계정이에요' });
+            if (ST.rv.plog === '500') return json(res, 500, { ok: false, error: '처리하지 못했어요. 잠시 뒤 다시 해 주세요.' });
+            const q = u.searchParams, lim = Math.min(Number(q.get('limit')) || 50, 100), bf = Number(q.get('before')) || 0, us = q.get('user'), ch = q.get('channel');
+            let rows = ST.plog.filter(r => (!bf || r.id < bf) && (!us || String(r.user_id) === us) && (!ch || r.channel === ch)).sort((a, b) => b.id - a.id);
+            const more = rows.length > lim; rows = rows.slice(0, lim);
+            const um = new Map(); for (const r of ST.plog) um.set(r.user_id, r.user_name);
+            return json(res, 200, { ok: true, keep_days: 90, more, users: bf ? undefined : [...um].map(([id, name]) => ({ id, name })), rows });
+        }
         if (p === '/api/agent-office/response-preview' && M === 'POST') {
             const kind = ST.rv.next; ST.rv.next = 'ok';
+            const json = (rs, code, o) => { if (code !== 404 && !(o && (o.code === 'day_cap'))) ST.plog.push({ id: ST.plog.length ? ST.plog[ST.plog.length - 1].id + 1 : 1, user_id: ST.user.id || 1, user_name: ST.user.name || '', channel: body.channel, question: String(body.text), answer: o.ok ? (o.skip ? o.why_text : o.answer) : o.error, source: o.ok ? (o.skip ? 'skip' : o.source) : 'error', scenario_nos: (o.ok && !o.skip && o.scenario_nos) || [], ms: o.ms || 2100, created_at: new Date().toISOString() }); return jsonRaw(rs, code, o); };
             if (ST.rv.delay) await new Promise(r => setTimeout(r, ST.rv.delay));
             const left = () => ({ left_today: Math.max(0, ST.rv.cap - ST.rv.used), cap: ST.rv.cap });
             if (kind === '404') return json(res, 404, { error: 'not found' });

@@ -14070,22 +14070,25 @@ function rvInit() {
     window.addEventListener('resize', onVV);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', onVV);
 }
-function rvTopGap() {   // 화면 맨 위에 붙어 있는 머리(메뉴·종 단추 줄) 높이 — 없으면 0
-    let b = 0, e = document.elementFromPoint(Math.max(1, window.innerWidth / 2), 2);
-    while (e && e !== document.body && e !== document.documentElement) {
-        if (e.id === 'rv-chat') return 0;
-        const p = getComputedStyle(e).position;
-        if (p === 'fixed' || p === 'sticky') b = Math.max(b, e.getBoundingClientRect().bottom);
-        e = e.parentElement;
+function rvTopGap() {   // 화면 위쪽에 떠 있는 것(머리 줄 · 왼쪽 메뉴 단추 · 오른쪽 종 단추) 아래 끝 — 없으면 0 · 미리보기 카드가 그 밑에 깔리지 않게
+    const chat = rvEl('rv-chat'), W = window.innerWidth, lim = window.innerHeight * 0.4; let b = 0;
+    for (const [x, y] of [[W / 2, 2], [34, 34], [W - 34, 34]]) {
+        let e = document.elementFromPoint(Math.max(1, Math.min(W - 1, x)), y);
+        if (chat && e && chat.contains(e)) continue;
+        while (e && e !== document.body && e !== document.documentElement) {
+            if (getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.bottom < lim && r.height < lim) b = Math.max(b, r.bottom); }
+            e = e.parentElement;
+        }
     }
-    return b > 0 && b < window.innerHeight * 0.4 ? Math.round(b) : 0;
+    return Math.round(b);
 }
 function rvFit() {   // 미리보기 카드 높이(--rv-h) — 폰 = 지금 보이는 높이 − 고정 머리 − 여백
     const chat = rvEl('rv-chat'); if (!chat) return;
     const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     if (window.matchMedia('(max-width: 860px)').matches) { chat.style.setProperty('--rv-h', Math.max(260, Math.round(vh - rvTopGap() - 16)) + 'px'); return; }
     const left = document.querySelector('#inquiry-tab-overview .rv-left');   // PC = 왼쪽 칸 높이만큼(화면보다 길어지지는 않게)
-    if (left && left.offsetHeight) chat.style.setProperty('--rv-h', Math.max(480, Math.min(left.offsetHeight, window.innerHeight - 24)) + 'px');
+    const gap = rvTopGap(); chat.style.setProperty('--rv-top', (gap ? gap + 8 : 12) + 'px');   // PC 붙는 자리 = 떠 있는 종 단추 아래
+    if (left && left.offsetHeight) chat.style.setProperty('--rv-h', Math.max(360, Math.min(left.offsetHeight, window.innerHeight - (gap ? gap + 8 : 12) - 12)) + 'px');
 }
 function rvLogEnd() { const el = rvEl('rv-log'); if (el) el.scrollTop = el.scrollHeight; }
 function rvAlign(instant) {
@@ -14093,7 +14096,7 @@ function rvAlign(instant) {
     rvFit();
     const gap = rvTopGap() + 8;
     if (Math.abs(chat.getBoundingClientRect().top - gap) < 4) return;
-    chat.style.scrollMarginTop = gap + 'px';
+    chat.style.scrollMarginTop = gap + 'px';   // PC 는 붙는 자리(--rv-top)와 같은 값
     const calm = instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     chat.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
 }
@@ -14204,6 +14207,86 @@ async function rvAsk(text, retry) {
     const ta = rvEl('rv-text'); if (ta && window.matchMedia('(pointer: fine)').matches) ta.focus({ preventScroll: true });
 }
 window.rvLoad = rvLoad;
+// ── #1110-5 미리보기 [초기화] + 「미리보기 이력」 창(누가 · 무엇을 물었고 · 무슨 답이 나왔나 · 읽기만) ──
+//   대화(RV.log)는 메모리에만 둔다 → 새로고침·재로그인 뒤엔 빈 화면 · 다른 탭 갔다 오면 그대로 · 물어본 글은 서버 이력(90일)에 남는다
+window.rvReset = function() {
+    if (RV.busy) { showToast('답을 만드는 중이에요 — 끝난 뒤 눌러 주세요'); return; }
+    if (!RV.log.length) { showToast('비울 대화가 없어요'); return; }
+    RV.log = []; rvDrawLog();
+    showToast('대화를 비웠어요 · 물어본 글은 「미리보기 이력」에 남아 있어요');
+};
+const PVL = { rows: [], users: [], more: false, user: '', ch: '', loading: false, err: '', open: new Set(), seq: 0, map: null, inited: false };
+const PVL_SRC = { price_direct: '가격 바로 답(AI 없이)', sms_rule: '정해 둔 글(AI 없이)' };
+function pvlWhen(iso) {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const p = Object.fromEntries(new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d).map(x => [x.type, x.value]));
+    return `${p.month}/${p.day} ${p.hour === '24' ? '00' : p.hour}:${p.minute}`;
+}
+function pvlInit() {
+    if (PVL.inited) return; PVL.inited = true;
+    const dlg = rvEl('pvl'); if (!dlg) return;
+    rvEl('pvl-close')?.addEventListener('click', () => pvlClose());
+    dlg.addEventListener('click', e => { if (e.target === dlg) pvlClose(); });   // 바깥(어두운 바탕) 누르면 닫힘
+    rvEl('pvl-user')?.addEventListener('change', e => { PVL.user = e.target.value; pvlLoad(true); });
+    rvEl('pvl-ch')?.addEventListener('change', e => { PVL.ch = e.target.value; pvlLoad(true); });
+    rvEl('pvl-more')?.addEventListener('click', () => pvlLoad(false));
+    rvEl('pvl-list')?.addEventListener('click', e => {
+        const link = e.target.closest('[data-pvl-scen]');
+        if (link) { const id = Number(link.dataset.pvlScen); pvlClose(); if (typeof switchPage === 'function' && !document.getElementById('page-inquiry')?.classList.contains('active')) switchPage('inquiry'); setTimeout(() => gotoScenario(id), 0); return; }
+        if (e.target.closest('[data-pvl-retry]')) { pvlLoad(true); return; }
+        const row = e.target.closest('[data-pvl]'); if (!row) return;
+        const id = Number(row.dataset.pvl); if (PVL.open.has(id)) PVL.open.delete(id); else PVL.open.add(id);
+        pvlDraw(); rvEl('pvl-list')?.querySelector(`[data-pvl="${id}"]`)?.focus({ preventScroll: true });
+    });
+}
+function pvlClose() { const dlg = rvEl('pvl'); if (dlg && dlg.open) dlg.close(); }
+function pvlOpen() {
+    const dlg = rvEl('pvl'); if (!dlg) return;
+    pvlInit();
+    if (!dlg.open) { if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', ''); }
+    PVL.open.clear(); pvlLoad(true);
+    scenNoMap().then(m => { PVL.map = m; pvlDraw(); }).catch(() => { /* 번호 링크 없이도 목록은 보인다 */ });
+}
+async function pvlLoad(reset) {
+    if (PVL.loading && !reset) return;
+    const seq = ++PVL.seq; PVL.loading = true; PVL.err = '';
+    if (reset) { PVL.rows = []; PVL.more = false; }
+    pvlDraw();
+    const last = PVL.rows[PVL.rows.length - 1];
+    const qs = ['limit=50', PVL.user ? 'user=' + encodeURIComponent(PVL.user) : '', PVL.ch ? 'channel=' + encodeURIComponent(PVL.ch) : '', !reset && last ? 'before=' + last.id : ''].filter(Boolean).join('&');
+    try {
+        const d = await api('/api/agent-office/response-preview-log?' + qs);
+        if (seq !== PVL.seq) return;
+        PVL.rows = PVL.rows.concat(d.rows || []); PVL.more = !!d.more;
+        if (Array.isArray(d.users)) PVL.users = d.users;
+    } catch (e) { if (seq !== PVL.seq) return; PVL.err = (e && e.message) || '이력을 읽지 못했어요'; }
+    PVL.loading = false; pvlDraw();
+}
+function pvlDraw() {
+    const list = rvEl('pvl-list'); if (!list) return;
+    const chName = Object.fromEntries(RV_CH);
+    const us = rvEl('pvl-user'), cs = rvEl('pvl-ch');
+    if (us) { const want = '<option value="">전체</option>' + PVL.users.map(u => `<option value="${Number(u.id)}">${escapeHtml(u.name || '이름 없음')}</option>`).join(''); if (us.dataset.sig !== want) { us.innerHTML = want; us.dataset.sig = want; } us.value = PVL.user; if (us.value !== PVL.user) { us.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(PVL.user)}">고른 사람</option>`); us.value = PVL.user; us.dataset.sig = ''; } }
+    if (cs && !cs.options.length) cs.innerHTML = '<option value="">전체</option>' + RV_CH.filter(([k]) => k !== 'all').map(([k, label]) => `<option value="${k}">${label}</option>`).join('');
+    const more = rvEl('pvl-more');
+    if (more) { more.hidden = !(PVL.more && PVL.rows.length) || !!PVL.err; more.disabled = PVL.loading; more.textContent = PVL.loading ? '읽는 중' : '더 보기'; }
+    if (PVL.err) { list.innerHTML = `<p class="pvl-empty">${escapeHtml(PVL.err)}<br><button type="button" class="pvl-btn" data-pvl-retry>다시 읽기</button></p>`; return; }
+    if (!PVL.rows.length) { list.innerHTML = `<p class="pvl-empty">${PVL.loading ? '이력을 읽는 중이에요.' : (PVL.user || PVL.ch) ? '고른 조건에 맞는 미리보기가 없어요.' : '아직 미리 물어본 글이 없어요.<br>응대 현황의 미리보기에서 물어보면 여기에 쌓여요.'}</p>`; return; }
+    const map = PVL.map || {};
+    list.innerHTML = PVL.rows.map(r => {
+        const id = Number(r.id), on = PVL.open.has(id);
+        const state = r.source === 'skip' ? '<span class="pill pill-wait">봇이 넘김</span>' : r.source === 'error' ? '<span class="pill pvl-pill-err">오류</span>' : '';
+        const first = String(r.answer || '').split('\n').find(x => x.trim()) || '';
+        let full = '';
+        if (on) {
+            const links = (r.scenario_nos || []).map(no => { const s = map['#' + no]; const label = '시나리오 ' + escapeHtml(String(no)); return s ? `<button type="button" class="rv-link" data-pvl-scen="${Number(s.id)}" title="${escapeHtml(s.name)} · 누르면 이 글을 고쳐요">${label}</button>` : `<span>${label}</span>`; });
+            const foot = [PVL_SRC[r.source] || (links.length ? '쓴 재료: ' + links.join(' · ') : r.source === 'ai' ? '쓴 재료 표시 없음' : ''), r.ms ? (Math.round(r.ms / 100) / 10) + '초' : ''].filter(Boolean).join(' · ');
+            full = `<div class="pvl-full"><div class="pvl-lab">물은 글</div><div class="pvl-text">${escapeHtml(r.question)}</div><div class="pvl-lab">${r.source === 'skip' ? '봇이 답하지 않았어요' : r.source === 'error' ? '답을 만들지 못했어요' : '봇 답'}</div><div class="pvl-text">${escapeHtml(r.answer)}</div>${foot ? `<div class="pvl-foot">${foot}</div>` : ''}</div>`;
+        }
+        return `<div class="pvl-item${on ? ' on' : ''}"><button type="button" class="pvl-row" data-pvl="${id}" aria-expanded="${on}"><span class="pvl-meta"><span class="pvl-when">${escapeHtml(pvlWhen(r.created_at))}</span><span class="pvl-who">${escapeHtml(r.user_name || '이름 없음')}</span><span class="pill pvl-ch">${escapeHtml(chName[r.channel] || r.channel)}</span>${state}</span><span class="pvl-q">${escapeHtml(r.question)}</span>${on ? '' : `<span class="pvl-a">${escapeHtml(first)}</span>`}</button>${full}</div>`;
+    }).join('');
+}
+window.AkmPreviewLog = { open: pvlOpen, close: pvlClose };   // 에이전트 오피스 「이전 채팅 이력」 옆 단추가 부르는 문(ao-desk.js)
 window.inqSetAutoPost = async function(kind, enabled) {
     const url = kind === 'qna' ? '/api/agent-office/naver/qna-auto-post' : '/api/agent-office/naver/inquiry-auto-post';
     try {

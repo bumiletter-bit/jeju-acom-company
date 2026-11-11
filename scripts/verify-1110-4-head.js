@@ -29,6 +29,7 @@ function world(over) {
         if (/count\(\*\)::int AS n FROM inquiry_scenarios/.test(sql)) return { rows: [{ n: 63 }] };
         if (/SELECT start_md, end_md FROM product_season_knowledge/.test(sql)) return { rows: W.season };
         if (/SELECT scenario_no, name FROM inquiry_scenarios/.test(sql)) return { rows: W.scen.filter(s => p[0].includes(s.name)) };
+        if (/response_preview_log/.test(sql)) return { rows: [] };   // #1110-5 미리보기 이력 표(자세한 검증 = verify-1110-5-head.js)
         throw new Error('가짜 pool 이 모르는 SQL: ' + sql.slice(0, 80));
     } };
     const app = { get(p, ...h) { W.routes['GET ' + p] = h; }, post(p, ...h) { W.routes['POST ' + p] = h; } };
@@ -155,9 +156,9 @@ const row = (id, o) => Object.assign({ id, message: '질문', answered: false, b
     ok(r2.code === 429 && r2.body.code === 'busy' && a1.code === 200 && a3.code === 200, '같은 사람 동시 2번째 = 429 busy · 다른 사람은 됨', r2.body);
     // 쓰기는 상한 한 칸뿐
     W = world(); await W.call('POST /api/agent-office/response-preview', { body: { channel: 'qna', text: 'x' } }); await W.call('GET /api/agent-office/response-stats', {});
-    const writes = W.sql.filter(s => /^\s*(INSERT|UPDATE|DELETE)/i.test(s));
-    ok(writes.length === 1 && /INSERT INTO agent_office_config/.test(writes[0]), '쓰기 = 상한 셈 한 문장뿐(기록·발송 표 쓰기 0)', writes);
-    ok(Object.keys(world().routes).join('|') === 'GET /api/agent-office/response-stats|POST /api/agent-office/response-preview', '주소 2개만 건다');
+    const writes = W.sql.filter(s => /^\s*(INSERT|UPDATE|DELETE)/i.test(s) && !/response_preview_log/.test(s));   // #1110-5 미리보기 이력 기록은 따로(verify-1110-5-head.js)
+    ok(writes.length === 1 && /INSERT INTO agent_office_config/.test(writes[0]), '쓰기 = 상한 셈 한 문장뿐(발송·응대 기록 표 쓰기 0 · 미리보기 이력 표는 따로)', writes);
+    ok(Object.keys(world().routes).join('|') === 'GET /api/agent-office/response-stats|POST /api/agent-office/response-preview|GET /api/agent-office/response-preview-log', '주소 3개만 건다(#1110-5 이력 조회 더함)');
     let threw = false; try { world({ deps: { tables: { logs: 'x; DROP' } } }); } catch (e) { threw = true; } ok(threw, '이상한 표 이름은 장착 때 멈춤');
 
     console.log(`#1110-4 서버 모듈 검증: 통과 ${pass} · 실패 ${fail}`);
