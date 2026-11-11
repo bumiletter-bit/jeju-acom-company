@@ -6861,7 +6861,7 @@ const TELEGRAM_ALERT_DEFAULTS = {
     claim: '⚠️ 반품·교환 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음 · 취소는 알림 제외)',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
     autodone: '📮 {{채널}} 답변완료 {{건수}}건 — 확인바람 ([문의 관리]에서 답변 내용 확인)',
-    staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — [문의 관리]에서 답변해주세요',
+    staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — 에이전트 오피스 › 손님 연락에서 답해 주세요',
     reminder: '⏰ 미처리 문의 {{건수}}건 — 가장 오래된 건 {{경과}}시간 경과. [문의 관리]에서 처리해주세요',
     briefing: '🌅 밤사이 현황 ({{시작}}~{{종료}})\n{{내용}}',
     kakaosend: '📨 주문 안내 알림톡 {{건수}}건 발송 (실패 {{실패건수}}건→SMS 대체)',
@@ -6976,6 +6976,23 @@ const INVOICE_VERB_RE = /알려|보내|부탁|요청|전달|공유/;
 const INVOICE_THANKS_RE = /(?:알려|보내|전달해|공유해)\s*주셔서|(?:알려|보내)\s*주신\s*(?:거|것)?\s*(?:잘\s*)?받았/;
 function invoiceReq(text) { const m = String(text || ''); return INVOICE_REQ_RE.test(m) && !INVOICE_THANKS_RE.test(m) && !(INVOICE_Q_RE.test(m) && !INVOICE_VERB_RE.test(m)); }
 const CLAIM_WORD_RE = /취소|반품|환불|교환/;
+// #1129(대표 11/11 「전과 크기가 다르다·불만·교환·반품은 직원 호출로 · 파손·무른 건 응대로 제시」) 상품문의·고객문의 = 이미 받은 상품 불만(맛·크기·전과 다름·맞게 보낸 거냐)·교환/반품/환불 요청이면
+//   봇이 답하지 않고 사람 몫(AI 부르기 전에 가름 = 생성 0 · ai_status 'staff' · 🟥 알림 #1128 「불만·교환·반품 = 직원 몫」 초안 없이 · 초안은 #1130 손님 연락에서 요청 시) · 파손·무름·곰팡이 같은 상태 글만 = 종전(봇 선택지) · 구매 전 물음(「맛없으면 반품 되나요」·정책) = 종전 봇
+//   새 주문 요청(「작은 걸로 보내주세요」·「지난번엔 곰팡이 있었어요 이번엔 잘」)·칭찬 = 봇 · 파손 + 명시 요청 = 직원 · 애매하면 직원 쪽 · 30일 실자료 대조(11/11) = 상품문의 8/135 · 고객문의 글로 새로 2/27 · 가짜 경계 15/15
+//   끄기 = agent_office_config 'qna_claim_staff' = 'off'(미설정 = 켬 · qna_auto_post 와 같은 글자 꼴) · 톡톡봇·문자·🟩🟦 답변완료 알림·지시문 무접촉
+const QCS_REQ_RE = /(교환|반품|환불|보상)[^.!?\n]{0,12}(가능|되나|될까|되는지|해\s*주|해주|부탁|요청|하고\s*싶|원해|원합|신청|처리|받고|받을|바랍|할\s*수|하려|할게|할래|하겠|해야|으로\s*(다시|보내)|주세요|해\s*드)/;
+const QCS_SOUR_RE = /(맛이|귤이|감귤이|황금향이|너무|엄청|많이|좀|정말|그렇게)\s*(시네|시어|셔요|셔서|십니다|시고|시다|시어서|시더)|신\s*맛|시큼|싱겁|싱거|밍밍|맛(이|도)?\s*(없|별로|이상|달라|다르|차이)|맛없|당도가?\s*(낮|떨어|없|별로)|기대\s*이하|실망|품질이?\s*(안|별로|떨어)|상태가?\s*(너무\s*)?(안|별로)|안\s*달|달지\s*않|단맛이?\s*(없|안)|안\s*좋(아요|습니다|네요|더라|았|은\s*게|던)|별로(예요|네요|입니다)/;   // 끝 5개 = 워커2 점검 제안(「안 달아요」·「안좋습니다」 꼴 · 「안좋은 성분은 없는 거죠?」 물음은 안 잡히게 서술형만)
+const QCS_MISMATCH_RE = /맞게\s*보내|맞나\s*싶|맞나요|맞아요|맞는지|맞는\s*건지|잘못\s*보내|잘못\s*온|잘못온|다른\s*(게|거|상품|품종)|(전|처음|저번|지난번|먼저|예전|작년|첫)[^.!?\n]{0,25}(다르|달라|달랐)|크기가?\s*(다르|작|달라)|사이즈가?\s*(다르|작|달라)|(너무|많이)\s*작|(중과|대과|소과|큰\s*(게|거|귤)|작은\s*(게|거|귤))\s*(이상|만|이|가)?\s*(왔|왓|오고|들어|받았|받아보|받은)/;   // 「(너무|많이) 작」 = 워커2 제안(받았다 문맥 필수라 「너무 작은 건 말고요」 새 주문 글은 안 잡힘)
+const QCS_RECEIVED_RE = /받은|받았|받아|받고|받자|왔는데|왔어요|왔습니다|왔네|왔고|도착|배송된|배송받|먹어보|먹었|먹어|먹기|열어보|열었|까보니|주문했다가|했더니|보내드린|보내드렸|선물해\s*드|선물했|선물지기|재주문한|이번에\s*받/;   // 「이미 받았다」 문맥(「이번에」·「주문했는데」만으론 X)
+const QCS_PREQ_RE = /(주문|구매|사기|시키기)\s*전|사려|살려|주문하려|시키려|주문할|구매할|(으면|다면|라면)\s*(반품|교환|환불)|정책|하면\s*(반품|교환|환불)/;   // 구매 전 물음 = 봇(맛 보증 #51 류)
+const QCS_NOTX_RE = /(맛있|싱싱|좋)(하|으)?(지도|지\s*않|지않|지는|진\s*않)/;   // 「싱싱하지도 않다」 = 칭찬 아님
+const QCS_NOT_RE = /(?<![안않]\s?)(?:없이|없네|없어요|없습니다|없고|없었|하나도|안\s*해도|괜찮|좋네|좋아요|좋습니다|맛있|싱싱|잘\s*받|잘\s*왔|감사|고맙|만족)/;   // 칭찬·잘 받았다는 글(「안좋습니다」는 아님)
+function qnaClaimStaff(text) {   // → '' = 봇 그대로 · 글자 = 직원 몫 사유(「교환·반품 요청」 | 「받은 상품 불만」)
+    const t = String(text || ''); const rec = QCS_RECEIVED_RE.test(t), req = QCS_REQ_RE.test(t), cx = (QCS_SOUR_RE.test(t) || QCS_MISMATCH_RE.test(t)) && rec;
+    if (QCS_PREQ_RE.test(t) && !rec) return '';
+    if (QCS_NOT_RE.test(t) && !QCS_NOTX_RE.test(t) && !req && !cx) return '';   // 칭찬 낱말이 있어도 불만·요청 신호가 같이 있으면 칭찬으로 안 봄
+    return req ? '교환·반품 요청' : cx ? '받은 상품 불만' : '';
+}
 function needsMemo(text) { return NEEDS_MEMO_RE.test(String(text || '')); }
 // #1069 텔레그램 HTML 알림(문의·톡톡만) — 본문 &<> 이스케이프 · <b> 굵게 · 4,000자 넘으면 가장 긴 칸부터 「…」(텔레그램 4,096 상한)
 function tgEsc(v) { return String(v == null ? '' : v).replace(/\r/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -7020,7 +7037,7 @@ function redHead(word, what) { return { html: `🟥 <b>${tgEsc(word)}</b> · ${t
 function qnaStaffBlock(kind, meta, question, draft, why, detail) {   // 줄 구성·라벨 = qnaDoneBlock(🟩🟦 답변완료)과 같게(대표 「답변완료 구도가 맘에 듦」) · 머리만 🟥 · 번호·시각은 머리 아래 한 줄
     const fields = [['상품', (meta && meta.product) || '-'], ['문의', question]].concat(String(draft || '').trim() ? [['봇 초안', draft]] : []).concat(String(detail || '').trim() ? [['사유', detail]] : []);
     const sub = meta ? [meta.id ? '#' + meta.id : '', meta.at || ''].filter(Boolean).join(' · ') : '';
-    return tgBlock(redHead('확인 필요', `${kind}(${why})`), fields, '→ [문의 관리]에서 답변해 주세요', sub);
+    return tgBlock(redHead('확인 필요', `${kind}(${why})`), fields, '→ 에이전트 오피스 › 손님 연락에서 답해 주세요', sub);   // #1130 실제 답하는 화면(문의 관리의 그 탭은 #1110 에서 숨김)
 }
 // 네이버 API 날짜 글 → 「M/D HH:MM」(KST) · 시간대 표시 없는 글(「2026-11-11 20:53:00」)은 이미 KST 로 보고 그대로 · 못 읽으면 ''
 function tgMd(v) {
@@ -9059,10 +9076,20 @@ async function collectInquiry() {
     const inqStaffBlocks = [], inqMeta = f => ({ id: f.id, at: tgMd(f.item.registered_at), product: f.item.product_name }), inqQ = f => [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n');   // #1128 사람 몫 건마다 한 통(🟥)
     if (freshItems.length) {
         const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
+        const claimStaffOn = (await naverCfgGet('qna_claim_staff')) !== 'off';   // #1129 미설정 = 켬(상품문의와 같은 칸)
         for (const f of freshItems) {
             if (/반품|교환|환불/.test(String(f.item.category || ''))) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='claim' WHERE inquiry_id=$1`, [f.id]);
                 inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', '반품·교환·환불 = 직원 몫'));
+                continue;
+            }
+            // #1129·#1130 사람 몫이 미리 정해지는 글 = AI 부르기 전에 가름(생성 0 · ai_status 'staff' = 새 값 · 목록은 「✍️ 직원 답변 필요」 · 초안은 손님 연락에서 요청 시) · 🟥 알림은 「봇 초안」 줄 없이
+            //   (a) 글 내용(배송·상품 카테고리에 적힌 받은 상품 불만·교환/반품 요청 · 카테고리 반품·교환·환불은 위 claim 갈래 종전) (b) 자동 등록 꺼짐(inquiry_auto_post 기본값) · 그대로 = 켜진 정상 건(생성 → 자동 게시 🟦) · 생성 실패 skip · 등록 실패(초안 남음 · 🟥)
+            const qcs = claimStaffOn ? qnaClaimStaff(inqQ(f)) : '';
+            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
+            if (pre) {
+                await pool.query(`UPDATE naver_inquiries SET ai_status='staff' WHERE inquiry_id=$1`, [f.id]);
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', pre[0], pre[1]));
                 continue;
             }
             let gen = null;
@@ -9075,7 +9102,6 @@ async function collectInquiry() {
             }
             await pool.query(`UPDATE naver_inquiries SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE inquiry_id=$1`,
                 [f.id, JSON.stringify(gen.used), gen.answer]);
-            if (!autoOn) { inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), gen.answer, '자동 등록 꺼짐 · 초안 있음')); continue; }              // 승인 모드(기본): 초안 대기
             try {
                 await naverPostInquiryAnswer(f.id, gen.answer, { name: 'auto' });
                 inqPosted++;
@@ -9748,7 +9774,17 @@ async function collectQna() {
     const qnaStaff = [];   // #1128 사람 몫 건마다 텔레그램 한 통(🟥 확인 필요)
     if (fresh.length) {
         const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
+        const claimStaffOn = (await naverCfgGet('qna_claim_staff')) !== 'off';   // #1129 미설정 = 켬
         for (const q of fresh) {
+            // #1129·#1130 사람 몫이 미리 정해지는 글 = AI 부르기 전에 가름(생성 0 · ai_status 'staff' = 새 값 · 목록은 「✍️ 직원 답변 필요」 · 초안은 손님 연락에서 요청 시) · 🟥 알림은 「봇 초안」 줄 없이
+            //   (a) 받은 상품 불만·교환/반품 요청(qnaClaimStaff · 끄기 qna_claim_staff off) (b) 자동 등록 꺼짐(qna_auto_post off) · 그대로 = 켜진 정상 건(생성 → 자동 게시 🟩) · 생성 실패 skip · 게시 실패(초안 남음 · 🟥 등록 실패)
+            const qcs = claimStaffOn ? qnaClaimStaff(q.question) : '';
+            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
+            if (pre) {
+                await pool.query(`UPDATE naver_qnas SET ai_status='staff' WHERE question_id=$1`, [q.id]);
+                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, '', pre[0], pre[1]));
+                continue;
+            }
             let gen = null;
             try { gen = await qnaGenerate(q.question, q.product); }
             catch (e) { console.error('[상품문의] 생성 오류(SKIP):', e.message); }
@@ -9760,7 +9796,6 @@ async function collectQna() {
             const draft = gen.answer;
             await pool.query(`UPDATE naver_qnas SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE question_id=$1`,
                 [q.id, JSON.stringify(gen.used), draft]);
-            if (!autoOn) { needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, draft, '자동 등록 꺼짐 · 초안 있음')); continue; }              // 승인 모드: 초안 대기
             try {
                 await naverPostQnaAnswer(q.id, draft, { name: 'auto' });
                 posted++;
@@ -20096,7 +20131,8 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate, isOwner: isOwnerUser });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
-const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
+// #1130 genQna·genInquiry = 손님 연락 [초안 만들기](사람 몫 문의 · 수집기와 같은 채널 = 공개 게시판·고객문의 꼴 · 결과 { answer, used } 그대로)
+const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), genQna: (question, product) => qnaGenerate(question, product), genInquiry: item => inquiryGenerate(item), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
 // ── #1111-B 직원 알림 6종(staff-alerts.js · 대표 11/11) — 1분 틱 · 실서버(RENDER)만 · 스위치 = 설정 staff_alerts.enabled(기본 꺼짐 = 아무것도 안 함) · 받는 사람 = notify_routes
 //   순위 문제·3채널 가격 어긋남(민주) · 묵은 미답변·답변 재료 점검(지현·승협) · 클레임 요약(지현) · 정산 자동 수집 실패(가영) · 받는 사람마다 그 사람 근무일에만(workdays.js)
 //   가격 = /api/price-check 와 같은 build(쿠팡 포함) · 실패해도 다른 일은 돎 · 한 번에 하나(busy)

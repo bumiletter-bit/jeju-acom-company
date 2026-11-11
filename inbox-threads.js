@@ -283,6 +283,33 @@ module.exports = function mountInboxThreads(app, deps) {
         } finally { drafting.delete(tkey); }
     }
 
+    // #1130(대표 11/11) 상품문의·주문문의 [초안 만들기] = 누를 때만 생성(수집기는 사람 몫 건에 초안을 미리 안 만듦 · ai_status 'staff') · 생성 = 수집기와 같은 함수(server.js 가 넘김 · 없으면 400) · 하루 상한·셈 = 톡톡과 같은 칸(draft_daily_cap · 0 = 상한 없음)
+    //   저장 = 그 표 ai_draft·ai_scenarios(ai_status 그대로 = 사람 몫 유지) · 이미 답한 문의 = 409 · 같은 문의 동시 누름 = 409 busy
+    const postGen = c => c === 'qna' ? deps.genQna : c === 'inquiry' ? deps.genInquiry : null;
+    async function postMakeDraft(c, id, actor) {
+        const gen0 = postGen(c); if (typeof gen0 !== 'function') throw bad(400, '지금은 초안을 만들 수 없어요');
+        const x = await postRow(c, id), P = POST[c], raw = x.raw || {};
+        if (x.answered || x.posted_at) throw bad(409, ALREADY, { code: 'already' });
+        const dk = c + ':' + String(x.id); if (drafting.has(dk)) throw bad(409, '초안을 만드는 중이에요', { code: 'busy' });
+        drafting.add(dk);
+        try {
+            const cap = await draftCap(); const day = kstDay();
+            const up = await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, jsonb_build_object('day', $2::text, 'n', 1))
+                ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('day', $2::text, 'n', CASE WHEN agent_office_config.value->>'day' = $2::text THEN COALESCE((agent_office_config.value->>'n')::int, 0) + 1 ELSE 1 END), updated_at = NOW()
+                WHERE $3::int = 0 OR agent_office_config.value->>'day' IS DISTINCT FROM $2::text OR COALESCE((agent_office_config.value->>'n')::int, 0) < $3::int
+                RETURNING (value->>'n')::int AS n`, [CFG_KEY + '_state', day, cap]);
+            if (!up.rows.length) throw bad(429, `오늘 초안 만들기 상한(${cap}번)을 다 썼어요 — 직접 적어 주세요`, { code: 'draft_cap' });
+            let g = null; try { g = c === 'qna' ? await gen0(String(raw.question || ''), String(raw.product_name || '')) : await gen0(raw); } catch (e) { log.error('[문의 창] ' + P.name + ' 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
+            const body = g && String(g.answer || '').trim();
+            if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
+            const w = await pool.query(`UPDATE ${P.table()} SET ai_draft = $2, ai_scenarios = $3 WHERE ${P.id}::text = $1 AND NOT COALESCE(answered, false) AND posted_at IS NULL RETURNING ${P.id}`, [String(x.id), body, JSON.stringify(Array.isArray(g.used) ? g.used : [])]);
+            if (!w.rowCount) throw bad(409, ALREADY, { code: 'already' });
+            _cnt = null;
+            if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: c, id: String(x.id), draft_made: true } }, source: 'inbox_threads', actor }).catch(() => { });
+            return { ok: true, draft: clip(body, POST_MAX), used_today: up.rows[0].n, cap };
+        } finally { drafting.delete(dk); }
+    }
+
     // ───────── 상품문의 · 주문문의(질문 1 + 답 1) ─────────
     const POST = {
         qna: { table: () => T.qnas, id: 'question_id', okId: v => /^\d{1,15}$/.test(v), at: raw => raw.create_date, q: raw => clip(raw.question, 2000), a: raw => raw.answer, sub: () => '', why: () => '', fn: () => deps.postQna, arg: v => Number(v), opts: undefined, name: '상품문의' },
@@ -294,7 +321,7 @@ module.exports = function mountInboxThreads(app, deps) {
         const ans = done ? String(P.a(raw) || x.ai_draft || '') : ''; const draft = !done && x.ai_draft ? String(x.ai_draft) : null;
         const at = P.at(raw) || x.collected_at; const question = P.q(raw);
         const thread = { ch: c, id: String(x.id), title: clip(raw.product_name, 60) || P.name, sub: P.sub(raw), last_text: clip(done ? (ans || '답변함') : question, 120), last_at: done ? (x.posted_at || at) : at, last_dir: done ? 'out' : 'in',
-            unread: ((mk && mk.forced) || (!mk && !x.reviewed_at && (!done || auto) && fresh(done ? 'ai' : 'open', ageOf(at)))) ? 1 : 0, needs_reply: !done && !x.reviewed_at && ageOf(at) <= OPEN_DAYS, done: !!x.reviewed_at, state: !done ? 'open' : auto ? 'ai' : 'done', why: done ? '' : (x.post_error ? '자동 등록 실패' : x.ai_status === 'claim' ? '반품·교환·환불 분류' : x.ai_status === 'skip' ? '봇이 넘긴 글' : (P.why(raw) || '')), has_draft: !!draft, can_send: !done };
+            unread: ((mk && mk.forced) || (!mk && !x.reviewed_at && (!done || auto) && fresh(done ? 'ai' : 'open', ageOf(at)))) ? 1 : 0, needs_reply: !done && !x.reviewed_at && ageOf(at) <= OPEN_DAYS, done: !!x.reviewed_at, state: !done ? 'open' : auto ? 'ai' : 'done', why: done ? '' : (x.post_error ? '자동 등록 실패' : x.ai_status === 'claim' ? '반품·교환·환불 분류' : x.ai_status === 'skip' ? '봇이 넘긴 글' : x.ai_status === 'staff' ? '직원 답 필요' : (P.why(raw) || '')), has_draft: !!draft, can_send: !done };
         Object.defineProperty(thread, '_card', { value: { kind: c, id: String(x.id), at, item: clip(raw.product_name, 60), state: !done ? 'open' : auto ? 'ai' : 'staff', why: P.why(raw), question: clip(question, 600), answer: clip(ans, 1200), draft: clip(draft || '', 1200), seen_by: x.reviewed_by || '' } });
         return { thread, raw, done, auto, ans, draft, at, question };
     }
@@ -320,7 +347,7 @@ module.exports = function mountInboxThreads(app, deps) {
     async function postDetail(c, id) {
         const x = await postRow(c, id); const s = postShape(c, x, await readMark(c, id)); const messages = [{ id: 'q', direction: 'in', sender: 'customer', body: s.question, at: s.at }];
         if (s.done) messages.push({ id: 'a', direction: 'out', sender: s.auto ? 'bot' : 'staff', by: s.auto ? '' : clip(x.posted_by || '', 20), via: x.posted_at ? 'office' : 'center', body: clip(s.ans || '(답변 내용은 스마트스토어 센터에서 확인해 주세요)', 3000), at: x.posted_at || s.at });
-        return { x, s, thread: s.thread, messages, draft: s.draft, can_send: !s.done, cannot_why: s.done ? ALREADY : '', can_draft: false, post_error: s.done ? '' : clip(x.post_error, 300),
+        return { x, s, thread: s.thread, messages, draft: s.draft, can_send: !s.done, cannot_why: s.done ? ALREADY : '', can_draft: !s.done && typeof postGen(c) === 'function', post_error: s.done ? '' : clip(x.post_error, 300),
             limits: { max_chars: POST_MAX, confirm: false, public: c === 'qna', pii_note: c === 'qna' ? '공개 게시판이에요 — 전화번호·주소·이메일이 들면 등록되지 않아요' : '주소·이메일이 들면 등록되지 않아요(전화번호는 돼요)' } };
     }
     async function postRead(c, id, name, undo) {
@@ -438,12 +465,19 @@ module.exports = function mountInboxThreads(app, deps) {
         res.json(r);
     }));
     app.post('/api/inbox/threads/:ch/:id/draft', authMiddleware, wrap(async (req, res) => {
-        const c = chOf(req.params.ch); if (c !== 'talk') throw bad(400, '초안 만들기는 톡톡에서만 돼요(상품문의·주문문의는 수집할 때 만든 초안이 있어요)');
+        const c = chOf(req.params.ch); if (c !== 'talk') return res.json(await postMakeDraft(c, String(req.params.id || ''), who(req)));   // #1130 상품문의·주문문의
         res.json(await talkMakeDraft(String(req.params.id || ''), who(req)));
     }));
     // #1109-b(대표 11/11 「지우면 없어져야 해」) 톡톡 [지우기] = 답 칸 글이 지금 서버 초안 그대로면 초안 줄도 지움(「초안」 칩·다시 열 때 채우기 사라짐) · 다르면(그 사이 새 초안) 안 지움 · 미처리(needs_reply)는 대화 글로 정해져 그대로
     app.post('/api/inbox/threads/:ch/:id/draft-clear', authMiddleware, wrap(async (req, res) => {
-        const c = chOf(req.params.ch); if (c !== 'talk') throw bad(400, '초안 지우기는 톡톡에서만 돼요');
+        const c = chOf(req.params.ch);
+        if (c !== 'talk') {   // #1130 상품문의·주문문의 [지우기] = ai_draft 가 본 글 그대로일 때만 비움(답한 문의 = 그대로)
+            const P = POST[c], id = String(req.params.id || ''); if (!P.okId(id)) throw bad(404, '없는 문의예요');
+            const seen = req.body && typeof req.body.seen === 'string' ? req.body.seen : null; if (seen === null) throw bad(400, 'seen 이 필요해요');
+            const r = await pool.query(`UPDATE ${P.table()} SET ai_draft = NULL WHERE ${P.id}::text = $1 AND ai_draft IS NOT NULL AND btrim(ai_draft, E' \\n\\r\\t') = btrim($2::text, E' \\n\\r\\t') AND NOT COALESCE(answered, false) AND posted_at IS NULL RETURNING ${P.id}`, [id, seen]);
+            if (r.rowCount) { _cnt = null; if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: c, id, draft_cleared: true } }, source: 'inbox_threads', actor: who(req) }).catch(() => { }); }
+            return res.json({ ok: true, cleared: r.rowCount > 0 });
+        }
         const tkey = String(req.params.id || ''); if (!/^[0-9a-f]{16}$/.test(tkey)) throw bad(404, '없는 대화예요');
         const seen = req.body && typeof req.body.seen === 'string' ? req.body.seen : null; if (seen === null) throw bad(400, 'seen 이 필요해요');
         const r = await pool.query(`DELETE FROM ${T.drafts} WHERE ch = 'talk' AND tkey = $1 AND btrim(body, E' \\n\\r\\t') = btrim($2::text, E' \\n\\r\\t') RETURNING tkey`, [tkey, seen]);

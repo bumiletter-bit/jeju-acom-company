@@ -192,7 +192,7 @@
     function replyRender(d) {
         const f = $('inb-reply'); if (!f) return;
         const c = CH[I.ch], can = d.can_send !== false, done = isDone(d);
-        const pub = d.limits && d.limits.public != null ? !!d.limits.public : I.ch === 'qna', mkd = I.ch === 'talk' && d.can_draft !== false;
+        const pub = d.limits && d.limits.public != null ? !!d.limits.public : I.ch === 'qna', mkd = I.ch === 'talk' ? d.can_draft !== false : d.can_draft === true;   // #1130 상품·주문문의 = 서버가 can_draft 줄 때만
         const mode = !can ? (done ? 'done' : 'lock') : 'write' + (mkd ? '+d' : '');
         if (f.dataset.mode === mode) { if (!can) { const p = f.querySelector('.inb-lock span'); const t = lockText(d, done); if (p && p.textContent !== t) p.textContent = t; } return; }
         f.dataset.mode = mode;
@@ -311,20 +311,20 @@
     }
     // #1109-b(대표 11/11 「지우면 없어져야 해」) 톡톡 [지우기] = 칸 글이 지금 서버 초안 그대로면 서버 초안도 지움(문자 smsClearManual 과 같은 뜻) · 사람이 친 글·고친 글은 칸만
     function clearServerDraft(v) {
-        const k = I.open, dt = curDraft().trim(); if (!k || I.ch !== 'talk' || !dt || String(v || '').trim() !== dt) return;
+        const k = I.open, dt = curDraft().trim(), ch = I.ch; if (!k || !CH[ch] || !dt || String(v || '').trim() !== dt) return;   // #1130 상품·주문문의도(서버 ai_draft)
         const id = k.slice(k.indexOf(':') + 1), seen = curDraft();
-        call('/api/inbox/threads/talk/' + encodeURIComponent(id) + '/draft-clear', 'POST', { seen }).then(r => {
+        call('/api/inbox/threads/' + ch + '/' + encodeURIComponent(id) + '/draft-clear', 'POST', { seen }).then(r => {
             if (!(r.ok && r.body && r.body.cleared) || I.open !== k || !I.thread) return;
             I.thread.draft = null; I.tsig = ''; I.filled = k + '|'; I.newDraft = ''; sync(); I.cAt = 0; loadList(true);
         }).catch(() => { });
     }
     async function makeDraft() {
-        const k = I.open; if (!k || I.ch !== 'talk' || I.sending || I.drafting || !I.thread) return;
+        const k = I.open, ch = I.ch; if (!k || !(ch === 'talk' || (I.thread && I.thread.can_draft === true)) || I.sending || I.drafting || !I.thread) return;   // #1130 상품·주문문의 = 누를 때만 초안
         const id = k.slice(k.indexOf(':') + 1);
         I.drafting = true; sync();
         let msg = '', nd = '';
         try {
-            const r = await call('/api/inbox/threads/talk/' + encodeURIComponent(id) + '/draft', 'POST', {});
+            const r = await call('/api/inbox/threads/' + ch + '/' + encodeURIComponent(id) + '/draft', 'POST', {});
             if (!r.ok || r.body.ok === false) msg = errText(r);
             else nd = String(r.body.draft != null ? (typeof r.body.draft === 'object' ? r.body.draft.text || '' : r.body.draft) : (r.body.draft_text || r.body.text || ''));
         } catch (e) { msg = '통신이 끊겼어요'; }

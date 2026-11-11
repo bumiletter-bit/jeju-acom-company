@@ -96,7 +96,7 @@ http.createServer(async (req, res) => {
             if (!act && req.method === 'GET') {
                 const peek = u.searchParams.get('peek') === '1'; if (!peek) t.read = true;
                 ST.log.push({ op: 'get', ch: t.ch, id: t.id, peek });
-                return send(res, 200, { thread: row(t), messages: t.messages, draft: t.draft, can_send: t.can_send, cannot_why: t.cannot_why, can_draft: t.ch === 'talk' && t.can_send, post_error: t.post_error || null, limits: { max_chars: t.ch === 'talk' ? 1000 : 2000, confirm: false, public: t.ch === 'qna', pii_note: t.ch === 'qna' ? '공개 게시판에 올라가요. 전화번호·이메일·주소는 적지 마세요.' : null, time_note: t.ch === 'talk' ? '봇·직원 답의 시각은 그 손님 글 시각으로 보여요.' : null } });
+                return send(res, 200, { thread: row(t), messages: t.messages, draft: t.draft, can_send: t.can_send, cannot_why: t.cannot_why, can_draft: (t.ch === 'talk' || process.env.MOCK658_POST_DRAFT === '1') && t.can_send,   /* #1130 환경 칸 켤 때만 상품·주문문의도 */ post_error: t.post_error || null, limits: { max_chars: t.ch === 'talk' ? 1000 : 2000, confirm: false, public: t.ch === 'qna', pii_note: t.ch === 'qna' ? '공개 게시판에 올라가요. 전화번호·이메일·주소는 적지 마세요.' : null, time_note: t.ch === 'talk' ? '봇·직원 답의 시각은 그 손님 글 시각으로 보여요.' : null } });
             }
             if (req.method !== 'POST') return send(res, 405, { error: 'method' });
             const b = await body(req);
@@ -104,7 +104,7 @@ http.createServer(async (req, res) => {
             if (act === 'unread') { t.read = false; ST.log.push({ op: 'unread', ch: t.ch, id: t.id }); return send(res, 200, { ok: true }); }
             if (act === 'draft-clear') { const hit = !!t.draft && String(b.seen || '').trim() === String(t.draft).trim(); if (hit) t.draft = null; ST.log.push({ op: 'draft-clear', ch: t.ch, id: t.id, seen: b.seen, hit }); return send(res, 200, { ok: true, cleared: hit }); }   // #1109-b 톡톡 [지우기] = 서버 초안 그대로면 지움
             if (act === 'draft') {
-                if (t.ch !== 'talk') return send(res, 400, { error: '톡톡만 초안을 만들 수 있어요' });
+                if (t.ch !== 'talk' && process.env.MOCK658_POST_DRAFT !== '1') return send(res, 400, { error: '톡톡만 초안을 만들 수 있어요' });
                 if (ST.fail === 'draft') return send(res, 502, { ok: false, error: 'AI 호출에 실패했어요' });
                 t.draft = '안녕하세요, 제주아꼼이네입니다. 문의 주신 내용 확인했어요. (봇 초안 ' + (ST.log.filter(x => x.op === 'draft').length + 1) + ')';
                 ST.log.push({ op: 'draft', ch: t.ch, id: t.id }); return send(res, 200, { ok: true, draft: t.draft });
