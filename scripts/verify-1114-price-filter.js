@@ -12,7 +12,7 @@ function grab(src, startMark, fnName, ret) {   // startMark ~ fnName 함수 끝�
     if (a < 0 || f < 0) throw new Error('구간 없음: ' + fnName);
     return new Function(s.slice(a, b) + '\nreturn ' + ret + ';')();
 }
-const gitShow = (cwd, file) => execSync('git show HEAD:' + file, { cwd, maxBuffer: 64 << 20 }).toString('utf8');
+const gitShow = (cwd, file) => execSync('git show ' + ((cwd === ROOT ? process.env.BASE_SV : process.env.BASE_BOT) || 'HEAD') + ':' + file, { cwd, maxBuffer: 64 << 20 }).toString('utf8');   // 옛 판 = HEAD(기본) · 커밋 뒤 대조는 BASE_SV·BASE_BOT 에 그 앞 커밋
 const SV_OLD = grab(gitShow(ROOT, 'server.js'), 'const QNA_FILTER_STOPWORDS', 'qnaFilterStoreLines', 'qnaFilterStoreLines');
 const SV_NEW = grab(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8'), 'const QNA_FILTER_STOPWORDS', 'qnaFilterStoreLines', 'qnaFilterStoreLines');
 const BOT_OLD = grab(gitShow(BOT, 'ai-handler.js'), 'const FILTER_STOPWORDS', 'filterStoreLines', 'filterStoreLines');
@@ -47,6 +47,10 @@ const PN = ' 제주 노지 감귤 타이벡 하우스';   // 상품 페이지 �
         { const q = '하우스 황금향 선물용 얼마예요'; const o = OLD(PRICE, q), n = NEW(PRICE, q); ok(o === n && /하우스 황금향 선물용/.test(n), 'e) 「하우스 황금향」 = 안 건드림(옛과 같음)', n); }
         { const q = '고당도 타이벡 말고 새콤달콤한 노지 5kg'; const n = NEW(PRICE, q); ok(/노지감귤.*5kg/.test(n) && /타이벡감귤.*5kg/.test(n), '두 품목 말한 글 = 두 품목 5kg 줄(합집합 유지)', n); }
         { const q = '레몬 5kg 얼마'; ok(OLD(PRICE, q) === NEW(PRICE, q), '레몬 5kg = 그대로'); }
+        // #1114-g(30일 실자료 대조에서 나온 회귀): 판매 중 품목인데 줄 낱말이 안 겹쳐 0줄 → 비우지 않고 종전대로
+        for (const q of ['타이벡은 지금도 당도가 좋은가요?', '타이벡이면 5키로 주문하려고 했는대 선물용이랑 다른가보내요???ㅠ', '청레몬 맞나요?', '오 주문할께요~~~!! 레몬도 좋았는데!!'])
+            ok(NEW(PRICE, q) !== '' && NEW(PRICE, q) === OLD(PRICE, q), 'g) 판매 중 품목(줄 낱말 안 겹침) = 종전대로(빈 글 아님): ' + q, NEW(PRICE, q).slice(0, 80));
+        { const q = '레드키위 언제쯤 다시 판매하시나요??'; ok(NEW(PRICE, q) === '', 'g) 판매 줄에 없는 품목(레드키위) = 빈 글 그대로'); }
         { const n = NEW(SELL, q1 + PN); ok(/타이벡감귤.*10kg/.test(n), '{{판매현황}} 꼴(「- 이름: 판매중」)도 같은 고침', n); }
         { const n = NEW('🍊 새콤달콤 노지감귤 / 상품 및 과수: 가정용 - 5kg(로얄과 2S~M) — 21,800원\n🍊 그린레몬 / 상품 및 과수: 중소과 - 5kg — 50,000원', '타이벡 5kg 있나요'); ok(n === FALL, 'd) 글에 나온 품목(타이벡) 줄이 결과에 0 = 가격표 대신 재료 한 줄', n); }
     }

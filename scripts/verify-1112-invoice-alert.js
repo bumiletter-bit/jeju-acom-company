@@ -13,7 +13,7 @@ function region(src, extra) {
     return new Function('notifyTelegram', s.slice(a, b) + '\nreturn { needsMemo, talkPick, talkBlock, tgBlock, qnaDoneBlock' + (extra || '') + ' };')(async () => 'sent');
 }
 (async () => {
-    const oldSrc = execSync('git show HEAD:server.js', { cwd: ROOT, maxBuffer: 64 << 20 }).toString('utf8');
+    const oldSrc = execSync('git show ' + (process.env.BASE_SV || 'HEAD') + ':server.js', { cwd: ROOT, maxBuffer: 64 << 20 }).toString('utf8');
     const newSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
     const O = region(oldSrc), N = region(newSrc, ', invoiceReq');
 

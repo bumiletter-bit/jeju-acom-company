@@ -9165,7 +9165,8 @@ function qnaFilterStoreLines(text, message) {
                tokens.some(t => lineNorm.includes(t.toLowerCase()));
     });
     // #1114 f) 품목 낱말(타이벡·노지·황금향·레몬·키위·청귤·유라)을 말했는데 판매 줄에 겹치는 낱말이 하나도 없으면(시즌 종료 등) 전체 목록 대신 빈 글(그 자리 비움 · 대표 11/11 「시즌이 끝났으면 다음 해에 찾아 달라고」 = 답 본문 몫) · 품목 낱말 없는 글은 종전대로 전체
-    if (matched.length === 0) return /타이벡|유라|노지|황금향|레몬|키위|청귤/.test(msgNorm) ? '' : text;
+    //   🔴 #1114-g(30일 실자료 대조): 「타이벡은 지금도 당도가 좋은가요?」 = 판매 중인데 줄 낱말이 안 겹쳐(「타이벡은」≠「타이벡감귤」) 0줄 → 비우면 안 됨 = 말한 품목이 판매 줄 어디에도 없을 때만 비움
+    if (matched.length === 0) { const said = msgNorm.match(/타이벡|유라|노지|황금향|레몬|키위|청귤/g) || []; return said.length && !said.some(w => lines.some(l => l.toLowerCase().replace(/\s/g, '').includes(w))) ? '' : text; }
     /* #495(10/1 실측 「황금향 못난이 5kg 얼마예요?」): 「5kg」 토큰이 4.5kg·유라 5kg·레몬 5kg 줄까지 끌어와 16줄이 되자
        AI가 「황금향 못난이 5kg는 준비돼 있지 않다」고 틀리게 안내(목록 안에는 37,800원 줄이 있었음).
        교정 = 질문 단어 순서대로 **좁혀 간다**(품목 단어 → 세부 단어 → 용량). 단어가 어느 줄에도 없으면 그 단계는 건너뛰어 종전 결과 유지(무회귀).
