@@ -16,6 +16,7 @@
  */
 'use strict';
 const crypto = require('crypto');
+const DRAFT = require('./inbox-talk-draft-note.js');   // #1107-D 톡톡 초안 = 앞 대화 맥락 조립·결과 거르기·금액 자리표
 
 const DAYS = 30;                 // 목록·대화가 보는 기간
 const FRESH_DAYS = 3, OPEN_DAYS = 14;   // 안 읽음으로 세는 기간: 봇이 답한 글은 3일 · 아무도 안 답한 글은 14일(「확인 필요 문의」 칸과 같은 기준 — 옛 자동 답이 숫자에 쌓이지 않게)
@@ -114,7 +115,7 @@ module.exports = function mountInboxThreads(app, deps) {
     const chOfUser = uid => { const u = String(uid || ''); return u.startsWith('kakao:') ? 'kakao' : u.startsWith('mall:') ? 'mall' : 'talk'; };
     const CH_NAME = { talk: '톡톡', kakao: '카카오', mall: '자사몰' };
     const staffParts = s => String(s || '').split(' | ').map(x => x.trim()).filter(Boolean).map(x => { const m = x.match(/^\[에이전트오피스(?:·([^\]]{1,20}))?\]\s*/); return m ? { body: x.slice(m[0].length), by: m[1] || '', via: 'office' } : { body: x, by: '', via: 'center' }; });
-    const botSilent = b => { const s = String(b || ''); return /^\[쿨다운/.test(s) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[AI에러/.test(s) ? '봇이 답을 만들지 못함' : /^\[이미지/.test(s) ? '사진(봇이 답하지 않음)' : /^\[직원응답/.test(s) ? '직원이 먼저 답함' : '봇이 넘긴 글'; };
+    const botSilent = b => { const s = String(b || ''); return /^\[쿨다운/.test(s) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[1회응대/.test(s) ? '이미 응대한 대화 · 봇이 답하지 않음' :/^\[AI에러/.test(s) ? '봇이 답을 만들지 못함' : /^\[이미지/.test(s) ? '사진(봇이 답하지 않음)' : /^\[직원응답/.test(s) ? '직원이 먼저 답함' : '봇이 넘긴 글'; };
     function talkCannot(uid, lastAgeDays) {
         const c = chOfUser(uid);
         if (c === 'kakao') return '카카오 손님에게는 여기서 보낼 수 없어요(카카오 채널 관리자센터에서 답해 주세요)';
@@ -220,6 +221,7 @@ module.exports = function mountInboxThreads(app, deps) {
         if (!d.can_send) throw bad(400, d.cannot_why);
         if (text.length > TALK_MAX) throw bad(400, '톡톡은 1,000자까지 보낼 수 있어요');
         if (PAY_WORDS.test(text)) throw bad(400, '결제 낱말(계좌·입금·이체·송금 등)이 든 글은 톡톡으로 보낼 수 없어요 — 네이버가 낱말만 보고 경고해요');
+        if (DRAFT.hasPlaceholder(text)) throw bad(400, `금액 자리표 「${DRAFT.PLACEHOLDER}」를 실제 금액으로 바꾼 뒤 보내 주세요`, { code: 'placeholder' });   // #1107-D 화면(ao-inbox.js)과 같은 검사
         // 같은 손님에게 같은 글이 아직 가는 중(10분 — 배달부가 집는 기한)이거나 방금(1분) 나갔으면 넣지 않는다(두 번 누름 · 둘이 같이 누름 · 요청이 끊긴 뒤 다시 누름)
         //   (같은 순간 두 요청이 서로를 못 보고 둘 다 넣지 않게 그 손님 열쇠로 잠근 채 넣는다)
         const cl = await pool.connect(); let ins;
@@ -269,11 +271,11 @@ module.exports = function mountInboxThreads(app, deps) {
                 RETURNING (value->>'n')::int AS n`, [CFG_KEY + '_state', day, cap]);
             if (!up.rows.length) throw bad(429, `오늘 초안 만들기 상한(${cap}번)을 다 썼어요 — 직접 적어 주세요`, { code: 'draft_cap' });
             const n = up.rows[0].n - 1;
-            // 마지막 답(봇·직원) 뒤에 온 손님 글만(최대 3통) — 없으면 마지막 한 통
-            let tail = []; for (let i = d.rows.length - 1; i >= 0 && tail.length < 3; i--) { const x = d.rows[i]; const m = String(x.message || '').trim(); const outed = x.answered || staffParts(x.staff_response).length; if (outed && tail.length) break; if (m && m !== STAFF_ONLY && m !== PHOTO_ONLY) tail.unshift(m); if (outed) break; }
-            if (!tail.length) tail = [String(ins[ins.length - 1].message).trim()];
-            let gen = null; try { gen = await deps.generate(tail.join('\n'), d.thread.sub || ''); } catch (e) { log.error('[문의 창] 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
-            const body = gen && String(gen.answer || '').trim();
+            // #1107-D(대표 11/11): 앞 대화(손님·봇·직원 · 10턴 · 턴당 300자) + 이번 손님 글(마지막 우리 답 뒤 최대 3통) 꼴로 넘기고, 직원 말투 초안 채널('talk_draft')로 만든다
+            const ctx = DRAFT.buildInput(d.rows, staffParts);
+            if (!ctx) throw bad(400, '손님 글이 없어 초안을 만들 수 없어요(사진만 온 대화는 직접 적어 주세요)');
+            let gen = null; try { gen = await deps.generate(ctx.input, d.thread.sub || ''); } catch (e) { log.error('[문의 창] 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
+            const body = gen && DRAFT.cleanDraft(gen.answer, ctx.staffAmounts);   // 「[사람]」 줄·꼬리 거름 · 보상 금액 = 자리표(우리 직원이 말한 금액만 살림)
             if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
             const lastIn = [...d.rows].reverse().find(x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY; });
             await pool.query(`INSERT INTO ${T.drafts} (ch, tkey, body, src_id, made_by) VALUES ('talk', $1, $2, $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET body = EXCLUDED.body, src_id = EXCLUDED.src_id, made_by = EXCLUDED.made_by, made_at = NOW()`, [tkey, clip(body, TALK_MAX), lastIn.id, clip(actor.name, 50)]);

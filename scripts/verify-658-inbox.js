@@ -162,7 +162,7 @@ async function api(method, url, body, user) {
         await lg(U.a, '냉장 보관인가요', { ago: 1, mark: '[쿨다운-무응답]' }); const lastA2 = await lg(U.a, '며칠 가나요', { ago: 0, mark: '[쿨다운-무응답]' });
         ok(gens.length === 0, '여기까지 AI 호출 0(목록·대화·보내기는 AI 를 부르지 않음)');
         r = await api('POST', `/api/inbox/threads/talk/${kA}/draft`);
-        ok(r.status === 200 && r.json.ok === true && r.json.draft === '시험 초안입니다.' && gens.length === 1 && gens[0].q === '냉장 보관인가요\n며칠 가나요' && r.json.used_today === 1 && r.json.cap === 50, '초안 = AI 1회 · 재료는 마지막 직원 답 뒤 손님 글만 ' + JSON.stringify(gens[0] && gens[0].q));
+        ok(r.status === 200 && r.json.ok === true && r.json.draft === '시험 초안입니다.' && gens.length === 1 && /\[앞 대화[^\n]*\]\n/.test(gens[0].q) && /\n손님: 귤 언제 발송되나요\n봇: 오늘 발송됩니다\.\n/.test(gens[0].q) && /\n냉장 보관인가요\n며칠 가나요$/.test(gens[0].q) && !/무응답/.test(gens[0].q) && r.json.used_today === 1 && r.json.cap === 50, '초안 = AI 1회 · #1107-D 앞 대화(손님·봇·직원 · 표식 뺌) + 이번 글 = 마지막 우리 답 뒤 손님 글 ' + JSON.stringify(gens[0] && gens[0].q));
         r = await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`); ok(r.json.draft === '시험 초안입니다.' && (await api('GET', '/api/inbox/threads?ch=talk&scope=all')).json.threads.find(x => x.id === kA).has_draft === true, '대화 응답 draft · 목록 has_draft');
         r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '고친 글', seen: '옛 초안' });
         ok(r.status === 409 && r.json.code === 'draft_changed' && r.json.draft === '시험 초안입니다.', '화면이 본 초안(seen)이 서버 초안과 다르면 409 + 지금 초안');
@@ -178,6 +178,20 @@ async function api(method, url, body, user) {
         r = await api('GET', `/api/inbox/threads/talk/${kA}?peek=1`); ok(r.json.draft === null, '손님이 새 글을 보내면 옛 초안은 안 보임');
         r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '초안 없이 보내는 글', seen: '' }); ok(r.status === 200 && (await pool.query(`SELECT count(*)::int n FROM ${TB.drafts}`)).rows[0].n === 0, 'seen 빈 글 + 초안 없음 = 통과 · 보낸 뒤 초안 줄 지움');
         void lastA2;
+        // #1107-D 「[사람]」 줄 거름 · 손님이 부른 금액 → 자리표 · 자리표 남은 글 보내기 막음(서버)
+        await pool.query(`UPDATE agent_office_config SET value = '{"draft_daily_cap":10}'::jsonb WHERE key = 'inbox_threads_verify'`);
+        const st1107 = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inbox_threads_verify_state'`)).rows[0];   // 아래 상한 시험의 셈을 건드리지 않게 끝에 되돌림
+        await lg(U.a, '보상해 주세요 5천원이요', { ago: 0, mark: '[쿨다운-무응답]' }); await sleep(50);
+        genAnswer = { answer: '[사람] 보상 요청\n네 고객님 불편드려 다시한번 죄송하구요, 저희가 고객님 네이버 아이디로 네이버페이 포인트 5천원 지급 도와드리겠습니다.' };
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/draft`);
+        ok(r.status === 200 && r.json.draft === '네 고객님 불편드려 다시한번 죄송하구요, 저희가 고객님 네이버 아이디로 네이버페이 포인트 0,000원 지급 도와드리겠습니다.', '#1107-D 초안 = 「[사람]」 줄 빠짐 · 손님이 부른 5천원 → 0,000원 ' + JSON.stringify(r.json.draft));
+        const ob0 = (await pool.query(`SELECT count(*)::int n FROM ${TB.outbox}`)).rows[0].n;
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: r.json.draft, seen: r.json.draft });
+        ok(r.status === 400 && r.json.code === 'placeholder' && /0,000원/.test(r.json.error) && (await pool.query(`SELECT count(*)::int n FROM ${TB.outbox}`)).rows[0].n === ob0, '#1107-D 자리표 남은 글 = 400 placeholder · 보낼 줄 0');
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '네 고객님 포인트 10,000원 지급 도와드리겠습니다.' }); ok(r.status === 200, '#1107-D 10,000원 = 자리표 아님 · 보냄');
+        genAnswer = { answer: '시험 초안입니다.' };
+        await pool.query(`UPDATE agent_office_config SET value = '{"draft_daily_cap":2}'::jsonb WHERE key = 'inbox_threads_verify'`);
+        if (st1107) await pool.query(`UPDATE agent_office_config SET value = $1::jsonb WHERE key = 'inbox_threads_verify_state'`, [JSON.stringify(st1107.value)]);
 
         console.log('⑥ 상품문의');
         r = await api('GET', '/api/inbox/threads?ch=qna'); L = r.json.threads;

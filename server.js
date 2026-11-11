@@ -9506,6 +9506,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
     if (!baseScenarios.length) return null;
     const isMall = channel === 'mall';
     const isSms = channel === 'sms';   // #610 회사폰 문자 — 재료는 네이버 꼴 그대로 · 채널 안내 블록(sms/ai-note.js)만 더하고 꼬리(톡톡·전화 유도)는 안 붙인다
+    const isTalkDraft = channel === 'talk_draft';   // #1107-D 톡톡 [초안 만들기] — 재료는 네이버 꼴 그대로 · 채널 안내 블록(inbox-talk-draft-note.js)만 더하고 꼬리는 안 붙인다
     const scenarios = isMall
         ? [...mallMaterial([...baseScenarios, ...(await seasonScenariosToday(simDate, 'mall')), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday())]), ...mallChannelRule()]   // #565 자사몰 챗: 네이버 주소·결제 줄을 거른 재료 + #892 대신 자사몰 규칙(893)
         : [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
@@ -9526,6 +9527,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
             { type: 'text', text: qnaBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
             ...(isMall ? [{ type: 'text', text: MALL_SYSTEM_NOTE }] : []),   // #565: 자사몰 챗일 때만 채널 안내 블록(네이버 쪽은 블록 2개 그대로)
             ...(isSms ? [{ type: 'text', text: require('./sms/ai-note.js').SMS_SYSTEM_NOTE }] : []),   // #610: 문자일 때만(공용 블록 글자는 무변경 · 캐시 유지)
+            ...(isTalkDraft ? [{ type: 'text', text: require('./inbox-talk-draft-note.js').TALK_DRAFT_NOTE }] : []),   // #1107-D: 톡톡 초안일 때만
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -9550,7 +9552,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
        재료(시나리오·시기지식)에 'SKIP' 문자열은 0건이라 오탐 위험 없음 → 본문 어디든 있으면 답변하지 않는다. */
     if (/SKIP/.test(answer)) { console.error('[문의생성] 본문에 SKIP 판정 혼입 → 답변 보류'); return null; }
     used = used.filter(n => scenarios.some(s => s.name === n));   // 재료 목록에 있는 이름만 기록
-    if (!isSms && !answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망) — #610 문자는 제외(회사폰 자기 번호로 연락하라는 글이 됨 · sms/index.js 가 smsSafe 로 다듬음)
+    if (!isSms && !isTalkDraft && !answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망) — #610 문자는 제외(회사폰 자기 번호로 연락하라는 글이 됨 · sms/index.js 가 smsSafe 로 다듬음)
     if (isMall) answer = mallPostAnswer(answer);   // #565: 자사몰 챗 — 네이버 스토어 주소 제거·「톡톡」 → 「카카오톡 채널」
     // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
     const filterText = (String(question || '') + ' ' + String(productName || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
@@ -19921,7 +19923,7 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
         return { realToday, shipDays, suggested: (isShip(realToday) && kst.getUTCHours() < 12) ? realToday : (shipDays.find(x => x > realToday) || realToday) }; } });
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
-require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
+require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), kick: process.env.RENDER ? deskInbox.deliver : null });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답
 // SPA 캐치올이 200+HTML을 주면 claude.ai 신규 연결 절차가 OAuth 서버로 오인해 등록 실패함 (2026-07-18 진단)

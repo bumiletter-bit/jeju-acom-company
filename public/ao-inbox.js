@@ -207,18 +207,20 @@
             + `<div class="sms-reply-row"><span class="sms-len" id="inb-len"></span>${mkd ? '<button type="button" class="desk-btn" id="inb-mkdraft">초안 만들기</button>' : ''}<button type="submit" class="desk-btn primary" id="inb-send" disabled>${esc(c.send)}</button></div>`;
         const ta = $('inb-text'); if (keep) ta.value = keep; else if (I.texts.has(I.open)) ta.value = I.texts.get(I.open);
     }
+    const PH_RE = /(^|[^\d,])0,000\s*원/, PH_TEXT = '금액 자리표 「0,000원」을 실제 금액으로 바꾼 뒤 보내 주세요';   // #1107-D 서버 inbox-talk-draft-note.js PLACEHOLDER_RE 와 같은 꼴
     const lockText = (d, done) => String(d.cannot_why || (done ? DONE_TEXT : '이 대화는 여기서 답을 보낼 수 없어요.'));
     function sync() {
         const ta = $('inb-text'); if (!ta) return;
         const c = CH[I.ch], v = ta.value, has = !!v.trim(), dt = curDraft(), dr = !!dt, same = dr && v.trim() === dt.trim();
+        const ph = I.ch === 'talk' && PH_RE.test(v);   // #1107-D 금액 자리표가 남은 글은 보내기 막음(서버 talkSend 와 같은 검사)
         const btn = $('inb-send');
-        btn.disabled = !has || I.sending || I.drafting || !I.thread || Date.now() < I.lockUntil;
+        btn.disabled = !has || ph || I.sending || I.drafting || !I.thread || Date.now() < I.lockUntil;
         btn.textContent = same ? c.sendDraft : dr && has ? c.sendEdit : c.send;
         const mk = $('inb-mkdraft'); if (mk) { mk.disabled = I.sending || I.drafting || !I.thread; mk.textContent = I.drafting ? '초안 만드는 중' : dr ? '초안 다시 만들기' : '초안 만들기'; if (I.drafting) mk.setAttribute('aria-busy', 'true'); else mk.removeAttribute('aria-busy'); }
         const band = $('inb-draft'), fresh = dr && I.newDraft && I.newDraft === dt && !same, k = fresh ? 'new' : 'std';
         band.hidden = !dr;
         if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>초안이 새로 만들어졌어요.</span><button type="button" class="desk-btn sm" id="inb-draft-new">새 초안으로 바꾸기</button>' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; }
-        { const w = $('inb-warn'), pe = I.thread && I.thread.post_error; if (w) { w.hidden = !pe; w.textContent = pe ? '자동 등록이 실패했던 문의예요: ' + pe : ''; } }
+        { const w = $('inb-warn'), pe = I.thread && I.thread.post_error; if (w) { const wt = ph ? PH_TEXT : pe ? '자동 등록이 실패했던 문의예요: ' + pe : ''; w.hidden = !wt; if (w.textContent !== wt) w.textContent = wt; } }
         $('inb-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
     }
     // 초안을 글 칸에 — 칸이 비었거나 우리가 채워 준 옛 초안 그대로면 채운다 · 사람이 적던 글은 안 덮는다([새 초안으로 바꾸기] 안내)
@@ -276,6 +278,7 @@
         const ta = $('inb-text'); if (!ta) return;
         const text = ta.value.trim(); if (!text) return;
         const ch = I.ch, id = k.slice(k.indexOf(':') + 1), c = CH[ch];
+        if (ch === 'talk' && PH_RE.test(text)) { toast(PH_TEXT, 5000); sync(); return; }   // #1107-D Ctrl+Enter 로 눌러도 막음
         I.sending = true; sync();
         const btn = $('inb-send'); btn.setAttribute('aria-busy', 'true');
         let ok = false, changed = false, msg = '', code = '';
