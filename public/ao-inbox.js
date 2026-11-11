@@ -509,8 +509,8 @@ window.AkmPoint = (function () {
         const old = o.form.querySelector('.akm-point'); if (old) old.remove();
         const box = document.createElement('div'); box.className = 'akm-point'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', '포인트 지급 지시 만들기');
         box.innerHTML = '<b class="akm-point-t">포인트 지급 지시</b>'
-            + '<label class="akm-point-f">금액 <input class="akm-point-amt" inputmode="numeric" autocomplete="off" value="' + esc(comma(amount)) + '" aria-label="지급 금액(원)"> 원</label>'
-            + '<label class="akm-point-f">사유 <input class="akm-point-why" maxlength="15" autocomplete="off" value="' + esc(String(o.reason || '감귤 보상처리').slice(0, 15)) + '" aria-label="지급 사유(15자)"></label>'
+            + '<label class="akm-point-f akm-point-fa">금액 <input class="akm-point-amt" inputmode="numeric" autocomplete="off" value="' + esc(comma(amount)) + '" aria-label="지급 금액(원)"> 원</label>'
+            + '<label class="akm-point-f akm-point-fw">사유 <input class="akm-point-why" maxlength="15" autocomplete="off" value="' + esc(String(o.reason || '감귤 보상처리').slice(0, 15)) + '" aria-label="지급 사유(15자)"></label>'
             + '<span class="akm-point-b"><button type="button" class="desk-btn akm-point-go">지시 만들기</button><button type="button" class="desk-btn akm-point-x">닫기</button></span>'
             + (o.note ? '<small class="akm-point-n">' + esc(o.note) + '</small>' : '') + '<small class="akm-point-msg" role="status" aria-live="polite"></small>';
         const ta = o.form.querySelector('textarea'); o.form.insertBefore(box, ta || o.form.firstChild);

@@ -7015,6 +7015,21 @@ function qnaDoneBlock(kind, product, question, answer) {   // kind = '상품문�
 }
 // #1108-E(대표 11/11 「봐야 되는 건은 빨강 · 낱말 통일」) 사람이 손대야 하는 문의 알림 머리 = 「🟥 <b>메모 필요|확인 필요</b> · 무엇」(텔레그램은 글자 색이 없어 🟥 + 굵게) · 손댈 것 없는 🟩🟦 는 종전 그대로
 function redHead(word, what) { return { html: `🟥 <b>${tgEsc(word)}</b> · ${tgEsc(what)}` }; }
+// #1128(대표 11/11 「이것도 톡톡처럼 · 질문 내용은 오고 답 못함이라고 빨강불」) 사람 몫 상품문의·고객문의 = 건마다 한 통(종전 「✍️ 직접 처리해야 할 문의 n건」 대체)
+//   머리 「🟥 확인 필요 · 상품문의(사유)」 + 아래 「#번호 · M/D HH:MM」 + 상품 + 문의 전문 + 봇 초안(있을 때만) + 사유 칸(등록 실패 글만) + 꼬리 → [문의 관리] · 글자 꼴은 qnaDoneBlock(🟩🟦)과 같은 tgBlock(이스케이프·4,000자 자름)
+function qnaStaffBlock(kind, meta, question, draft, why, detail) {   // 줄 구성·라벨 = qnaDoneBlock(🟩🟦 답변완료)과 같게(대표 「답변완료 구도가 맘에 듦」) · 머리만 🟥 · 번호·시각은 머리 아래 한 줄
+    const fields = [['상품', (meta && meta.product) || '-'], ['문의', question]].concat(String(draft || '').trim() ? [['봇 초안', draft]] : []).concat(String(detail || '').trim() ? [['사유', detail]] : []);
+    const sub = meta ? [meta.id ? '#' + meta.id : '', meta.at || ''].filter(Boolean).join(' · ') : '';
+    return tgBlock(redHead('확인 필요', `${kind}(${why})`), fields, '→ [문의 관리]에서 답변해 주세요', sub);
+}
+// 네이버 API 날짜 글 → 「M/D HH:MM」(KST) · 시간대 표시 없는 글(「2026-11-11 20:53:00」)은 이미 KST 로 보고 그대로 · 못 읽으면 ''
+function tgMd(v) {
+    const t = String(v || '').trim(); if (!t) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(t), tz = /(Z|[+-]\d{2}:?\d{2})$/.test(t);
+    if (m && !tz) return `${+m[2]}/${+m[3]} ${m[4]}:${m[5]}`;
+    const d = new Date(t); if (isNaN(d.getTime())) return '';
+    const k = new Date(d.getTime() + 9 * 3600e3); return `${k.getUTCMonth() + 1}/${k.getUTCDate()} ${String(k.getUTCHours()).padStart(2, '0')}:${String(k.getUTCMinutes()).padStart(2, '0')}`;
+}
 // #1074(대표 11/9 확정) 톡톡 알림 고르기 — null = 안 보냄 · { mode: 'staff'(🟨 직접 확인 필요) | 'memo'(🟧 답변완료 메모 필요), botLine, memo }
 //   · [쿨다운-무응답](직원 대화 중) = 안 보냄(요청형이어도) · 직원 답(staff_response·staff_at) 달린 줄 = 안 보냄
 //   · 봇이 답 못함([SKIP-무응답]·[AI에러…]) + 직원 신호·요청형·메모 거리 = 🟨 · 요청형 = 🟨(봇이 글로 답했으면 「봇:」 줄)
@@ -9041,12 +9056,13 @@ async function collectInquiry() {
     // 대표 7/27: 신규 미답변 → 생성 → 자동 답변(inquiry_auto_post ON일 때만·기본 OFF). 반품·교환·환불 카테고리는 무조건 직원(클레임).
     let inqPosted = 0, inqStaff = 0, inqFailed = 0;
     const inqDone = [];   // #1069 답변완료 건마다 텔레그램 한 통(상품·문의·답 전체)
+    const inqStaffBlocks = [], inqMeta = f => ({ id: f.id, at: tgMd(f.item.registered_at), product: f.item.product_name }), inqQ = f => [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n');   // #1128 사람 몫 건마다 한 통(🟥)
     if (freshItems.length) {
         const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
         for (const f of freshItems) {
             if (/반품|교환|환불/.test(String(f.item.category || ''))) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='claim' WHERE inquiry_id=$1`, [f.id]);
-                inqStaff++;
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', '반품·교환·환불 = 직원 몫'));
                 continue;
             }
             let gen = null;
@@ -9054,19 +9070,19 @@ async function collectInquiry() {
             catch (e) { console.error('[고객문의] 생성 오류(SKIP):', e.message); }
             if (!gen) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='skip' WHERE inquiry_id=$1`, [f.id]);
-                inqStaff++;
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', '봇 답 못함'));
                 continue;
             }
             await pool.query(`UPDATE naver_inquiries SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE inquiry_id=$1`,
                 [f.id, JSON.stringify(gen.used), gen.answer]);
-            if (!autoOn) { inqStaff++; continue; }              // 승인 모드(기본): 초안 대기
+            if (!autoOn) { inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), gen.answer, '자동 등록 꺼짐 · 초안 있음')); continue; }              // 승인 모드(기본): 초안 대기
             try {
                 await naverPostInquiryAnswer(f.id, gen.answer, { name: 'auto' });
                 inqPosted++;
                 inqDone.push(qnaDoneBlock('고객문의', f.item.product_name, [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n'), gen.answer));
             } catch (e) {
                 inqFailed++;
-                inqStaff++;
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), gen.answer, '등록 실패', String((e && e.message) || e).slice(0, 300)));
                 await pool.query(`UPDATE naver_inquiries SET post_error=$2 WHERE inquiry_id=$1`,
                     [f.id, String((e && e.message) || e).slice(0, 300)]);
             }
@@ -9075,7 +9091,7 @@ async function collectInquiry() {
         // 대표 7/27 알림 개선: 상황별 분리 + 야간 조용 (오류 알림은 항상) · #1103 night_pass 에 inquiry 있으면 밤에도 바로
         if (!(await alertQuietFor('inquiry'))) {
             if (inqPosted > 0 && await alertEnabled('autodone')) tgSendBlocks(inqDone).catch(() => {});   // #1069 건수 한 줄 → 건마다 한 통(🟦 · 끝나길 안 기다림 = 수집 시간 종전)
-            if (inqStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': inqStaff, '채널': '고객문의' }));
+            if (inqStaffBlocks.length && await alertEnabled('staffneed')) tgSendBlocks(inqStaffBlocks).catch(() => {});   // #1128 건수 한 줄 → 건마다 한 통(🟥)
         }
         if (inqFailed) notifyTelegram(`⚠️ 고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
     }
@@ -9720,7 +9736,7 @@ async function collectQna() {
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
             if (res.rows[0] && res.rows[0].inserted) {
                 added++;
-                if (!q.answered) fresh.push({ id, question: item.question, product: item.product_name });
+                if (!q.answered) fresh.push({ id, question: item.question, product: item.product_name, at: tgMd(item.create_date) });   // #1128 at = 알림 「M/D HH:MM」
             } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
@@ -9729,6 +9745,7 @@ async function collectQna() {
     // 신규 미답변 → 시나리오 기반 생성 → 자동 게시(스위치 ON일 때만). 실패·SKIP·스위치 OFF = 직원 답변 대기.
     let posted = 0, needStaff = 0, failed = 0;
     const qnaDone = [];   // #1069 답변완료 건마다 텔레그램 한 통
+    const qnaStaff = [];   // #1128 사람 몫 건마다 텔레그램 한 통(🟥 확인 필요)
     if (fresh.length) {
         const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
         for (const q of fresh) {
@@ -9737,20 +9754,20 @@ async function collectQna() {
             catch (e) { console.error('[상품문의] 생성 오류(SKIP):', e.message); }
             if (!gen) {
                 await pool.query(`UPDATE naver_qnas SET ai_status='skip' WHERE question_id=$1`, [q.id]);
-                needStaff++;
+                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, '', '봇 답 못함'));
                 continue;
             }
             const draft = gen.answer;
             await pool.query(`UPDATE naver_qnas SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE question_id=$1`,
                 [q.id, JSON.stringify(gen.used), draft]);
-            if (!autoOn) { needStaff++; continue; }              // 승인 모드: 초안 대기
+            if (!autoOn) { needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, draft, '자동 등록 꺼짐 · 초안 있음')); continue; }              // 승인 모드: 초안 대기
             try {
                 await naverPostQnaAnswer(q.id, draft, { name: 'auto' });
                 posted++;
                 qnaDone.push(qnaDoneBlock('상품문의', q.product, q.question, draft));
             } catch (e) {
                 failed++;
-                needStaff++;
+                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, draft, '등록 실패', String((e && e.message) || e).slice(0, 300)));
                 await pool.query(`UPDATE naver_qnas SET post_error=$2 WHERE question_id=$1`,
                     [q.id, String((e && e.message) || e).slice(0, 300)]);
             }
@@ -9762,7 +9779,7 @@ async function collectQna() {
     // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상) · #1103 night_pass 에 qna 있으면 밤에도 바로
     if (!(await alertQuietFor('qna'))) {
         if (posted > 0 && await alertEnabled('autodone')) tgSendBlocks(qnaDone).catch(() => {});   // #1069 건마다 한 통(🟩)
-        if (needStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': needStaff, '채널': '상품문의' }));
+        if (qnaStaff.length && await alertEnabled('staffneed')) tgSendBlocks(qnaStaff).catch(() => {});   // #1128 건수 한 줄 → 건마다 한 통(🟥 · 종전 staffneed 켜짐 조건 그대로)
     }
     if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
     return `상품문의 신규 ${added}(자동게시 ${posted}·직원필요 ${needStaff})·갱신 ${updatedCnt} (창 내 총 ${total}건)`;

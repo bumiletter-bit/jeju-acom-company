@@ -192,6 +192,7 @@
 .desk-tab[aria-selected="true"] { color: var(--d-accent); border-bottom-color: var(--d-accent); }
 .desk-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
 .desk-tab .n { display: inline-block; margin-left: 5px; background: var(--d-err); color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 6px; }
+.desk-tabsrow > .desk-pvlog { margin-left: -6px; }   /* #1126 「미리보기 이력」 = 탭 꼴(.desk-tab) · 줄 gap 10 을 탭끼리 gap 4 와 같게 */
 .desk-filter { margin-left: auto; display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
 .desk-filter select { min-height: 36px; border: 1px solid var(--d-line); border-radius: 9px; background: #fff; color: var(--d-ink); font: inherit; font-size: 13px; padding: 0 10px; }
 .desk-list { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
@@ -2334,22 +2335,23 @@ html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after {
 .sms-reply .sms-reply-row .desk-btn.primary { flex: none; min-width: 128px; padding: 0 20px; font-size: 15px; font-weight: 700; }
 @media (max-width: 720px) { .sms-reply .sms-reply-row .desk-btn.primary { flex: 1 1 auto; min-width: 96px; padding: 0 12px; } }
 @media (max-width: 380px) { .sms-reply .sms-reply-row .sms-mkdraft { padding: 0 10px; font-size: 13px; } .sms-reply .sms-reply-row .sms-clear { padding: 0 6px; margin-right: 4px; } .sms-reply .sms-reply-row { gap: 6px; } }
-/* ── #1108-③ 포인트 지급 지시 띠(톡톡·문자 답 칸 위 · 1회용) — 초안 띠와 같은 자리 · 색은 --d-* 토큰(야간 자동) · 칸·단추 44px */
-.akm-point { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--d-line); background: var(--d-accent-soft); color: var(--d-ink); font-size: 13px; }
-.akm-point-t { flex: none; font-weight: 700; color: var(--d-accent); }
-.akm-point-f { display: inline-flex; align-items: center; gap: 4px; color: var(--d-sub); white-space: nowrap; }
-.akm-point-f input { min-height: 44px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; }
-.akm-point-amt { width: 92px; text-align: right; font-variant-numeric: tabular-nums; }
-.akm-point-why { width: 150px; }
-.akm-point-b { display: inline-flex; gap: 6px; margin-left: auto; }
-.akm-point-b .desk-btn { min-height: 44px; }
+/* ── #1108-③ 포인트 지급 지시 띠(톡톡·문자 답 칸 위 · 1회용) — 초안 띠와 같은 자리 · 색은 --d-* 토큰(야간 자동)
+   #1127(대표 11/11 「글씨가 포인트부터 삐뚤어지고 · 줄 맞춰서 · 칸 많이 안 먹고 깔끔하게」) = 한 줄(폰 390 은 두 줄: 제목+금액 / 사유+단추 · flex-wrap 자연 줄바꿈) · 글·칸·단추 전부 세로 가운데(line-height 1.2) · 칸·단추 높이 44(전 폭 · 종전 규격) · 여백 6/8 · 금액 칸 오른 맞춤 숫자 · 사유 칸은 남는 폭 */
+.akm-point { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--d-line); background: var(--d-accent-soft); color: var(--d-ink); font-size: 13px; line-height: 1.2; }
+.akm-point-t { flex: none; font-weight: 700; color: var(--d-accent); white-space: nowrap; }
+.akm-point-f { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--d-sub); white-space: nowrap; }
+.akm-point-fa { flex: none; }
+.akm-point-fw { flex: 1 1 120px; }
+.akm-point-f input { min-height: 44px; padding: 0 8px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 13.5px; line-height: 1.2; }
+.akm-point-amt { width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.akm-point-fw input { flex: 1 1 auto; width: auto; min-width: 90px; }
+.akm-point-b { display: inline-flex; gap: 6px; margin-left: auto; flex: none; width: auto; }
+.akm-point-b .desk-btn { flex: none; width: auto; min-height: 44px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
 .akm-point-go { background: var(--d-card); border-color: var(--d-accent); color: var(--d-accent); }
 .akm-point-x { border-color: transparent; background: transparent; color: var(--d-sub); }
 .akm-point-n, .akm-point-msg { flex: 1 0 100%; color: var(--d-sub); font-size: 12px; }
 .akm-point-msg:empty { display: none; }
 .akm-point-ok { color: var(--d-accent); font-weight: 600; }
-@media (max-width: 720px) { .akm-point-why { width: 128px; } .akm-point-b { margin-left: 0; flex: 1 0 100%; } .akm-point-b .desk-btn { flex: 1 1 auto; } }
+@media (max-width: 720px) { .akm-point-fw { flex-basis: 140px; } }   /* #1127 폰 = 사유 칸이 둘째 줄로 내려가 단추와 한 줄(제목+금액 / 사유+단추) · 칸·단추 44 는 전 폭 공통 */
 
 /* #1110 「이전 채팅 이력」 탭 옆 [미리보기 이력](탭 아닌 보통 단추 · 탭 줄 아래 선과 맞춤) */
-.desk-pvlog { margin-bottom: 6px; min-height: 36px; }
-@media (max-width: 720px) { .desk-pvlog { min-height: 44px; } }

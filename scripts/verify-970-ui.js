@@ -97,9 +97,11 @@ const K = '010-5555-0001', KD = '01055550001', KC = '050-7777-0002', KCD = '0507
         ok((await pn(s1.rows[1].id, ['2099110300002'])).status === 400, '현금 줄 = 400'); ok((await pn(lineId, ['abc'])).status === 400, '주문번호 꼴 아님 = 400');
         ok((await fetch(BASE + '/api/order-memo/rows/' + lineId + '/normal', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-t-role': 'accountant' }, body: JSON.stringify({ orders: [] }) })).status === 403, '점검 ⑥ 세무사 = 403');
         console.log('⑥ 폭·야간');
-        for (const [w, h, dark, lb] of [[390, 800, false, '390'], [900, 800, false, '900'], [1280, 900, true, '1280 야간'], [390, 800, true, '390 야간']]) {
+        const SHOT = process.env.SHOT970 || '';   // #1125 눈 확인 캡처(폴더를 줄 때만 · 기대값 무변경 · 1280 밝음은 캡처 때만 더 엶)
+        for (const [w, h, dark, lb] of [[390, 800, false, '390'], [900, 800, false, '900'], [1280, 900, true, '1280 야간'], [390, 800, true, '390 야간']].concat(SHOT ? [[1280, 900, false, '1280']] : [])) {
             const p = await open({ width: w, height: h }, dark); await badgeOf(p, K).click(); await p.waitForSelector('.om-norm input[data-cact="normchk"]'); await p.waitForTimeout(400);
             const m = await p.evaluate(() => { const b = document.querySelector('.om-norm'), r = b.getBoundingClientRect(), o = document.getElementById('om-card').getBoundingClientRect(), lab = b.querySelector('label').getBoundingClientRect(), cs = getComputedStyle(b.querySelector('.om-norm-li > span') || b.querySelector('label span')); return { over: r.right - o.right, lab: lab.height, fg: cs.color, dark: document.documentElement.getAttribute('data-ao-theme') }; });
+            if (SHOT) await p.locator('#om-card').screenshot({ path: require('path').join(SHOT, 'card-' + w + (dark ? '-dark' : '') + '.png') });
             ok(m.over <= 1 && (w > 960 || m.lab >= 44), lb + ': 넘침 0 · 44px', m); await p.close();
         }
         ok(errs.length === 0, '콘솔 오류 0', errs.slice(0, 3));

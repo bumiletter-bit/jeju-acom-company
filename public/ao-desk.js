@@ -263,7 +263,7 @@
                         <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">채팅</button>
                         <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all">이전 채팅 이력</button>
                     </div>
-                    <button type="button" class="desk-btn sm desk-pvlog" id="desk-pvlog" hidden>미리보기 이력</button>
+                    <button type="button" class="desk-tab desk-pvlog" id="desk-pvlog" hidden>미리보기 이력</button><!-- #1126(대표 11/11) 앞 두 탭과 같은 꼴(.desk-tab) · #desk-tabs 밖이라 탭 상태 코드(409·2695)에 안 낌 · 대표만(2751) -->
                     <div class="desk-filter">
                         <button type="button" class="desk-btn sm desk-viewbtn" id="desk-view" hidden>표로 보기</button>
                         <select id="desk-fs" aria-label="상태로 걸러 보기">
