@@ -20025,7 +20025,7 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
         return { realToday, shipDays, suggested: (isShip(realToday) && kst.getUTCHours() < 12) ? realToday : (shipDays.find(x => x > realToday) || realToday) }; } });
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
-require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
+require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate, isOwner: isOwnerUser });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
 const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
 // ── #1111-B 직원 알림 6종(staff-alerts.js · 대표 11/11) — 1분 틱 · 실서버(RENDER)만 · 스위치 = 설정 staff_alerts.enabled(기본 꺼짐 = 아무것도 안 함) · 받는 사람 = notify_routes
 //   순위 문제·3채널 가격 어긋남(민주) · 묵은 미답변·답변 재료 점검(지현·승협) · 클레임 요약(지현) · 정산 자동 수집 실패(가영) · 받는 사람마다 그 사람 근무일에만(workdays.js)

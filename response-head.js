@@ -258,7 +258,10 @@ module.exports = function mountResponseHead(app, deps) {
             if (day !== plogCleanDay) { plogCleanDay = day; await pool.query(`DELETE FROM ${T.plog} WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')`, [PLOG_KEEP_DAYS]); }
         } catch (e) { log.error('[응대 현황] 미리보기 이력 기록 실패:', e && e.message); }
     }
+    // #1110-5b(대표 11/11): 이력 보기는 대표 계정만(관리자도 X) · 판정 = server.js isOwnerUser(deps.isOwner) · 없으면 닫힘 · 쌓기(plogAdd)는 종전대로 전 직원
+    const isOwner = typeof deps.isOwner === 'function' ? deps.isOwner : () => false;
     app.get('/api/agent-office/response-preview-log', authMiddleware, guard(async (req, res) => {
+        if (!isOwner(req.user)) return res.status(403).json({ ok: false, error: '대표만 볼 수 있어요' });
         const q = req.query || {};
         const limit = Math.max(1, Math.min(Number.parseInt(q.limit, 10) || 50, 100));
         const before = /^\d{1,18}$/.test(String(q.before || '')) ? String(q.before) : null;

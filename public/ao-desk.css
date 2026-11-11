@@ -2349,3 +2349,7 @@ html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after {
 .akm-point-msg:empty { display: none; }
 .akm-point-ok { color: var(--d-accent); font-weight: 600; }
 @media (max-width: 720px) { .akm-point-why { width: 128px; } .akm-point-b { margin-left: 0; flex: 1 0 100%; } .akm-point-b .desk-btn { flex: 1 1 auto; } }
+
+/* #1110 「이전 채팅 이력」 탭 옆 [미리보기 이력](탭 아닌 보통 단추 · 탭 줄 아래 선과 맞춤) */
+.desk-pvlog { margin-bottom: 6px; min-height: 36px; }
+@media (max-width: 720px) { .desk-pvlog { min-height: 44px; } }

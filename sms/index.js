@@ -74,7 +74,15 @@ module.exports = function mountSms(app, deps) {
     const followup = optional('./followup.js'), selfcheck = optional('./selfcheck.js'), photoTest = optional('./photo-test.js'), preorders = optional('./preorders.js');
     let selfcheckApi = null;   // 셀프 조회 페이지(워커1) 장착 결과 { initDB, … }
     const classifyMod = optional('./classify.js'), rulesMod = optional('./rules.js'), lookupMod = optional('./lookup.js'), photoJudge = optional('./photo-judge.js'), photoReply = optional('./photo-reply.js'), aiNote = optional('./ai-note.js'), safeMod = optional('./sms-safe.js');
-    const smsSafe = t => (safeMod && typeof safeMod.smsSafe === 'function') ? safeMod.smsSafe(t) : smsSafeText(t);   // 워커3 sms-safe(꼬리 줄·「톡톡」·「네이버 페이」 제거 포함) 우선
+    // #1116(대표 11/11 「직원이 보낸 한 통은 한 통으로」) 직원 글 상한 = 2,000바이트(sms-safe smsBytes 셈 = 한글 2·그 밖 1 = EUC-KR 꼴) — 국내 장문(LMS) 한도 · 답 칸 maxlength 1000자(한글 1000자 = 2,000바이트)와 맞음
+    //   이 안이면 자르지도 나누지도 않고 한 통(폰이 장문 MMS 로 보냄 · #610 시험 b-3) · 넘으면 서버가 400 으로 거절(화면이 먼저 알림) · 조용히 자르기 0
+    const STAFF_MAX_BYTES = 2000;
+    // 워커3 sms-safe(꼬리 줄·「톡톡」·「네이버 페이」 제거 포함) 우선 · #1116 봇 길 = 결과 종전 그대로(900바이트 자르기) · 실제로 잘랐으면 서버 로그 1줄(조용히 넘기지 않음)
+    const smsSafeRaw = t => (safeMod && typeof safeMod.smsSafe === 'function') ? safeMod.smsSafe(t) : smsSafeText(t);
+    const smsSafe = t => { const r = smsSafeRaw(t); try { if (safeMod && typeof safeMod.smsSafe === 'function') { const full = safeMod.smsSafe(t, { maxBytes: 0 }); if (full !== r) log.error(`[문자] 봇·초안 글이 길어서 뒤가 잘렸어요(${safeMod.smsBytes(full)}→${safeMod.smsBytes(r)}바이트 · #1116)`); } } catch (_) { } return r; };
+    const staffFull = t => (safeMod && typeof safeMod.smsSafe === 'function') ? safeMod.smsSafe(t, { maxBytes: 0 }) : smsSafeText(t);
+    const staffTooLong = t => { const b = (safeMod && typeof safeMod.smsBytes === 'function') ? safeMod.smsBytes(staffFull(t)) : 0; return b > STAFF_MAX_BYTES ? b : 0; };   // #1116 넘은 바이트 수(0 = 보낼 수 있음)
+    const tooLongMsg = b => ({ ok: false, code: 'too_long', bytes: b, max_bytes: STAFF_MAX_BYTES, error: `글이 너무 길어요(한 통 최대 한글 약 1,000자) — 약 ${Math.ceil((b - STAFF_MAX_BYTES) / 2)}자 줄여 주세요` });
 
     // ── 설정 ──
     function cfgOf(raw) {
@@ -1440,8 +1448,12 @@ module.exports = function mountSms(app, deps) {
     function typingClear(threadId, uid) { const m = _typing.get(Number(threadId)); if (!m) return; m.delete(Number(uid)); if (!m.size) _typing.delete(Number(threadId)); }
     function typingOf(threadId, me) { const m = _typing.get(Number(threadId)); if (!m) return []; const now = Date.now(), ttl = typingTtl(), out = []; for (const [uid, v] of m) if (uid !== Number(me) && now - v.at <= ttl) out.push({ id: uid, name: v.name }); return out; }
     async function queueStaffReply(t, text, req, kind) {
-        const body = smsSafe(text); if (!body) return null;
-        const c = await cfg(); const pieces = splitForSms(body, c.max_chars);   // 직원·초안 발송도 봇 답과 같이 max_chars 조각(워커2 지적 · b-2 뒤 1000 으로 올리면 한 통)
+        // #1116(대표 11/11 직원 긴 답이 「3.」 에서 조용히 잘림 → 「한 통은 한 통으로」) 900바이트 넘는 직원 글 = 자르지도 나누지도 않고 한 통(상한 STAFF_MAX_BYTES 는 라우트가 먼저 거름)
+        //   900바이트 이하 = 종전과 바이트 동일(smsSafe 결과 → splitForSms(max_chars) · 설정 1000 이면 늘 1통)
+        const full = staffFull(text);
+        const long = !!(safeMod && typeof safeMod.smsBytes === 'function') && safeMod.smsBytes(full) > 900;
+        const body = long ? full : smsSafe(text); if (!body) return null;
+        const c = await cfg(); const pieces = long ? [body] : splitForSms(body, c.max_chars);   // 직원·초안 발송도 봇 답과 같이 max_chars 조각(워커2 지적 · b-2 뒤 1000 으로 올리면 한 통)
         let m = null;
         for (let i = 0; i < pieces.length; i++) { const x = await addMessage({ thread_id: t.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'staff_desk', state: 'queued', rule_kind: kind || null, priority: Math.max(0, 9 - i), ai_json: { part: i + 1, parts: pieces.length }, send_after: new Date() }); if (!m) m = x; }
         await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND sender <> 'staff_desk'`, [t.id]);
@@ -1456,6 +1468,7 @@ module.exports = function mountSms(app, deps) {
         const t = await loadThread(req, res); if (!t) return;
         const text = String(req.body && req.body.text || '').trim(); if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
+        { const tl = staffTooLong(text); if (tl) return res.status(400).json(tooLongMsg(tl)); }   // #1116 상한 넘음 = 보내지 않고 알림(자르기·나누기 0)
         const m = await queueStaffReply(t, text, req, 'staff'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' }); res.json({ ok: true, message_id: m.id });
     }));
     // #688(대표 「고」 10/14): 우리가 먼저 보내기 — 문자가 온 적 없는 번호(또는 아무 번호)에 에이전트 오피스에서 새 문자. 폰 삼성 메시지로 손 발송은 서버에 안 남아(SMSGate 한계) 「보내기는 전부 여기서」.
@@ -1470,6 +1483,7 @@ module.exports = function mountSms(app, deps) {
         else if (!MOBILE_RE.test(digits)) return res.status(400).json({ ok: false, error: '휴대폰 번호(010-0000-0000 꼴)만 보낼 수 있어요' });
         if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
+        { const tl = staffTooLong(text); if (tl) return res.status(400).json(tooLongMsg(tl)); }   // #1116 대화 만들기 전에 거름
         const before = (await pool.query(`SELECT id FROM sms_threads WHERE phone_digits = $1`, [digits])).rows[0];
         const t = await threadFor(digits);
         const m = await queueStaffReply(t, text, req, 'staff_new'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' });

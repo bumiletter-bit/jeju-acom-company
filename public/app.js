@@ -14105,6 +14105,7 @@ window.rvSetDays = function(d) { d = Number(d) === 30 ? 30 : 7; if (d === RV.day
 window.rvSetCh = function(c) { RV.ch = c; rvDraw(); };
 window.rvSetPch = function(c) { if (RV.busy) return; RV.pch = c; rvDraw(); };
 async function rvLoad() {
+    const hb = rvEl('rv-hist-btn'); if (hb) hb.hidden = !(currentUser?.role === 'admin' && currentUser?.position === '대표');   // #1110-5b 이력은 대표만(서버도 403)
     const seq = ++RV.seq; RV.loading = true; RV.statsErr = '';
     try {
         const d = await api('/api/agent-office/response-stats?days=' + RV.days);
@@ -14241,6 +14242,7 @@ function pvlInit() {
 }
 function pvlClose() { const dlg = rvEl('pvl'); if (dlg && dlg.open) dlg.close(); }
 function pvlOpen() {
+    if (!(currentUser?.role === 'admin' && currentUser?.position === '대표')) return;   // #1110-5b 대표만
     const dlg = rvEl('pvl'); if (!dlg) return;
     pvlInit();
     if (!dlg.open) { if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', ''); }

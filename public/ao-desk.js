@@ -263,6 +263,7 @@
                         <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">채팅</button>
                         <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all">이전 채팅 이력</button>
                     </div>
+                    <button type="button" class="desk-btn sm desk-pvlog" id="desk-pvlog" hidden>미리보기 이력</button>
                     <div class="desk-filter">
                         <button type="button" class="desk-btn sm desk-viewbtn" id="desk-view" hidden>표로 보기</button>
                         <select id="desk-fs" aria-label="상태로 걸러 보기">
@@ -387,6 +388,7 @@
             } catch (err) { showToast(err && err.message ? err.message : '처리하지 못했어요'); b.disabled = false; }
         });
         $('desk-fs').addEventListener('change', e => { S.fs = e.target.value; S.sig = ''; renderList(); });
+        $('desk-pvlog').addEventListener('click', () => { if (window.AkmPreviewLog && typeof window.AkmPreviewLog.open === 'function') window.AkmPreviewLog.open(); });   // #1110 미리보기 이력(응대 현황 채팅 미리보기 기록 · 화면 = app.js pvlOpen)
         $('desk-view').addEventListener('click', () => {
             S.view = S.view === 'chat' ? 'table' : 'chat';
             try { localStorage.setItem('akm_desk_view', S.view); } catch (e) { }
@@ -593,6 +595,10 @@
     const SHIP = { timer: 0, data: null, busy: false, seq: 0, pick: null, q: '', list: null, lseq: 0, qt: 0, rkey: '', asked: '' };   // asked = 이 카드에서 [조회]를 누른 기간(from|to) — 「카톡에 올릴 요약」은 그 기간에만 뜬다(대표 10/10 저녁)
     const kstDay = off => new Date(Date.now() + 9 * 3600e3 + (off || 0) * 86400e3).toISOString().slice(0, 10);
     const nfmt = n => (Number(n) || 0).toLocaleString('ko-KR');
+    // #1116(대표 11/11 「한 통은 한 통으로」) 문자 한 통 상한 = 2,000바이트(한글 2 · 그 밖 1 = 서버 sms/index.js STAFF_MAX_BYTES 와 같음) — 넘으면 글자 수 칸에 「약 n자 줄여 주세요」(서버도 같은 기준으로 거절)
+    const SMS_MAX_BYTES = 2000;
+    const smsBytesOf = s => { let n = 0; for (const ch of String(s || '').trim()) n += ch.codePointAt(0) > 0x7f ? 2 : 1; return n; };
+    const smsLenText = v => { const b = smsBytesOf(v); return nfmt(String(v).length) + '자' + (b > SMS_MAX_BYTES ? ' · 너무 길어요(약 ' + nfmt(Math.ceil((b - SMS_MAX_BYTES) / 2)) + '자 줄여 주세요)' : ''); };
     const mdOf = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] : String(d || ''); };
     const SHIP_KEYS = ['배송완료', '배송출발', '간선상하차', '집화', '미배송', '사고', '기타', '조회실패', '미조회'];
     const SHIP_BADGE = { '사고': 'err', '미배송': 'ask', '집화': 'wait', '집화 정체': 'wait', '기타': 'mute', '조회실패': 'mute', '미조회': 'mute' };
@@ -1542,7 +1548,7 @@
         const pe = $('sms-new-perr'), bad = !!d && !okNo && N.touched; pe.hidden = !bad; pe.textContent = bad ? '휴대폰 번호 전체를 적어 주세요(예: 010-1234-5678).' : ''; ph.setAttribute('aria-invalid', String(bad));
         const hint = $('sms-new-hint'), old = okNo ? (SMS.items || []).find(x => smsFull(x) === d) : null, hk = old ? String(old.id) : '';
         if (hint.dataset.k !== hk) { hint.dataset.k = hk; hint.hidden = !old; hint.innerHTML = old ? `이 번호와 나눈 대화가 있어요. <button type="button" class="sms-new-goto" id="sms-new-goto" data-id="${old.id}">그 대화 열기</button>` : ''; }
-        $('sms-new-len').textContent = has ? nfmt(ta.value.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
+        $('sms-new-len').textContent = has ? smsLenText(ta.value) : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
         const w = $('sms-new-warn'), em = smsNewEmoji(ta.value), dead = smsDead();
         w.hidden = !(em || dead); w.textContent = [em ? '이모지 ' + nfmt(em) + '개는 문자에서 깨져서 빠진 채 나가요.' : '', dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 글은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : ''].filter(Boolean).join(' ');
         const er = $('sms-new-err'); er.hidden = !N.err; er.textContent = N.err || '';
@@ -1996,7 +2002,7 @@
             if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>손님 글이 더 와서 봇이 초안을 새로 만들었어요.</span><button type="button" class="desk-btn sm" id="sms-draft-new">새 초안으로 바꾸기</button>' : k === 'chg' ? '초안이 새로 바뀌었어요. 읽어 보고 보내 주세요.' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; } }
         { const cl = $('sms-clear'); if (cl) cl.disabled = !has; }   // #853 비어 있으면 흐림
         { const mk = $('sms-mkdraft'); if (mk) { mk.disabled = !!SMS.sending || !!SMS.drafting || !SMS.thread; mk.textContent = SMS.drafting ? '만드는 중…' : dr ? '초안 다시 만들기' : '초안 만들기'; if (SMS.drafting) mk.setAttribute('aria-busy', 'true'); else mk.removeAttribute('aria-busy'); } }   // #1109
-        $('sms-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
+        $('sms-len').textContent = has ? smsLenText(v) : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
         const w = $('sms-warn'), dead = smsDead();
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
         smsGrowSync();
@@ -2726,6 +2732,7 @@
                 ? '대표 PC의 창구 관리 프로그램이 꺼져 있어요. PC를 켜면 남긴 지시부터 순서대로 처리됩니다.'
                 : asleep && !isAdmin() ? '창구가 자리 비움이에요. 관리자가 깨우면 남긴 지시부터 처리됩니다.'
                 : (lc && lc.note) ? lc.note : '';
+            $('desk-pvlog').hidden = !window.AkmPreviewLog || !isOwner();   // #1110 [미리보기 이력] = 대표 계정만(대표 11/11 「관리자도 X」 · isOwner = 관리자+직급 대표 · 화면 함수가 없으면 숨김)
             $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
             $('desk-hist-mine-wrap').hidden = !isOwner() || S.tab !== 'all';
         } catch (e) { /* 다음 주기에 다시 */ }
