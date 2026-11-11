@@ -119,6 +119,9 @@ function staleText(r, slot) {
 // ───────────── ④ 답변 재료 점검(지현·승협) ─────────────
 const ITEM_RE = /타이벡|노지\s*황금향|하우스\s*황금향|황금향|노지\s*감귤|노지귤|하우스\s*감귤|하우스귤|레몬|한라봉|천혜향|레드향|카라향|레드키위|키위|청귤|밤호박|단호박|옥수수|체험/;
 const FIX_RE = /AI\s*자동|자동\s*답변|자동답변|정정|잘못\s*(?:안내|말씀|답)|다시\s*안내|착오|봇이\s*잘못/;
+const PAST_AFTER_RE = /마감|종료|끝|까지였|되었|됐|었어요|었습니다|이후(?:에는|엔)?\s*(?:판매|주문)/;   // #1116 날짜 뒤 20자 = 이미 지난 일로 적은 말
+const PAST_BEFORE_RE = /매년|해마다/;   // 날짜 앞 12자 = 해마다 되풀이되는 규칙
+const MATERIAL_REPEAT_MAX = 3;   // #1116 같은 줄을 근무일 3번 알린 뒤에는 월요일에만 다시
 function mdDiff(fromMd, toMd) {   // 'MM-DD' 둘 → toMd 까지 남은 날(0~365 · 해 넘김 포함)
     const y = 2026, a = Date.UTC(y, Number(fromMd.slice(0, 2)) - 1, Number(fromMd.slice(3, 5))), b = Date.UTC(y, Number(toMd.slice(0, 2)) - 1, Number(toMd.slice(3, 5)));
     let d = Math.round((b - a) / DAY); if (d < 0) d += 365; return d;
@@ -127,10 +130,15 @@ function materialSignals({ knowledge, logs, products, scenarios, nowMs, cfg, sin
     const c = Object.assign({}, DEF, cfg || {}); const today = kstDate(nowMs), tmd = today.slice(5);
     const out = [];
     // (a) 시기 지식 = 오늘~n일 안에 끝나거나 시작(켜진 줄만 · 1년 내내 줄 제외)
-    for (const k of (knowledge || [])) {
-        if (k.enabled === false || !/^\d{2}-\d{2}$/.test(k.start_md || '') || !/^\d{2}-\d{2}$/.test(k.end_md || '')) continue;
+    // #1116 헛경보 거름: 지운 줄 빼기 · 판매 연동 「판매중이면 숨김」 줄은 끝·시작 경고 없음(판매 연동이 넘김) · 같은 품목의 다음 줄이 끝 다음 0~3일 안에 시작(또는 앞 줄이 시작 전 0~3일 안에 끝)하면 이어지는 글이 있음
+    const kn = (knowledge || []).filter(k => !k.deleted_at && k.enabled !== false && /^\d{2}-\d{2}$/.test(k.start_md || '') && /^\d{2}-\d{2}$/.test(k.end_md || ''));
+    const joined = (k, side) => kn.some(x => x.id !== k.id && x.item_key === k.item_key && (side === 'end' ? mdDiff(k.end_md, x.start_md) <= 3 : mdDiff(x.end_md, k.start_md) <= 3));
+    for (const k of kn) {
         if (k.start_md === '01-01' && k.end_md === '12-31') continue;
+        if (k.sell_rule === 'hide_when_selling') continue;
         const toEnd = mdDiff(tmd, k.end_md), toStart = mdDiff(tmd, k.start_md);
+        if (toEnd <= c.season_days && joined(k, 'end')) continue;
+        if (toEnd > c.season_days && toStart <= c.season_days && joined(k, 'start')) continue;
         if (toEnd <= c.season_days) out.push({ key: 'season-end:' + k.id + ':' + k.end_md, kind: 'season', text: `시기 지식 「${clip(k.item_key + ' ' + k.label, 30)}」 ${toEnd === 0 ? '오늘 끝' : toEnd + '일 뒤 끝'}(${md('2026-' + k.end_md)}) — 다음 시기 글이 있는지` });
         else if (toStart <= c.season_days) out.push({ key: 'season-start:' + k.id + ':' + k.start_md, kind: 'season', text: `시기 지식 「${clip(k.item_key + ' ' + k.label, 30)}」 ${toStart === 0 ? '오늘 시작' : toStart + '일 뒤 시작'}(${md('2026-' + k.start_md)}) — 글이 지금 맞는지` });
     }
@@ -160,18 +168,30 @@ function materialSignals({ knowledge, logs, products, scenarios, nowMs, cfg, sin
         const t = String(s.response || ''); const re = /(\d{1,2})\s*월\s*(\d{1,2})\s*일|(?<![\d/.])(\d{1,2})\/(\d{1,2})(?![\d/])/g; let mm, hit = null;
         while ((mm = re.exec(t))) {
             const mo = Number(mm[1] || mm[3]), da = Number(mm[2] || mm[4]); if (!(mo >= 1 && mo <= 12 && da >= 1 && da <= 31)) continue;
-            const ms = Date.UTC(Number(today.slice(0, 4)), mo - 1, da); if (ms < todayMs && todayMs - ms <= 180 * DAY) { hit = mm[0]; break; }
+            const ms = Date.UTC(Number(today.slice(0, 4)), mo - 1, da); if (!(ms < todayMs && todayMs - ms <= 180 * DAY)) continue;
+            // #1116 일부러 적은 지난 일(「9/15 오전 8시로 마감되었어요」·「9월 15일 이후에는 판매할 수 없어요」·「매년 …」)은 낡은 글이 아님 → 그 날짜만 건너뜀
+            if (PAST_AFTER_RE.test(t.slice(mm.index + mm[0].length, mm.index + mm[0].length + 20)) || PAST_BEFORE_RE.test(t.slice(Math.max(0, mm.index - 12), mm.index))) continue;
+            hit = mm[0]; break;
         }
         if (hit) out.push({ key: 'date:' + s.id + ':' + hit, kind: 'date', text: `시나리오 #${s.scenario_no} 「${clip(s.name, 18)}」에 지난 날짜 「${hit}」` });
     }
     return out;
 }
-function materialText(list, prevKeys) {
+// #1116 되풀이 줄이기: mem = { keys:[지난번 목록], n:{열쇠:알린 횟수} }(옛 꼴 = 열쇠 배열) · 3번 알린 줄은 월요일(KST)에만 다시 · 고쳐져 목록에서 빠진 줄은 횟수도 지움
+function materialRepeat(list, mem, today) {
+    const old = Array.isArray(mem) ? { keys: mem, n: {} } : (mem && typeof mem === 'object' ? { keys: mem.keys || [], n: mem.n || {} } : { keys: [], n: {} });
+    const monday = new Date(today + 'T00:00:00Z').getUTCDay() === 1;
+    const show = list.filter(x => monday || (Number(old.n[x.key]) || 0) < MATERIAL_REPEAT_MAX);
+    const n = {}; for (const x of list) n[x.key] = (Number(old.n[x.key]) || 0) + (show.includes(x) ? 1 : 0);
+    return { show, prevKeys: old.keys, mem: { keys: list.map(x => x.key), n }, quiet: list.length - show.length };
+}
+function materialText(list, prevKeys, all, quiet) {   // all = 오늘 잡힌 줄 전부(「처리됨」 셈용 · 없으면 list) · quiet = 3번 넘게 알려 오늘은 안 적은 줄 수(#1116)
     if (!list.length) return null;
-    const prev = new Set(prevKeys || []);
-    const done = [...prev].filter(k => !list.some(x => x.key === k)).length, remain = list.filter(x => prev.has(x.key)).length;
+    const prev = new Set(prevKeys || []), whole = all || list;
+    const done = [...prev].filter(k => !whole.some(x => x.key === k)).length, remain = list.filter(x => prev.has(x.key)).length;
     const lines = list.slice(0, 8).map(x => `ㆍ${prev.has(x.key) ? '(남음) ' : ''}${x.text}`);
     if (list.length > 8) lines.push(`… 외 ${list.length - 8}건`);
+    if (quiet) lines.push(`(그 밖 ${quiet}건은 이미 3번 알려 월요일에 다시)`);
     const flow = (done || remain) ? `지난번 뒤 처리 ${done}건 · 아직 남음 ${remain}건\n` : '';
     return { title: RED + `답변 재료 점검 ${list.length}건`, message: flow + lines.join('\n') + '\n→ 문의 관리 답변 재료에서 그 줄 고치기', level: 'alert' };
 }
@@ -349,14 +369,14 @@ async function run(deps) {
             // 정정·상태 바뀜 = 받는 사람들 가운데 가장 이른 지난 근무일 0시(KST)부터 · received_at = naive UTC
             const sinceMs = Math.min(...ids.map(uid => dayMs(pwdOf(uid)) - KST));
             const [knowledge, logs, products, scenarios] = await Promise.all([
-                pool.query(`SELECT id, item_key, label, start_md, end_md, enabled FROM product_season_knowledge`).then(r => r.rows),
+                pool.query(`SELECT id, item_key, label, start_md, end_md, enabled, sell_rule, deleted_at FROM product_season_knowledge WHERE deleted_at IS NULL`).then(r => r.rows),
                 pool.query(`SELECT id, user_id, message, bot_response, staff_response, scenario_name FROM message_logs WHERE received_at >= $1::timestamp ORDER BY id`, [naiveUtc(sinceMs)]).then(r => r.rows),
                 pool.query(`SELECT id, name, status, updated_at FROM bot_products WHERE deleted_at IS NULL AND updated_at >= $1::timestamptz`, [new Date(sinceMs).toISOString()]).then(r => r.rows),
                 pool.query(`SELECT id, scenario_no, name, response, enabled, updated_at FROM inquiry_scenarios WHERE deleted_at IS NULL`).then(r => r.rows)]);
             const list = materialSignals({ knowledge, logs, products, scenarios, nowMs: now, cfg, sinceMs });
-            const prev = await memGet(pool, 'material');
-            await memSet(pool, 'material', list.map(x => x.key));
-            return sendTo(deps, ids, 'cs_material', materialText(list, prev), 'inquiry');
+            const rep = materialRepeat(list, await memGet(pool, 'material'), day);   // #1116 같은 줄 매일 되풀이 줄이기
+            await memSet(pool, 'material', rep.mem);
+            return sendTo(deps, ids, 'cs_material', materialText(rep.show, rep.prevKeys, list, rep.quiet), 'inquiry');
         });
         await job('cs_claim_brief', 'claim:' + day, async ids => {
           let open = 0; try { open = (await openItems(deps)).length; } catch (e) { log.error('[직원 알림] 미답변 셈 실패(0으로):', e.message); }
@@ -394,4 +414,4 @@ async function run(deps) {
     return { done };
 }
 
-module.exports = { run, isOffDay, prevWorkday, holidaySetOf, rankAlerts, rankText, priceDiff, priceText, staleUnanswered, staleText, materialSignals, materialText, claimBrief, claimText, settleText, kstDate, kstHM, PRICE_KINDS, DEF };
+module.exports = { run, isOffDay, prevWorkday, holidaySetOf, rankAlerts, rankText, priceDiff, priceText, staleUnanswered, staleText, materialSignals, materialText, materialRepeat, claimBrief, claimText, settleText, kstDate, kstHM, PRICE_KINDS, DEF };

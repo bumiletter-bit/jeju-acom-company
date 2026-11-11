@@ -91,6 +91,40 @@ const at = s => Date.parse(s + '+09:00');   // 'YYYY-MM-DDTHH:MM' 한국 시각 
     ok(ms.some(x => x.kind === 'date' && /#54/.test(x.text) && /12월 20일/.test(x.text)) && !ms.some(x => x.kind === 'date' && /#55/.test(x.text)), '지난 날짜 글(켜진 줄만 · 「1/5」 는 앞날이라 안 잡음)');
     { const t = SA.materialText(ms, [ms[0].key, 'gone-key']); ok(t.title === `🟥 확인 필요 · 답변 재료 점검 ${ms.length}건` && /지난번 뒤 처리 1건 · 아직 남음 1건/.test(t.message) && /\(남음\)/.test(t.message) && /\n→ 문의 관리 답변 재료에서 그 줄 고치기$/.test(t.message), '재료 글 꼴', t.message); }
     ok(SA.materialText([], []) === null, '0건 = 안 보냄');
+    // #1116 헛경보 거름 · 일부러 적은 지난 날짜 · 되풀이 줄이기
+    {
+        const sc = (id, no, response) => ({ id, scenario_no: no, name: 'x' + no, response, enabled: true, updated_at: new Date(at('2026-11-01T00:00')).toISOString() });
+        const m2 = SA.materialSignals({ nowMs: at('2026-11-12T09:00'), cfg: {}, logs: [], products: [],
+            knowledge: [{ id: 36, item_key: '타이벡', label: '오픈 예정', start_md: '10-18', end_md: '11-15', enabled: true, sell_rule: 'hide_when_selling' },
+                { id: 47, item_key: '레드향', label: '비시즌', start_md: '05-01', end_md: '11-14', enabled: true },
+                { id: 49, item_key: '레드향', label: '비시즌 12월', start_md: '11-15', end_md: '12-31', enabled: true },
+                { id: 8, item_key: '청귤', label: '공통', start_md: '08-01', end_md: '11-13', enabled: true, deleted_at: '2026-09-20T00:00:00Z' },
+                { id: 90, item_key: '황금향', label: '시즌', start_md: '05-01', end_md: '11-14', enabled: true }],
+            scenarios: [sc(39, 38, '올해 청귤(풋귤) 시즌은 9월 15일 오전 8시로 주문이 마감되었어요 💚\n(청귤은 9월 15일 이후에는 판매할 수 없어요)'),
+                sc(49, 48, '매년 8월부터 수확·판매가 가능하고, 9월 15일 이후에는 판매할 수 없습니다.'),
+                sc(70, 70, '11월 5일까지 주문 시 11월 7일 도착해요')] });
+        const keys = m2.map(x => x.key);
+        ok(!keys.some(k => /:36:/.test(k)), '판매중이면 숨는 줄(hide_when_selling)은 끝 경고 없음', JSON.stringify(keys));
+        ok(!keys.some(k => /:47:|:49:/.test(k)), '같은 품목 다음 줄이 바로 이어지면 끝·시작 경고 없음', JSON.stringify(keys));
+        ok(!keys.some(k => /:8:/.test(k)), '지운 줄(deleted_at) 뺌');
+        ok(keys.includes('season-end:90:11-14'), '이어지는 줄 없는 끝은 그대로 잡음', JSON.stringify(keys));
+        ok(!keys.some(k => /^date:(39|49):/.test(k)), '일부러 적은 지난 일(마감되었어요·이후에는 판매·매년)은 낡은 글 아님', JSON.stringify(keys));
+        ok(keys.includes('date:70:11월 5일'), '앞으로 올 일처럼 적힌 지난 날짜는 그대로 잡음', JSON.stringify(keys));
+        const L = [{ key: 'a', text: 'A' }, { key: 'b', text: 'B' }];
+        let mem = ['a'];   // 옛 꼴(열쇠 배열)
+        let r = SA.materialRepeat(L, mem, '2026-11-12');   // 목
+        ok(r.show.length === 2 && r.mem.n.a === 1 && r.mem.n.b === 1 && r.prevKeys[0] === 'a', '옛 꼴 기억 읽기 · 처음엔 다 보냄', JSON.stringify(r));
+        r = SA.materialRepeat(L, r.mem, '2026-11-13'); r = SA.materialRepeat(L, r.mem, '2026-11-16');   // 금·월 = 3번째
+        const r4 = SA.materialRepeat(L, r.mem, '2026-11-17');   // 화 = 4번째 → 안 보냄
+        ok(r.mem.n.a === 3 && r4.show.length === 0 && r4.quiet === 2 && r4.mem.n.a === 3, '3번 알린 뒤 평일엔 안 보냄', JSON.stringify(r4));
+        const r5 = SA.materialRepeat(L.concat([{ key: 'c', text: 'C' }]), r4.mem, '2026-11-18');
+        ok(r5.show.length === 1 && r5.show[0].key === 'c' && r5.quiet === 2, '새 줄은 그대로 보냄', JSON.stringify(r5));
+        const r6 = SA.materialRepeat(L, r5.mem, '2026-11-23');   // 월
+        ok(r6.show.length === 2 && r6.mem.n.a === 4 && !('c' in r6.mem.n), '월요일엔 다시 · 고쳐져 빠진 줄은 횟수 지움', JSON.stringify(r6));
+        const t5 = SA.materialText(r5.show, r5.prevKeys, L.concat([{ key: 'c', text: 'C' }]), r5.quiet);
+        ok(/그 밖 2건은 이미 3번 알려 월요일에 다시/.test(t5.message) && /지난번 뒤 처리 0건 · 아직 남음 0건/.test(t5.message) === false && /답변 재료 점검 1건/.test(t5.title), '조용히 둔 줄은 「처리됨」으로 안 셈 · 안내 한 줄', t5.message);
+        ok(SA.materialText(r4.show, r4.prevKeys, L, r4.quiet) === null, '보낼 줄이 다 조용하면 안 보냄');
+    }
 
     console.log('⑥ 어제 클레임 요약');
     const b1 = SA.claimBrief({ open: 3, claimWords: ['파손', '썩', '곰팡이', '물러', '환불', '반품', '교환', '안 왔', '터졌'],
