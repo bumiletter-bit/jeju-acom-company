@@ -18,7 +18,7 @@ const crypto = require('crypto');
 
 // #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
 const TYPING_TTL_MS = 30000;   // #683 「입력 중」 표시 = 마지막 신호 뒤 30초(설정 sms_gateway.typing_ttl_sec 5~120)
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, draft_open_hours: 1, context_msgs: 6, draft_daily_cap: 20, history_days: 60, staff_notify: true };   // staff_notify = 문자 대화의 직원 알림(알림 종 + 폰 푸시 · type 'sms')을 보낼지(#837 대표 10/24 「회사프로그램에 문자 알림 안 뜨게 · 승인 알림이 묻힘 · 미처리는 에이전트 오피스에서 봄」 → 실DB false · 에이전트 오피스 카드·미처리 집계·텔레그램은 무관)   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, draft_open_hours: 1, context_msgs: 6, draft_daily_cap: 20, history_days: 60, staff_notify: true, auto_draft_ai: true, auto_draft_rule: true };   // staff_notify = 문자 대화의 직원 알림(알림 종 + 폰 푸시 · type 'sms')을 보낼지(#837 대표 10/24 「회사프로그램에 문자 알림 안 뜨게 · 승인 알림이 묻힘 · 미처리는 에이전트 오피스에서 봄」 → 실DB false · 에이전트 오피스 카드·미처리 집계·텔레그램은 무관)   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 // #635(대표 「고」 10/11 · 폰 문자함 구도): 목록 = 안 읽은 글이 있는 대화(staff_read_at 뒤 들어온 글 수) · 열면 0 · 초안은 손님 글이 올 때마다 새로(쿨다운·하루 상한·잠금·되풀이는 자동 발송만 막는다) · 쿨다운 기본 30분
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
@@ -100,6 +100,8 @@ module.exports = function mountSms(app, deps) {
             draft_open_hours: num(v.draft_open_hours, DEFAULT_CFG.draft_open_hours, 0, 720),   // #695 초안만 남은 대화 자동 종료(시간 · 0 = 안 닫음)
             context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
             typing_ttl_sec: num(v.typing_ttl_sec, TYPING_TTL_MS / 1000, 5, 120),   // #683 「입력 중」 표시 유효 시간
+            auto_draft_rule: v.auto_draft_rule !== false,   // #1109 초안 모드의 규칙 추천 글(배송조회·주문 찾은 손님 규칙 답·주문 못 찾음 고정 문구·첫 불만 확정 글 · AI 0)도 미리 만들지 · false = 누를 때만 · 주문 줄(order_hint)·주문 찾기는 스위치 무관 · 없음 = true(종전)
+            auto_draft_ai: v.auto_draft_ai !== false,   // #1109 초안 모드의 자동 AI 초안·사진 판독(비용 드는 것) · false = 누를 때만([초안 만들기]) · 규칙 답(비용 0)은 늘 자동 · 없음 = true(종전)
             staff_notify: v.staff_notify !== false,   // #837 행에 false 만 꺼짐 · 없음·그 밖 = true(종전)
             app_user_ids: Array.isArray(v.app_user_ids) ? v.app_user_ids.map(Number).filter(n => Number.isInteger(n) && n > 0) : [],   // #1062 「아꼼이 문자」 앱 알림 받을 계정(손님 문자마다 · 5분 잠금 X · staff_notify 무관 · 기본 = 아무도 안 받음)
         };
@@ -521,7 +523,7 @@ module.exports = function mountSms(app, deps) {
             //   전제 = 초안은 사람이 [이대로 보내기]를 눌러야 나감 → 자동 모드(auto)는 #645 그대로 고정 문구(AI 호출 없음 · 지어낸 발송일 자동 발송 사고 재발 막음)
             //   AI 에 「이 번호로 주문 못 찾음 · 발송·도착일 단정 금지 · 일반 안내 · 필요하면 주문하신 분 성함·연락처 여쭘」 한 줄을 붙임 · staff_flag order_not_found 그대로(직원 알림 제목·카드 종전)
             //   안전장치 = AI 가 [사람]·빈 글·약속 낱말·발송/도착 단정(aiAsserts)·실패면 종전 고정 문구 · 초안 하루 상한(noAi)이면 AI 안 부르고 고정 문구(종전)
-            if (c && c.mode === 'draft' && !(opts && opts.noAi) && typeof qnaGenerate === 'function') {
+            if (c && c.mode === 'draft' && !(opts && opts.noAi) && !(opts && opts.noAutoAi) && typeof qnaGenerate === 'function') {   // #1109 noAutoAi = 자동 AI 초안 꺼짐 → 종전 고정 문구(AI 0)
                 try {
                     if (opts) opts.aiUsed = true;
                     const g = await qnaGenerate(NF_AI_NOTE + await withContext(thread, inMsg, text, c), null, undefined, 'sms');
@@ -535,6 +537,7 @@ module.exports = function mountSms(app, deps) {
             }
             return nf;
         }
+        if (opts && opts.noAutoAi) return { text: null, kind: null, toStaff: true, why: 'no_draft' };   // #1109 자동 AI 초안 꺼짐(초안 모드) = 초안 없이 직원 몫 「직원 답 필요」(미처리·손님 n 에 잡힘 · [초안 만들기]로 만듦)
         if (opts && opts.noAi) return { text: null, kind: null, toStaff: true, why: 'draft_cap' };   // #652 초안 하루 상한을 넘은 번호 — AI 를 부르지 않는다(규칙 답·고정 문구는 위에서 이미 나갔다)
         if (typeof qnaGenerate === 'function') {
             try {
@@ -654,11 +657,28 @@ module.exports = function mountSms(app, deps) {
         if (lookup && lookup.match === 'one' && lookup.order) lookup.order = Object.assign({}, lookup.order, { option: lookup.order.option_text || lookup.order.option });   // rules.js 는 option/option_text 둘 다 읽음
         let ans;
         const orderQ = bucket === 'ship_q' || bucket === 'order_q';
-        if (hasImage && !gated && photoJudge && photoReply) { ans = await composePhotoAnswer(thread, msg, c, lookup, images, bodyText); if (ans && ans.text) ans.auto_ok = !!(lookup && lookup.match === 'one'); }   // #650: 사진 답은 주문을 찾은 손님에게만 자동(#617) · 주문 없는 번호의 사진 답은 초안   // 사진이 있으면 글이 클레임이어도 사진 판독 쪽(대표 📱 ④ · 결정은 사람)
+        // #1109 초안 모드 + auto_draft_ai false = AI·사진 판독을 부르지 않음(누름 초안 aiOpts.manual 은 예외) · true(종전)면 aiOpts 를 그대로 넘겨 종전과 같음
+        const noAutoAi = !!(c && c.mode === 'draft' && c.auto_draft_ai === false && !(aiOpts && aiOpts.manual));
+        if (noAutoAi) aiOpts = Object.assign(aiOpts || {}, { noAutoAi: true });
+        // #1109 auto_draft_rule false(초안 모드 · 누름 아님) = 규칙 글도 미리 안 만듦 → 사람 몫 「직원 답 필요」(no_draft) · 주문 찾기·주문 줄(patch.order_hint)은 위에서 이미 끝남 = 그대로
+        //   무시 갈래(인증·광고·택배사·인사)와 사람 갈래(사진·계좌·요청·전화·잘못 온 글·수신거부)는 composeAnswer 가 글을 만들지 않고 바로 돌려주므로 종전 사유 그대로 둔다
+        const noAutoRule = !!(c && c.mode === 'draft' && c.auto_draft_rule === false && !(aiOpts && aiOpts.manual));
+        const PASS_BUCKETS = ['otp', 'ad', 'carrier', 'greeting', 'photo', 'account', 'request', 'call', 'wrong', 'refuse'];
+        if (noAutoRule && !PASS_BUCKETS.includes(bucket)) ans = { text: null, kind: null, toStaff: true, why: 'no_draft' };
+        else if (noAutoRule && hasImage) ans = { text: null, toStaff: true, why: 'photo' };
+        else         if (hasImage && !gated && !noAutoAi && photoJudge && photoReply) { ans = await composePhotoAnswer(thread, msg, c, lookup, images, bodyText); if (ans && ans.text) ans.auto_ok = !!(lookup && lookup.match === 'one'); }   // #650: 사진 답은 주문을 찾은 손님에게만 자동(#617) · 주문 없는 번호의 사진 답은 초안   // 사진이 있으면 글이 클레임이어도 사진 판독 쪽(대표 📱 ④ · 결정은 사람)
         else if (hasImage) ans = { text: null, toStaff: true, why: 'photo' };
         else ans = await composeAnswer(thread, msg, c, (orderQ || bucket === 'claim') ? lookup : (lookup && lookup.match === 'one' ? lookup : null), aiOpts);   // 주문 물음이 아니면 many 되묻기 안 함(보관법 물음에 「받는 분 성함」 묻지 않게)
-        if (ans.why !== 'draft_cap' && (ans.ai_json || (ans.toStaff && ans.why))) await pool.query(`UPDATE sms_messages SET ai_json = $2::jsonb WHERE id = $1`, [msg.id, JSON.stringify(Object.assign({}, ans.ai_json || {}, ans.toStaff && ans.why ? { staff_why: ans.why } : {}))]).catch(() => { });   // #633: 직원 몫으로 넘긴 사유를 받은 글에 남김(「지금 챙길 일 · 봇 실패」 셈)
+        if (ans.why !== 'draft_cap' && !(aiOpts && aiOpts.manual) && (ans.ai_json || (ans.toStaff && ans.why))) await pool.query(`UPDATE sms_messages SET ai_json = $2::jsonb WHERE id = $1`, [msg.id, JSON.stringify(Object.assign({}, ans.ai_json || {}, ans.toStaff && ans.why ? { staff_why: ans.why } : {}))]).catch(() => { });   // #633: 직원 몫으로 넘긴 사유를 받은 글에 남김(「지금 챙길 일 · 봇 실패」 셈)
         return ans;
+    }
+    // #1109(대표 11/11 「이미 한 번 답한 대화의 두 번째 답은 인사 빼고 내용만」) 초안에만 = 최근 7일 안 우리가 보낸 글(봇·직원 · 취소·실패 제외)이 있는 대화면 첫머리 인사 문장만 뗌
+    //   (규칙 답 #646 「오늘」 기준·사진 판독 답 머리·AI 글 공통) · 자동 발송 글(queueBotAnswer)·대표 확정 글 본문은 무변경 · 첫 답은 인사 유지 · 조회 실패 = 원문
+    async function helloTrim(thread, text) {
+        if (!text || !thread || !thread.id) return text;
+        try { const r = await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '7 days' LIMIT 1`, [thread.id]); if (!r.rowCount) return text; }
+        catch (e) { return text; }
+        return require('../inbox-talk-draft-note.js').stripHello(text);
     }
     // 답 → 대화에 적을 초안 칸(#635): 무시 갈래 = 안 건드림 · 사람 몫 = 초안 없음 + 사유 · 그 밖 = 초안 + 사유 비움
     const isIgnoreAns = ans => !!(ans && ans.why && ans.why.startsWith('ignore:'));
@@ -676,7 +696,8 @@ module.exports = function mountSms(app, deps) {
             const ans = await makeAnswer(thread, msg, c, patch, Object.assign({}, ctx, { gated: true, aiOpts }));
             await bump();
             if (ans && ans.why === 'draft_cap') return {};   // 새 초안 없음 — 앞서 만든 초안·사유는 그대로 둔다(안 읽음으로만 뜸)
-            return draftFields(ans);
+            const f = draftFields(ans); if (f.draft_text) f.draft_text = await helloTrim(thread, f.draft_text);   // #1109
+            return f;
         }
         catch (e) {
             log.error('[문자] 초안 만들기 실패:', e.message); await bump();
@@ -712,7 +733,7 @@ module.exports = function mountSms(app, deps) {
                         const ans2 = await composeAnswer(thread, Object.assign({}, msg, { bucket: (prevQ && prevQ.bucket) || 'ship_q', body: (prevQ && prevQ.body) || bodyText }), c, r2);
                         if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask' && ans2.auto_ok) return await queueBotAnswer(thread, msg, c, patch, ans2, { bypassCap: true, images });
                         if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask') {   // #650: 2차 답이 AI 글이면 초안으로
-                            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans2.text, draft_kind: ans2.kind, staff_why: ans2.staff_flag || null }));
+                            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: await helloTrim(thread, ans2.text), draft_kind: ans2.kind, staff_why: ans2.staff_flag || null }));
                             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 초안 확인`, staffBody({ text: bodyText, images, draft: ans2.text }));
                             return done('draft', { kind: ans2.kind, second: true });
                         }
@@ -793,12 +814,12 @@ module.exports = function mountSms(app, deps) {
         if (ans.why && ans.why.startsWith('ignore:')) { await setThread(thread.id, Object.assign(patch, { status: (thread.status === 'new' && ans.why !== 'ignore:greeting' && !(ans.why === 'ignore:carrier' && isDomestic(digits) && digits.length >= 10)) ? 'ignored' : thread.status })); return done(ans.why === 'ignore:greeting' ? 'noop' : 'ignored'); }   // #641: 인사·「잘 받았어요」는 답·초안 없이 안 읽음으로만(숨기지 않음)
         if (ans.toStaff || !ans.text) {
             await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: ans.why || 'staff' }));
-            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 직원 답 필요(${labelWhy(ans.why)})`, staffBody({ text: bodyText, images, why: ans.staff_summary }));
+            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 직원 답 필요${ans.why === 'no_draft' ? '' : '(' + labelWhy(ans.why) + ')'}`, staffBody({ text: bodyText, images, why: ans.staff_summary }));
             return done('to_staff', { why: ans.why });
         }
         // #650(대표 「고」 10/11 · 문자 최종 점검): 자동으로 나가도 되는 답(auto_ok)은 ①주문을 찾은 손님의 규칙 답 ②명백한 사기 전 물음의 AI 답 ③주문을 찾은 손님의 불만 고정 답 ④주문 여럿 되묻기 + 주문을 찾은 손님의 사진 답뿐 — 그 밖은 자동 모드에서도 초안만(직원이 [이대로 보내기])
         if (c.mode === 'draft' || !ans.auto_ok) {
-            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: ans.staff_flag || (ans.promise ? 'ai_promise_draft' : null) }));   // #1065-b 약속 글 초안 = 카드 사유 칩 「약속 글 포함 · 확인」
+            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: await helloTrim(thread, ans.text), draft_kind: ans.kind, staff_why: ans.staff_flag || (ans.promise ? 'ai_promise_draft' : null) }));   // #1065-b 약속 글 초안 = 카드 사유 칩 「약속 글 포함 · 확인」
             const what = (ans.staff_flag === 'order_not_found' ? '주문을 못 찾았어요 · 되묻기 초안 확인' : ans.staff_flag === 'claim' ? '불만 글 · 초안 확인' : '봇 초안 확인') + (ans.promise ? ' · 약속 글 포함 · 확인' : '');
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${what}`, staffBody({ text: bodyText, images, draft: ans.text, why: ans.staff_summary }));
             return done('draft', { kind: ans.kind, held: c.mode !== 'draft' });
@@ -864,7 +885,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', request: '요청(주문·변경·취소)', call: '전화 요청', wrong_number: '잘못 온 문자라는 글', refuse: '수신거부·그만 보내', no_bot: '봇 응대 끔(수신거부)', foreign_number: '해외·알 수 없는 번호', order_not_found: '주문 못 찾음', order_not_found_ai: '주문 못 찾음(AI 초안)', ai_promise_draft: '약속 글 포함 · 확인', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
+    const labelWhy = w => ({ no_draft: '직원 답 필요', claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', request: '요청(주문·변경·취소)', call: '전화 요청', wrong_number: '잘못 온 문자라는 글', refuse: '수신거부·그만 보내', no_bot: '봇 응대 끔(수신거부)', foreign_number: '해외·알 수 없는 번호', order_not_found: '주문 못 찾음', order_not_found_ai: '주문 못 찾음(AI 초안)', ai_promise_draft: '약속 글 포함 · 확인', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
         rule_reserve: '예약 상품', rule_trouble: '배송 이상', rule_not_received: '못 받았다는 글', rule_arrive_overdue: '도착 예정일 지남', rule_ship_overdue: '발송 예정일 지남',
         rule_new_order_pending: '새 주문 대기', rule_pre_no_paid_at: '결제 시각 모름', rule_memo_date: '배송메세지 날짜 요청', rule_staff: '직원 확인' }[w] || (w ? '직원 확인' : ''));
 
@@ -982,8 +1003,9 @@ module.exports = function mountSms(app, deps) {
             out.auto_closed = rel.rowCount || 0;
         }
         // #625(대표 「고」 10/10): 직원 몫(staff_needed · 아무도 안 답함)도 손님 마지막 글 뒤 staff_open_hours 지나면 저절로 끝남 — [처리함]을 안 눌러도 봇이 영영 침묵하지 않게(직원은 폰에서 답하는 구조)
+        //   #1109 staff_why 'no_draft'(자동 AI 초안 꺼짐으로 초안 없이 직원 몫) 는 저절로 닫지 않는다 — 밤 문자가 새벽에 닫혀 미처리에서 빠지지 않게(#1050 꼴) · 다른 사유는 종전
         if (c.staff_open_hours > 0) {
-            const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_needed' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.staff_open_hours]);
+            const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_needed' AND staff_why IS DISTINCT FROM 'no_draft' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.staff_open_hours]);
             out.auto_closed_open = rel2.rowCount || 0;
         }
         // #695(대표 10/14 15:2x): 「초안만 남은 대화」(status draft · 사유 없음 · 초안 있음 = 자동 모드에서 자동 발송 5갈래 밖이라 사람이 보내야 하는 AI 초안)는 손님 마지막 글 뒤
@@ -1468,6 +1490,62 @@ module.exports = function mountSms(app, deps) {
         }
         if (!taken) return res.status(409).json({ ok: false, error: '보낼 초안이 없어요(이미 보냈을 수 있어요)' });
         const m = await queueStaffReply(t, taken.draft_text, req, 'draft:' + (taken.draft_kind || '')); if (!m) return res.status(400).json({ ok: false, error: '초안에 문자로 보낼 글자가 없어요' }); res.json({ ok: true, message_id: m.id });
+    }));
+    // #1109(대표 11/11 「초안 만들기를 눌러야 만들 수 있도록」) [초안 만들기] = 그 대화의 마지막 손님 글(사진 포함)로 답 엔진(makeAnswer · 규칙 → 사진 판독 → AI · #1065·#1077 확정 글)을 한 번 —
+    //   초안 모드처럼(약속 글도 초안 · 자동 발송 0) · 하루 상한·자동 AI 스위치(auto_draft_ai)와 무관 · draft_text·draft_kind 만 쓴다(status·staff_why 는 그대로 = 미처리 판정 안 흔듦) · 같은 대화 연타 = 409
+    const _drafting = new Set();
+    const DRAFT = require('../inbox-talk-draft-note.js');
+    // #1109 ② 문자 대화 → 톡톡 초안 엔진 입력(message_logs 줄 꼴로 옮김 · 최근 7일은 엔진이 거름) · 채널 'talk_draft' 재사용 + 문자 머리 한 줄 · 결과 = cleanDraft(「[사람]」 거름·금액 자리표) → smsSafe(이모지 뺌)
+    const SMS_CTX_HEAD = '[채널 — 이 대화는 회사 휴대폰 문자입니다 · 「톡톡」 「스마트스토어」 낱말 대신 「문자」 · 이모지는 쓰지 마세요(ㅠ ^^ 는 됨) · 다른 곳으로 연락하라고 하지 마세요]\n';
+    async function contextDraft(t) {
+        if (typeof qnaGenerate !== 'function') return null;
+        const rows = (await pool.query(`SELECT m.id, m.direction, m.sender, m.body, (SELECT count(*)::int FROM sms_images i WHERE i.message_id = m.id) AS nimg, EXTRACT(EPOCH FROM (now() - m.created_at)) / 86400 AS age
+            FROM sms_messages m WHERE m.thread_id = $1 AND m.created_at > now() - interval '7 days' AND (m.direction = 'in' OR m.state NOT IN ('cancelled','failed')) AND COALESCE(m.bucket, 'other') NOT IN ('otp','ad','carrier')
+            ORDER BY m.id DESC LIMIT 40`, [t.id])).rows.reverse();
+        const logRows = rows.map(m => m.direction === 'in'
+            ? { id: m.id, message: String(m.body || '').trim() || (m.nimg ? '[이미지 전송]' : ''), image_url: m.nimg ? 'sms-image' : null, answered: false, bot_response: '', staff_response: '', age: Number(m.age) }
+            : (m.sender === 'bot' ? { id: m.id, message: '', answered: true, bot_response: String(m.body || ''), staff_response: '', age: Number(m.age) } : { id: m.id, message: '', answered: false, bot_response: '', staff_response: String(m.body || ''), age: Number(m.age) }));
+        const ctx = DRAFT.buildInput(logRows, s => (String(s || '').trim() ? [{ body: String(s) }] : []));
+        if (!ctx) return null;
+        const g = await qnaGenerate(SMS_CTX_HEAD + ctx.input, null, undefined, 'talk_draft');
+        const body = g && DRAFT.cleanDraft(g.answer, ctx.staffAmounts, { noHello: ctx.hasOurReply });
+        const text = body ? smsSafe(String(body).replace(/스마트스토어\s*톡톡|네이버\s*톡톡|톡톡/g, '문자')) : '';
+        return text ? { text, kind: 'ai', why: 'context_draft' } : null;
+    }
+    app.post('/api/sms/threads/:id/draft', authMiddleware, wrap(async (req, res) => {
+        const t = await loadThread(req, res); if (!t) return;
+        const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요' });
+        if (_drafting.has(t.id)) return res.status(409).json({ ok: false, error: '초안을 만드는 중이에요', code: 'busy' });
+        _drafting.add(t.id);
+        try {
+            const msg = (await pool.query(`SELECT * FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND COALESCE(bucket, 'other') NOT IN ('otp','ad','carrier') ORDER BY id DESC LIMIT 1`, [t.id])).rows[0];
+            if (!msg) return res.status(400).json({ ok: false, error: '손님 글이 없어 초안을 만들 수 없어요', code: 'no_message' });
+            const imgs = (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [msg.id])).rows.map(x => ({ contentType: x.content_type, data: x.data.toString('base64') }));
+            const cDraft = Object.assign({}, c, { mode: 'draft' });
+            let ans;
+            // #1109 ② 첫 불만 글은 대표 확정 글(#1065·#1077) 먼저 · 이미 우리가 답한 뒤(7일 안)의 불만 글(보상·반품 요구 등)은 바로 맥락 초안
+            const priorOut = msg.bucket === 'claim' && (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND state NOT IN ('cancelled','failed') AND id < $2 AND created_at > now() - interval '7 days' LIMIT 1`, [t.id, msg.id])).rowCount > 0;
+            if (priorOut) { try { ans = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); } if (!ans) return res.json({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }); }
+            else try { ans = await makeAnswer(t, msg, cDraft, {},{ bodyText: String(msg.body || ''), images: imgs, aiOpts: { noAi: false, aiUsed: false, manual: true } }); }
+            catch (e) { log.error('[문자] 초안 만들기(누름) 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
+            if (!ans || ans.toStaff || !ans.text) {   // #1109 ② 엔진이 사람 몫(불만 재발·보상/반품 요구·요청·전화·계좌·AI 넘김 등)으로 넘기면 = 톡톡 초안 엔진으로 맥락 초안
+                let ctxAns = null;
+                try { ctxAns = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
+                if (!ctxAns) return res.json({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' });
+                ans = ctxAns;
+            }
+            ans.text = await helloTrim(t, ans.text);   // #1109 우리 글이 이미 있는 대화 = 첫머리 인사 뗌
+            await pool.query(`UPDATE sms_threads SET draft_text = $2, draft_kind = $3, updated_at = now() WHERE id = $1`, [t.id, ans.text, ans.kind || null]);
+            await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { draft_made: true, kind: ans.kind || null, why: ans.why || null } }, source: 'sms', actor: who(req) }).catch(() => { });
+            res.json({ ok: true, draft_text: ans.text, draft_kind: ans.kind || null, thread: pub(await withUnread(t.id)) });
+        } finally { _drafting.delete(t.id); }
+    }));
+    app.post('/api/sms/threads/:id/draft-clear', authMiddleware, wrap(async (req, res) => {   // #1109 ③ [지우기] = 눌러 만든 초안이면 서버 초안도 비움(화면이 그 초안을 기억할 때만 부름) · seen 과 다르면 안 지움
+        const t = await loadThread(req, res); if (!t) return;
+        const seen = (req.body && typeof req.body.seen === 'string') ? req.body.seen : null; if (seen === null) return res.status(400).json({ ok: false, error: 'seen 이 필요해요' });
+        const WS = `E' \\n\\r\\t'`;
+        const r = await pool.query(`UPDATE sms_threads SET draft_text = NULL, draft_kind = NULL, updated_at = now() WHERE id = $1 AND draft_text IS NOT NULL AND btrim(draft_text, ${WS}) = btrim($2::text, ${WS}) AND NOT (status = 'draft' AND staff_why IS NULL) RETURNING id`   /* 봇 자동 초안 대화 = 안 비움(사유도 초안도 없으면 미처리·손님 n 에서 빠짐 · 워커3 점검) */, [t.id, seen]);
+        res.json({ ok: true, cleared: r.rowCount > 0, thread: pub(await withUnread(t.id)) });
     }));
     app.post('/api/sms/threads/:id/handled', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;

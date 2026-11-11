@@ -2321,3 +2321,16 @@ html[data-app="sms"][data-ao-theme="dark"] body:not(.sms-win-open) .app::after {
 .sms-buy-mini-i { flex: none; color: var(--d-sub); font-size: 12px; }
 #desk-sms.sms-buy-full .sms-buy-mini-i { transform: rotate(180deg); }
 .sms-buy-mini:focus-visible { outline: 2px solid var(--d-accent, #4f46e5); outline-offset: 1px; }
+/* ── #1109(대표 11/11 「지우기 · 초안 만들기 · 답 보내기 · 같은 구도 · 답 보내기가 가장 커야」) 문자·톡톡 답 칸 단추 한 줄 ──
+   [지우기](왼쪽 · 글자 단추 · 가장 약하게) ‥ [글자 수(남는 폭 · 모자라면 줄어 사라짐)] [초안 만들기(보조 · 인디고 테두리)] [답 보내기(주인공 · 오른쪽 끝)]
+   전부 44px(≤720 의 36px 예외도 이 줄은 44) · 한 줄(폴드7 접힘 344 포함) · 색 = --d-* 토큰만(야간 자동) · 새 문자 판(.sms-new-form)은 무접촉 */
+.sms-reply .sms-reply-row { flex-wrap: nowrap; gap: 8px; }
+.sms-reply .sms-reply-row .desk-btn { min-height: 44px; padding-top: 0; padding-bottom: 0; white-space: nowrap; }
+.sms-reply .sms-reply-row .sms-clear { flex: none; min-width: 44px; padding: 0 10px; margin-right: 8px; border-color: transparent; background: transparent; box-shadow: none; color: var(--d-sub); font-weight: 600; }
+.sms-reply .sms-reply-row .sms-clear:hover:not(:disabled) { background: var(--d-soft); color: var(--d-ink); border-color: transparent; }
+.sms-reply .sms-reply-row .sms-len { flex: 1 1 0; min-width: 0; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-reply .sms-reply-row .sms-mkdraft { flex: none; padding: 0 14px; background: var(--d-card); border-color: var(--d-accent); color: var(--d-accent); }
+.sms-reply .sms-reply-row .sms-mkdraft:hover:not(:disabled) { background: var(--d-accent-soft); border-color: var(--d-accent); }
+.sms-reply .sms-reply-row .desk-btn.primary { flex: none; min-width: 128px; padding: 0 20px; font-size: 15px; font-weight: 700; }
+@media (max-width: 720px) { .sms-reply .sms-reply-row .desk-btn.primary { flex: 1 1 auto; min-width: 96px; padding: 0 12px; } }
+@media (max-width: 380px) { .sms-reply .sms-reply-row .sms-mkdraft { padding: 0 10px; font-size: 13px; } .sms-reply .sms-reply-row .sms-clear { padding: 0 6px; margin-right: 4px; } .sms-reply .sms-reply-row { gap: 6px; } }

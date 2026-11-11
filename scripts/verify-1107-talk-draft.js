@@ -104,7 +104,7 @@ function engine(src) {
     ok(N.cleanDraft('지금 판매 중인 4kg 은 29,000원이에요!', new Set()) === '지금 판매 중인 4kg 은 29,000원이에요!', '보상 아닌 가격 문장 금액 = 그대로');
     ok(N.cleanDraft('사용시나리오: 반품\n[이번 손님 글] 네 고객님 반품접수 도와드리겠습니다.\n\n*추가 문의사항 있으시다면 언제든지 톡톡 또는 📞 010-6687-4031 고객센터 번호로 연락주시면 빠른 상담 도와드리겠습니다.', new Set()) === '네 고객님 반품접수 도와드리겠습니다.', '머리·머리글 흉내·꼬리 거름');
     ok(N.cleanDraft('SKIP', new Set()) === '' && N.cleanDraft('', new Set()) === '', 'SKIP·빈 답 = 빈 초안');
-    ok(N.hasPlaceholder('포인트 0,000원 지급') && N.hasPlaceholder('0,000 원') && !N.hasPlaceholder('포인트 3,000원') && !N.hasPlaceholder('10,000원'), '자리표 검사 = 0,000원만(10,000원은 아님)');
+    ok(!('hasPlaceholder' in N) && !('PLACEHOLDER_RE' in N) && N.PLACEHOLDER === '0,000원', '#1109 자리표 보내기 막기 뺌(대표 「우리가 수정해서 보낼 거야」) = 검사 함수 내보내기 정리 · 자리표 글자는 그대로');
 
     // ───── ③-b 워커3 점검 손질(1~8) ─────
     console.log('③-b 점검 손질');
@@ -123,14 +123,22 @@ function engine(src) {
     ok(CD('환불만 원하시면 반품접수 도와드리겠습니다.') === '환불만 원하시면 반품접수 도와드리겠습니다.', '재점검) 「환불만 원하시면」 = 금액 아님', CD('환불만 원하시면 반품접수 도와드리겠습니다.'));
     ok(CD('네이버페이 포인트 만원을 지급 도와드리겠습니다.') === '네이버페이 포인트 0,000원을 지급 도와드리겠습니다.', '재점검) 「포인트 만원을」 → 자리표 · 앞 빈칸 그대로', CD('네이버페이 포인트 만원을 지급 도와드리겠습니다.'));
     ok(CD('귤 1,000개 중 일부 보상 도와드리겠습니다.') === '귤 1,000개 중 일부 보상 도와드리겠습니다.' && CD('귤 1,000,000개 보상') === '귤 1,000,000개 보상' && CD('5,000 kg 보상') === '5,000 kg 보상', '재점검) 「귤 1,000개」·「1,000,000개」·「5,000 kg」 = 금액 아님', [CD('귤 1,000개 중 일부 보상 도와드리겠습니다.'), CD('귤 1,000,000개 보상'), CD('5,000 kg 보상')].join(' | '));
-    ok(N.hasPlaceholder('0,000원') && N.hasPlaceholder('포인트0,000원') && !N.hasPlaceholder('10,000원') && !N.hasPlaceholder('1,0,000원'), '1) 자리표 검사(뒤보기 없이) = 앞이 줄머리·숫자·쉼표 아닐 때만');
+    ok(N.stripHello('안녕하세요 고객님께서 주문하신 귤') === '안녕하세요 고객님께서 주문하신 귤' && N.stripHello('안녕하세요 제주아꼼이네 고객센터입니다') === '안녕하세요 제주아꼼이네 고객센터입니다', '#1109 인사 낱말 뒤로 문장이 이어지면 안 뗌(워커3 점검 ①)');
+    ok(N.cleanDraft('[채널 — 이 대화는 회사 휴대폰 문자입니다 · 이모지 X]\n네 고객님 반품 도와드리겠습니다.', new Set()) === '네 고객님 반품 도와드리겠습니다.', '#1109 문자 맥락 초안 「[채널 — …]」 머리를 따라 쓴 줄 거름(워커3 점검 ②)');
+    // ───── ③-c #1109 첫머리 인사(우리 답이 이미 있는 대화의 둘째 답 = 인사 없이) ─────
+    console.log('③-c 인사 떼기');
+    { const H = [['안녕하세요 고객님 ^^ 오늘 제주에서 출발했습니다!', '오늘 제주에서 출발했습니다!'], ['안녕하세요 제주아꼼이네입니다.\n냉장 보관해 주세요.', '냉장 보관해 주세요.'], ['안녕하세요 고객님, 제주아꼼이네입니다 🍊 네 지정해드리겠습니다!', '네 지정해드리겠습니다!'], ['안녕하세요!! 제주아꼼이네입니다~ 사진 확인했습니다.', '사진 확인했습니다.'],
+        ['네 고객님 안녕하세요', '네 고객님 안녕하세요'], ['안녕하세요', '안녕하세요'], ['안녕하세요 고객님 ^^', '안녕하세요 고객님 ^^'], ['에고 그러셨군요 ㅠ 안녕하세요', '에고 그러셨군요 ㅠ 안녕하세요']];
+      const bad = H.filter(([a, b]) => N.stripHello(a) !== b); ok(bad.length === 0, 'stripHello = 첫머리 인사 문장만 · 뒤 본문 보존 · 인사뿐이면 원문 · 가운데 「안녕하세요」 무접촉', JSON.stringify(bad.map(([a]) => [a, N.stripHello(a)]))); }
+    ok(N.cleanDraft('안녕하세요 고객님 ^^ 네 고객님 포인트 지급 도와드리겠습니다.', new Set(), { noHello: true }) === '네 고객님 포인트 지급 도와드리겠습니다.' && N.cleanDraft('안녕하세요 고객님 ^^ 반품 도와드리겠습니다.', new Set()) === '안녕하세요 고객님 ^^ 반품 도와드리겠습니다.', 'cleanDraft noHello = 인사 뗌 · 옵션 없으면(첫 답) 인사 유지');
+    { const first = N.buildInput([R('귤 언제 와요?')], staffParts), second = N.buildInput([R('귤 언제 와요?', { answered: true, bot_response: '내일 출발해요' }), R('감사해요 또 하나 물을게요')], staffParts), staffed = N.buildInput([R('상했어요', { staff_response: '에고 죄송합니다' }), R('보상해 주세요')], staffParts), old = N.buildInput([R('예전 글', { age: 20, staff_response: '네' }), R('새 글', { age: 0 })], staffParts);
+      ok(first.hasOurReply === false && second.hasOurReply === true && staffed.hasOurReply === true && old.hasOurReply === false, 'buildInput hasOurReply = 앞 대화(7일 안)에 봇·직원 답 있을 때만', JSON.stringify([first.hasOurReply, second.hasOurReply, staffed.hasOurReply, old.hasOurReply])); }
+    ok(/우리 답\(봇·직원\)이 하나도 없는 첫 답일 때만 · 우리 답이 이미 있으면 인사 없이 바로 본문/.test(N.TALK_DRAFT_NOTE), '톡톡 초안 지시문 = 인사는 첫 답일 때만 줄');
     // ───── ④ 화면 자리표 꼴 ─────
     console.log('④ 화면 ao-inbox.js');
     const ui = fs.readFileSync(path.join(ROOT, 'public/ao-inbox.js'), 'utf8');
-    const m = ui.match(/const PH_RE = (\/[^\n]*?\/), PH_TEXT/);
-    ok(m && m[1] === String(N.PLACEHOLDER_RE), '화면 PH_RE = 서버 PLACEHOLDER_RE', m && m[1]);
-    ok(m && !/\(\?<[=!]/.test(m[1]), '화면 정규식 뒤보기 0(옛 iOS 사파리)', m && m[1]);
-    ok(/btn\.disabled = !has \|\| ph \|\|/.test(ui) && /if \(ch === 'talk' && PH_RE\.test\(text\)\) \{ toast\(PH_TEXT/.test(ui), '화면 = 자리표 있으면 [보내기] 꺼짐 + 보내기 함수 막음');
+    ok(!/PH_RE|PH_TEXT/.test(ui) && /btn.disabled = !has || I.sending/.test(ui), '#1109 화면 = 자리표가 남아도 [보내기] 안 막음(막기 코드 0)');
+    ok(!/hasPlaceholder|placeholder/.test(fs.readFileSync(path.join(ROOT, 'inbox-threads.js'), 'utf8').split('talkSend')[1].split('talkMakeDraft')[0]), '#1109 서버 talkSend = 자리표 막기 0');
     ok(fs.readFileSync(path.join(ROOT, 'inbox-threads.js'), 'utf8').includes("/^\\[1회응대/.test(s) ? '이미 응대한 대화 · 봇이 답하지 않음'"), 'botSilent 「[1회응대-무응답]」 글귀');
 
     console.log(`\n결과: 통과 ${pass} · 실패 ${fail}`);

@@ -6480,10 +6480,13 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         const conds = [], params = [];
         conds.push(`(k.id IS NULL OR k.deleted_at IS NULL)`);   // 지시 #245: 수기 삭제 건 비표시(soft-delete — 발송안내만 있는 행은 k.id IS NULL이라 통과)
         // #179-2: 아래 3줄은 SQL 파라미터 참조($1·$2…)의 '$'가 소실돼 정수 리터럴로 박혔었음(1::date → 캐스팅 오류 500) — 교정
-        if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN $${params.length - 1}::date AND $${params.length}::date`); }
+        // #1110: 기준 시각(주문안내가 있으면 k.created_at · 없으면 l.created_at) 조건은 conds 가 아니라 tconds 에 「{col}」 자리로 둔다 — 아래 두 갈래에서 각 표의 created_at 으로 바꿔 색인을 타게
+        //   종전 「(COALESCE(k,l) + 9시간)::date BETWEEN 처음 AND 끝」 = 「{col} >= 처음 − 9시간 AND {col} < 끝 + 1일 − 9시간」(created_at = 시간대 없는 UTC 값 · DB 시간대 UTC)
+        const tconds = [];
+        if (useRange) { params.push(from, to); tconds.push(`{col} >= ($${params.length - 1}::date - interval '9 hours') AND {col} < ($${params.length}::date + interval '1 day' - interval '9 hours')`); }
         // #579: 날짜를 안 고르면 최근 90일만(이력이 해마다 쌓여도 첫 화면이 느려지지 않게). 더 옛것은 날짜를 골라서 본다 · all=1 이면 전체(점검용)
         const defaultDays = (!useRange && String(req.query.all || '') !== '1') ? NLOG_DEFAULT_DAYS : 0;
-        if (defaultDays) conds.push(`COALESCE(k.created_at, l.created_at) > NOW() - interval '${defaultDays} days'`);
+        if (defaultDays) tconds.push(`{col} > NOW() - interval '${defaultDays} days'`);
         if (qRaw) {
             // #179-4: 연락처 검색 — 풀번호(하이픈 유무 무관)·뒷자리 부분검색 모두 수용. DB는 마스킹(010****4031)만 보관하므로
             //   앞 3자리 + 뒷 4자리로 대조(풀번호 입력 시 오탐 축소), 4자리만 넣으면 뒷자리 대조. 숫자가 아니면 품목명 검색(기존 기능 유지).
@@ -6511,15 +6514,19 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         } else if (filter === 'pending') {
             conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status NOT IN ('canceled-excluded','experience')))`);   // 발송안내 미도래(#775-A 체험 = 발송안내 없음)
         }
-        const whereSql = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
         // 지시 #180-A1: 표시 상한(300) 하드컷 폐지 → 100건씩 offset/limit 페이징. 무제한 전량 로드는 금지(한 번에 최대 100).
-        //   total은 같은 조건으로 별도 COUNT — 요약 줄은 '조회 조건 전체 기준'을 유지해야 하므로 표시분 개수와 분리한다.
+        //   total = 조회 조건 전체 건수(요약 줄은 '조회 조건 전체 기준' · 표시분 개수와 분리).
         const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 100);
         const offset = Math.max(Number(req.query.offset) || 0, 0);
-        const total = Number((await pool.query(
-            `SELECT count(*) n FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key ${whereSql}`, params)).rows[0].n);
-        const rows = (await pool.query(
-            `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
+        // #1110(대표 11/11 「알림 발송 이력이 늦게 뜸」): 종전 = 두 표 FULL OUTER JOIN 뒤 COALESCE 시각으로 거름(색인 못 탐 · COUNT 2.8초 + 목록 4.5초)
+        //   → 같은 뜻을 두 갈래로 나눔: ① 주문안내(k)가 있는 줄 = k.created_at 으로 좁히고 발송안내(l)를 order_key 로 붙임
+        //   ② 주문안내가 없는 줄 = l.created_at 으로 좁히고 같은 order_key 의 k 가 아예 없는 것만(지운 k 가 있으면 종전처럼 안 보임)
+        //   건수는 같은 쿼리의 count(*) OVER() 로 한 번에 · 칸 이름·순서·정렬(타이브레이커)은 종전 그대로
+        const nlogWhere = (extra, col) => {
+            const all = (extra ? [extra] : []).concat(conds, tconds.map(t => t.split('{col}').join(col)));
+            return all.length ? 'WHERE ' + all.join(' AND ') : '';
+        };
+        const NLOG_COLS = `COALESCE(k.order_key, l.order_key) AS order_key,
                     COALESCE(k.order_at, l.order_at, k.created_at, l.created_at) AS at_main,   /* #401-c(대표): 일시(주문) = 실제 주문 시각 우선 — 없으면 종전(수집 시각) */
                     COALESCE(k.product_name, l.product_name) AS product_name,
                     COALESCE(k.receiver_masked, l.receiver_masked) AS receiver_masked,
@@ -6527,12 +6534,44 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                     k.message AS k_message, k.resend_count AS k_resend, k.backfill AS k_backfill,
                     k.confirm_status, k.confirm_error, k.confirmed_at,
                     l.id AS l_id, l.created_at AS l_at, l.mode AS l_mode, l.status AS l_status, l.error AS l_error,
-                    l.message AS l_message, l.resend_count AS l_resend, l.product_name AS l_product
-             FROM kakao_notify_log k
-             FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
-             ${whereSql}
-             ORDER BY COALESCE(k.created_at, l.created_at) DESC, COALESCE(k.id, 0) DESC, COALESCE(l.id, 0) DESC
-             LIMIT ${limit} OFFSET ${offset}`, params)).rows;   /* 동일 시각 행의 순서 고정(타이브레이커) — 없으면 페이지 경계에서 중복·누락 발생 */
+                    l.message AS l_message, l.resend_count AS l_resend, l.product_name AS l_product`;
+        //   ⚠ 날짜를 고른 조회(useRange · 첫 화면 = 오늘)에만 이 길 · 날짜를 안 고른 조회(최근 90일 · all=1)는 거의 전 줄이라 색인이 오히려 느려(실측 19초 → 37초) 종전 쿼리 그대로
+        let rows, total;
+        if (!useRange) {
+            const whereSql = nlogWhere('', 'COALESCE(k.created_at, l.created_at)');
+            total = Number((await pool.query(
+                `SELECT count(*) n FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key ${whereSql}`, params)).rows[0].n);
+            rows = (await pool.query(
+                `SELECT ${NLOG_COLS}
+                 FROM kakao_notify_log k
+                 FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
+                 ${whereSql}
+                 ORDER BY COALESCE(k.created_at, l.created_at) DESC, COALESCE(k.id, 0) DESC, COALESCE(l.id, 0) DESC
+                 LIMIT ${limit} OFFSET ${offset}`, params)).rows;   /* 동일 시각 행의 순서 고정(타이브레이커) — 없으면 페이지 경계에서 중복·누락 발생 */
+        } else {
+        //   긴 글 칸(message 등)은 고른 100줄에만 붙인다: 안쪽 = 좁은 칸(id·기준 시각)만으로 거르고·세고·정렬·자름 → 바깥 = id 로 두 표를 다시 붙여 칸을 채움
+        rows = (await pool.query(
+            `SELECT ${NLOG_COLS}, x.nlog_n
+             FROM (
+                SELECT u.kid, u.lid, u.t, count(*) OVER () AS nlog_n
+                FROM (
+                    SELECT k.id AS kid, l.id AS lid, COALESCE(k.created_at, l.created_at) AS t FROM kakao_notify_log k LEFT JOIN lms_guide_log l ON l.order_key = k.order_key ${nlogWhere('', 'k.created_at')}
+                    UNION ALL
+                    SELECT k.id AS kid, l.id AS lid, COALESCE(k.created_at, l.created_at) AS t FROM lms_guide_log l LEFT JOIN kakao_notify_log k ON k.order_key = l.order_key ${nlogWhere('k.id IS NULL', 'l.created_at')}
+                ) u
+                ORDER BY u.t DESC, COALESCE(u.kid, 0) DESC, COALESCE(u.lid, 0) DESC
+                LIMIT ${limit} OFFSET ${offset}
+             ) x
+             LEFT JOIN kakao_notify_log k ON k.id = x.kid
+             LEFT JOIN lms_guide_log l ON l.id = x.lid
+             ORDER BY x.t DESC, COALESCE(x.kid, 0) DESC, COALESCE(x.lid, 0) DESC`, params)).rows;   /* 동일 시각 행의 순서 고정(타이브레이커) — 없으면 페이지 경계에서 중복·누락 발생 */
+        // 건수 = 첫 줄의 nlog_n(LIMIT 전에 셈) · 줄이 없으면(빈 결과 또는 끝 페이지 넘김) offset 0 = 0건 · 그 밖만 COUNT 한 번
+        total = rows.length ? Number(rows[0].nlog_n) : 0;
+        if (!rows.length && offset > 0) total = Number((await pool.query(
+            `SELECT (SELECT count(*) FROM kakao_notify_log k LEFT JOIN lms_guide_log l ON l.order_key = k.order_key ${nlogWhere('', 'k.created_at')})
+                  + (SELECT count(*) FROM lms_guide_log l LEFT JOIN kakao_notify_log k ON k.order_key = l.order_key ${nlogWhere('k.id IS NULL', 'l.created_at')}) AS n`, params)).rows[0].n);
+        for (const r of rows) delete r.nlog_n;   // 응답 칸은 종전 그대로
+        }
         // 지시 #177: 수신 풀번호 표시 — DB엔 마스킹만 저장(원칙 유지), 표시 시점에 네이버 상세조회로 재취득.
         //   배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
         // 지시 #190(대표 확정): admin 전용 → **로그인한 전 계정**으로 확대.
@@ -6919,6 +6958,15 @@ const NEEDS_MEMO_RE = new RegExp([
 ].join('|'), 'i');
 // #1108-D 주소 변경 요청(취소·반품·환불·교환 말 없이) — 봇이 글로 답했으면 🟧 답변완료(메모 필요) + 「→ 배송지 수정」 · 봇이 못 답했으면 종전 🟨
 const ADDR_CHANGE_RE = /(배송지|주소)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소)/;
+// #1112(대표 11/11 「송장번호는 텔레그램 확인 필요로 잡히게」) 송장번호를 달라는 요청 — 봇이 답했어도 직원이 보내 드려야 함(시나리오 #61 「확인 후 톡톡으로 보내드리겠습니다」 약속)
+//   요청 = 송장·운송장(번호) 뒤 15자 안에 알려·보내·부탁·요청·전달·공유·받을 수·주세요·주실·주시·좀 주 · 「개별 송장」 · 「알려/보내 주세요 … 송장」
+//   빼는 것 = 「어디서·어떻게·조회는·언제 나와」 같은 물음 낱말이 있고 알려·보내·부탁·요청·전달·공유 가 없는 글(「송장 조회는 어디서 하나요」 · 「개별 송장은 어떻게 확인해요」)
+//   #1114 손질(워커3 점검): 「송장번호 알 수 있을까요」「송장번호 뭐예요·뭔가요」「송장번호 어떻게 되나요」도 요청 · 「알려/보내 주셔서 감사」(지난 일·감사)는 뺌
+const INVOICE_REQ_RE = /(?:운?송장)(?:\s*번호)?[\s\S]{0,15}?(?:알려|보내|부탁|요청|전달|공유|받을\s*수|주세요|주실|주시|좀\s*주)|(?:알려|보내)\s*(?:주세요|주실|주시)[\s\S]{0,8}?운?송장|개별\s*송장|(?:운?송장)(?:\s*번호)?\s*(?:이|가|는|좀|을|를)?\s*(?:알\s*수\s*있|뭐예요|뭐에요|뭔가요|뭐죠|뭐야|어떻게\s*되)/;
+const INVOICE_Q_RE = /어디서|어디에서|어디로|어떻게(?!\s*되)|조회\s*(?:는|방법|하는)|언제\s*(?:나와|나오|뜨|떠)/;
+const INVOICE_VERB_RE = /알려|보내|부탁|요청|전달|공유/;
+const INVOICE_THANKS_RE = /(?:알려|보내|전달해|공유해)\s*주셔서|(?:알려|보내)\s*주신\s*(?:거|것)?\s*(?:잘\s*)?받았/;
+function invoiceReq(text) { const m = String(text || ''); return INVOICE_REQ_RE.test(m) && !INVOICE_THANKS_RE.test(m) && !(INVOICE_Q_RE.test(m) && !INVOICE_VERB_RE.test(m)); }
 const CLAIM_WORD_RE = /취소|반품|환불|교환/;
 function needsMemo(text) { return NEEDS_MEMO_RE.test(String(text || '')); }
 // #1069 텔레그램 HTML 알림(문의·톡톡만) — 본문 &<> 이스케이프 · <b> 굵게 · 4,000자 넘으면 가장 긴 칸부터 「…」(텔레그램 4,096 상한)
@@ -6951,10 +6999,10 @@ async function tgSendBlocks(blocks) {
 }
 function qnaDoneBlock(kind, product, question, answer) {   // kind = '상품문의' | '고객문의'
     // #1108-E 문의 글이 메모 거리(needsMemo)·주소 변경이면 머리 「답변완료 (*메모 필요*)」 + 톡톡 🟧 와 같은 꼬리 · 해당 없으면 종전 바이트
-    const q = String(question || ''), memo = needsMemo(q), addr = ADDR_CHANGE_RE.test(q) && !CLAIM_WORD_RE.test(q);
+    const q = String(question || ''), memo = needsMemo(q), addr = ADDR_CHANGE_RE.test(q) && !CLAIM_WORD_RE.test(q), inv = invoiceReq(q);   // #1112 inv = 송장번호 요청
     const fields = [['상품', product || '-'], ['문의', question], ['답변', answer]];
-    if (!memo && !addr) return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', fields);   // 손댈 것 없음 = 종전 바이트
-    const tail = [addr ? '→ 배송지 수정' : '', memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
+    if (!memo && !addr && !inv) return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', fields);   // 손댈 것 없음 = 종전 바이트
+    const tail = [addr ? '→ 배송지 수정' : '', inv ? '→ 송장번호 보내 드리기' : '', memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
     return tgBlock(redHead('메모 필요', (kind === '상품문의' ? '상품문의' : '고객문의') + ' 답변완료'), fields, tail);
 }
 // #1108-E(대표 11/11 「봐야 되는 건은 빨강 · 낱말 통일」) 사람이 손대야 하는 문의 알림 머리 = 「🟥 <b>메모 필요|확인 필요</b> · 무엇」(텔레그램은 글자 색이 없어 🟥 + 굵게) · 손댈 것 없는 🟩🟦 는 종전 그대로
@@ -6970,15 +7018,17 @@ function talkPick(x) {
     const botAnswered = !!br.trim() && !br.trim().startsWith('[');
     const unanswered = br === '[SKIP-무응답]' || br.startsWith('[AI에러');
     const req = TALKTALK_REQUEST_RE.test(msg), memo = needsMemo(msg);
-    if (unanswered) return (req || memo || NEEDS_STAFF_RE.test(msg)) ? { mode: 'staff', botLine: false, memo } : null;
-    if (botAnswered && ADDR_CHANGE_RE.test(msg) && !CLAIM_WORD_RE.test(msg)) return { mode: 'memo', botLine: true, memo, addr: true };   // #1108-D 주소 변경 = 봇이 답함 → 🟧 + 「→ 배송지 수정」
-    if (req) return { mode: 'staff', botLine: botAnswered, memo };
-    if (botAnswered && memo) return { mode: 'memo', botLine: true, memo: true };
-    if (!botAnswered && memo) return { mode: 'staff', botLine: false, memo: true };   // 그 밖 대괄호 줄([이미지-무응답] 등 = 봇이 답 안 함) + 메모 거리 = [SKIP-무응답] 과 같게 🟨 + 메모 꼬리
+    // #1112 송장번호 요청 = inv 칸(있을 때만 붙임 · 없으면 판정 객체가 종전과 같은 글자) · 꼬리 「→ 송장번호 보내 드리기」
+    const inv = invoiceReq(msg), iv = inv ? { inv: true } : {};
+    if (unanswered) return (req || memo || inv || NEEDS_STAFF_RE.test(msg)) ? { mode: 'staff', botLine: false, memo, ...iv } : null;
+    if (botAnswered && ADDR_CHANGE_RE.test(msg) && !CLAIM_WORD_RE.test(msg)) return { mode: 'memo', botLine: true, memo, addr: true, ...iv };   // #1108-D 주소 변경 = 봇이 답함 → 🟧 + 「→ 배송지 수정」
+    if (req) return { mode: 'staff', botLine: botAnswered, memo, ...iv };
+    if (botAnswered && (memo || inv)) return { mode: 'memo', botLine: true, memo, ...iv };
+    if (!botAnswered && (memo || inv)) return { mode: 'staff', botLine: false, memo, ...iv };   // 그 밖 대괄호 줄([이미지-무응답] 등 = 봇이 답 안 함) + 메모 거리·송장 요청 = [SKIP-무응답] 과 같게 🟨 + 꼬리
     return null;
 }
 function talkBlock(ch, pick, message, botAnswer, meta) {   // #1108-D meta = { id, at(「M/D HH:MM」 KST), item } → 머리 아래 「톡톡 #줄번호 · M/D HH:MM · 상품」 한 줄(없으면 종전 꼴)
-    const tail = [pick.addr ? '→ 배송지 수정' : '', pick.memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
+    const tail = [pick.addr ? '→ 배송지 수정' : '', pick.inv ? '→ 송장번호 보내 드리기' : '', pick.memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
     const sub = meta ? [ch + (meta.id ? ' #' + meta.id : ''), meta.at || '', meta.item && meta.item !== '기타' ? meta.item : ''].filter(Boolean).join(' · ') : '';
     if (pick.mode === 'memo') return tgBlock(redHead('메모 필요', `${ch} 답변완료`), [['손님', message], ['봇', botAnswer]], tail, sub);
     return tgBlock(redHead('확인 필요', `${ch}(${pick.botLine ? '봇 답함 · 처리 필요' : '봇이 답 못함'})`), pick.botLine ? [['손님', message], ['봇', botAnswer]] : [['손님', message]], tail, sub);
@@ -9092,10 +9142,18 @@ const QNA_FILTER_STOPWORDS = ['얼마', '얼마예요', '얼마에요', '얼마�
     '하나', '한개', '박스', '지금', '혹시', '그리고', '있나요', '인가요', '얼만가요', '알려주세요',
     '판매', '판매중', '품절', '메시지', '메세지', '상품', '상품을', '문의합니다', '문의드립니다', '과수',
     '선물용', '가정용', '하우스', '제주', '산지직송', '당일수확'];
+// #1114(대표 11/11 · 상품문의 「타이백 10kg 해도 될지」에 노지감귤 가격표가 붙음) — 손님 글 「새콤달콤 보다는」의 「새콤달콤」이 상품명 「새콤달콤 노지감귤」 줄만 남기는 좁히기로 작동했다
+//   a) 표기 변형 「타이백」 = 「타이벡」(품목 낱말로 잡힘) b) 품목 낱말(감귤 같은 일반 낱말 빼고)이 글에 있으면, 상품 이름 앞부분(「 / 」 앞 · 「새콤달콤」「고당도」「과즙팡팡」 등)에만 있는 낱말로는 좁히지 않음
+//   d) 좁힌 결과에 글에 나온 품목 줄이 하나도 없으면 가격표 대신 재료에 있는 한 줄(QNA_STORE_FALLBACK · 시나리오 #36 「품목-황금향」 끝 문장) — 오매칭 > 미매칭
+//   품목 낱말이 없는 글은 종전과 바이트 같음 · 톡톡봇 ai-handler.js filterStoreLines 도 같은 고침
+const QNA_STORE_FALLBACK = '판매 여부·가격은 스토어에서 실시간 확인 가능하세요!';
 function qnaFilterStoreLines(text, message) {
     if (!text || !message) return text;
     const lines = text.split('\n');
     if (lines.length <= 1) return text;
+    message = String(message).replace(/타이백/g, '타이벡');   // #1114 a) 표기 변형
+    // #1114 e) 「하우스귤·하우스감귤」 = 타이벡과 같은 품목(하우스 옵션이 타이벡으로 이름 바뀜 #842·#887 · 하우스 옵션이 다시 생기면 이 줄 지움) · 「하우스 황금향」은 안 건드림(뒤가 감귤·귤일 때만)
+    message = message.replace(/하우스\s*(?:감귤|귤)/g, '타이벡감귤');
     const msgNorm = message.toLowerCase().replace(/\s/g, '');
     const tokens = message.replace(/[^가-힣a-zA-Z0-9]/g, ' ').split(/\s+/)
         .filter(t => t.length >= 2 && !QNA_FILTER_STOPWORDS.includes(t));
@@ -9106,7 +9164,8 @@ function qnaFilterStoreLines(text, message) {
         return chunks.some(c => msgNorm.includes(c.toLowerCase())) ||
                tokens.some(t => lineNorm.includes(t.toLowerCase()));
     });
-    if (matched.length === 0) return text;
+    // #1114 f) 품목 낱말(타이벡·노지·황금향·레몬·키위·청귤·유라)을 말했는데 판매 줄에 겹치는 낱말이 하나도 없으면(시즌 종료 등) 전체 목록 대신 빈 글(그 자리 비움 · 대표 11/11 「시즌이 끝났으면 다음 해에 찾아 달라고」 = 답 본문 몫) · 품목 낱말 없는 글은 종전대로 전체
+    if (matched.length === 0) return /타이벡|유라|노지|황금향|레몬|키위|청귤/.test(msgNorm) ? '' : text;
     /* #495(10/1 실측 「황금향 못난이 5kg 얼마예요?」): 「5kg」 토큰이 4.5kg·유라 5kg·레몬 5kg 줄까지 끌어와 16줄이 되자
        AI가 「황금향 못난이 5kg는 준비돼 있지 않다」고 틀리게 안내(목록 안에는 37,800원 줄이 있었음).
        교정 = 질문 단어 순서대로 **좁혀 간다**(품목 단어 → 세부 단어 → 용량). 단어가 어느 줄에도 없으면 그 단계는 건너뛰어 종전 결과 유지(무회귀).
@@ -9132,6 +9191,10 @@ function qnaFilterStoreLines(text, message) {
         if (sub.length > 0 && sub.length < narrowed.length) narrowed = sub;
     }
     const sizeTok = t => /^\d+(?:\.\d+)?kg$/i.test(t);
+    // #1114 b) 글에 나온 품목 낱말(일반 낱말 「감귤」 뺌) · 상품 이름 앞부분(「 / 」 앞)에만 있는 낱말인지
+    const specific = [...new Set(productToks.filter(w => w !== '감귤'))];
+    const normLine = line => line.toLowerCase().replace(/\s/g, '');
+    const titleOnly = tl => { const hit = narrowed.filter(line => normLine(line).includes(tl)); return hit.length > 0 && hit.every(line => { const i = line.indexOf(' / '); return i >= 0 && !normLine(line.slice(i)).includes(tl); }); };
     for (const tl of narrowToks) {
         const sub = narrowed.filter(line => {
             const ln = line.toLowerCase().replace(/\s/g, '');
@@ -9139,8 +9202,13 @@ function qnaFilterStoreLines(text, message) {
             const i = ln.indexOf(tl);
             return i >= 0 && !(i > 0 && /[\d.]/.test(ln[i - 1]));
         });
+        // 상품 이름 꾸밈말(「새콤달콤」 등)로 좁혔더니 글에 나온 품목 줄이 몽땅 빠지면 그 단계는 건너뜀
+        const losesItem = w => narrowed.some(line => normLine(line).includes(w)) && !sub.some(line => normLine(line).includes(w));
+        if (specific.length && !sizeTok(tl) && !['선물용', '가정용', '못난이'].includes(tl) && titleOnly(tl) && specific.some(losesItem)) continue;
         if (sub.length > 0 && sub.length < narrowed.length) narrowed = sub;
     }
+    // #1114 d) 글에 나온 품목 줄이 결과에 하나도 없으면 가격표를 붙이지 않음
+    if (specific.length && !narrowed.some(line => specific.some(w => normLine(line).includes(w)))) return QNA_STORE_FALLBACK;
     return narrowed.join('\n');
 }
 // {{가격표}}/{{판매현황}} 치환 — 공개 게시판은 글이 계속 남으므로 "N/N 기준" 날짜를 붙여 시점을 명시
@@ -9150,9 +9218,11 @@ async function qnaRenderPlaceholders(text, filterText) {
     const { priceText, sellingText } = await qnaStoreData();   // #432: {{판매현황}}은 판매중만(품절·시즌종료 나열 금지 — 대표 9/11)
     const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const stamp = `(${kst.getUTCMonth() + 1}/${kst.getUTCDate()} 기준)`;
+    // #1114 f) 거른 결과가 빈 글(말한 품목이 시즌 끝·판매 줄 0) = 「N/N 기준」 머리도 붙이지 않고 그 자리를 비움(답 본문이 시즌 종료를 말함)
+    const put = f => f === '' ? '' : `${stamp}\n${f}`;
     return String(text)
-        .replace(/\{\{가격표\}\}/g, `${stamp}\n${qnaFilterStoreLines(priceText, filterText)}`)
-        .replace(/\{\{판매현황\}\}/g, `${stamp}\n${qnaFilterStoreLines(sellingText, filterText)}`);
+        .replace(/\{\{가격표\}\}/g, () => put(qnaFilterStoreLines(priceText, filterText)))
+        .replace(/\{\{판매현황\}\}/g, () => put(qnaFilterStoreLines(sellingText, filterText)));
 }
 
 // 생성 재료 시나리오 (채널 상품문의·공통만 — 재료 0건이면 전부 SKIP = 단계적 가동)

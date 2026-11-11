@@ -7,15 +7,13 @@
  *   buildInput(rows, staffParts, opts) → { input, tailIds, staffAmounts } | null
  *                     「[앞 대화 …] … [이번 손님 글 …] …」 꼴. 이번 손님 글 = 마지막 우리 답(봇·직원) 뒤 손님 글(최대 3통 · 종전 tail 과 같은 규칙)
  *   cleanDraft(answer, staffAmounts) → string   「[사람]」 줄·사용시나리오 머리·자동 꼬리·머리글 흉내를 거르고, 보상 문장의 금액을 자리표로
- *   hasPlaceholder(text) → boolean   「0,000원」 자리표가 남았는지(화면·서버 [보내기] 막기와 같은 검사)
+ *   (대표 11/11 「0,000원 보내기 막기는 안 해도 돼 · 우리가 수정해서 보낼 거야」 = 자리표가 남아도 보내기는 막지 않음 · 초안에 자리표를 넣는 것은 그대로)
  *
  *   본보기 = 워커1 조사(1107-B · 직원 답 772줄) · 대표 확정 ⓒ 문장(11/11)
  */
 'use strict';
 
 const PLACEHOLDER = '0,000원';
-const PLACEHOLDER_RE = /(^|[^\d,])0,000\s*원/;   // 10,000원 은 자리표가 아님 · 뒤보기 안 씀(화면 ao-inbox.js 와 글자 같게 · 옛 iOS 사파리)
-const hasPlaceholder = t => PLACEHOLDER_RE.test(String(t == null ? '' : t));
 
 const TALK_DRAFT_NOTE = `## 지금 채널 — 네이버 톡톡 직원 답 초안 (위 안내보다 우선)
 지금 쓰는 글은 공개 게시판 글이 아니라, 톡톡으로 대화 중인 손님 한 분께 우리 직원이 보낼 답의 **초안**입니다. 직원이 읽고 고쳐서 보냅니다(자동으로 나가지 않습니다). 아래를 위 안내보다 먼저 지키세요.
@@ -36,7 +34,7 @@ const TALK_DRAFT_NOTE = `## 지금 채널 — 네이버 톡톡 직원 답 초안
 
 ### 글 쓰는 법(우리 직원 말투)
 - 짧게. 대개 150자 안, 길어도 3~4문장. 긴 글은 클레임 첫 응대일 때만.
-- 첫마디: 보통 「네 고객님」 · 클레임 첫 응대는 「에고 그러셨군요 ㅠ」 · 「안녕하세요 제주아꼼이네입니다」는 이 대화의 첫 답일 때만.
+- 첫마디: 보통 「네 고객님」 · 클레임 첫 응대는 「에고 그러셨군요 ㅠ」 · 「안녕하세요 제주아꼼이네입니다」 인사는 「[앞 대화]」에 우리 답(봇·직원)이 하나도 없는 첫 답일 때만 · 우리 답이 이미 있으면 인사 없이 바로 본문.
 - 말끝은 「~하구요」 「~드리구요」 「죄송하구요」 같은 말하듯 쓰는 꼴, 「도와드리겠습니다」로 공손하게. 사과는 「불편드려 (다시한번) 죄송합니다」.
 - 느낌표·「^^」·「ㅠ」는 써도 됩니다. 이모지(🍊😊🙏📸 등)는 거의 쓰지 마세요.
 - 맺음: 「늘 고객님 입장에서 만족드리도록 최선을 다하겠습니다」 「다음에는 꼭 만족드리도록 약속드리겠습니다」 「감사합니다 편안한 하루 되세요 ^^」 중 상황에 맞게 하나둘.
@@ -123,14 +121,24 @@ function buildInput(rows, staffParts) {
     const head = [];
     if (lines.length) head.push('[앞 대화 — 이 손님과 지금까지 주고받은 톡톡 · 오래된 순]', ...lines, '');
     head.push('[이번 손님 글 — 여기에 답하는 직원 초안을 쓰세요]' + (photoTail ? ' (손님이 [사진]도 보냄 · 사진 요청 금지)' : photoSeen ? ' (손님 사진 이미 받음 · 사진 요청 금지)' : ''), ...now);
-    return { input: head.join('\n'), tailIds: tail.map(k => turns[k].id), staffAmounts };
+    const hasOurReply = prior.some(t => t.who !== '손님');   // #1109 최근 7일 안 우리 답(봇·직원)이 있음 = 초안 첫머리 인사 떼기(cleanDraft opts.noHello)
+    return { input: head.join('\n'), tailIds: tail.map(k => turns[k].id), staffAmounts, hasOurReply };
 }
 
 // ── 결과 거르기 ──
 const TAIL_LINE_RE = /^\*?\s*추가\s*문의\s*사항.*(톡톡|카카오톡|고객센터|010-?6687-?4031)/;
-const HEAD_ECHO_RE = /^\s*\[(?:앞\s*대화|이번\s*손님\s*글)[^\]]*\]\s*/;
+const HEAD_ECHO_RE = /^\s*\[(?:앞\s*대화|이번\s*손님\s*글|채널\s*[—-])[^\]]*\]\s*/;   // #1109 문자 맥락 초안의 「[채널 — …]」 머리를 따라 쓴 줄도
 const MONEY_CTX_RE = /포인트|보상|지급|환불|충전/;
-function cleanDraft(answer, staffAmounts) {
+// #1109(대표 11/11 「이미 한 번 답한 대화의 두 번째 답은 인사 빼고 내용만」) 첫머리 인사 문장 떼기 — 「안녕하세요 고객님 ^^」 「안녕하세요 제주아꼼이네입니다.」 「안녕하세요 고객님, 제주아꼼이네입니다 🍊」 꼴만 · 뒤 본문 그대로 · 다 지워지면 원문
+//   인사 덩어리(안녕하세요 [고객님] [제주아꼼이네(입니다)]) 바로 뒤에 문장 끝(. ! ~ ^^ 🍊 😊 줄바꿈·글 끝)이 있어야 인사로 봄 = 「안녕하세요 고객님께서 주문하신…」 「안녕하세요 제주아꼼이네 고객센터입니다」처럼 문장이 이어지면 안 뗌(워커3 점검)
+const HELLO_RE = /^\s*안녕하세요(?:[\s,!.~]*고객님)?(?:[\s,!.~]*(?:여기는\s*)?제주아꼼이네(?:입니다)?)?(?:[\s,]*(?:[.!~]+|\^\^|🍊|😊)[\s.!~^🍊😊]*|[ \t,]*\n\s*|\s*$)/u;
+function stripHello(text) {
+    const t = String(text == null ? '' : text); const m = t.match(HELLO_RE);
+    if (!m || !m[0].trim()) return t;
+    const rest = t.slice(m[0].length).replace(/^\s+/, '');
+    return rest ? rest : t;
+}
+function cleanDraft(answer, staffAmounts, opts) {
     let lines = String(answer == null ? '' : answer).replace(/\r\n?/g, '\n').split('\n');
     lines = lines.filter(l => !/^\s*사용시나리오\s*[:：]/.test(l))
         .filter(l => !/[\[［【]\s*사람\s*[\]］】]/.test(l))   // 「[사람] …」 판정 줄은 초안에 넣지 않는다(#1107 실례)
@@ -141,7 +149,8 @@ function cleanDraft(answer, staffAmounts) {
     // 글 어디든 보상 낱말이 있으면 글 전체의 금액 = 우리 직원이 앞에서 말한 금액(숫자로 비교)만 살리고 나머지는 자리표(손님이 부른 금액·AI 가 셈한 금액이 그대로 나가지 않게 · 금액이 다음 문장으로 나뉜 꼴 포함)
     const ok = staffAmounts instanceof Set ? staffAmounts : new Set();
     if (MONEY_CTX_RE.test(text)) text = text.replace(AMT_RE, m => { const v = toWon(m); return (v === 0 || ok.has(v)) ? m : PLACEHOLDER + (/포인트$/.test(m) ? ' 포인트' : ''); });   // 「5천 포인트」 → 「0,000원 포인트」(낱말 보존)
-    return text.replace(/0,000\s*원(?:\s*원)+/g, PLACEHOLDER).trim();
+    text = text.replace(/0,000\s*원(?:\s*원)+/g, PLACEHOLDER).trim();
+    return (opts && opts.noHello) ? stripHello(text) : text;   // #1109 우리 답이 이미 있는 대화 = 첫머리 인사 뗌(지시문이 1차 · 이건 안전망)
 }
 
-module.exports = { TALK_DRAFT_NOTE, PLACEHOLDER, PLACEHOLDER_RE, hasPlaceholder, turnsFromRows, buildInput, cleanDraft };
+module.exports = { TALK_DRAFT_NOTE, PLACEHOLDER, turnsFromRows, buildInput, cleanDraft, stripHello };

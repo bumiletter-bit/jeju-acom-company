@@ -1736,7 +1736,7 @@
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
-            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
+            + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(봇 초안도 칸에서만 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="button" class="desk-btn sms-mkdraft" id="sms-mkdraft">초안 만들기</button><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
             + `</form>`;
         TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
         if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
@@ -1989,12 +1989,13 @@
         const ta = document.getElementById('sms-text'); if (!ta) return;
         const t = SMS.thread && SMS.thread.thread, v = ta.value, has = !!v.trim(), dr = !!(t && t.draft_text);
         const btn = $('sms-send');
-        btn.disabled = !has || SMS.sending || !SMS.thread || Date.now() < (SMS.lockUntil || 0);
+        btn.disabled = !has || SMS.sending || SMS.drafting || !SMS.thread || Date.now() < (SMS.lockUntil || 0);
         btn.textContent = smsIsDraft() ? '이대로 보내기' : dr && has ? '고쳐서 보내기' : '답 보내기';
         { const band = $('sms-draft'), fresh = dr && SMS.newDraft && SMS.newDraft === t.draft_text && v.trim() !== String(t.draft_text).trim(), k = fresh ? 'new' : (dr && SMS.chgAt && Date.now() - SMS.chgAt < 8000 && v.trim() === String(t.draft_text).trim()) ? 'chg' : 'std';
             band.hidden = !dr;
             if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>손님 글이 더 와서 봇이 초안을 새로 만들었어요.</span><button type="button" class="desk-btn sm" id="sms-draft-new">새 초안으로 바꾸기</button>' : k === 'chg' ? '초안이 새로 바뀌었어요. 읽어 보고 보내 주세요.' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; } }
         { const cl = $('sms-clear'); if (cl) cl.disabled = !has; }   // #853 비어 있으면 흐림
+        { const mk = $('sms-mkdraft'); if (mk) { mk.disabled = !!SMS.sending || !!SMS.drafting || !SMS.thread; mk.textContent = SMS.drafting ? '만드는 중…' : dr ? '초안 다시 만들기' : '초안 만들기'; if (SMS.drafting) mk.setAttribute('aria-busy', 'true'); else mk.removeAttribute('aria-busy'); } }   // #1109
         $('sms-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
         const w = $('sms-warn'), dead = smsDead();
         w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
@@ -2016,6 +2017,30 @@
         const max = smsKbOn() ? Math.max(base, Math.round(lh * 4 + frame)) : Math.max(base, Math.min(base * 2, Math.round(vh * 0.6)));
         const need = ta.scrollHeight + (ta.offsetHeight - ta.clientHeight);
         ta.style.height = Math.min(need, max) + 'px'; ta.scrollTop = st;
+    }
+    // #1109(대표 11/11) [초안 만들기] = 누를 때만 그 대화 초안(POST /api/sms/threads/:id/draft · 서버 = 문자 답 엔진 그대로) → 다시 받아 칸에 채움(칸이 비었거나 채워 준 옛 초안 그대로면 · 적던 글은 안 덮고 [새 초안으로 바꾸기])
+    async function smsMakeDraft() {
+        const id = SMS.open; if (!id || SMS.drafting || SMS.sending || !SMS.thread) return;
+        SMS.drafting = true; smsSync();
+        let err = '';
+        try {
+            const r = await fetch('/api/sms/threads/' + id + '/draft', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: '{}' });
+            const j = await r.json().catch(() => ({}));
+            if (r.status === 401 && typeof akmSessionExpired === 'function') akmSessionExpired();
+            if (!r.ok || !j || j.ok === false) err = (j && j.error) || '초안을 만들지 못했어요';
+            else if (SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = j.draft_text || null; SMS.thread.thread.draft_kind = j.draft_kind || null; SMS.tsig = ''; SMS.manual = { id, text: String(j.draft_text || '') }; }
+        } catch (e) { err = '통신이 끊겼어요. 다시 눌러 주세요'; }
+        finally { SMS.drafting = false; }
+        if (SMS.open !== id) return;
+        if (err) { showToast(err, '', 5000); smsSync(); return; }
+        await smsThread(true);   // 같은 채우기 규칙(#635·#681)으로 칸·띠를 맞춤
+    }
+    // #1109 ③ [지우기] = 칸의 글이 방금 눌러 만든 초안 그대로면 서버 초안도 비움(그 대화가 미처리로 다시 잡히지 않게) · 자동 초안·고친 글은 종전(칸만)
+    function smsClearManual(v) {
+        const mm = SMS.manual, id = SMS.open; if (!mm || mm.id !== id || String(v || '').trim() !== mm.text.trim()) return;
+        SMS.manual = null;
+        fetch('/api/sms/threads/' + id + '/draft-clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ seen: mm.text }) })
+            .then(r => r.json()).then(j => { if (j && j.ok && j.cleared && SMS.open === id && SMS.thread && SMS.thread.thread && String(SMS.thread.thread.draft_text || '').trim() === mm.text.trim()) { SMS.thread.thread.draft_text = null; SMS.thread.thread.draft_kind = null; SMS.tsig = ''; smsSync(); } }).catch(() => { });
     }
     async function smsAct() {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
@@ -2183,7 +2208,8 @@
         const pane = $('sms-pane'); if (!pane) return;
         pane.addEventListener('click', e => {
             if (e.target.closest('#sms-tomemo')) { omFromSms(); return; }
-            if (e.target.closest('#sms-clear')) { const ta = $('sms-text'); if (ta && ta.value) { ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus({ preventScroll: true }); } return; }   // #853 칸만 비움(서버 초안 무접촉)
+            if (e.target.closest('#sms-mkdraft')) { smsMakeDraft(); return; }   // #1109
+            if (e.target.closest('#sms-clear')) { const ta = $('sms-text'); if (ta && ta.value) { smsClearManual(ta.value); ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus({ preventScroll: true }); } return; }   // #853 칸만 비움(서버 초안 무접촉)
             const c = e.target.closest('.sms-omchip'); if (!c || !SMS.open) return;   // #852 말풍선 「발주메모」 칩 = 그 글 한 개를 메모함 입력 칸에 덧붙임
             const M = window.AkmOrderMemo, ms = (SMS.thread && Array.isArray(SMS.thread.messages)) ? SMS.thread.messages : [], m = ms.find((x, i) => String(x.id != null ? x.id : 'i' + i + ':' + (x.event_at || '')) === c.dataset.ok);   // 자리 번호가 아니라 글 id 로 집음(그 사이 새 글이 와도 같은 글)
             if (!M || !m || m.direction === 'out' || !String(m.body || '').trim()) return;

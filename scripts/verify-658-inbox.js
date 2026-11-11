@@ -187,8 +187,8 @@ async function api(method, url, body, user) {
         ok(r.status === 200 && r.json.draft === '네 고객님 불편드려 다시한번 죄송하구요, 저희가 고객님 네이버 아이디로 네이버페이 포인트 0,000원 지급 도와드리겠습니다.', '#1107-D 초안 = 「[사람]」 줄 빠짐 · 손님이 부른 5천원 → 0,000원 ' + JSON.stringify(r.json.draft));
         const ob0 = (await pool.query(`SELECT count(*)::int n FROM ${TB.outbox}`)).rows[0].n;
         r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: r.json.draft, seen: r.json.draft });
-        ok(r.status === 400 && r.json.code === 'placeholder' && /0,000원/.test(r.json.error) && (await pool.query(`SELECT count(*)::int n FROM ${TB.outbox}`)).rows[0].n === ob0, '#1107-D 자리표 남은 글 = 400 placeholder · 보낼 줄 0');
-        r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '네 고객님 포인트 10,000원 지급 도와드리겠습니다.' }); ok(r.status === 200, '#1107-D 10,000원 = 자리표 아님 · 보냄');
+        ok(r.status === 200 && (await pool.query(`SELECT count(*)::int n FROM ${TB.outbox}`)).rows[0].n === ob0 + 1, '#1109 자리표 남은 글도 보냄(대표 「우리가 수정해서 보낼 거야」 · 막기 뺌) · 보낼 줄 1');
+        r = await api('POST', `/api/inbox/threads/talk/${kA}/send`, { text: '네 고객님 포인트 10,000원 지급 도와드리겠습니다.' }); ok(r.status === 200, '10,000원 글 보냄');
         genAnswer = { answer: '시험 초안입니다.' };
         await pool.query(`UPDATE agent_office_config SET value = '{"draft_daily_cap":2}'::jsonb WHERE key = 'inbox_threads_verify'`);
         if (st1107) await pool.query(`UPDATE agent_office_config SET value = $1::jsonb WHERE key = 'inbox_threads_verify_state'`, [JSON.stringify(st1107.value)]);

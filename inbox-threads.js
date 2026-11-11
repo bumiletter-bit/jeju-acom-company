@@ -221,7 +221,6 @@ module.exports = function mountInboxThreads(app, deps) {
         if (!d.can_send) throw bad(400, d.cannot_why);
         if (text.length > TALK_MAX) throw bad(400, '톡톡은 1,000자까지 보낼 수 있어요');
         if (PAY_WORDS.test(text)) throw bad(400, '결제 낱말(계좌·입금·이체·송금 등)이 든 글은 톡톡으로 보낼 수 없어요 — 네이버가 낱말만 보고 경고해요');
-        if (DRAFT.hasPlaceholder(text)) throw bad(400, `금액 자리표 「${DRAFT.PLACEHOLDER}」를 실제 금액으로 바꾼 뒤 보내 주세요`, { code: 'placeholder' });   // #1107-D 화면(ao-inbox.js)과 같은 검사
         // 같은 손님에게 같은 글이 아직 가는 중(10분 — 배달부가 집는 기한)이거나 방금(1분) 나갔으면 넣지 않는다(두 번 누름 · 둘이 같이 누름 · 요청이 끊긴 뒤 다시 누름)
         //   (같은 순간 두 요청이 서로를 못 보고 둘 다 넣지 않게 그 손님 열쇠로 잠근 채 넣는다)
         const cl = await pool.connect(); let ins;
@@ -275,7 +274,7 @@ module.exports = function mountInboxThreads(app, deps) {
             const ctx = DRAFT.buildInput(d.rows, staffParts);
             if (!ctx) throw bad(400, '손님 글이 없어 초안을 만들 수 없어요(사진만 온 대화는 직접 적어 주세요)');
             let gen = null; try { gen = await deps.generate(ctx.input, d.thread.sub || ''); } catch (e) { log.error('[문의 창] 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
-            const body = gen && DRAFT.cleanDraft(gen.answer, ctx.staffAmounts);   // 「[사람]」 줄·꼬리 거름 · 보상 금액 = 자리표(우리 직원이 말한 금액만 살림)
+            const body = gen && DRAFT.cleanDraft(gen.answer, ctx.staffAmounts, { noHello: ctx.hasOurReply });   // #1109 우리 답이 이미 있으면 첫머리 인사 뗌   // 「[사람]」 줄·꼬리 거름 · 보상 금액 = 자리표(우리 직원이 말한 금액만 살림)
             if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
             const lastIn = [...d.rows].reverse().find(x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY; });
             await pool.query(`INSERT INTO ${T.drafts} (ch, tkey, body, src_id, made_by) VALUES ('talk', $1, $2, $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET body = EXCLUDED.body, src_id = EXCLUDED.src_id, made_by = EXCLUDED.made_by, made_at = NOW()`, [tkey, clip(body, TALK_MAX), lastIn.id, clip(actor.name, 50)]);
