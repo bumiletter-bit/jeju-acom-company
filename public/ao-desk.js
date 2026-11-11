@@ -1825,7 +1825,7 @@
         const trk1 = n => `<span class="sms-trk1"><button type="button" class="sms-trk" data-trk="${n}" title="눌러서 복사" aria-label="송장번호 ${n} 복사">${n}</button><a class="sms-trk-go" href="/track?n=${n}" target="_blank" rel="noopener" aria-label="송장번호 ${n} 배송조회(새 창)">조회</a></span>`;
         const trkHtml = trks.length ? `<span class="sms-trks">${trks.map(trk1).join('')}</span>` : (o.tracking_tail ? esc('끝 ' + o.tracking_tail) : '');
         // #657(대표 10/11): 배지 글 = 서버가 지어 준 status_text(「배송 중 · 집화 전」「조회 안 됨」…) — 없으면(옛 서버) status_label. 색 = 배송완료 초록 · 배송 중 인디고 · 조회 안 됨·미배송·사고 주황
-        const stK = s => /완료/.test(s) ? 'done' : /조회 안 됨|미배송|사고|반송|실패|없음/.test(s) ? 'ask' : s ? 'work' : 'mute';
+        const stK = s => /완료/.test(s) ? 'done' : /조회 안 됨|확인 필요|미배송|사고|반송|실패|없음/.test(s) ? 'ask' : s ? 'work' : 'mute';
         const st = String(o.status_text || o.status_label || '').trim() || (o.delivered ? '배송완료' : '');
         // #657 송장별 품목·상태(서버 boxes_detail) → #681 송장마다 따로 한 건(상태 배지 하나 · 발송일 거래처 · 송장 [조회] · 받는 분 · 그 상자 품목). 「n/m상자」 = 같은 주문의 몇째 상자
         const bd = (Array.isArray(o.boxes_detail) ? o.boxes_detail : []).map(b => ({ n: String((b && b.tracking) == null ? '' : b.tracking).replace(/[^0-9]/g, ''), opt: String((b && b.option_text) || '').trim(), qty: Number(b && b.qty) || 0, st: String((b && (b.status_text || b.status_label)) || '').trim() || (b && b.delivered ? '배송완료' : '') })).filter(b => /^[0-9]{10,12}$/.test(b.n));

@@ -1382,9 +1382,15 @@ module.exports = function mountSms(app, deps) {
     }
     // #657(대표 10/11 「정보 없음으로 왜 나오는 거야 · 배송 중이나」): 직원 화면에 보일 상태 이름. status_label(우리 분류 원값)은 그대로 두고 이 글자만 따로 준다
     //   정보없음(또는 아직 조회한 적 없음) = 송장은 발행됐는데 CJ 전산에 아직 안 올라온 것 → 발송 2일 안이면 「배송 중 · 집화 전」 · 3일 넘으면 「조회 안 됨」
-    function staffStatusText(label, shipDate, delivered) {
+    //   #1120(대표 11/11) 발송 7일 넘었는데 아직 배송 중 꼴(집화·이동·배송 출발)이면 「확인 필요 · M/D 마지막 확인」(멈춘 상태를 「배송 중」으로 믿지 않게 · checkedAt = delivery_status.checked_at) · 7일 안·완료는 종전 글자
+    function staffStatusText(label, shipDate, delivered, checkedAt) {
         const l = String(label || '');
         if (delivered || l === '배송완료') return '배송완료';
+        if ((l === '집화' || l === '간선상하차' || l === '배송출발') && shipDate) {
+            const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+            const gap = Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(String(shipDate).slice(0, 10) + 'T00:00:00Z')) / 86400e3);
+            if (gap > 7) { const c = checkedAt ? new Date(new Date(checkedAt).getTime() + 9 * 3600e3) : null; return '확인 필요' + (c && !isNaN(c) ? ' · ' + (c.getUTCMonth() + 1) + '/' + c.getUTCDate() + ' 마지막 확인' : ''); }
+        }
         if (l === '집화') return '배송 중 · 집화';
         if (l === '간선상하차') return '배송 중 · 이동';
         if (l === '배송출발') return '배송 중 · 배송 출발';
@@ -1413,7 +1419,7 @@ module.exports = function mountSms(app, deps) {
             FROM delivery_shipments s WHERE (s.phone_digits = $1 OR s.buyer_digits = $1) AND s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - $2::int ${deps.testMode ? '' : "AND COALESCE(s.source, '') NOT LIKE 'verify%'"}
             GROUP BY s.ship_date, regexp_replace(COALESCE(s.recipient, ''), '[[:space:]]+', '', 'g') ORDER BY s.ship_date DESC LIMIT ${MAX + 1}`, [d, c.history_days])).rows;
         const all = [].concat(...g.map(x => x.trackings || [])).filter(Boolean);
-        const st = new Map(all.length ? (await pool.query(`SELECT tracking, bucket, label, event_time, delivered FROM delivery_status WHERE tracking = ANY($1::text[])`, [all])).rows.map(r => [r.tracking, r]) : []);
+        const st = new Map(all.length ? (await pool.query(`SELECT tracking, bucket, label, event_time, delivered, checked_at FROM delivery_status WHERE tracking = ANY($1::text[])`, [all])).rows.map(r => [r.tracking, r]) : []);
         for (const x of g) {
             const trs = (x.trackings || []).filter(Boolean); const ss = trs.map(t => st.get(t) || null);
             const pend = ss.findIndex(v => !(v && v.delivered)); const rep1 = ss[pend >= 0 ? pend : 0] || null;   // 안 끝난 상자가 있으면 그 상자가 대표(lookup.fillStatus 와 같은 규칙)
@@ -1421,9 +1427,9 @@ module.exports = function mountSms(app, deps) {
             const detail = (Array.isArray(x.lines) ? x.lines : []).map(ln => {
                 const tr = String(ln && ln.t == null ? '' : ln.t).replace(/[^0-9]/g, ''); if (!/^\d{10,12}$/.test(tr)) return null;
                 const v = st.get(ln.t) || null; const lab = v ? (v.bucket || v.label || null) : null; const dv = !!(v && v.delivered);
-                return { tracking: tr, option_text: String(ln.o || '').slice(0, 200) || null, qty: Number(ln.q) > 0 ? Number(ln.q) : null, status_label: lab, status_text: staffStatusText(lab, x.ship_date, dv), delivered: dv, event_time: v ? (v.event_time || null) : null };
+                return { tracking: tr, option_text: String(ln.o || '').slice(0, 200) || null, qty: Number(ln.q) > 0 ? Number(ln.q) : null, status_label: lab, status_text: staffStatusText(lab, x.ship_date, dv, v ? v.checked_at : null), delivered: dv, event_time: v ? (v.event_time || null) : null };
             }).filter(Boolean).slice(0, 20);
-            items.push({ pre: false, status_text: staffStatusText(rep1 ? (rep1.bucket || rep1.label || null) : null, x.ship_date, trs.length > 0 && pend < 0), boxes_detail: detail, ship_date: x.ship_date, recipient_name: String(x.recipient_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || null, option_text: (x.options || []).join(' + ') || null, qty: x.qty || null, boxes: trs.length,
+            items.push({ pre: false, status_text: staffStatusText(rep1 ? (rep1.bucket || rep1.label || null) : null, x.ship_date, trs.length > 0 && pend < 0, rep1 ? rep1.checked_at : null), boxes_detail: detail, ship_date: x.ship_date, recipient_name: String(x.recipient_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || null, option_text: (x.options || []).join(' + ') || null, qty: x.qty || null, boxes: trs.length,
                 trackings: [...new Set(trs.map(t => String(t).replace(/[^0-9]/g, '')).filter(t => /^\d{10,12}$/.test(t)))].slice(0, 5), status_label: rep1 ? (rep1.bucket || rep1.label || null) : null, delivered: trs.length > 0 && pend < 0,
                 event_time: rep1 ? (rep1.event_time || null) : null, partner: (x.partners || []).join(' · ') || null, role: x.is_r && x.is_b ? 'both' : (x.is_r ? 'recipient' : 'buyer') });
         }

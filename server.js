@@ -11357,6 +11357,59 @@ async function deliveryTestTick() {
     finally { _deliveryTestBusy = false; }
 }
 setInterval(deliveryTestTick, 60 * 1000);
+// #1120(대표 11/11 「배송조회 고」) 하루 1회 자동 재조회 — 발송 2~14일 · 배송완료 아님(미조회 포함) · 마지막 확인 12시간 지난 줄만 · 오래 확인 안 한 줄부터 · 한 번 상한(기본 3,000건 · 넘치면 다음 날 이어서)
+//   조회 = 위와 같은 cjTrack.trackMany(동시 5 · 350ms · 연속 3건 실패면 멈춤) + deliveryUpsertStatus · 새 타이머 행 없음(#467 시드 함정) = 이 1분 틱 + 설정 한 칸
+//   설정 agent_office_config 'delivery_auto' { enabled(없으면 켬 · false = 끔), at:'HH:MM'(KST · 기본 05:30), max(기본 3000) } · 기록 'delivery_auto_last' { day, … } = 그날 한 번만
+//   발송 1일(어제) 송장은 안 건드림 = 아침 일일 요약(#594·#597)·직원 [배송조회 확인하기] 결과 그대로 · 수동 조회가 도는 중이면 건너뜀 · 알림 0 · 렌더에서만
+const DELIVERY_AUTO_DEF = { enabled: true, at: '05:30', max: 3000 };
+function deliveryAutoCfg(v) {
+    const o = v && typeof v === 'object' ? v : {};
+    const at = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(o.at || '')) ? String(o.at) : DELIVERY_AUTO_DEF.at;
+    const max = Number.isInteger(o.max) && o.max >= 1 && o.max <= 10000 ? o.max : DELIVERY_AUTO_DEF.max;
+    return { enabled: o.enabled !== false, at, max };
+}
+// 오늘 돌릴 차례인가(순수 · 검증이 떼어 씀) = 켜짐 · KST 시각이 at 지남 · 오늘 기록 없음
+function deliveryAutoDue(cfg, last, nowMs) {
+    if (!cfg.enabled) return false;
+    const k = new Date(nowMs + 9 * 3600e3), day = k.toISOString().slice(0, 10), hm = k.toISOString().slice(11, 16);
+    return hm >= cfg.at && !(last && last.day === day);
+}
+const DELIVERY_AUTO_SQL = `SELECT s.tracking FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking
+    WHERE s.ship_date BETWEEN ((now() AT TIME ZONE 'Asia/Seoul')::date - 14) AND ((now() AT TIME ZONE 'Asia/Seoul')::date - 2)
+      AND (t.tracking IS NULL OR t.delivered IS NOT TRUE) AND (t.checked_at IS NULL OR t.checked_at < now() - interval '12 hours')${deliveryNoTestSql('s')}
+    ORDER BY t.checked_at NULLS FIRST, s.ship_date, s.tracking LIMIT $1`;
+// 한 번 돌리기(deps = { pool, track, upsert, cfgGet, cfgSet, nowMs, busy } — 검증이 가짜로 갈아 끼운다)
+async function deliveryAutoRun(d) {
+    const cfg = deliveryAutoCfg(await d.cfgGet('delivery_auto'));
+    const last = await d.cfgGet('delivery_auto_last');
+    if (!deliveryAutoDue(cfg, last, d.nowMs)) return { ran: false };
+    if (d.busy && d.busy()) return { ran: false, busy: true };
+    const day = new Date(d.nowMs + 9 * 3600e3).toISOString().slice(0, 10);
+    const rec = { day, started_at: new Date(d.nowMs).toISOString(), total: 0, done: 0, delivered: 0, state: 'running' };
+    await d.cfgSet('delivery_auto_last', rec);   // 먼저 오늘 표시 = 중간에 죽어도 같은 날 다시 안 돎(다음 날 이어서)
+    try {
+        const list = (await d.pool.query(DELIVERY_AUTO_SQL, [cfg.max])).rows.map(x => x.tracking);
+        rec.total = list.length;
+        if (list.length) {
+            const out = await d.track(list, { conc: 5, gap: 350, onEach: async k => { rec.done++; if (k.delivered) rec.delivered++; if (k.bucket !== '조회실패') await d.upsert(k); else rec.failed = (rec.failed || 0) + 1; } });   // 한 건 삐끗(조회실패)은 좋은 옛 값을 덮지 않음 = 다음 날 다시 물음(수동 길은 종전)
+            if (out && out.stopped) { rec.state = 'stopped'; rec.error = '연속 조회 실패로 멈춤(' + out.stopped.asked + '/' + out.stopped.of + ' · ' + out.stopped.why + ')'; }
+        }
+        if (rec.state === 'running') rec.state = 'done';
+    } catch (e) { rec.state = 'error'; rec.error = String(e && e.message || e).slice(0, 200); }
+    rec.done_at = new Date().toISOString();
+    try { await d.cfgSet('delivery_auto_last', rec); } catch (e) { /* 기록 실패는 무시 */ }
+    return Object.assign({ ran: true }, rec);
+}
+let _deliveryAutoBusy = false;
+async function deliveryAutoTick() {
+    if (_deliveryAutoBusy) return; _deliveryAutoBusy = true;
+    try {
+        const r = await deliveryAutoRun({ pool, track: cjTrack.trackMany, upsert: deliveryUpsertStatus, cfgGet: naverCfgGet, cfgSet: naverCfgSet, nowMs: Date.now(), busy: () => !!(deliveryJob && deliveryJob.state === 'running') });
+        if (r.ran) console.log(`[배송조회] 자동 재조회 ${r.state} · ${r.done}/${r.total} · 배송완료 ${r.delivered}${r.error ? ' · ' + r.error : ''}`);
+    } catch (e) { console.error('[배송조회] 자동 재조회 오류:', e.message); }
+    finally { _deliveryAutoBusy = false; }
+}
+if (process.env.RENDER) setInterval(deliveryAutoTick, 60 * 1000);
 // ── #647-b 사진 판독 시험 러너(로그인 없이 — 총괄이 DB 플래그로) — 시작
 //   agent_office_config 'photo_test_request' { ids:[message_logs id…] | urls:[…] | sms_image_ids:[…], channel:'talk'|'sms', text? } → 'photo_test_result'
 //   하는 일 = 사진을 받아 판독기(sms/photo-judge.js)에 한 장씩 넣고 결과(종류·확신·직원용 요약·토큰 수·걸린 시간)를 적는 것뿐. 손님 답을 만들지도 보내지도 않는다.
