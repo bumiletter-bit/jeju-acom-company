@@ -168,6 +168,38 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
     //   알림은 서버(createNotification)도 적고 창구(대표 PC의 respond.js)도 직접 적는다 → 표를 보고 보내야 빠짐이 없다.
     //   🔴 실서버에서만 돈다(RENDER 환경) — 로컬 검증 서버가 같은 DB를 보고 폰으로 쏘면 안 된다.
     //   시험 지시([검증469]) 결과는 보내지 않는다. 10분 넘은 알림도 보내지 않는다(서버가 쉬다 깨어나 옛 알림을 쏟아내지 않게).
+    // ── #1111-B(대표 11/11 「알림은 주말·공휴일에는 가지 않도록 · 승협 화~토」) 쉬는 날 폰 푸시 보류 ──
+    //   스위치 = 설정 staff_alerts.push_hold === true 일 때만(기본 꺼짐 = 종전 그대로) · 판정 = workdays.js(사람별 근무 요일 + 휴무일 달력)
+    //   받는 사람의 쉬는 날에 생긴 알림 = 알림 종(notifications)에는 종전대로 바로 쌓이고 폰 푸시만 보류(push_held = true)
+    //   → 그 사람의 다음 근무일 release_at(기본 09:00 KST · 대표 11/11 「근무일 오전 9시에」 · 그날 새 직원 알림은 09:01 부터라 묶음이 먼저)부터 한 통으로 묶어 「쉬는 동안 알림 n건 (M/D~M/D)」 + 종류별 건수 · 묶인 알림은 낱개 푸시 없음
+    //   빼는 사람 = staff_alerts.push_hold_exempt(기본 [1, 10] = 대표·발주컴퓨터) · 문자 앱(sendApp)은 이 길을 안 지남(종전 그대로)
+    const HOLD_KO = { document_submitted: '결재 요청', modification_requested: '수정 요청', document_approved: '결재 결과', document_rejected: '결재 결과', modification_approved: '수정 결과', modification_rejected: '수정 결과',
+        expense: '지출결의', desk: '지시 결과', desk_login: '창구', leave_adj: '연차', payslip: '급여명세', rules: '규정', announcement: '지시사항', settle_recon: '정산 대조', sms: '문자', rank: '순위 요약' };
+    let wdLoad = null;
+    async function holdCfg() {
+        if (!wdLoad) wdLoad = require('./workdays.js').loader(pool, console);
+        const v = await wdLoad();
+        const c = v.cfg || {};
+        return { on: c.push_hold === true, exempt: new Set((Array.isArray(c.push_hold_exempt) ? c.push_hold_exempt : [1, 10]).map(Number)), releaseAt: /^\d{2}:\d{2}$/.test(String(c.push_release_at || '')) ? c.push_release_at : '09:00', v };
+    }
+    const kstNow = () => new Date(Date.now() + 9 * 3600e3).toISOString();
+    function offNow(uid, h) { return require('./workdays.js').isOffFor(uid, kstNow().slice(0, 10), h.v.workdays, h.v.hol); }
+    let releaseAt = 0;
+    async function releaseHeld(h, force) {   // 1분에 한 번 · 근무일이 된 사람의 보류분을 한 통으로 · force = 스위치가 꺼짐(쉬는 날·시각 무관 · 끈 사람 뜻 = 보류 안 함)
+        if (Date.now() - releaseAt < 60000) return; releaseAt = Date.now();
+        if (!force && kstNow().slice(11, 16) < h.releaseAt) return;
+        const users = (await pool.query(`SELECT DISTINCT user_id FROM notifications WHERE push_held = true`)).rows.map(r => r.user_id);
+        for (const uid of users) {
+            if (!force && offNow(uid, h)) continue;
+            const got = (await pool.query(`UPDATE notifications SET push_held = false WHERE user_id = $1 AND push_held = true
+                RETURNING type, to_char(created_at + interval '9 hours', 'FMMM/FMDD') AS md, created_at`, [uid])).rows;   // 표식 먼저 걷음 = 두 서버가 겹쳐도 한 번만 · created_at = 시간대 없는 UTC
+            if (!got.length) continue;
+            got.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const cnt = {}; for (const g of got) { const k = HOLD_KO[g.type] || '그 밖'; cnt[k] = (cnt[k] || 0) + 1; }
+            const span = got[0].md === got[got.length - 1].md ? got[0].md : `${got[0].md}~${got[got.length - 1].md}`;
+            await send(uid, { title: `쉬는 동안 알림 ${got.length}건 (${span})`, message: Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(' · ') + ' — 알림 종에서 확인', link: '' });
+        }
+    }
     let delivering = false;
     async function deliver() {
         if (delivering) return;
@@ -175,12 +207,23 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
         try {
             await init();
             if (!deliver.colReady) { await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS pushed_at TIMESTAMP`); deliver.colReady = true; }   // 칸 만들기는 한 번만(매번 하면 표를 잠근다)
+            let h = null;
+            try { h = await holdCfg(); if (h.on && !deliver.holdReady) { await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS push_held BOOLEAN`); deliver.holdReady = true; } } catch (e) { console.error('[push] 쉬는 날 판정 실패(종전대로 바로 보냄):', e.message); h = null; }
             const r = await pool.query(`UPDATE notifications SET pushed_at = NOW()
                 WHERE id IN (SELECT id FROM notifications WHERE pushed_at IS NULL ORDER BY id ASC LIMIT 20)
                 RETURNING id, user_id, type, title, message, link, (created_at > NOW() - interval '10 minutes') AS fresh`);
+            const sc = (h && h.on) ? await scope() : null;
             for (const n of r.rows) {
                 if (!n.fresh) continue;
+                if (h && h.on && !h.exempt.has(Number(n.user_id)) && !(n.type && sc[n.type] === false) && offNow(n.user_id, h)) {   // 쉬는 날 = 보류(폰으로 갈 종류만 · 알림 종엔 그대로)
+                    await pool.query(`UPDATE notifications SET push_held = true WHERE id = $1`, [n.id]);
+                    continue;
+                }
                 await send(n.user_id, { title: n.title, message: n.message, link: n.link, type: n.type });
+            }
+            if (h && h.on && deliver.holdReady) await releaseHeld(h);
+            else if (h && !h.on) {   // #1111-B 스위치를 끈 뒤 = 남은 보류분을 한 번 풀어 묶음으로(영영 안 나가는 것 막기 · 칸이 없으면(한 번도 안 켬) 조회 오류 = 그냥 지나감)
+                try { await releaseHeld(h, true); } catch (e) { if (!/push_held/.test(String(e.message))) console.error('[push] 보류분 풀기 실패(다음 주기):', e.message); }
             }
         } catch (e) { console.error("[push] 배달 실패(다음 주기에 다시):", e.message); }
         finally { delivering = false; }

@@ -1284,9 +1284,9 @@ module.exports = function mountSms(app, deps) {
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
             (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads, true AS done_route, true AS send_route,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND ${HUMAN_SQL} AND t.status <> 'closed') AS needs_staff,   /* #695: 초안만 남은 대화도 사람 몫 */
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('gateway_other','staff_desk') AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_staff`, [today])).rows[0];
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND event_at >= ($1::date::timestamptz - interval '9 hours') AND event_at < ($1::date::timestamptz + interval '1 day' - interval '9 hours') ${TEST_HIDE_MSG}) AS today_in,   /* #1113-4 시각 범위(색인) · 뜻 = 종전 (event_at+9h)::date = 오늘 */
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND sent_at >= ($1::date::timestamptz - interval '9 hours') AND sent_at < ($1::date::timestamptz + interval '1 day' - interval '9 hours') ${TEST_HIDE_MSG}) AS today_bot,
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('gateway_other','staff_desk') AND event_at >= ($1::date::timestamptz - interval '9 hours') AND event_at < ($1::date::timestamptz + interval '1 day' - interval '9 hours') ${TEST_HIDE_MSG}) AS today_staff`, [today])).rows[0];
         const lastPing = Math.max(st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0, st.last_event_at ? new Date(st.last_event_at).getTime() : 0);
         const counts = {}; for (const row of (await pool.query(`SELECT status, count(*)::int AS n FROM sms_threads WHERE TRUE ${TEST_HIDE} GROUP BY status`)).rows) counts[row.status] = row.n;   // 숫자 칸(워커1 계약 제안 1)
         res.json(Object.assign({ enabled: c.enabled, mode: c.mode, counts }, r, { gateway: { last_ping_at: st.last_ping_at || null, alive: !!lastPing && Date.now() - lastPing < c.ping_alert_hours * 3600e3 } }));
@@ -1327,7 +1327,7 @@ module.exports = function mountSms(app, deps) {
         const t = (await pool.query(peek ? `SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1` : `UPDATE sms_threads SET staff_read_at = now() WHERE id = $1 RETURNING *, 0 AS unread`, [id])).rows[0]; if (!t) return res.status(404).json({ ok: false, error: '없는 대화예요' });
         const ms = (await pool.query(`SELECT m.id, m.direction, m.kind, m.body, m.sender, m.state, m.bucket, m.rule_kind, m.event_at, m.sent_at, m.fail_reason, m.send_after,
             COALESCE((SELECT array_agg(i.id ORDER BY i.id) FROM sms_images i WHERE i.message_id = m.id AND i.purged_at IS NULL AND i.data IS NOT NULL), '{}') AS image_ids
-            FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id LIMIT 300`, [id])).rows;
+            FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id DESC LIMIT 300`, [id])).rows.reverse();   // #1113-5 최근 300통(종전 = 오래된 300통이라 긴 대화에서 새 글이 안 보였음) · 화면 순서는 종전대로 오래된 → 최신
         const pDb = pms(pt0), pt1 = process.hrtime.bigint();
         const cH = await cfg(); let hist = { items: [], more: false };
         try { hist = await staffHistory(t.phone_digits, cH); } catch (e) { log.error('[문자] 구매이력 읽기 실패(무시):', e.message); }   // #654 실패해도 대화는 열린다

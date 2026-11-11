@@ -2069,6 +2069,11 @@
             okDone = true; typStop(true);   // #683 보냄 = 서버가 내 입력 표시를 지운다
             if (SMS.open === id && ta.isConnected) ta.value = '';
             SMS.texts.delete(id); showToast('답을 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요');
+            if (SMS.open === id && SMS.thread && SMS.thread.thread && window.AkmPoint) {   // #1108-③ 보낸 글에 포인트 금액이 있으면 지급 지시 띠(1회용 · ao-inbox.js AkmPoint)
+                const st = SMS.thread.thread, d = String(st.phone_full || '').replace(/\D/g, ''), tel = d.length === 11 ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : d;
+                window.AkmPoint.show({ form: $('sms-reply'), ch: 'sms', key: id, sent: text, reason: window.AkmPoint.reasonOf(st.customer_hint || ''), note: '네이버 주문 손님만 돼요(쿠팡·자사몰 손님은 네이버 포인트가 안 돼요)',
+                    build: (amt, why) => `[VM] 포인트 보상 지급 · 문자 보낸 번호 ${tel} · 사유 ${why} · ${amt}원` });
+            }
         } catch (e) {
             showToast(changed ? '초안이 바뀌었어요. 확인하고 다시 눌러 주세요' : '답을 보내지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), '', 5000);
         } finally { SMS.sending = false; if (btn.isConnected) btn.removeAttribute('aria-busy'); smsSync(); }

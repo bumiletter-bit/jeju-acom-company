@@ -39,6 +39,7 @@ async function commonRun(br, w, h, who) {
     const { page } = o; const out = { ov: {}, plus: {} };
     if (who !== 'acct') {
         for (const t of ['scenario', 'products', 'notify', 'holiday', 'reward', 'season']) { await page.evaluate(n => window.switchInquiryTab(n), t); await page.waitForTimeout(350); out.ov[t] = await overflow(page); }
+        if (await page.evaluate(() => !!document.getElementById('inquiry-tab-overview'))) { await page.evaluate(() => window.switchInquiryTab('overview')); await page.waitForTimeout(400); out.ovOverview = await overflow(page); }
         await page.evaluate(() => window.switchPage && switchPage('invoice')); await page.waitForTimeout(500);
         out.invoicePage = await page.evaluate(() => { const p = document.getElementById('page-invoice'); return !!p && p.classList.contains('active'); });
         await page.evaluate(() => switchPage('agent-office')); await page.waitForTimeout(900);
@@ -80,6 +81,7 @@ async function commonRun(br, w, h, who) {
                 ok(fresh.length === 0, tag + '새 콘솔 오류 0', fresh.join(' | '));
                 if (who !== 'acct') {
                     for (const t of ['scenario', 'products', 'notify', 'holiday', 'reward']) ok(now.ov[t] <= (was.ov[t] || 0), tag + `가로 넘침 안 늘어남(${t})`, now.ov[t] + ' ↔ ' + was.ov[t]);
+                    ok((await (async () => now.ovOverview)()) === 0 || now.ovOverview === undefined, tag + '응대 현황 탭 가로 넘침 0', now.ovOverview);
                     ok(now.invoicePage === was.invoicePage && now.invoicePage === true, tag + '송장변환 화면은 직접 열면 그대로 열림', now.invoicePage + ' ↔ ' + was.invoicePage);
                     for (const k of ['qty', 'final', 'om']) ok(String(now.plus[k]) === String(was.plus[k]), tag + `[+] ${k} 열림 = 옛 판과 같음`, now.plus[k] + ' ↔ ' + was.plus[k]);
                 }
@@ -95,7 +97,7 @@ async function commonRun(br, w, h, who) {
             }
             const o = await open(br, w, h, who, { akm_last_page: 'inquiry' }); const { page } = o;
             const names = await tabNames(page);
-            ok(names.length === 5 && /답변 재료/.test(names[0]) && /판매현황·가격/.test(names[1]) && /알림 발송 이력/.test(names[2]) && /발송 휴무일/.test(names[3]) && /당첨 지급/.test(names[4]), tag + '탭 5개·순서', names.join(' | '));
+            ok(names.length === 6 && /응대 현황/.test(names[0]) && /답변 재료/.test(names[1]) && /판매현황·가격/.test(names[2]) && /알림 발송 이력/.test(names[3]) && /발송 휴무일/.test(names[4]) && /당첨 지급/.test(names[5]), tag + '탭 6개·순서(#1110-4 응대 현황 맨 앞)', names.join(' | '));
             for (const t of ['season', 'unanswered', 'qna', 'userinq']) ok(await vis(page, '#inquiry-tab-btn-' + t) === false, tag + `숨긴 탭 단추 ${t} 안 보임`);
             ok(await vis(page, '#btn-unans-excel') === false, tag + '미매칭 엑셀 안 보임');
             ok(await page.evaluate(() => !document.getElementById('inquiry-moved-note') && !/손님 연락에서 봐요/.test(document.getElementById('page-inquiry').textContent)), tag + '옮겼다는 안내 줄 없음(대표 11/11)');
@@ -116,9 +118,11 @@ async function commonRun(br, w, h, who) {
                 await page.click('#inquiry-auto-reply-toggle'); await page.waitForTimeout(400);
                 lg = (await getLog()).log; const c = lg.find(x => x.p === '/api/agent-office/scenarios-auto-reply');
                 ok(c && c.m === 'PUT' && c.body.value === 'off', tag + '전체 자동응답 끔 → PUT { value:"off" }(종전 꼴)', JSON.stringify(c));
+                await page.evaluate(() => window.switchInquiryTab('scenario')); await page.waitForTimeout(300);   // #1110-4 사용 설정은 응대 현황 탭 · 아래부터 답변 재료 탭
                 ok(await vis(page, '#inquiry-history-card') === true, tag + '수정 이력 카드(대표) 보임');
             } else {
                 ok(set.ar === 'none' && !set.qi && !set.ui, tag + '직원 = 스위치 없음(상태만)', JSON.stringify(set));
+                await page.evaluate(() => window.switchInquiryTab('scenario')); await page.waitForTimeout(300);
                 ok(await vis(page, '#inquiry-history-card') === false, tag + '수정 이력 카드(직원) 안 보임');
             }
             // 답변 재료: 세그먼트 숫자 · 찾기

@@ -416,7 +416,8 @@ function switchPage(pageName) {
     if (pageName === 'inquiry') {
         renderInquiryPage().catch(console.error);
         if (inquiryActiveTab === 'products') renderBotProducts().catch(console.error);
-        inqMatHeadLoad();   // #1110: 답변 재료 머리 — 자동 등록 스위치 상태 · 기간 있는 글 수
+        inqMatHeadLoad();   // #1110: 답변 재료 머리 — 자동 등록 스위치 상태 · 기간 있는 글 수(#1110-4 = 숫자 API 한 번)
+        if (inquiryActiveTab === 'overview') rvEnter();   // #1110-4 응대 현황(기본 탭)
     }
     if (pageName === 'data' && currentUser?.role === 'admin') {
         renderUserList().catch(console.error);
@@ -1190,7 +1191,8 @@ async function renderNotificationList() {
         const notis = await api('/api/notifications');
         // 알림 목록을 저장해두고 클릭 시 참조
         window._notiCache = notis;
-        const unreadNotis = notis.filter(n => !n.isRead);
+        const nhAlert = n => n.level === 'alert' || /^\s*🟥/.test(String(n.title || ''));   // #1111-B 서버 level 칸(없는 옛 알림은 제목 머리로)
+        const unreadNotis = notis.filter(n => !n.isRead).map((n, i) => [n, i]).sort((a, b) => (nhAlert(b[0]) - nhAlert(a[0])) || (a[1] - b[1])).map(x => x[0]);   // 확인 필요 먼저 · 그 안과 나머지는 종전 순서
         if (unreadNotis.length === 0) {
             listEl.innerHTML = '<div class="noti-empty">새로운 알림이 없습니다.</div>';
             return;
@@ -1206,7 +1208,7 @@ async function renderNotificationList() {
             const d = new Date(n.createdAt);
             const hm = isNaN(d) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             const time = isNaN(d) || nhDayKey(d) === nhDayKey(new Date()) ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;   // 이 판엔 날짜 머리줄이 없어 오늘이 아니면 날짜를 붙임
-            return `<div class="noti-hist-item unread" data-id="${n.id}" role="button" tabindex="0" aria-label="${nhEsc(title || msg)}" onclick="${clickAction}" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();this.click();}">
+            return `<div class="noti-hist-item unread${nhAlert(n) ? ' nh-alert' : ''}" data-id="${n.id}" role="button" tabindex="0" aria-label="${nhEsc(title || msg)}" onclick="${clickAction}" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();this.click();}">
                 <span class="nh-ic" aria-hidden="true">${nhIcon(n.type)}</span>
                 <div class="nh-body">
                     <div class="nh-title">${nhEsc(title || msg)}</div>
@@ -1236,6 +1238,19 @@ function notiGo(link) {
     if (page === 'myinfo' && prm.get('leave')) setTimeout(() => { if (window.AkmPayslip && window.AkmPayslip.setTab) window.AkmPayslip.setTab('info'); const c = document.getElementById('myinfo-leave'); if (c) c.scrollIntoView({ block: 'nearest' }); }, 200);   // #945 연차 조정 알림 → 내 정보 > 연차 칸
     if (page === 'myinfo' && prm.get('rules')) setTimeout(() => { if (window.AkmRules) window.AkmRules.open(); }, 200);   // #687 회사 규정 알림 → 내 정보 > 회사 규정
     if (page === 'event' && prm.get('step')) setTimeout(() => { if (window.AkmEvent) window.AkmEvent.open(prm.get('step')); }, 200);   // #708-B 「아꼼이 그림 왔어요」 알림 → 이벤트 관리 그 단계 카드
+    // #1111-B 알림 링크 2개 더: agent-office?price=1 → 「전체 가격 확인하기」 · agent-office?inbox=open → 손님 연락 창(안 읽음·미처리가 있는 탭) — ao-desk.js 가 실릴 때까지 최대 5초 기다림(#620 과 같은 꼴)
+    if (page === 'agent-office' && (prm.get('price') || prm.get('inbox'))) {
+        let w = 0; const wantPrice = !!prm.get('price');
+        const open2 = () => {
+            try {
+                if (wantPrice) { const b = document.getElementById('desk-price-now'); if (b) return b.click(); }
+                else if (window.AkmAoDesk && typeof window.AkmAoDesk.openInbox === 'function') { const b = document.querySelector('#desk-plus [data-mk="inb"]:not([hidden])'); if (b) return b.click(); return window.AkmAoDesk.openInbox('talk'); }
+            } catch (_) { return; }
+            if ((w += 100) <= 5000) setTimeout(open2, 100);
+        };
+        setTimeout(open2, 300);
+        return;
+    }
     const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
     if (!(oid > 0) && !(rid > 0) && !(sid > 0)) return;
     // #620: 새로고침 직후 알림 해시로 올 때 ao-desk.js(258KB)가 아직 안 내려왔을 수 있다 → agent-office 갈래는 AkmAoDesk 가 생길 때까지 100ms 간격 최대 5초 기다렸다 연다(워커4 원인 조사 · 화면 자체는 ao-desk.js 끝 한 줄이 그림)
@@ -13121,14 +13136,14 @@ async function renderInquiryLogs(range) {
 }
 // --- 판매현황·가격 탭 (bot_products — 스마트스토어 판매가, 봇 1분 캐시 자동 반영) ---
 let botProducts = [];
-let inquiryActiveTab = 'scenario';
+let inquiryActiveTab = 'overview';   // #1110-4 기본 탭 = 응대 현황(새로고침 복원값이 있으면 그 탭)
 // #1110(대표 11/11): 톡톡·상품문의·고객문의 탭은 숨김(에이전트 오피스 › 손님 연락) — 옛 복원값·옛 링크로 들어오면 기본 탭(답변 재료)으로
 const INQ_HIDDEN_TABS = ['unanswered', 'qna', 'userinq'];
 window.switchInquiryTab = function(name) {
     if (INQ_HIDDEN_TABS.includes(name) || !document.getElementById('inquiry-tab-' + name)) name = 'scenario';
     inquiryActiveTab = name;
     try { localStorage.setItem('akm_inq_tab', name); } catch (_) {}   // 지시 #407: 새로고침 복원용(문의 관리 한정)
-    for (const t of ['scenario', 'products', 'notify', 'holiday', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {   /* #407: 알림 이력·발송 휴무일 독립 탭 */
+    for (const t of ['overview', 'scenario', 'products', 'notify', 'holiday', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {   /* #407: 알림 이력·발송 휴무일 독립 탭 */
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
@@ -13140,7 +13155,8 @@ window.switchInquiryTab = function(name) {
         if (name === 'scenario') drawInquiryList();   // 찾기 글이 바뀐 채 넘어왔을 수 있음
     }
     syncInqLogCard();   // 지시 #181-1: 이력 카드 대상 전환·초기화(이전 탭 이력 잔류 차단) — 조회는 [조회] 눌렀을 때만
-    if (name === 'products') renderBotProducts().catch(console.error);
+    if (name === 'overview') rvEnter();   // #1110-4
+    else if (name === 'products') renderBotProducts().catch(console.error);
     else if (name === 'notify') {                                                    // 지시 #407 — 판매현황 탭에서 분리
         /* #412: 기본 기간 = 오늘(첫 진입 1회만 자동 세팅) — 성수기에 데이터가 쌓여도 기본 화면이 가볍게.
            과거 조회 = 기간 버튼/[초기화] 그대로. 사용자가 이미 기간·검색을 만졌으면 건드리지 않는다. */
@@ -14023,12 +14039,135 @@ function inqSetDraw(kind, on, err) {   // kind = 'qna' | 'userinq' · 대표 = �
         : `${label} ${pill}`;
 }
 async function inqMatHeadLoad() {
-    const seq = ++_inqSetSeq;
     if (!skRows.length) renderSeasonKnowledge().catch(console.error);   // 「기간 있는 글 n · 오늘 적용 n」 숫자용(가벼움)
+    rvLoad();   // #1110-4: 자동 등록 스위치 상태 + 숫자 카드를 숫자 API 한 번으로(종전 = 상품문의·고객문의 목록 GET 2번)
+}
+function inqSetFallback() {   // 숫자 API 가 없는 서버(옛 판)·실패 = 종전 길(목록 GET 2번)로 스위치 상태만
+    const seq = ++_inqSetSeq;
     for (const [kind, url] of [['qna', '/api/agent-office/naver/qnas'], ['userinq', '/api/agent-office/naver/inquiries']]) {
         api(url).then(d => { if (seq === _inqSetSeq) inqSetDraw(kind, !!d.auto_post); }).catch(e => { if (seq === _inqSetSeq) inqSetDraw(kind, false, e.message || '오류'); });
     }
 }
+// ── #1110-4 응대 현황(문의 관리 맨 앞 탭) — 숫자 카드 · 채팅 미리보기(생성만 · 발송·기록 0) · 「쓴 재료」 → 그 시나리오 편집 ──
+const RV = { days: 7, ch: 'all', pch: 'talk', stats: null, statsErr: '', loading: false, log: [], busy: false, seq: 0, left: null, cap: null, inited: false };
+const RV_CH = [['all', '전체'], ['talk', '톡톡'], ['qna', '상품문의'], ['inquiry', '고객문의'], ['sms', '문자']];
+const RV_CHIPS = ['사이즈 지정 되나요?', '주소 바꿔 주세요', '오늘 주문하면 언제 받아요?', '귤이 물러서 왔어요', '체험 예약은 어떻게 해요?', '5kg 얼마예요?', '보관은 어떻게 해요?', '선물 포장 되나요?'];
+const RV_PNOTE = { talk: '톡톡은 재료를 고친 뒤 최대 5분 뒤에 반영돼요. 30초 묶음·하루 1번 쉼·사진 판독은 미리보기에 없어요.', qna: '상품문의(공개 게시판)에 올라갈 답이에요.', inquiry: '고객문의(1:1)에 올라갈 답이에요.', sms: '문자는 주문 조회·정해 둔 글이 먼저라, 주문 확인이 필요한 물음은 실제와 다를 수 있어요.' };
+const rvEl = id => document.getElementById(id);
+const rvSeg = (id, list, cur, fn) => { const el = rvEl(id); if (el) el.innerHTML = list.map(([k, label]) => `<button type="button" class="settlement-tab${String(k) === String(cur) ? ' active' : ''}" aria-pressed="${String(k) === String(cur)}" onclick="${fn}('${k}')">${label}</button>`).join(''); };
+function rvInit() {
+    if (RV.inited) return; RV.inited = true;
+    const chips = rvEl('rv-chips'); if (chips) chips.innerHTML = RV_CHIPS.map((t, i) => `<button type="button" class="rv-chip" data-rv-chip="${i}">${escapeHtml(t)}</button>`).join('');
+    chips?.addEventListener('click', e => { const b = e.target.closest('[data-rv-chip]'); if (b && !RV.busy) rvAsk(RV_CHIPS[Number(b.dataset.rvChip)]); });
+    rvEl('rv-form')?.addEventListener('submit', e => { e.preventDefault(); const ta = rvEl('rv-text'); const v = ta ? ta.value.trim() : ''; if (v && !RV.busy) { ta.value = ''; rvAsk(v); } });
+    rvEl('rv-text')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); rvEl('rv-form')?.requestSubmit(); } });
+    rvEl('rv-log')?.addEventListener('click', e => { const r = e.target.closest('[data-rv-retry]'); if (r && !RV.busy) { const q = RV.log[Number(r.dataset.rvRetry)]; if (q) rvAsk(q.text, true); } });
+}
+function rvEnter() { rvInit(); rvDraw(); rvDrawLog(); if (!RV.stats && !RV.loading) rvLoad(); }
+window.rvSetDays = function(d) { d = Number(d) === 30 ? 30 : 7; if (d === RV.days) return; RV.days = d; RV.stats = null; rvDraw(); rvLoad(); };
+window.rvSetCh = function(c) { RV.ch = c; rvDraw(); };
+window.rvSetPch = function(c) { if (RV.busy) return; RV.pch = c; rvDraw(); };
+async function rvLoad() {
+    const seq = ++RV.seq; RV.loading = true; RV.statsErr = '';
+    try {
+        const d = await api('/api/agent-office/response-stats?days=' + RV.days);
+        if (seq !== RV.seq) return;
+        RV.stats = d; RV.loading = false;
+        if (d.settings) { inqSetDraw('qna', !!d.settings.qna_auto_post); inqSetDraw('userinq', !!d.settings.inquiry_auto_post); } else inqSetFallback();
+        if (d.preview) { RV.left = d.preview.left_today; RV.cap = d.preview.cap; }
+    } catch (e) {
+        if (seq !== RV.seq) return;
+        RV.loading = false; RV.statsErr = String(e && e.message || '오류'); inqSetFallback();
+    }
+    rvDraw();
+}
+function rvDraw() {
+    rvInit();
+    rvSeg('rv-days', [[7, '7일'], [30, '30일']], RV.days, 'rvSetDays');
+    rvSeg('rv-ch', RV_CH, RV.ch, 'rvSetCh');
+    rvSeg('rv-pch', RV_CH.slice(1), RV.pch, 'rvSetPch');
+    const box = rvEl('rv-nums'), d = RV.stats; if (!box) return;
+    const pct = (n, t) => t > 0 ? Math.round(n * 100 / t) : 0;
+    if (!d) box.innerHTML = RV.statsErr ? '<p class="text-muted rv-note">숫자를 못 읽었어요. <button type="button" class="rv-link" onclick="rvLoad()">다시 읽기</button></p>' : '<p class="text-muted rv-note">숫자를 읽는 중이에요.</p>';
+    else {
+        const c = RV.ch === 'all' ? d.all : (d.channels || {})[RV.ch];
+        if (!c) box.innerHTML = '<p class="text-muted rv-note">이 채널 숫자를 못 읽었어요.</p>';
+        else if (!c.total) box.innerHTML = `<p class="text-muted rv-note">최근 ${d.days}일 손님 글이 없어요.</p>`;
+        else box.innerHTML = `
+            <div class="rv-num"><b>${pct(c.bot, c.total)}%</b><span>봇이 답함</span><small>${c.bot}건</small></div>
+            <div class="rv-num"><b>${pct(c.staff, c.total)}%</b><span>직원이 답함</span><small>${c.staff}건</small></div>
+            <button type="button" class="rv-num is-open" onclick="notiGo('agent-office?inbox=open')" title="에이전트 오피스 손님 연락에서 답해요"><b>${c.open}건</b><span>아직 안 답함</span><small>눌러서 답하러 가기</small></button>`;
+    }
+    const rg = rvEl('rv-range'); if (rg) rg.textContent = d ? `${String(d.from || '').slice(5).replace('-', '/')} ~ ${String(d.to || '').slice(5).replace('-', '/')} · 손님 대화 기준 · 봇 답 뒤 직원이 다시 답한 대화는 「직원이 답함」으로 세요.` : '';
+    const more = rvEl('rv-set-more');
+    if (more) {
+        const st = d && d.settings, bits = [];
+        if (st) {
+            bits.push(`<span class="pill pill-off">문자 ${({ off: '꺼짐', record: '기록만', draft: '초안(사람이 보냄)', auto: '자동 답' })[st.sms_mode] || st.sms_mode}</span>`);
+            if (st.talk_once_until_hour != null) bits.push(`<span class="pill pill-off">톡톡 하루 1번 답(매일 ${st.talk_once_until_hour}시 새로)</span>`);
+            if (!st.auto_reply) bits.push('<span class="pill pill-wait">전체 자동응답 꺼짐</span>');
+        }
+        more.innerHTML = bits.join('');
+    }
+    const ml = rvEl('rv-mat-links');
+    if (ml) {
+        const m = d && d.materials, nS = m ? m.scenarios : inquiryScenarios.length, nK = m ? m.season : skRows.length, nT = m ? m.season_today : skRows.filter(skTodayIn).length;
+        ml.innerHTML = `<button type="button" class="rv-link" onclick="switchInquiryTab('scenario')">늘 쓰는 글 ${nS}개 보기</button><button type="button" class="rv-link" onclick="switchInquiryTab('season')">기간 있는 글 ${nK}개 보기(오늘 적용 ${nT})</button>`;
+    }
+    const foot = rvEl('rv-foot');
+    if (foot) foot.textContent = (RV.cap ? `오늘 남은 미리보기 ${RV.left == null ? RV.cap : RV.left}번 · ` : '') + '실제로 보내거나 기록하지 않아요. ' + (RV_PNOTE[RV.pch] || '');
+    const send = rvEl('rv-send'), ta = rvEl('rv-text'); if (send) { send.disabled = RV.busy; send.textContent = RV.busy ? '만드는 중' : '물어보기'; if (RV.busy) send.setAttribute('aria-busy', 'true'); else send.removeAttribute('aria-busy'); } if (ta) ta.disabled = RV.busy;
+    document.querySelectorAll('#rv-chips .rv-chip').forEach(b => { b.disabled = RV.busy; });
+}
+function rvDrawLog() {
+    const el = rvEl('rv-log'); if (!el) return;
+    if (!RV.log.length) { el.innerHTML = '<p class="rv-empty">손님이 물어볼 만한 질문을 넣어 보세요.<br>봇이 실제로 뭐라고 답하는지 바로 보여 드려요.</p>'; return; }
+    const map = _scenNoMap || {};
+    const chName = Object.fromEntries(RV_CH);
+    el.innerHTML = RV.log.map((m, i) => {
+        if (m.who === 'me') return `<div class="rv-msg me">${escapeHtml(m.text)}</div>`;
+        if (m.state === 'wait') return `<div class="rv-msg bot wait" aria-busy="true">${m.slow ? '조금 더 걸리고 있어요…' : '답 만드는 중…'}</div>`;
+        if (m.state === 'skip') return `<div class="rv-msg skip"><b>봇이 답하지 않아요</b> · ${escapeHtml(m.text)}${m.why === 'no_material' ? `<div class="rv-meta"><button type="button" class="rv-link" onclick="switchInquiryTab('scenario')">답변 재료에서 글 추가하기</button></div>` : ''}</div>`;
+        if (m.state === 'err') return `<div class="rv-msg err">${escapeHtml(m.text)}${m.retry != null ? `<div class="rv-meta"><button type="button" class="rv-link" data-rv-retry="${m.retry}">다시 물어보기</button></div>` : ''}</div>`;
+        const links = (m.nos || []).map((no, k) => { const s = map['#' + no]; const label = '시나리오 ' + escapeHtml(String(no)); return s ? `<button type="button" class="rv-link" onclick="gotoScenario(${s.id})" title="${escapeHtml(s.name)} · 누르면 이 글을 고쳐요">${label}</button>` : `<span title="${escapeHtml((m.names || [])[k] || '')}">${label}</span>`; });
+        const meta = [chName[m.ch] || '', m.source === 'price_direct' ? '가격 바로 답(AI 없이)' : '', links.length ? '쓴 재료: ' + links.join(' · ') : '쓴 재료 표시 없음', m.ms ? (Math.round(m.ms / 100) / 10) + '초' : ''].filter(Boolean).join(' · ');
+        return `<div class="rv-msg bot">${escapeHtml(m.text)}<div class="rv-meta">${meta}</div></div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+}
+async function rvAsk(text, retry) {
+    text = String(text || '').trim().slice(0, 1000); if (!text || RV.busy) return;
+    rvInit();
+    const ch = RV.pch;
+    if (!retry) RV.log.push({ who: 'me', text });
+    const qi = (() => { for (let i = RV.log.length - 1; i >= 0; i--) if (RV.log[i].who === 'me' && RV.log[i].text === text) return i; return RV.log.length - 1; })();
+    if (retry) RV.log = RV.log.filter(m => !(m.state === 'err' && m.retry === qi));
+    const slot = { who: 'bot', state: 'wait', ch }; RV.log.push(slot);
+    if (RV.log.length > 20) RV.log = RV.log.slice(-20);
+    RV.busy = true; rvDraw(); rvDrawLog();
+    const slowT = setTimeout(() => { if (slot.state === 'wait') { slot.slow = true; rvDrawLog(); } }, 15000);
+    try { await scenNoMap(); } catch (_) { /* 번호 링크 없이도 답은 보인다 */ }
+    let status = 0, j = null;
+    try {
+        const r = await fetch('/api/agent-office/response-preview', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ channel: ch, text }) });
+        status = r.status; j = await r.json().catch(() => null);
+        if (status === 401 && typeof akmSessionExpired === 'function') akmSessionExpired();
+    } catch (e) { status = 0; j = null; }
+    clearTimeout(slowT);
+    const myIdx = RV.log.indexOf(slot);
+    const qIdx = (() => { for (let i = myIdx - 1; i >= 0; i--) if (RV.log[i].who === 'me') return i; return null; })();
+    if (j && j.left_today !== undefined) { RV.left = j.left_today; RV.cap = j.cap; }
+    if (status === 200 && j && j.ok && !j.skip) Object.assign(slot, { state: 'ok', text: String(j.answer || ''), nos: j.scenario_nos || [], names: j.scenario_names || [], source: j.source, ms: j.ms });
+    else if (status === 200 && j && j.ok && j.skip) Object.assign(slot, { state: 'skip', text: String(j.why_text || '봇이 답하지 않고 넘겨요 → 실제로는 직원 몫'), why: j.why });
+    else {
+        const code = j && j.code;
+        const msg = status === 404 ? '미리보기가 아직 준비 중이에요(서버에 이 기능이 아직 없어요).' : status === 0 ? '통신이 끊겼어요. 다시 물어봐 주세요.' : (j && j.error) || '답을 만들지 못했어요. 잠시 뒤 다시 물어봐 주세요.';
+        Object.assign(slot, { state: 'err', text: msg, retry: (code === 'day_cap' || code === 'bot_old' || status === 404) ? null : qIdx });
+    }
+    RV.busy = false; rvDraw(); rvDrawLog();
+    const ta = rvEl('rv-text'); if (ta && window.matchMedia('(pointer: fine)').matches) ta.focus({ preventScroll: true });
+}
+window.rvLoad = rvLoad;
 window.inqSetAutoPost = async function(kind, enabled) {
     const url = kind === 'qna' ? '/api/agent-office/naver/qna-auto-post' : '/api/agent-office/naver/inquiry-auto-post';
     try {

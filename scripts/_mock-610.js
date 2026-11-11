@@ -128,6 +128,7 @@ const STUB = [
 http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname), M = req.method;
     try {
+        if (p === '/api/agent-office/orders' && M === 'POST') { const bd = await readBody(req); ST.log.push({ at: Date.now(), action: 'order', body: bd }); return send(res, 200, { message: '지시가 접수되었습니다', order: { id: 90000 + ST.log.length, content: bd.content } }); }   // #1108-③
         if (p === '/__mock/log') return send(res, 200, { log: ST.log, typPosts: ST.typPosts || [], typGets: ST.typGets || 0, typing: ST.typing || [] });
         if (p === '/__mock/typing') { const b = await readBody(req); ST.typing = (ST.typing || []).filter(x => !(x.tid === Number(b.thread) && x.id === Number(b.id))); if (b.on !== false) ST.typing.push({ tid: Number(b.thread), id: Number(b.id), name: String(b.name || ''), at: Date.now() }); return send(res, 200, { ok: true }); }   // #683 다른 사람 입력 상태 끼워 넣기
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }

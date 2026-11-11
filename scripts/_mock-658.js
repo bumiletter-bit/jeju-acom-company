@@ -64,6 +64,7 @@ http.createServer(async (req, res) => {
     if (p === '/__mock/pic.svg') return send(res, 200, PIC, MIME['.svg']);
     if (p === '/__mock/log') return send(res, 200, { log: ST.log, threads: ST.threads.map(t => ({ id: t.id, read: t.read, done: !!t.done, state: t.state, draft: t.draft, n: t.messages.length })) });
     if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
+    if (p === '/api/agent-office/orders' && req.method === 'POST') { const b = await body(req); ST.log.push({ at: Date.now(), action: 'order', body: b }); return send(res, 200, { message: '지시가 접수되었습니다', order: { id: 90000 + ST.log.length, content: b.content } }); }   // #1108-③ 포인트 지급 지시 띠
     if (p === '/__mock/set') { Object.assign(ST, await body(req)); return send(res, 200, { ok: true }); }
     if (p === '/__mock/push') { const b = await body(req), t = ST.threads.find(x => x.ch === b.ch && x.id === b.id); if (t) { t.messages.push({ id: Date.now(), direction: 'in', sender: 'customer', body: b.body || '또 문의드려요', at: new Date().toISOString(), image_url: null }); t.read = false; t.done = false; if (t.state !== 'open') t.state = 'open'; if (b.draft) t.draft = b.draft; } return send(res, 200, { ok: !!t }); }
     if (p.startsWith('/api/inbox/')) {

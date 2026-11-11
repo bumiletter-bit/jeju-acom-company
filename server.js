@@ -332,6 +332,9 @@ async function initDB() {
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // #1111-B 직원 알림: level = 'alert'(🟥 확인 필요 · 알림 종 빨강 띠 = 화면 몫) | 'info' | NULL(종전) · push_held = 쉬는 날 폰 푸시 보류(push.js · 스위치 staff_alerts.push_hold)
+    await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS level TEXT`);
+    await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS push_held BOOLEAN`);
 
     // documents 테이블
     await pool.query(`
@@ -1884,9 +1887,14 @@ app.post('/api/users/:id/restore', authMiddleware, adminOnly, async (req, res) =
 // #473 웹 푸시 — 화면 알림을 폰으로도 보낸다(앱을 안 켜도 옴). 실패해도 알림 기록은 그대로 남는다.
 const push = require('./push.js')(app, { pool, authMiddleware });
 
-async function createNotification(userId, type, title, message, link) {
+// #1111-B 「종류 → 받는 사람」 설정(notify_routes · 칸 없으면 종전 받는 사람 그대로) · 직원 알림 6종(staff-alerts.js · 스위치 staff_alerts.enabled · 기본 꺼짐)
+const notifyRoutes = require('./notify-routes.js')({ pool, log: console });
+async function createNotification(userId, type, title, message, link, level) {   // level(#1111-B) = 'alert' | 'info' · 없으면 종전 INSERT 그대로
     try {
-        await pool.query(
+        if (level) await pool.query(
+            'INSERT INTO notifications (user_id, type, title, message, link, level) VALUES ($1, $2, $3, $4, $5, $6)',
+            [userId, type, title, message || '', link || 'documents', String(level).slice(0, 10)]);
+        else await pool.query(
             'INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, $2, $3, $4, $5)',
             [userId, type, title, message || '', link || 'documents']
         );
@@ -1904,7 +1912,7 @@ app.get('/api/notifications', authMiddleware, async (req, res) => {
         );
         res.json(result.rows.map(r => ({
             id: r.id, type: r.type, title: r.title, message: r.message,
-            link: r.link, isRead: r.is_read, createdAt: r.created_at
+            link: r.link, isRead: r.is_read, createdAt: r.created_at, level: r.level || null   // #1111-B 🟥 확인 필요(화면 nhAlert)
         })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -8236,7 +8244,8 @@ async function settleReconNotify(r) {
     if (!first && !promoted) return false;
     const { title, body } = settleReconMessage(r);
     const admins = (await pool.query(`SELECT id FROM users WHERE role='admin' AND deleted_at IS NULL ORDER BY id`)).rows;
-    for (const a of admins) await createNotification(a.id, 'settle_recon', title, body, 'settlement:settlement-status');
+    // #1111-B 받는 사람 = 설정 notify_routes.settle_recon 이 있으면 그 목록(예 가영) · 없으면 종전(관리자 전원)
+    for (const uid of await notifyRoutes.routeIds('settle_recon', admins.map(a => a.id))) await createNotification(uid, 'settle_recon', title, body, 'settlement:settlement-status');
     await pool.query(`UPDATE naver_settle_recon SET notified_at=NOW(), notified_status=$2 WHERE expect_date=$1`, [r.expect_date, r.status]);
     return true;
 }
@@ -15623,6 +15632,7 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                        COUNT(*) FILTER (WHERE (COALESCE(order_at, created_at) + interval '9 hours')::date = (NOW() + interval '9 hours')::date - 1)::int AS yesterday
                 FROM kakao_notify_log
                 WHERE order_key NOT LIKE 'join:%' AND order_key NOT LIKE 'coupon%'
+                  AND created_at > NOW() - interval '3 days'   /* #1113-1 색인(created_at) 타는 앞 조건 · order_at ≤ created_at(실DB 31,597줄 전부 · 주문 뒤에 기록) 이라 아래 조건과 같은 줄만 남음 */
                   AND COALESCE(order_at, created_at) > NOW() - interval '3 days'
                 GROUP BY 1`)).rows),
             // 최근 7일 발송 박스(정산관리 입력 기준)
@@ -20014,7 +20024,27 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
         return { realToday, shipDays, suggested: (isShip(realToday) && kst.getUTCHours() < 12) ? realToday : (shipDays.find(x => x > realToday) || realToday) }; } });
 // #776 네이버 메일 찾기(읽기 전용 · 창구 scripts/desk/mail-find.js · 요청 줄 mail_search/read/attach_request · IMAP = naver-mail.js(#775 와 같이 씀)) — 렌더에서만(로컬 검증 서버가 실DB 요청 줄을 집지 않게)
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
-require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), kick: process.env.RENDER ? deskInbox.deliver : null });
+require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
+const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
+// ── #1111-B 직원 알림 6종(staff-alerts.js · 대표 11/11) — 1분 틱 · 실서버(RENDER)만 · 스위치 = 설정 staff_alerts.enabled(기본 꺼짐 = 아무것도 안 함) · 받는 사람 = notify_routes
+//   순위 문제·3채널 가격 어긋남(민주) · 묵은 미답변·답변 재료 점검(지현·승협) · 클레임 요약(지현) · 정산 자동 수집 실패(가영) · 받는 사람마다 그 사람 근무일에만(workdays.js)
+//   가격 = /api/price-check 와 같은 build(쿠팡 포함) · 실패해도 다른 일은 돎 · 한 번에 하나(busy)
+{
+    let busy = false;
+    const priceReport = async () => {
+        const mod = priceCheckModule(); if (!mod || typeof mod.build !== 'function') return { ok: false, error: '가격 확인 모듈 없음' };
+        return mod.build({ pool, cafe24Get: require('./cafe24.js').apiGet, cfg: { naverCfgGet }, log: console,
+            coupangGet: async (vid) => cpwItemOf(cpwData(await naverRelay.callCoupang({ method: 'GET', path: CPW_PATH.inventory(vid) }, null))) });
+    };
+    const tick = async () => {
+        if (busy) return; busy = true;
+        try { await require('./staff-alerts.js').run({ pool, routes: notifyRoutes, inbox: inboxThreads, priceReport, log: console,
+            notify: (uid, type, title, message, link, level) => createNotification(uid, type, title, message, link, level) }); }
+        catch (e) { console.error('[직원 알림] 틱 실패(다음 분에 다시):', e.message); }
+        finally { busy = false; }
+    };
+    if (process.env.RENDER) { const t = setInterval(tick, 60000); if (t.unref) t.unref(); }
+}
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답
 // SPA 캐치올이 200+HTML을 주면 claude.ai 신규 연결 절차가 OAuth 서버로 오인해 등록 실패함 (2026-07-18 진단)

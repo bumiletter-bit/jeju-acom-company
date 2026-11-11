@@ -5044,3 +5044,74 @@ body.ps-view-open { overflow: hidden; }
     #settlement-invoice .si-sup .si-dot { display: none; }
     #settlement-invoice .si-group[class*="si-g-"]::before { display: none; }   /* 폰 = 줄 띠만(묶음 띠와 겹쳐 두 줄로 보임) · 묶음은 이름 앞 색 점 */
 }
+
+/* ── #1110-4 응대 현황(문의 관리 맨 앞 탭) — 왼쪽 설정·숫자·칩·재료 / 오른쪽 채팅 미리보기 · 색은 토큰만(야간 = scripts/ao-dark/gen-dark.js 다시) ── */
+.rv-grid { display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.rv-left { display: grid; gap: 12px; min-width: 0; }
+.rv-card { padding: 16px; margin: 0; }
+.rv-h { font-size: 14px; font-weight: 700; margin: 0 0 10px; color: var(--text-dark); }
+.rv-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.rv-head-row .rv-h { margin: 0; }
+.rv-seg { margin: 0 0 10px; flex-wrap: wrap; gap: 6px; }
+.rv-head-row .rv-seg { margin: 0; }
+.rv-seg .settlement-tab { padding: 6px 12px; font-size: 13px; }
+.rv-set-row { display: flex; gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.rv-set-more { display: flex; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--text-mid); }
+.rv-set-more:empty { display: none; }
+.rv-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rv-num { border: 1px solid var(--card-border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg); text-align: left; min-width: 0; font: inherit; color: inherit; }
+.rv-num b { display: block; font-size: 22px; line-height: 1.15; font-weight: 800; color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.rv-num span { display: block; font-size: 12px; color: var(--text-mid); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-num small { display: block; font-size: 11.5px; color: var(--text-mid); margin-top: 2px; font-variant-numeric: tabular-nums; }
+button.rv-num { cursor: pointer; transition: border-color .12s ease-out, background .12s ease-out; }
+button.rv-num:hover { border-color: var(--primary); background: var(--primary-light); }
+button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.rv-num.is-open b { color: var(--primary); }
+.rv-nums > p { grid-column: 1 / -1; margin: 0; }
+.rv-note { font-size: 12px; color: var(--text-mid); margin: 8px 0 0; line-height: 1.5; }
+.rv-note:empty { display: none; }
+.rv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-chip { border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text-dark); border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px; transition: border-color .12s ease-out, background .12s ease-out; }
+.rv-chip:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+.rv-chip:active:not(:disabled) { transform: scale(0.97); }
+.rv-chip:disabled { opacity: .5; cursor: default; }
+.rv-mat-links { display: grid; gap: 6px; font-size: 13px; }
+.rv-link { color: var(--primary); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+.rv-right { padding: 16px; margin: 0; display: flex; flex-direction: column; min-height: 420px; max-height: calc(100vh - 220px); position: sticky; top: 12px; }
+.rv-log { flex: 1 1 auto; min-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.rv-empty { margin: auto; text-align: center; color: var(--text-mid); font-size: 13px; line-height: 1.6; }
+.rv-msg { max-width: 86%; border-radius: 14px; padding: 9px 12px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rv-msg.me { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.rv-msg.bot { align-self: flex-start; background: var(--card-bg); color: var(--text-dark); border: 1px solid var(--card-border); border-bottom-left-radius: 4px; }
+.rv-msg.wait { color: var(--text-mid); }
+.rv-msg.skip { align-self: stretch; max-width: none; background: #FFFAEB; color: #93370D; border: 1px solid #FEDF89; }
+.rv-msg.err { align-self: stretch; max-width: none; background: #FEF3F2; color: #B42318; border: 1px solid #FECDCA; }
+.rv-meta { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--card-border); font-size: 12px; color: var(--text-mid); white-space: normal; }
+.rv-msg.skip .rv-meta, .rv-msg.err .rv-meta { border-top: 0; padding-top: 0; }
+.rv-form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.rv-form textarea { flex: 1 1 auto; min-height: 44px; max-height: 120px; resize: none; font-size: 14px; padding: 10px 12px; }
+.rv-form .btn-primary { flex: none; min-height: 44px; padding: 0 18px; white-space: nowrap; }
+.rv-form .btn-primary:disabled { opacity: .55; cursor: default; }
+.rv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) { .rv-msg { animation: rv-in .15s cubic-bezier(0.23, 1, 0.32, 1); } }
+@keyframes rv-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (max-width: 1100px) { .rv-grid { grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); } }
+@media (max-width: 860px) {
+    .rv-grid { grid-template-columns: minmax(0, 1fr); }
+    .rv-right { position: static; max-height: none; min-height: 0; order: 2; }
+    .rv-log { min-height: 200px; max-height: 52vh; }
+    .rv-left { order: 1; }
+    #rv-mat { order: 3; }
+    .rv-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+    .rv-chips::-webkit-scrollbar { display: none; }
+    .rv-chip { flex: none; min-height: 44px; }
+    .rv-seg .settlement-tab { min-height: 44px; }
+}
+/* 문의 관리 탭 6개: 폭이 모자라면 줄바꿈 대신 가로로 밀기(늘 한 줄 · 넓은 화면에선 그대로 다 보임) */
+#page-inquiry > .settlement-tab-bar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#page-inquiry > .settlement-tab-bar::-webkit-scrollbar { display: none; }
+#page-inquiry > .settlement-tab-bar > .settlement-tab { flex: none; white-space: nowrap; }
+/* #1111-B 알림 종: 「🟥 확인 필요」(level alert) = 빨강 띠 · 안 읽은 것만 맨 위 고정(app.js renderNotificationList) */
+.noti-hist-item.unread.nh-alert { background: #FEF3F2; box-shadow: inset 4px 0 0 var(--danger, #F04438); }
+.noti-hist-item.unread.nh-alert:hover { background: #FEE4E2; }
+.noti-hist-item.unread.nh-alert .nh-time { color: #B42318; }

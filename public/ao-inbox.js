@@ -298,6 +298,12 @@
             return; }
         if (I.open === k && ta.isConnected) ta.value = '';
         I.texts.delete(k); I.fillText = ''; toast(c.sent);
+        if (ch === 'talk' && I.open === k && I.thread && window.AkmPoint) {   // #1108-③ 보낸 글에 포인트 금액이 있으면 지급 지시 띠(1회용)
+            const th = I.thread, msgs = th.messages || [], lastIn = [...msgs].reverse().find(m => m.direction === 'in'), line = lastIn ? String(lastIn.id).replace(/^i/, '') : '';
+            const sub = (th.thread && th.thread.sub) || '', pick = window.AkmPoint.pickLine(msgs);
+            window.AkmPoint.show({ form: $('inb-reply'), ch: 'talk', key: id, sent: text, reason: window.AkmPoint.reasonOf(sub),
+                build: (amt, why) => `[VM] 포인트 보상 지급 · 톡톡 #${line} · ${pick.at} 무렵 대화 · 톡톡 첫마디: ${pick.text} · 품목 ${sub || '-'} · 사유 ${why} · ${amt}원` });
+        }
         sync();
         if (I.open !== k) return;
         I.tsig = ''; await loadThread(true);
@@ -450,4 +456,80 @@
         available: () => I.avail === true,
         _state: I,
     };
+})();
+
+// ── #1108-③(대표 11/11) 포인트 지급 지시 띠 — 톡톡·문자 답을 보낸 직후, 보낸 글에 「포인트 n,nnn원」(n천원·n만원)이 있으면 답 칸 위에 1회용 띠
+//   금액(보낸 글에서 읽어 미리 채움 · 고칠 수 있음) · 사유(15자 · 미리 채움) 확인 → [지시 만들기] = 에이전트 오피스 지시 1건(POST /api/agent-office/orders {content} · 서버 변경 0 · 「[VM]」 머리 = 승인 없이 VM 러너)
+//   금액을 못 읽으면(「소정의 포인트」·「0,000원」) 안 뜸 · 같은 대화·같은 보낸 글로는 다시 안 뜸(sessionStorage) · 보내기·초안·지우기 동작 무접촉 · ao-desk.js(문자)도 이것을 부름
+window.AkmPoint = (function () {
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const comma = n => (Number(n) || 0).toLocaleString('ko-KR');
+    const KN = { 일: 1, 이: 2, 삼: 3, 사: 4, 오: 5, 육: 6, 칠: 7, 팔: 8, 구: 9 };
+    // 보낸 글 → 포인트 금액(원) · 「포인트」가 든 문장(또는 앞뒤 20자 안)의 첫 금액 · 0·자리표면 0
+    function amountOf(text) {
+        const t = String(text || ''); if (!/포인트/.test(t)) return 0;
+        const parts = t.replace(/([.!?\n])/g, '$1\u0000').split('\u0000').filter(s => /포인트/.test(s));   // 뒤보기 정규식 안 씀(옛 iOS 사파리)
+        const RE = /(\d{1,3}(?:,\d{3})+|\d+)\s*(만|천)?\s*(?:원|포인트)|([일이삼사오육칠팔구])?\s*(만|천)\s*원/g;
+        for (const s of parts) {   // 한 문장에 금액이 여럿이면(「배송비 4,500원 · 포인트 2,000원」) 「포인트」 낱말에 가장 가까운 금액
+            const pts = [...s.matchAll(/포인트/g)].map(x => x.index); let best = null;
+            for (const m of s.matchAll(RE)) {
+                let v = 0;
+                if (m[1]) v = Number(m[1].replace(/,/g, '')) * (m[2] === '만' ? 10000 : m[2] === '천' ? 1000 : 1);
+                else if (m[4]) v = (m[3] ? KN[m[3]] : 1) * (m[4] === '만' ? 10000 : 1000);
+                if (!(v > 0 && v <= 1000000)) continue;
+                const dist = Math.min(...pts.map(p => Math.abs(p - m.index)));
+                if (!best || dist < best.dist) best = { v, dist };
+            }
+            if (best) return best.v;
+        }
+        return 0;
+    }
+    const ITEM_RE = /타이벡|노지감귤|하우스감귤|황금향|레몬|한라봉|레드향|천혜향|카라향|키위|감귤|귤/;
+    const reasonOf = sub => { const m = String(sub || '').match(ITEM_RE); return ((m ? (m[0] === '귤' ? '감귤' : m[0]) : '감귤') + ' 보상처리').slice(0, 15); };
+    const DONE_KEY = 'akm-point-done';
+    const doneSet = () => { try { return new Set(JSON.parse(sessionStorage.getItem(DONE_KEY) || '[]')); } catch (e) { return new Set(); } };
+    const markDone = k => { try { const s = doneSet(); s.add(k); sessionStorage.setItem(DONE_KEY, JSON.stringify([...s].slice(-200))); } catch (e) { /* 저장 못 해도 이 화면 동안은 띠가 닫힘 */ } };
+    const hash = s => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return (h >>> 0).toString(36); };
+    // show({ form, ch:'talk'|'sms', key, sent, reason, note, build(amount, reason) → content })
+    function show(o) {
+        const amount = amountOf(o.sent); if (!amount || !o.form || !o.form.isConnected) return false;
+        const dk = o.ch + ':' + o.key + ':' + hash(o.sent); if (doneSet().has(dk)) return false;
+        const old = o.form.querySelector('.akm-point'); if (old) old.remove();
+        const box = document.createElement('div'); box.className = 'akm-point'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', '포인트 지급 지시 만들기');
+        box.innerHTML = '<b class="akm-point-t">포인트 지급 지시</b>'
+            + '<label class="akm-point-f">금액 <input class="akm-point-amt" inputmode="numeric" autocomplete="off" value="' + esc(comma(amount)) + '" aria-label="지급 금액(원)"> 원</label>'
+            + '<label class="akm-point-f">사유 <input class="akm-point-why" maxlength="15" autocomplete="off" value="' + esc(String(o.reason || '감귤 보상처리').slice(0, 15)) + '" aria-label="지급 사유(15자)"></label>'
+            + '<span class="akm-point-b"><button type="button" class="desk-btn akm-point-go">지시 만들기</button><button type="button" class="desk-btn akm-point-x">닫기</button></span>'
+            + (o.note ? '<small class="akm-point-n">' + esc(o.note) + '</small>' : '') + '<small class="akm-point-msg" role="status" aria-live="polite"></small>';
+        const ta = o.form.querySelector('textarea'); o.form.insertBefore(box, ta || o.form.firstChild);
+        const amtEl = box.querySelector('.akm-point-amt'), whyEl = box.querySelector('.akm-point-why'), go = box.querySelector('.akm-point-go'), msg = box.querySelector('.akm-point-msg');
+        amtEl.addEventListener('blur', () => { const n = Number(String(amtEl.value).replace(/[^\d]/g, '')); if (n) amtEl.value = comma(n); });
+        box.querySelector('.akm-point-x').addEventListener('click', () => { markDone(dk); box.remove(); });
+        go.addEventListener('click', async () => {
+            const n = Number(String(amtEl.value).replace(/[^\d]/g, '')), why = String(whyEl.value || '').trim().slice(0, 15);
+            if (!(n > 0)) { msg.textContent = '금액을 적어 주세요'; amtEl.focus(); return; }
+            if (!why) { msg.textContent = '사유를 적어 주세요'; whyEl.focus(); return; }
+            go.disabled = true; go.setAttribute('aria-busy', 'true'); msg.textContent = '지시를 만드는 중…';
+            try {
+                const r = await fetch('/api/agent-office/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ content: o.build(comma(n), why) }) });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok || !j || !j.order) throw new Error((j && (j.error || j.message)) || '다시 눌러 주세요');
+                markDone(dk); box.classList.add('done');
+                box.innerHTML = '<span class="akm-point-ok" role="status">지시를 만들었어요(#' + esc(j.order.id) + ') · 에이전트 오피스에서 결과를 확인해 주세요</span>';
+                setTimeout(() => { if (box.isConnected) box.remove(); }, 3000);
+            } catch (e) { go.disabled = false; go.removeAttribute('aria-busy'); msg.textContent = '지시를 만들지 못했어요: ' + ((e && e.message) || '다시 눌러 주세요'); }
+        });
+        return true;
+    }
+    const kst = t => { const d = new Date(t); if (isNaN(d)) return ''; const k = new Date(d.getTime() + 9 * 3600e3); return (k.getUTCMonth() + 1) + '/' + k.getUTCDate() + ' ' + String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0'); };
+    // 톡톡: 최근 7일 손님 글 중 가장 특징 있는 글(인사·한두 낱말 빼고 가장 긴 글) 앞 12자 + 그 시각 · 없으면 마지막 손님 글
+    const SHORT_RE = /^(안녕하세요|감사합니다|감사해요|고맙습니다|네|넵|예|ㅇㅇ|보상해\s*주세요|보상\s*부탁드려요)[\s.!~^ㅠㅜ]*$/;
+    function pickLine(msgs) {
+        const ins = (msgs || []).filter(m => m && m.direction === 'in' && String(m.body || '').trim()), wk = Date.now() - 7 * 86400e3;
+        const recent = ins.filter(m => { const t = Date.parse(m.at); return !Number.isFinite(t) || t >= wk; });
+        const good = recent.filter(m => { const b = String(m.body).replace(/\s+/g, ' ').trim(); return b.length >= 6 && !SHORT_RE.test(b); });
+        const best = good.sort((a, b) => String(b.body).trim().length - String(a.body).trim().length)[0] || ins[ins.length - 1] || null;
+        return best ? { text: String(best.body).replace(/\s+/g, ' ').trim().slice(0, 12), at: kst(best.at) } : { text: '', at: '' };
+    }
+    return { show, amountOf, reasonOf, pickLine };
 })();
