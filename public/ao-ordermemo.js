@@ -918,7 +918,7 @@
         if (act === 'pick') return;   // #859 고르기 칸 = change 에서
         if (act === 'reload') { load(); return; }
         const li = b.closest('.om-item'); const r = li && rowById(li.dataset.id); if (!r) return;
-        if (act === 'edit') { editOpen(r); return; }
+        if (act === 'edit') { const d = r.kind === 'line' && r.state === 'open' && isIndivText(r) && !(Array.isArray(r.boxes) && r.boxes.length) ? lineD(r) : ''; if (d && isPhoneKey(d)) { const sh = lineShow(r); editOpen(r, { pxOnly: { d, show: sh } }); if (OM.card && OM.card.pxOnly) pxOpen(OM.card, d, sh, { noSeed: true }); return; } editOpen(r); return; }   // #1124(대표 11/11) 입력삭제 줄은 글자를 눌러도 배지와 같은 판(일반발송·붙은 주소 줄·추가 매칭) · 같은 번호 현금 줄 미리 체크만 안 함 · 그 밖 줄·구매자 번호 없는 주문번호 줄 = 종전
         if (act === 'del') { askDel([r], b); return; }
         if (act === 'pairx') { const d = lineD(r), sh = lineShow(r); if (!isPhoneKey(d)) { toast('이 주문번호 줄엔 구매자 번호가 없어요 — 전화번호 줄로 다시 넣어 주세요'); return; } editOpen(r, { pxOnly: { d, show: sh } }); if (OM.card && OM.card.pxOnly) pxOpen(OM.card, d, sh); return; }   // #938 주문번호 줄 = checked.buyer 로   // #934 ④ 메모함 입력삭제 줄 → 번호 다른 현금 줄 붙이기(바로 POST)
         if (act === 'restore') {
@@ -1437,7 +1437,7 @@
         if (!x.open) return '';
         const n = pxSelIds(c, d).length;
         return `<div class="om-pair om-pairx" role="group" data-px="${esc(d)}" aria-labelledby="om-px-t-${esc(d)}"><b id="om-px-t-${esc(d)}">${c.pxOnly ? `입력삭제 ${esc(x.key)} 주소 줄로 바꿀 현금 줄을 고르세요` : `번호가 다른 현금 줄 가운데 입력삭제 ${esc(x.key)} 주소 줄을 고르세요`}</b>
-                <p class="om-pair-s">${c.pxOnly ? '같은 번호 줄은 미리 체크했어요 · 손님이 「따로 보내 달라」며 다른 번호로 들어온 줄도 체크하면 같이' : '손님이 「따로 보내 달라」며 다른 번호로 들어온 줄 등'} · 체크한 줄은 저장하면 주소 줄이 돼요(단추를 안 눌러도) · 체크 안 한 줄은 현금 그대로 · 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
+                <p class="om-pair-s">${c.pxOnly ? (x.noSeed ? '같은 번호 줄도 목록에 있어요 · 붙일 줄만 체크하세요 ·' : '같은 번호 줄은 미리 체크했어요 ·') + ' 손님이 「따로 보내 달라」며 다른 번호로 들어온 줄도 체크하면 같이' : '손님이 「따로 보내 달라」며 다른 번호로 들어온 줄 등'} · 체크한 줄은 저장하면 주소 줄이 돼요(단추를 안 눌러도) · 체크 안 한 줄은 현금 그대로 · 구매자 연락처만 그 번호로 바꿔요(보내는 분 번호 그대로)</p>
                 <div class="om-cash-q om-pairx-q"><label class="om-sr" for="om-px-q-${esc(d)}">현금 줄 찾기</label><input type="search" id="om-px-q-${esc(d)}" data-cact="pxq" data-k="${esc(d)}" value="${esc(x.q)}" autocomplete="off" spellcheck="false" placeholder="찾기 · 이름·번호 끝자리·주소·품목"></div>
                 <div class="om-pairx-b">${pxListHtml(c, d)}</div>${c.pxOnly ? normHtml(c) + pxPairedHtml(c, d) : ''}
                 <div class="om-acts"><button type="button" class="om-btn sm primary" data-cact="pxgo" data-k="${esc(d)}"${n ? '' : ' disabled'}>${pxGoLabel(n)}</button><button type="button" class="om-btn sm" data-cact="pxclose" data-k="${esc(d)}">닫기</button></div></div>`;
@@ -1513,7 +1513,7 @@
         if (!c || c.mode !== 'new' || c._refreshed) return; c._refreshed = true;
         load().then(() => { const go = () => { if (OM.card !== c || c._saving) return; if (cardTyping()) { setTimeout(go, 400); return; } renderCard(); }; go(); });   // 저장 중이면 건너뜀(저장 뒤 load 가 그림)
     }
-    async function pxOpen(c, d, show) { await load(); if (OM.card !== c) return; const x = pxState(c, d, show); x.open = true; if (c.pxOnly && !x.seeded) { x.seeded = true; pxCands(c, d).filter(r => pxSame(r, d)).forEach(r => x.sel.add(String(r.id))); } renderCard(); const q = $('om-card').querySelector(`#om-px-q-${d}`); if (q) q.focus({ preventScroll: true }); if (c.pxOnly) normLoad(c, d); }
+    async function pxOpen(c, d, show, o) { await load(); if (OM.card !== c) return; const x = pxState(c, d, show); x.open = true; if (o && o.noSeed) { x.seeded = true; x.noSeed = true; } if (c.pxOnly && !x.seeded) { x.seeded = true; pxCands(c, d).filter(r => pxSame(r, d)).forEach(r => x.sel.add(String(r.id))); } renderCard(); const q = $('om-card').querySelector(`#om-px-q-${d}`); if (q) q.focus({ preventScroll: true }); if (c.pxOnly) normLoad(c, d); }
     // #947 고른 줄이 60줄 넘을 수 있음(단체 120줄) = 서버 한 번에 60줄 → 나눠 보냄(60줄 이하 = 종전과 같은 요청 1회) · 실패하면 거기서 멈춤(된 줄은 되돌리기에 남음)
     async function pairPick(key, ids) {
         let n = 0, sent = 0; const undo = [];

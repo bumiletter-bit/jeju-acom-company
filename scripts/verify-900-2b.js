@@ -421,6 +421,13 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             await p.check('#om-card .om-pairx input[data-v="203"]'); await p.click('[data-cact="pxgo"]'); await until(() => S.pairs.length); await p.waitForTimeout(250);
             st = await p.evaluate(() => ({ undo: !document.getElementById('om-undo').hidden, t: document.getElementById('om-undo-t').textContent, px: !!document.querySelector('#om-card .om-pairx'), btn: !!document.querySelector('#om-card [data-cact="pxopen"]'), card: document.getElementById('om-card').hidden }));
             ok(JSON.stringify(S.pairs[0]) === JSON.stringify({ key: PXL, ids: [203], pick: true }) && st.undo && st.t === '현금 줄 1개를 입력삭제 010-5738-4123 주소 줄로 바꿨어요' && !st.px && st.card, '④ [이 줄도 주소 줄로] = 저장 없이 바로 POST pair {key 5738, ids 203, pick} · 되돌리기 띠 · 카드 닫힘(되돌리기 띠 안 가림)', { pairs: S.pairs, st });
+            // #1124(대표 11/11) 입력삭제 줄 글자를 눌러 열어도 같은 판(추가 매칭·붙은 주소 줄·일반발송) · 같은 번호 줄 미리 체크만 안 함 · 체크만 하고 닫으면 POST 0
+            S.pairs = []; await p.locator('#om-list .om-ml', { hasText: PXK }).locator('.om-ml-t').click(); await p.waitForSelector('#om-card:not([hidden]) .om-pairx');
+            st = await p.evaluate(() => { const x = document.querySelector('#om-card .om-pairx'); return { title: document.getElementById('om-card-t').textContent.trim(), b: x.querySelector('b').textContent, n: x.querySelectorAll('.om-pairx-b .om-pair-l li').length, on: [...x.querySelectorAll('input[data-cact="pxchk"]:checked')].map(i => i.dataset.v) }; });
+            ok(/메모 고치기/.test(st.title) && st.b === '입력삭제 010-3292-0535 주소 줄로 바꿀 현금 줄을 고르세요' && st.n === 4 && st.on.length === 0, '🆕 #1124 줄 글자로 열기 = 고치기 카드 + 추가 매칭 판 펼침 · 미리 체크 0(배지·[추가 매칭]으로 열면 191·192 미리 체크 = 위 종전)', st);
+            await p.check('#om-card .om-pairx input[data-v="191"]'); await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+            st = await p.evaluate(() => ({ card: document.getElementById('om-card').hidden }));
+            ok(st.card && S.pairs.length === 0, '🆕 #1124 체크만 하고 닫기(Esc) = POST pair 0', { st, pairs: S.pairs });
             // #947 단체 입력삭제 120줄 = 찾기 + 「찾은 n줄 전체 선택」(표시 50줄 · 저장/바로 POST 60줄씩)
             { S.px120 = true; const c947 = await browser.newContext({ viewport: { width: 1280, height: 900 } }), q = await c947.newPage(), pe947 = []; q.on('pageerror', e => pe947.push(String(e)));
               const qq = '#om-px-q-' + PXD, all = '#om-card .om-pairx input[data-cact="pxall"]', pick = () => S.pairs.filter(j => j.pick === true).map(j => j.ids);
