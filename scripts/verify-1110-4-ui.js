@@ -76,6 +76,7 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             let ms = await logMsgs(page);
             ok(ms.length === 2 && ms[0].cls === 'me' && ms[0].t === '사이즈 지정 되나요?' && /^bot/.test(ms[1].cls) && /\[talk\] 사이즈 지정 되나요\? 에 대한 답이에요/.test(ms[1].t), tag + '칩 → 손님 말풍선 + 봇 답(톡톡)', JSON.stringify(ms));
             ok(/쓴 재료: 시나리오 16/.test(ms[1].t) && /2\.1초/.test(ms[1].t), tag + '쓴 재료·걸린 시간');
+            ok(/실제 답과 조금 다를 수 있어요\(사진 요청 줄 생략 등\)/.test(ms[1].t), tag + '#1110-4b 톡톡 답 아래 「실제와 조금 다를 수 있어요」 한 줄');
             const sent = (await getLog()).log.filter(x => x.p === '/api/agent-office/response-preview').pop();
             ok(sent && sent.body.channel === 'talk' && sent.body.text === '사이즈 지정 되나요?', tag + '요청 꼴 { channel, text }', JSON.stringify(sent && sent.body));
             ok(/오늘 남은 미리보기 96번/.test(await txt(page, '#rv-foot')), tag + '남은 횟수 줄어듦');
@@ -89,6 +90,10 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             // 가격 즉답 · 넘김 · 오류 · 상한 · 준비 중
             await post('/__mock/set', { rv: { next: 'price' } }); await ask(page, '5kg 얼마예요?'); ms = await logMsgs(page);
             ok(/가격 바로 답\(AI 없이\)/.test(ms[ms.length - 1].t), tag + '가격 즉답 표시');
+            ok(!/실제 답과 조금 다를/.test(ms[ms.length - 1].t), tag + '#1110-4b 톡톡 아닌 채널 = 그 안내 줄 없음');
+            await page.evaluate(() => window.rvSetPch('sms')); await post('/__mock/set', { rv: { next: 'smsrule' } }); await ask(page, '귤이 물러서 왔어요'); ms = await logMsgs(page);
+            ok(/정해 둔 글\(AI 없이\)/.test(ms[ms.length - 1].t) && !/쓴 재료 표시 없음/.test(ms[ms.length - 1].t) && /정해 둔 <b>사과<\/b> 초안이 먼저예요/.test(ms[ms.length - 1].t) && await page.evaluate(() => { const last = Array.from(document.querySelectorAll('#rv-log .rv-msg.bot')).pop(); return !!last.querySelector('.rv-note') && !last.querySelector('.rv-note b'); }), tag + '#1110-4b 문자 불만 = 「정해 둔 글(AI 없이)」 + 안내 줄(글자 그대로)', JSON.stringify(ms[ms.length - 1]));
+            await page.evaluate(() => window.rvSetPch('qna'));
             await post('/__mock/set', { rv: { next: 'skip' } }); await ask(page, '감사합니다'); ms = await logMsgs(page);
             ok(ms[ms.length - 1].cls === 'skip' && /봇이 답하지 않아요/.test(ms[ms.length - 1].t) && /답변 재료에서 글 추가하기/.test(ms[ms.length - 1].t), tag + '넘김 = 호박 띠 + 재료 추가 링크', JSON.stringify(ms[ms.length - 1]));
             await post('/__mock/set', { rv: { next: 'err' } }); await ask(page, '오류 나는 글'); ms = await logMsgs(page);

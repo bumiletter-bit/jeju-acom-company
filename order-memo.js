@@ -993,6 +993,87 @@ function mount(app, deps) {
     }
     if (PRE_MOD && typeof PRE_MOD.setRowsHook === 'function') PRE_MOD.setRowsHook(preHook);
 
+    // ── #1108-(d)(대표 11/11 「사람 확인 후 저장으로 우선」 · 「수취인으로도 되도록 · 우리 DB 있으니 찾아서」) 창구 → 발주 메모함 「확인 대기 줄」 ──────────────
+    //   POST /api/order-memo/desk(로그인 없음 · 토큰 = 설정 order_memo_desk {enabled, token} · 꺼짐·없음 503 · 틀림 401 · 기본 꺼짐) · 창구 도구 scripts/desk/memo-add.js
+    //   items = [{ type: 'size'|'gwa'|'date'|'sender', value, phone?, name?, order_no?, plat?, text? }] · dry = 판정만(저장 0)
+    //   찾기 = 발송 전 주문 표(order_memo_preorders · 7일)에서 번호(구매자·받는 분)·이름(구매자·받는 분 · 정확히 같을 때)·주문번호로 → 구매자 하나로 좁혀질 때만
+    //     줄 열쇠 = 그 주문의 구매자 번호(없으면 = 선물하기 = 상품주문번호 · #1038 꼴) · 받는 분 번호·이름으로 찾았으면 checked.from_recv(화면 #1061-b ③ 과 같은 뜻)
+    //     0건 = not_found · 구매자 둘↑ = multi(후보만 돌려줌 · 넣지 않음 = 오매칭 > 미매칭) · 사이즈 = 가정용 로얄과 · 과수 = 선물용 만감류(LB_ROYAL·LB_GWA · 화면과 같은 판정) 아니면 not_allowed
+    //   넣는 줄 = 「확인」 줄(sure false · check_why 끝에 「에이전트가 넣음 · 확인 필요」 · src 'desk') = 최종발주 for-ship 의 held(자동으로 안 들어감) · 사람이 메모함에서 [고친 대로 저장] = PUT 이 다시 판정(src 'edit')
+    //   🔴 입력삭제·현금 주소 줄은 범위 밖(사람만) · 화면 저장 길(POST /api/order-memo) 무접촉
+    const DESK_TYPES = { size: 1, gwa: 1, date: 1, sender: 1 };
+    const DESK_MARK = '에이전트가 넣음 · 확인 필요';
+    const telOf = d => { const x = dg(d); return x.length === 11 ? x.slice(0, 3) + '-' + x.slice(3, 7) + '-' + x.slice(7) : x.length === 10 ? (x.startsWith('02') ? x.slice(0, 2) + '-' + x.slice(2, 6) + '-' + x.slice(6) : x.slice(0, 3) + '-' + x.slice(3, 6) + '-' + x.slice(6)) : x; };
+    async function deskCfg() { const v = cfgGet ? await cfgGet('order_memo_desk') : null; return v && typeof v === 'object' ? v : null; }
+    function deskNote(it) {   // 화면 꼬리표가 만드는 글과 같은 꼴
+        const v = s(it.value, 60).trim();
+        if (it.type === 'size') { const m = v.toUpperCase().match(/^(2S|S|M|L|2L)\b/); return m ? m[1] + '사이즈' : ''; }
+        if (it.type === 'gwa') { const m = v.match(/^(\d{1,2})\s*과?/); return m ? m[1] + '과로!' : ''; }
+        if (it.type === 'date') return isDay(v) ? (Number(v.slice(5, 7)) + '/' + Number(v.slice(8, 10)) + ' 발송') : '';
+        if (it.type === 'sender') { const n = v.replace(/\s*드림\s*$/, '').trim(); return n && n.length <= 20 ? '보내는이 ' + n + ' 드림' : ''; }
+        return '';
+    }
+    async function deskResolve(it, ctx) {
+        const out = { type: it.type, ok: false };
+        if (!DESK_TYPES[it.type]) return Object.assign(out, { why: 'bad_type', message: '종류는 사이즈·과수·발송일·보내는 이 중 하나예요' });
+        const note = deskNote(it); if (!note) return Object.assign(out, { why: 'bad_value', message: '값을 읽지 못했어요(사이즈 2S·S·M · 과수 숫자 · 발송일 YYYY-MM-DD · 보내는 이 이름)' });
+        const ph = PRE_LK ? PRE_LK.normalizePhone(it.phone || '') : dg(it.phone), phone = /^0\d{8,11}$/.test(ph) ? ph : '';
+        const name = s(it.name, 30).replace(/\s+/g, '').trim(), ono = dg(it.order_no);
+        if (!phone && !name && !(ono.length >= 10)) return Object.assign(out, { why: 'no_key', message: '번호·이름·주문번호 중 하나가 있어야 찾을 수 있어요' });
+        const cond = [], args = [];
+        if (phone) { args.push(phone); cond.push(`(buyer_digits = $${args.length} OR recv_digits = $${args.length})`); }
+        if (ono.length >= 10) { args.push(ono); cond.push(`(split_part(order_key, '|', 1) = $${args.length} OR product_order_no = $${args.length})`); }
+        if (name) { args.push(name); cond.push(`(replace(COALESCE(buyer_name, ''), ' ', '') = $${args.length} OR replace(COALESCE(recv_name, ''), ' ', '') = $${args.length})`); }
+        let rows = [];
+        try { rows = (await pool.query(`SELECT channel, order_key, product_order_no, buyer_name, buyer_digits, recv_name, recv_digits, option_text, qty, to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'MM-DD') AS paid
+            FROM order_memo_preorders WHERE miss = 0 AND ${cond.join(' AND ')} ORDER BY paid_at DESC NULLS LAST LIMIT 30`, args)).rows; }
+        catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+        const plat = PLAT_CH[s(it.plat, 10).trim()] || null; if (plat) rows = rows.filter(r => r.channel === plat);
+        const brief = r => ({ plat: CH_PLAT[r.channel] || r.channel, option: s(r.option_text, 60), qty: r.qty || null, paid: r.paid || null, buyer: r.buyer_name ? r.buyer_name.slice(0, 1) + '○' : null, recv: r.recv_name ? r.recv_name.slice(0, 1) + '○' : null });
+        if (!rows.length) return Object.assign(out, { why: 'not_found', message: '발송 전 주문(7일)에서 못 찾았어요 — 번호·이름을 다시 확인해 주세요' });
+        const who = r => r.buyer_digits ? 'b:' + r.buyer_digits : 'p:' + (r.product_order_no || r.order_key);
+        const ids = [...new Set(rows.map(who))];
+        if (ids.length > 1) return Object.assign(out, { why: 'multi', message: '주문한 분이 둘 이상이라 넣지 않았어요 — 번호·판매처로 좁혀 주세요', candidates: rows.slice(0, 6).map(brief) });
+        const mine = rows, r0 = mine[0];
+        if (it.type === 'size' && !mine.some(r => LB_ROYAL(r.option_text, ctx.catalog))) return Object.assign(out, { why: 'not_allowed', message: '사이즈 지정은 가정용 로얄과만 돼요', candidates: mine.slice(0, 3).map(brief) });
+        if (it.type === 'gwa' && !mine.some(r => LB_GWA(r.option_text, ctx.catalog))) return Object.assign(out, { why: 'not_allowed', message: '과수 지정은 선물용 만감류만 돼요', candidates: mine.slice(0, 3).map(brief) });
+        const asBuyer = !!r0.buyer_digits, viaRecv = (phone && !mine.some(r => r.buyer_digits === phone)) || (!phone && name && !mine.some(r => String(r.buyer_name || '').replace(/\s+/g, '') === name));
+        const key = asBuyer ? telOf(r0.buyer_digits) : String(r0.product_order_no || String(r0.order_key || '').split('|')[0]);
+        const checked = Object.assign({ plat: CH_PLAT[r0.channel] || '', as: asBuyer ? 'buyer' : 'order', at: new Date().toISOString(), desk: true }, asBuyer ? {} : { pno: key }, viaRecv ? { from_recv: true } : {});
+        return Object.assign(out, { ok: true, key, plat: CH_PLAT[r0.channel] || '', note, ship_date: it.type === 'date' ? s(it.value, 10) : null, checked, orders: mine.length, via: phone ? (viaRecv ? 'recv_phone' : 'buyer_phone') : ono.length >= 10 ? 'order_no' : (viaRecv ? 'recv_name' : 'buyer_name'), sample: brief(r0) });
+    }
+    app.post('/api/order-memo/desk', wrap(async (req, res) => {
+        const c = await deskCfg();
+        if (!c || c.enabled !== true || !c.token) return res.status(503).json({ ok: false, error: '창구 메모함 길이 꺼져 있어요(설정 order_memo_desk)' });
+        const got = String(req.headers['x-desk-token'] || '');
+        const a = Buffer.from(got), b = Buffer.from(String(c.token));
+        if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) return res.status(401).json({ ok: false, error: '토큰이 틀렸어요' });
+        const items = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 20) : [];
+        if (!items.length) throw err(400, '넣을 것이 없어요');
+        const dry = !(req.body && req.body.dry === false), by = s(req.body && req.body.by, 60).trim() || '창구 → 메모함';
+        const ctx = await ctxOf(), results = [];
+        for (const it of items) results.push(await deskResolve(it || {}, ctx));
+        const good = results.filter(x => x.ok);
+        if (dry || !good.length) return res.json({ ok: true, dry, saved: 0, results });
+        // 공개 주소 = 하루 상한(설정 order_memo_desk.daily_max · 기본 200줄 · KST 오늘 창구가 넣은 줄 수 · 판정만(dry)은 안 셈)
+        const dmax = Number.isInteger(Number(c.daily_max)) && Number(c.daily_max) > 0 ? Number(c.daily_max) : 200;
+        const usedToday = Number((await pool.query(`SELECT count(*)::int AS n FROM order_memo_rows r JOIN order_memo_entries e ON e.id = r.entry_id WHERE e.source = 'desk' AND e.created_at >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date::timestamp AT TIME ZONE 'Asia/Seoul')`)).rows[0].n);
+        if (usedToday + good.length > dmax) return res.status(429).json({ ok: false, error: `오늘 창구가 넣을 수 있는 줄(${dmax}줄)을 넘어요 · 오늘 ${usedToday}줄 넣음`, used_today: usedToday, daily_max: dmax, results });
+        const rows = good.map(x => { const r = checkMarked({ kind: 'line', key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date, src: 'edit', _bad: [] }, ctx);
+            return Object.assign(r, { sure: false, check_why: (r.check_why || []).filter(w => w !== DESK_MARK).concat(DESK_MARK), src: 'desk', checked: x.checked }); });
+        const raw = s(req.body && req.body.text, MAX_RAW).trim() || items.map(it => [it.type, it.value, it.phone ? '…' + dg(it.phone).slice(-4) : '', it.name || ''].filter(Boolean).join(' ')).join('\n');
+        const client = await pool.connect(); let entryId = null; const saved = [];
+        try {
+            await client.query('BEGIN');
+            entryId = (await client.query(`INSERT INTO order_memo_entries (created_by, created_by_id, raw, tags, source) VALUES ($1, NULL, $2, $3, 'desk') RETURNING id`, [by, raw, [...new Set(good.map(x => x.type === 'gwa' ? 'size' : x.type))].filter(t => /^(size|date|sender)$/.test(t))])).rows[0].id;
+            for (const r of rows) saved.push((await client.query(`INSERT INTO order_memo_rows (entry_id, kind, ship_date, line_key, note, plat, line, cells, sure, check_why, src, updated_by, checked)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ROW_COLS}`, [entryId, ...saveVals(r), by, JSON.stringify(r.checked)])).rows[0]);
+            await client.query('COMMIT');
+        } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+        await writeAudit({ action: 'create', targetType: 'order_memo', targetId: entryId, changes: { after: { rows: saved.length, desk: true, types: good.map(x => x.type) } }, source: 'order_memo', actor: { id: null, name: by, source: 'order_memo' } }).catch(() => {});
+        res.json({ ok: true, dry: false, saved: saved.length, entry_id: entryId, rows: saved.map(rowOut), results });
+    }));
+
     app.get('/api/order-memo/for-ship', authMiddleware, wrap(async (req, res) => {
         const date = String(req.query.date || '');
         if (!isDay(date)) throw err(400, '기준 발송일(date=YYYY-MM-DD)이 없어요');

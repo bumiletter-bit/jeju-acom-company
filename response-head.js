@@ -177,8 +177,26 @@ module.exports = function mountResponseHead(app, deps) {
         return { status: 200, body: { ok: true, skip: false, answer: clip(j.answer, 6000), source: j.source === 'price_direct' ? 'price_direct' : 'ai',
             scenario_nos: (Array.isArray(j.scenario_nos) ? j.scenario_nos : []).map(x => clip(x, 12)).slice(0, 12), scenario_names: (Array.isArray(j.scenario_names) ? j.scenario_names : []).map(x => clip(x, 80)).slice(0, 12) } };
     }
+    // #1110-4b 문자 불만 글 = 실제 흐름(sms/index.js 499~508)처럼 AI 전에 정해 둔 글 먼저 · 순수 함수만 씀(주문 조회·DB·AI 0)
+    //   주문을 찾았을 때 = rules.claimText(#1065 대표 확정 글) · 그 글이 없는 불만(미도착·누락…) = 찾으면 직원 몫 → 못 찾았을 때 글(#1077)만 보여 줌
+    function smsClaim(text) {
+        let cls, rules, safe = null;
+        try { cls = require('./sms/classify.js'); rules = require('./sms/rules.js'); } catch (e) { return null; }
+        try { safe = require('./sms/sms-safe.js'); } catch (e) { safe = null; }
+        let bucket = null; try { bucket = (cls.classify(text, { from: '01000000000' }) || {}).bucket; } catch (e) { return null; }
+        if (bucket !== 'claim' || typeof rules.claimText !== 'function') return null;
+        const fix = t => clip((safe && typeof safe.smsSafe === 'function') ? safe.smsSafe(t) : t, 6000);
+        let ct = null, nf = null;
+        try { ct = rules.claimText({ text }); nf = typeof rules.notFoundText === 'function' ? rules.notFoundText({ claim: true, text }) : null; } catch (e) { return null; }
+        if (ct) return { status: 200, refund: true, body: { ok: true, skip: false, answer: fix(ct), source: 'sms_rule', scenario_nos: [], scenario_names: [],
+            note: '불만 글은 AI 없이 정해 둔 사과 초안이 먼저예요(주문을 찾았을 때 · 그 대화에 한 번만 · 직원이 보고 보냄). 보낸 번호로 주문을 못 찾으면 사과 뒤 주문하신 분·받는 분 성함을 묻는 글이 대신 나와요.' } };
+        if (nf) return { status: 200, refund: true, body: { ok: true, skip: false, answer: fix(nf), source: 'sms_rule', scenario_nos: [], scenario_names: [],
+            note: '이런 불만(미도착·누락 등)은 주문을 찾으면 봇 글 없이 직원 몫이에요. 위 글은 보낸 번호로 주문을 못 찾았을 때만 나오는 초안이에요.' } };
+        return { status: 200, refund: true, body: { ok: true, skip: true, why: 'to_staff', why_text: '불만 글이라 봇이 답하지 않아요 → 실제로는 직원 몫' } };
+    }
     async function viaEngine(channel, text, item) {
         let g = null;
+        if (channel === 'sms') { const pre = smsClaim(text); if (pre) return pre; }
         if (channel === 'inquiry') { if (typeof deps.inquiryGenerate !== 'function') return { status: 503, body: { ok: false, code: 'no_engine', error: '고객문의 미리보기 길이 꺼져 있어요' }, refund: true }; g = await deps.inquiryGenerate({ title: '', content: text, product_name: item || '' }); }
         else { if (typeof deps.qnaGenerate !== 'function') return { status: 503, body: { ok: false, code: 'no_engine', error: '미리보기 길이 꺼져 있어요' }, refund: true }; g = channel === 'sms' ? await deps.qnaGenerate(text, null, undefined, 'sms') : await deps.qnaGenerate(text, item || null); }
         let answer = g && String(g.answer || '').trim();

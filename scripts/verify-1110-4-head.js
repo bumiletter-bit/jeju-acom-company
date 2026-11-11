@@ -98,8 +98,22 @@ const row = (id, o) => Object.assign({ id, message: '질문', answered: false, b
     // 문자
     W.genOut = { answer: '안녕하세요 고객님 ^^\n오전 8시 이전 주문은 당일 발송입니다.', used: [] }; r = await P({ channel: 'sms', text: '언제 와요' });
     ok(r.body.skip === false && JSON.stringify(W.gen) === JSON.stringify(['언제 와요', null, null, 'sms'].map((x, i) => i === 2 ? undefined : x)) || (W.gen[3] === 'sms' && W.gen[1] === null), '문자 = qnaGenerate(글, null, undefined, "sms")', W.gen);
-    W.genOut = { answer: '[사람] 파손 불만', used: [] }; r = await P({ channel: 'sms', text: '물렀어요' });
+    W.genOut = { answer: '[사람] 파손 불만', used: [] }; r = await P({ channel: 'sms', text: '이 건은 어떻게 처리되나요' });
     ok(r.body.skip === true && r.body.why === 'to_staff' && /파손 불만/.test(r.body.why_text), '문자 [사람] 줄 = 넘김(to_staff)', r.body);
+    // #1110-4b 문자 불만 글 = AI 전에 정해 둔 글(실제 흐름과 같게)
+    {
+        const rules = require('../sms/rules.js'); let safe = t => t; try { safe = require('../sms/sms-safe.js').smsSafe || safe; } catch (e) { /* 없으면 그대로 */ }
+        W.gen = null; const left0 = (await P({ channel: 'qna', text: 'x' })).body.left_today; W.gen = null;
+        r = await P({ channel: 'sms', text: '귤이 물러서 왔어요' });
+        ok(r.code === 200 && r.body.skip === false && r.body.source === 'sms_rule' && r.body.answer === safe(rules.claimText({ text: '귤이 물러서 왔어요' })) && /무른 게 나오셨군요/.test(r.body.answer), '문자 불만(상태 낱말) = claimText 글 그대로', r.body);
+        ok(W.gen === null && /주문을 못 찾으면/.test(r.body.note || '') && r.body.left_today === left0, '불만 글 = AI 안 부름 · 안내 줄 · 하루 횟수 안 깎임', [W.gen, r.body.left_today, left0]);
+        r = await P({ channel: 'sms', text: '아직도 안 왔어요 환불해 주세요' });
+        ok(rules.claimText({ text: '아직도 안 왔어요 환불해 주세요' }) === null && r.body.skip === false && r.body.source === 'sms_rule' && r.body.answer === safe(rules.notFoundText({ claim: true, text: '아직도 안 왔어요 환불해 주세요' })) && /직원 몫/.test(r.body.note || '') && W.gen === null, '문자 불만(미도착) = 못 찾았을 때 글 + 「찾으면 직원 몫」 안내 · AI 0', r.body);
+        r = await P({ channel: 'sms', text: '(광고) 무료수신거부 귤이 물러서 왔어요' });
+        ok(r.body.source === 'sms_rule' && W.gen === null, '광고 낱말 + 불만 낱말 = 실제 문자처럼 불만 갈래(번호 꼴 넘김)', r.body);
+        r = await P({ channel: 'sms', text: '파손 없이 잘 받았습니다 감사합니다' });
+        ok(r.body.source !== 'sms_rule', '불만 아닌 글(「파손 없이 잘 받았습니다」) = 정해 둔 글 안 나옴', r.body);
+    }
     W.genOut = { answer: '담당자가 확인 후 연락드리겠습니다.', used: [] }; r = await P({ channel: 'sms', text: 'x' });
     ok(r.body.skip === true, '문자 넘기기 문장만 남으면 넘김', r.body); W.genOut = undefined;
     // 톡톡(톡톡봇 대리)

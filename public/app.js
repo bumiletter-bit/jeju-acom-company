@@ -14130,8 +14130,9 @@ function rvDrawLog() {
         if (m.state === 'skip') return `<div class="rv-msg skip"><b>봇이 답하지 않아요</b> · ${escapeHtml(m.text)}${m.why === 'no_material' ? `<div class="rv-meta"><button type="button" class="rv-link" onclick="switchInquiryTab('scenario')">답변 재료에서 글 추가하기</button></div>` : ''}</div>`;
         if (m.state === 'err') return `<div class="rv-msg err">${escapeHtml(m.text)}${m.retry != null ? `<div class="rv-meta"><button type="button" class="rv-link" data-rv-retry="${m.retry}">다시 물어보기</button></div>` : ''}</div>`;
         const links = (m.nos || []).map((no, k) => { const s = map['#' + no]; const label = '시나리오 ' + escapeHtml(String(no)); return s ? `<button type="button" class="rv-link" onclick="gotoScenario(${s.id})" title="${escapeHtml(s.name)} · 누르면 이 글을 고쳐요">${label}</button>` : `<span title="${escapeHtml((m.names || [])[k] || '')}">${label}</span>`; });
-        const meta = [chName[m.ch] || '', m.source === 'price_direct' ? '가격 바로 답(AI 없이)' : '', links.length ? '쓴 재료: ' + links.join(' · ') : '쓴 재료 표시 없음', m.ms ? (Math.round(m.ms / 100) / 10) + '초' : ''].filter(Boolean).join(' · ');
-        return `<div class="rv-msg bot">${escapeHtml(m.text)}<div class="rv-meta">${meta}</div></div>`;
+        const meta = [chName[m.ch] || '', m.source === 'price_direct' ? '가격 바로 답(AI 없이)' : '', m.source === 'sms_rule' ? '정해 둔 글(AI 없이)' : links.length ? '쓴 재료: ' + links.join(' · ') : '쓴 재료 표시 없음', m.ms ? (Math.round(m.ms / 100) / 10) + '초' : ''].filter(Boolean).join(' · ');
+        const note = m.note || (m.ch === 'talk' ? '실제 답과 조금 다를 수 있어요(사진 요청 줄 생략 등).' : '');   // #1110-4b
+        return `<div class="rv-msg bot">${escapeHtml(m.text)}<div class="rv-meta">${meta}</div>${note ? `<div class="rv-meta rv-note">${escapeHtml(note)}</div>` : ''}</div>`;
     }).join('');
     el.scrollTop = el.scrollHeight;
 }
@@ -14157,7 +14158,7 @@ async function rvAsk(text, retry) {
     const myIdx = RV.log.indexOf(slot);
     const qIdx = (() => { for (let i = myIdx - 1; i >= 0; i--) if (RV.log[i].who === 'me') return i; return null; })();
     if (j && j.left_today !== undefined) { RV.left = j.left_today; RV.cap = j.cap; }
-    if (status === 200 && j && j.ok && !j.skip) Object.assign(slot, { state: 'ok', text: String(j.answer || ''), nos: j.scenario_nos || [], names: j.scenario_names || [], source: j.source, ms: j.ms });
+    if (status === 200 && j && j.ok && !j.skip) Object.assign(slot, { state: 'ok', text: String(j.answer || ''), nos: j.scenario_nos || [], names: j.scenario_names || [], source: j.source, ms: j.ms, note: j.note ? String(j.note).slice(0, 300) : '' });
     else if (status === 200 && j && j.ok && j.skip) Object.assign(slot, { state: 'skip', text: String(j.why_text || '봇이 답하지 않고 넘겨요 → 실제로는 직원 몫'), why: j.why });
     else {
         const code = j && j.code;

@@ -16173,7 +16173,8 @@ app.get('/api/agent-office/today-reminders', authMiddleware, /* 직원 가능 (�
 app.get('/api/agent-office/config', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(`SELECT key, value, updated_at FROM agent_office_config ORDER BY key`);
-        res.json({ config: Object.fromEntries(r.rows.map(row => [row.key, row.key === 'experience_auto' && row.value && typeof row.value === 'object' ? { ...row.value, token: row.value.token ? '***' : '' } : row.value])) });   // #1040 체험 자동 입력 토큰은 화면에 안 냄
+        const HIDE = { experience_auto: 'token', order_memo_desk: 'token', webpush_vapid: 'privateKey', tax_invoice: 'pdf_password' };   // #1040·#765 비밀 칸은 응답에 안 냄(읽어 다시 저장하는 화면·도구 없음 · 쓰는 곳은 DB 를 바로 읽음)
+        res.json({ config: Object.fromEntries(r.rows.map(row => { const f = HIDE[row.key], v = row.value; return [row.key, f && v && typeof v === 'object' && !Array.isArray(v) ? { ...v, [f]: v[f] ? '***' : '' } : v]; })) });
     } catch (err) { handleAdminErr(res, err); }
 });
 

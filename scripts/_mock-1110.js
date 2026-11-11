@@ -79,6 +79,7 @@ http.createServer(async (req, res) => {
             ST.rv.used++;
             if (kind === 'skip') return json(res, 200, Object.assign({ ok: true, channel: body.channel, skip: true, why: 'no_material', why_text: '봇이 답하지 않고 넘겨요(재료로 답할 수 없거나 확신 없음) → 실제로는 직원 몫', ms: 900 }, left()));
             if (kind === 'price') return json(res, 200, Object.assign({ ok: true, channel: body.channel, skip: false, answer: '🍊 타이벡감귤 가정용 3kg — 19,800원', source: 'price_direct', scenario_nos: ['2'], scenario_names: ['상품 파손/불량'], ms: 40 }, left()));
+            if (kind === 'smsrule') return json(res, 200, Object.assign({ ok: true, channel: body.channel, skip: false, answer: '고객님, 불편드려 죄송합니다.', source: 'sms_rule', scenario_nos: [], scenario_names: [], note: '불만 글은 AI 없이 정해 둔 <b>사과</b> 초안이 먼저예요', ms: 3 }, left()));
             if (kind === 'two') return json(res, 200, Object.assign({ ok: true, channel: body.channel, skip: false, answer: '네 고객님 <b>굵게</b> 아님 & 그대로' + String.fromCharCode(10) + '둘째 줄', source: 'ai', scenario_nos: ['16', '99'], scenario_names: ['사이즈 지정(감귤·만감류 전용)', '없는 시나리오'], ms: 5300 }, left()));
             return json(res, 200, Object.assign({ ok: true, channel: body.channel, skip: false, answer: '[' + body.channel + '] ' + String(body.text).slice(0, 40) + ' 에 대한 답이에요.', source: 'ai', scenario_nos: ['16'], scenario_names: ['사이즈 지정(감귤·만감류 전용)'], ms: 2100 }, left()));
         }
