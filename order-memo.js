@@ -419,10 +419,19 @@ function pickForShip(rows, date) {
       for (const r of rows) { if (r.state !== 'open' || r.kind !== 'cash' || !r.sure || !r.checked || !isDay(r.checked.split_done) || !(r.checked.split_done < date) || /[!！]/.test(String((r.cells || [])[0] || ''))) continue; const k = dg(r.cells && r.cells[10]); if (!k || have.has(k) || k !== dg(r.checked.k)) continue;
           const sd = r.ship_date ? String(r.ship_date).slice(0, 10) : null, g = m.get(k) || m.set(k, { id: null, k, date: r.checked.split_done, later: 0, later_date: null }).get(k); if (sd && sd > date) { g.later += Math.max(0, parseInt(r.cells[5], 10) || 0); if (!g.later_date || sd < g.later_date) g.later_date = sd; } }
       m.forEach(v => splitSent.push(v)); }
+    // #1133(대표 11/12 실사고 2507) 뒤 날짜 박스별 줄(#1027 고객정보수정 ⓑ)은 메모 칸 밖이라 그 주문을 오늘 막는 건 ⓐ 날짜 줄(주문번호 키 「M/D 발송」)뿐 → ⓐ 를 지우면 주문이 오늘 나감
+    //   ⓐ 같은 주문번호의 열린 날짜 줄이 없으면 그 꼴 한 줄을 메모 칸에 대신 넣음(id 없음 = 「오늘 씀」 안 찍힘 · 저장값 0) → v2 가 종전 날짜 줄과 같은 길로 오늘 hold
+    for (const w of boxWait) {
+        const r = rows.find(x => x.id === w.id), c = r && (r.checked || {}), pno = c && /^[\d-]{8,40}$/.test(String(c.pno || '').trim()) ? String(c.pno).trim() : '';
+        if (!pno || r.state !== 'open') continue;
+        if (rows.some(x => x.state === 'open' && x.kind === 'line' && !isBoxRow(x) && dg(x.line_key) === dg(pno) && x.ship_date && String(x.ship_date).slice(0, 10) === w.ship_date)) continue;
+        const plat = String(r.plat || c.plat || '').trim(), mdw = md(w.ship_date);
+        lines.push({ id: null, line: [mdw, pno, mdw + ' 발송', plat].filter(Boolean).join('\t'), ship_date: w.ship_date, checked: { plat: plat || '네이버', as: 'order', at: c.at || null, buyer: c.buyer || null, pno }, state: 'wait', box_hold: w.id });
+    }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
         cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
         cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
-        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, split_sent: splitSent, ids: lines.map(l => l.id).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
+        waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, split_sent: splitSent, ids: lines.map(l => l.id).filter(id => id != null).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
 }
 // 비우기 대상(순수): used_on = date 인 열린 줄 · 미래 날짜 메모 줄은 남김 · all = 열린 줄 전부
 function pickClear(rows, date, all) {
@@ -1121,7 +1130,7 @@ function mount(app, deps) {
         const date = String(req.query.date || '');
         if (!isDay(date)) throw err(400, '기준 발송일(date=YYYY-MM-DD)이 없어요');
         const rows = (await pool.query(`SELECT ${ROW_COLS} FROM order_memo_rows WHERE state = 'open' ORDER BY entry_id, id`)).rows;
-        if (req.query.sm !== '1') { const x = pickForShip(rows.filter(r => !shipMemoOf(r) && !isBoxRow(r)), date); delete x.ship_memos; delete x.ship_memo_wait; delete x.normal_orders; delete x.box_rows; delete x.box_wait; return res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, x)); }   // #955 옛 화면·중간발주 = 배송메모 줄 모름(종전 응답 그대로 · 「오늘 씀」 안 찍힘)
+        if (req.query.sm !== '1') { const x = pickForShip(rows.filter(r => !shipMemoOf(r)), date);   /* #1133 박스별 줄도 넘김 = 뒤 날짜 박스별 줄의 대신 날짜 줄(메모 칸)이 중간발주에도 · box_rows·box_wait 칸은 아래에서 지워 종전 응답 꼴 그대로 */ delete x.ship_memos; delete x.ship_memo_wait; delete x.normal_orders; delete x.box_rows; delete x.box_wait; return res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, x)); }   // #955 옛 화면·중간발주 = 배송메모 줄 모름(종전 응답 그대로 · 「오늘 씀」 안 찍힘)
         res.json(Object.assign({ ok: true, keep_days: (await cfg()).keep_days }, pickForShip(rows, date)));   // #905 keep_days = 화면 「n일 동안 되살림」 글
     }));
 
