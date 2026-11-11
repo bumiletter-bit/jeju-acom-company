@@ -32,6 +32,20 @@ function pxList() {
         { id: 140, created_at: today, source: 'manual', rows: [cash(201, '홍길동 드림', PXL, '주소줄손님', CAT[0], 1, '010-3300-0001', PXL, '서울 송파구 올림픽로 1', { pair_orig: S.pxOrig ? { a: '홍길동 드림!', b: '010-1234-8247', k: '010-1234-8247', d: null, ab: PXL, ad: null } : null, indiv: true }), cash(202, '서비스!', '', '서비스손님', CAT[0], 1, '010-3300-0002', '010-3300-0002', '서울 마포구 월드컵로 2', { service: true }), cash(203, '박민수 드림!', '010-8800-1234', '최수아', CAT[0], 2, '010-8800-1234', '010-8800-1234', '서울 강남구 테헤란로 1')] },
         { id: 128, created_at: yest, source: 'manual', raw: PXL + ' 입력o삭제x 네이버', rows: [Object.assign({ id: 190, kind: 'line', state: 'open', sure: true, check_why: [], key: PXL, note: '입력o삭제x', plat: '네이버', line: ['', PXL, '입력o삭제x', '네이버'].join('\t') }, S.badges[190] ? { badge: S.badges[190] } : {})] },
     ].concat(S.lines938 ? [{ id: 141, created_at: today, source: 'manual', raw: '', rows: [Object.assign({ badge: S.badges[310] || undefined }, { id: 310, kind: 'line', state: 'open', sure: true, check_why: [], key: '9000000001', note: '입력o삭제x', plat: '네이버', line: ['', '9000000001', '입력o삭제x', '네이버'].join('\t'), checked: { plat: '네이버', as: 'order', at: '2026-11-01T03:00:00.000Z', buyer: PXL } }), { id: 311, kind: 'line', state: 'open', sure: true, check_why: [], key: '9000000002', note: '입력o삭제x', plat: S.linesPlat311 || '네이버', line: ['', '9000000002', '입력o삭제x', S.linesPlat311 || '네이버'].join('\t'), checked: { plat: '네이버', as: 'order', at: '2026-11-01T03:00:00.000Z', buyer: PXL } }] }] : []).concat(S.px2 ? [{ id: 131, created_at: today, source: 'manual', raw: PXK + ' 입력o삭제x 네이버', rows: [{ id: 195, kind: 'line', state: 'open', sure: true, check_why: [], key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t') }] }] : []);
+    if (S.shot1132) {   // #1132 캡처용 줄 한 벌(SHOT1132 폴더 줄 때만 · 그 밖 검증 무관)
+        const D = '2026-12-15', L = (id, key, note, plat, sd, more) => Object.assign({ id, kind: 'line', state: 'open', sure: true, check_why: [], key, note, plat, ship_date: sd || null, line: [sd ? (+sd.slice(5, 7)) + '/' + (+sd.slice(8, 10)) : '', key, note, plat].join('\t') }, more || {});
+        const ib = (st, x) => Object.assign({ m: 3, n: 3, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: st }, x || {});
+        ents.push({ id: 150, created_at: today, source: 'manual', rows: [
+            L(401, '010-1111-0001', '입력o삭제x', '네이버', null, { badge: ib('ok') }),
+            L(402, '010-1111-0002', '입력o삭제x', '네이버', null, { badge: ib('short', { n: 2 }) }),
+            L(403, '010-1111-8480', '입력o삭제x', '자사몰', D, { badge: ib('personal', { m: 1, n: 3, later: 60, later_date: D, ship_now: true }) }),
+            L(404, '010-1111-0004', '입력o삭제x', '네이버', D, { badge: ib('sent_split', { m: null, n: 0, later: 60, later_date: D }) }),
+            L(405, '010-1111-0005', '박스별 2박스 · 박스1=S · 박스2=S(받는 분 바꿈)', '네이버', D, { boxes: [{ t: 'S' }, { t: 'S', n: '홍길동' }], badge: { kind: 'line', state: 'ok', t: '주문수정 2박스', why: '', type: 'box' } }),
+            L(406, '010-1111-0006', 'S사이즈로', '네이버', null, { badge: { kind: 'line', state: 'ok', t: '매칭완료', why: '', type: 'size' } }),
+            L(407, '010-1111-0007', '보내는이 홍길동', '쿠팡', D, { badge: { kind: 'line', state: 'ok', t: '매칭완료', why: '', type: 'other' } }),
+            L(408, '2026111200000001', '입력o삭제x', '네이버', null, { badge: ib('ok', { m: 2, n: 2 }), checked: { plat: '네이버', as: 'order', at: '2026-11-11T03:00:00.000Z' } }),
+        ] });
+    }
     if (S.px3) ents[0].rows = ents[0].rows.map(r => r.id === 193 ? cash(193, '이형주 드림', PXO, '김보은', CAT[1], 1, '010-4787-4217', PXK, '충남 보령시 동대동 8', Object.assign({ indiv: true }, S.px3Later ? { ship_date: '2026-12-31' } : {})) : r);   // #935 193 = 「풀림」(「!」 없음 · K 3292 · 그 번호 입력삭제 줄 없음 = 11/1 12:26 실사례 꼴)
     ents.forEach(e => { e.rows = e.rows.filter(r => !S.deleted.has(r.id)); });   // #935 가짜 DELETE 반영
     return { ok: true, ship_date: SHIP, keep_days: 15, counts: {}, entries: ents };
@@ -95,6 +109,19 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
         if (phone) await pg.click('#om-prev-open');
         return t;
     };
+    if (process.env.SHOT1132) {   // #1132 목록 알약 캡처만(390·720·1280 밝음 + 390 야간) · 넘침 확인 · 다른 검증 건너뜀
+        S.shot1132 = true; S.px = true; let bad = 0;
+        for (const [w, h, dark] of [[390, 844, false], [720, 900, false], [1280, 900, false], [390, 844, true]]) {
+            const c = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: w < 721, isMobile: w < 721 }); const p = await c.newPage(); const pe = []; p.on('pageerror', e => pe.push(String(e)));
+            await openMemo(p, 'new', 4, 1); await jusoQuiet(); if (dark) await p.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark'));
+            await p.waitForTimeout(300);
+            const st = await p.evaluate(() => { const L = document.getElementById('om-list'), r = L.getBoundingClientRect(); const over = [...L.querySelectorAll('.om-ml-h .om-pill')].filter(e => e.getBoundingClientRect().right > r.right + 0.5).length; return { over, sw: document.documentElement.scrollWidth, rows: [...L.querySelectorAll('.om-ml')].map(li => [...li.querySelectorAll('.om-ml-h .om-pill')].map(e => e.textContent.trim()).join(' | ') + ' ⟶ ' + (li.querySelector('.om-ml-l') || {}).textContent) }; });
+            await p.locator('#om-list').screenshot({ path: path.join(process.env.SHOT1132, 'list1132-' + w + (dark ? '-dark' : '') + '.png') });
+            console.log(w + (dark ? ' 야간' : '') + ' 넘침 ' + st.over + ' · 문서 폭 ' + st.sw + ' · 오류 ' + pe.length); if (w === 390 && !dark) st.rows.forEach(t => console.log('   ' + t));
+            if (st.over || st.sw > w || pe.length) bad++; await c.close();
+        }
+        await browser.close(); srv.close(); console.log(bad ? '❌ 캡처 확인 실패 ' + bad : '✅ 캡처 4장 · 넘침 0 · 오류 0'); process.exit(bad ? 1 : 0);
+    }
     try {
         // ── ① 1,000줄(묶음 300) 넓은 화면 ─────────────────
         console.log('① 현금 1,000줄(묶음 300) · 넓은 화면 1280');
@@ -636,8 +663,9 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             const B = { ok: { m: 15, n: 15, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'ok' }, short: { m: 15, n: 12, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'short' }, over: { m: 15, n: 16, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'over' },
                 unknown: { m: null, n: 15, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'unknown' }, personal: { m: 1, n: 1, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'personal' },
                 tails: { m: 15, n: 14, later: 1, later_date: '2026-11-04', service: 1, pre: false, item_diff: true, state: 'split' }, shortLater: { m: 15, n: 13, later: 1, later_date: '2026-11-04', service: 0, pre: false, item_diff: false, state: 'short' }, allLater: { m: 3, n: 0, later: 3, later_date: '2026-11-04', service: 0, pre: false, item_diff: false, state: 'split' }, unsure: { m: 15, n: 15, unsure: 2, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'ok' }, fixed: { m: 15, n: 15, unsure: 0, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'ok' }, overUnsure: { m: 15, n: 16, unsure: 1, later: 0, later_date: null, service: 0, pre: false, item_diff: false, state: 'over' } };
-            const want = { ok: ['15/15 매칭완료', 'k-ok'], short: ['12/15 · 3박스 모자람', 'k-short'], over: ['16/15 · 1박스 초과', 'k-over'], unknown: ['15/? 주문 확인 중', 'k-unk'], personal: ['개인결제창 · 주소 줄 1', 'k-pers'], tails: ['14/15 오늘 · 1박스 11/4 대기 · 서비스 1 · 품목 다름', 'k-later'], shortLater: ['13/15 오늘 · 1박스 11/4 대기 · 1박스 모자람', 'k-short'], allLater: ['0/3 오늘 · 3박스 11/4 대기', 'k-later'], unsure: ['15/15 · 확인 필요 2', 'k-short'], fixed: ['15/15 매칭완료', 'k-ok'], overUnsure: ['16/15 · 1박스 초과 · 확인 필요 1', 'k-over'] };
-            for (const k of Object.keys(B)) { S.badges = { 190: B[k] }; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1)); const st = await readBadge(); ok(st.has && st.t === '네이버 ' + want[k][0] && st.k === want[k][1] && !st.px, `배지 ${k} = 「${want[k][0]}」 · ${want[k][1]} · 글 단추 없음`, st); }
+            const want = { ok: ['15/15 매칭완료', 'k-ok'], short: ['12/15 · 3박스 모자람', 'k-short'], over: ['16/15 · 1박스 초과', 'k-over'], unknown: ['15/? 주문 확인 중', 'k-unk'], personal: ['개인결제창 매칭완료 · 총 1박스', 'k-pers'], tails: ['15/15 매칭완료 · 서비스 1 · 품목 다름', 'k-ok', '입력삭제|오늘 14박스|11/4 대기 1박스'], shortLater: ['13/15 오늘 · 1박스 11/4 대기 · 1박스 모자람', 'k-short'], allLater: ['3/3 매칭완료', 'k-ok', '입력삭제|11/4 대기 3박스'],   /* #1132 나뉜 입력삭제 = 매칭 알약 + 종류 알약 + 날짜 알약 둘 */ unsure: ['15/15 · 확인 필요 2', 'k-short'], fixed: ['15/15 매칭완료', 'k-ok'], overUnsure: ['16/15 · 1박스 초과 · 확인 필요 1', 'k-over'] };
+            for (const k of Object.keys(B)) { S.badges = { 190: B[k] }; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1)); const st = await readBadge(); ok(st.has && st.t === '네이버 ' + want[k][0] && st.k === want[k][1] && !st.px, `배지 ${k} = 「${want[k][0]}」 · ${want[k][1]} · 글 단추 없음`, st);
+                if (want[k][2]) { const pl = await p.evaluate(() => [...document.querySelectorAll('#om-list .om-ml-h .om-pill:not(.om-badge)')].map(e => e.textContent.trim()).join('|')); ok(pl === want[k][2], `🆕 #1132 ${k} 뒤 알약 = 「${want[k][2]}」(종류 → 날짜 · 긴 배지 한 덩어리 대신)`, pl); } }
             S.badges = {}; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1));
             let st = await readBadge(); ok(!st.has && st.px, '옛 서버(badge 없음) = 알약 없음 · 종전 [추가 매칭] 글 단추', st);
             // 누르면 ④ 판 + 붙은 주소 줄(201) 서비스 체크 → POST /service

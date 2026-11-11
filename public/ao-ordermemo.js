@@ -856,17 +856,50 @@
     const lbHtml = lb => lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(lbText(lb))}</span>` : '';
     const badgeHtml = r => indivBadge(r) ? `<button type="button" class="om-pill om-badge k-${badgeK(r.badge)}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(lineShow(r) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
     const lineTone = (lb, ib) => lb ? (lb.state === 'ok' ? 'ok' : lb.state === 'fail' ? 'bad' : '') : ib ? ({ ok: 'ok', over: 'bad', short: 'bad' }[badgeK(ib)] || '') : '';
+    // #1132(대표 11/12) 목록 줄 위 알약 = 한 알약 한 뜻 · 순서 ①매칭 상태 ②줄 종류 ③날짜 · 화면 표시만(서버 판정·저장 글·메모 칸 글 무변경 · aria 는 풀어 쓴 글 그대로)
+    const SPLIT_DONE = ['ok', 'split', 'personal', 'normal_split', 'sent_split'];
+    const badgeTail = b => [b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.normal && b.state !== 'allnormal' && b.state !== 'normal_later' && b.state !== 'normal_split' ? `· 일반발송 ${b.normal}건` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');
+    function matchPill(b) {   /* 입력삭제 배지 → { t 알약 글, k 색, dates 날짜 알약[] | null } · 문제 상태(모자람·초과·확인 중·확인 필요) = 종전 글 그대로 */
+        if (!b || b.unsure || !SPLIT_DONE.includes(b.state)) return { t: badgeText(b), k: badgeK(b), dates: null };
+        const n = Number(b.n) || 0, lt = Number(b.later) || 0, tl = badgeTail(b), add = t => tl ? t + ' ' + tl : t;
+        const two = lt ? [...(n ? [{ t: `오늘 ${n}박스`, title: b.ship_now ? '주문은 오늘 발송처리' : '' }] : []), { t: `${b.later_date ? md(b.later_date) + ' ' : ''}대기 ${lt}박스`, title: '' }] : null;
+        if (b.state === 'ok') return { t: add(`${n}/${b.m} 매칭완료`), k: 'ok', dates: null };
+        if (b.state === 'split') return { t: add(`${n + lt}/${b.m} 매칭완료`), k: 'ok', dates: two };
+        if (b.state === 'personal') return { t: add(`개인결제창 매칭완료 · 총 ${n + lt}박스`), k: 'pers', dates: two };
+        if (b.state === 'normal_split') return { t: add(`일반발송 ${b.normal}건`), k: 'later', dates: two };
+        return { t: add('발송처리 끝'), k: 'ok', dates: lt ? [{ t: `${b.later_date ? md(b.later_date) + ' ' : ''}대기 ${lt}박스`, title: '' }] : [{ t: `오늘 ${n}박스`, title: '' }] };   /* sent_split */
+    }
+    const BOX_EDIT_K = ['o', 'n', 'p', 'p2', 'a', 'm', 'sn', 'sp', 's'];
+    function kindOf(r, lb) {   /* 줄 종류 알약 = 입력삭제 / 사이즈 지정 / 주문수정(둘 다면 둘) · 그 밖 줄 = 없음 */
+        if (isIndivText(r)) return ['입력삭제'];
+        const bx = Array.isArray(r.boxes) ? r.boxes : [], out = [];
+        if ((lb && /^(size|size_parts|gwa)$/.test(String(lb.type || ''))) || bx.some(b => b && String(b.t || '').trim())) out.push('사이즈 지정');
+        if (bx.some(b => b && BOX_EDIT_K.some(k => String(b[k] || '').trim()))) out.push('주문수정');
+        return out;
+    }
+    const INDIV_WORD = /\s*입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]\s*/g;
+    function lineShowText(r, hideDate) {   /* 목록에 보이는 글만 다듬음(r.line·저장 글 그대로) = 끝 판매처 낱말 · 「입력o삭제x」 · (날짜 알약이 있으면) 맨 앞 M/D · 박스별 요약 「박스1=S」 → 「1박스 S」 */
+        const a = String(r.line || '').split('\t').map(x => x.trim()).filter(Boolean);
+        if (a.length > 1 && /^(네이버|쿠팡|자사몰)$/.test(a[a.length - 1])) a.pop();
+        if (hideDate && a.length > 1 && /^\d{1,2}\/\d{1,2}$/.test(a[0])) a.shift();
+        return a.map(x => x.replace(INDIV_WORD, ' ').replace(/^박스별\s+\d+박스\s*·\s*/, '').replace(/박스(\d+)=/g, '$1박스 ').trim()).filter(Boolean).join(' ');
+    }
     function memoLineHtml(r) {
         const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r), lb = lineBadge(r), ib = indivBadge(r);
-        const bH = b ? `<span class="om-pill k-${b.k}" data-act="edit">${esc(b.t)}</span>` : '';
         const pxRow = isIndivText(r) && isPhoneKey(lineD(r));
-        // #1024(대표 11/5 PC) 상태 글 앞에 판매처(「네이버 매칭완료」) · 그 대신 아래 줄 글에서 판매처 낱말을 뺌(표시만 · 저장 line 무변경)
         const pl = String(r.plat || '').trim(), pp = t => (pl ? pl + ' ' : '') + t;
-        const iH = ib ? (pxRow ? badgeHtml(r).replace(/>([^<]*)<\/button>$/, (m0, t) => '>' + (pl ? esc(pl) + ' ' : '') + t + '</button>') : `<span class="om-pill om-badge k-${badgeK(r.badge)}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(pp(badgeText(r.badge)))}</span>`) : '';
-        const lH = lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(pp(lbText(lb)))}</span>` : '';
+        const mp = ib ? matchPill(ib) : null;
+        // ① 매칭 상태(첫 알약 · 입력삭제 전화번호 줄 = 누르면 추가 매칭 판 · 종전 button 그대로)
+        const iH = mp ? (pxRow ? `<button type="button" class="om-pill om-badge k-${mp.k}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(lineShow(r) + ' 입력삭제 매칭 ' + badgeText(ib) + ' · 누르면 추가 매칭')}">${esc(pp(mp.t))}</button>` : `<span class="om-pill om-badge k-${mp.k}" title="주문번호 줄 · 구매자 번호가 없어 추가 매칭은 안 돼요">${esc(pp(mp.t))}</span>`) : '';
+        const lbT = lb ? (lb.state === 'ok' ? (lb.type === 'box' && Array.isArray(r.boxes) && r.boxes.length ? `매칭완료 · ${r.boxes.length}박스` : '매칭완료') : lbText(lb)) : '';
+        const lH = lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(pp(lbT))}</span>` : '';
         const xH = !lb && Array.isArray(r.boxes) && r.boxes.length ? `<span class="om-pill k-box" data-act="edit">${esc(pp('주문수정 ' + r.boxes.length + '박스'))}</span>` : '';   // #1021 서버 배지(type box · t 「박스별 n박스」)가 없을 때만
-        const head = iH + lH + xH + bH, tone = lineTone(lb, ib);
-        const lineT = (iH || lH || xH) && pl ? (() => { const a = String(r.line || '').split('\t'); if (a.length > 1 && a[a.length - 1].trim() === pl) a.pop(); return lineView(a.join('\t')); })() : lineView(r.line);
+        // ② 줄 종류
+        const kH = kindOf(r, lb).map(t => `<span class="om-pill k-kind" data-act="edit">${esc(t)}</span>`).join('');
+        // ③ 날짜(나뉜 입력삭제 = 날짜 알약 둘 · 그 밖 = 종전 날짜 알약)
+        const dH = mp && mp.dates ? mp.dates.map(d => `<span class="om-pill k-later" data-act="edit"${d.title ? ` title="${esc(d.title)}"` : ''}>${esc(d.t)}</span>`).join('') : (b ? `<span class="om-pill k-${b.k}" data-act="edit">${esc(b.t)}</span>` : '');
+        const head = iH + lH + xH + kH + dH, tone = lineTone(lb, ib);
+        const lineT = lineShowText(r, !!(mp && mp.dates) || !!(b && (b.k === 'later' || b.k === 'today')));   /* 날짜가 실제로 알약에 보일 때만 맨 앞 M/D 숨김(확인·발주에 넣음 알약이면 그대로 · 워커2 점검) */
         const lbAria = lb ? ' · ' + lbText(lb) + (lb.why ? ' · ' + lb.why : '') : '';
         return `<li class="om-item om-ml${b ? ' k-' + b.k : ''}${on ? ' picked' : ''}" data-id="${esc(r.id)}">
             <label class="om-ck"><input type="checkbox" data-act="pick" aria-label="${esc(w + ' 고르기')}"${on ? ' checked' : ''}></label>

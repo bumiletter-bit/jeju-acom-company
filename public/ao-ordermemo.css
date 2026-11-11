@@ -878,3 +878,6 @@ html[data-ao-theme="dark"] .om-pxs-wrap { --px-sub: #AEB4CB; --px-row: #2A3052; 
 .om-pxs-sum-s { margin: 0; font-size: 12px; color: var(--px-sub); line-height: 1.45; }
 .om-pxs-no { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 999px; background: var(--d-accent); color: #fff; font-size: 12px; font-weight: 700; font-style: normal; line-height: 1; vertical-align: 2px; }
 html[data-ao-theme="dark"] .om-pxs-no { background: var(--d-accent-fill, #5B5BEA); }
+/* #1132 목록 줄 종류 알약(입력삭제·사이즈 지정·주문수정) = 파랑 · 매칭(초록)·날짜(남색)와 다른 색 · 글자 대비 밝음 8.9:1 · 야간 7.6:1 */
+.om-pill.k-kind { background: #E0F2FE; color: #075985; }
+html[data-ao-theme="dark"] .om-pill.k-kind { background: #0C4A6E; color: #BAE6FD; }
