@@ -5137,7 +5137,8 @@ button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { ou
 .rv-talk .rv-link { color: var(--rvc-link); }
 .rv-talk .rv-msg.err .rv-link { color: var(--rvc-err-ink); }
 .rv-talk .rv-msg .rv-link { display: inline-block; padding: 6px 4px; }
-.rv-bottom { background: var(--rvc-bar); padding: 10px 12px 12px; border-top: 1px solid var(--rvc-line); }
+.rv-bottom { background: var(--rvc-bar); padding: 10px 12px; border-top: 1px solid var(--rvc-line); }
+.rv-talk #rv-foot[hidden] { display: none; }   /* #1110-4d 입력 줄 아래 작은 글(남은 횟수·안내) 안 보임(대표 11/11) · id 는 남김 */
 .rv-talk .rv-form { margin: 0; align-items: flex-end; }
 .rv-talk .rv-form textarea { background: var(--rvc-field); color: var(--rvc-ink); border: 1px solid transparent; border-radius: 20px; padding: 11px 16px; box-shadow: none; }
 .rv-talk .rv-form textarea::placeholder { color: var(--rvc-ph); }

@@ -72,6 +72,7 @@ const ask = async (page, text) => { await page.fill('#rv-text', text); await pag
             ok(/손님이 물어볼 만한 질문을 넣어 보세요/.test(await txt(page, '#rv-log')), tag + '처음 빈 안내');
             ok(await page.evaluate(() => document.querySelectorAll('#rv-chips .rv-chip').length) === 8, tag + '칩 8개');
             ok(/오늘 남은 미리보기 97번/.test(await txt(page, '#rv-foot')) && /보내거나 기록하지 않아요/.test(await txt(page, '#rv-foot')) && /톡톡은 재료를 고친 뒤 최대 5분/.test(await txt(page, '#rv-foot')), tag + '아래 안내(남은 횟수·기록 안 함·톡톡 차이)', await txt(page, '#rv-foot'));
+            ok(await page.evaluate(() => { const f = document.getElementById('rv-foot'), b = document.querySelector('.rv-bottom'), fm = document.getElementById('rv-form'); return f.hidden && getComputedStyle(f).display === 'none' && f.getBoundingClientRect().height === 0 && Math.abs(b.getBoundingClientRect().bottom - fm.getBoundingClientRect().bottom - 10) < 1.5 && !/오늘 남은 미리보기/.test(document.getElementById('rv-chat').innerText); }), tag + '#1110-4d 입력 줄 아래 작은 글(남은 횟수) 안 보임 · 흰 띠 아래 여백 10px');
             await page.click('#rv-chips .rv-chip'); await page.waitForFunction(() => !document.querySelector('#rv-log .rv-msg.wait') && document.querySelectorAll('#rv-log .rv-msg').length >= 2, null, { timeout: 8000 });
             let ms = await logMsgs(page);
             ok(ms.length === 2 && ms[0].cls === 'me' && ms[0].t === '사이즈 지정 되나요?' && /^bot/.test(ms[1].cls) && /\[talk\] 사이즈 지정 되나요\? 에 대한 답이에요/.test(ms[1].t), tag + '칩 → 손님 말풍선 + 봇 답(톡톡)', JSON.stringify(ms));
