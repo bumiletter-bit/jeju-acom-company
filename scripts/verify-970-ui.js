@@ -63,6 +63,7 @@ const K = '010-5555-0001', KD = '01055550001', KC = '050-7777-0002', KCD = '0507
         await badgeOf(pg, K).click(); await pg.waitForSelector('.om-norm input[data-cact="normchk"]');
         const txt = await pg.textContent('.om-norm');
         ok(txt.includes('이 번호의 주문 2건') && txt.includes('주문받는2') && txt.includes('서울 가짜구 주문로 2') && txt.includes('1박스'), '주문 목록 = 판매처·품목·수량·받는 분·주소', txt);
+        { const li = pg.locator('.om-norm li.om-norm-li', { has: pg.locator('input[data-v="2099110300002"]') }); await li.locator(':scope > span').first().click(); ok(!(await pg.locator('.om-norm input[data-v="2099110300002"]').isChecked()) && !(await pg.textContent('#om-card-save')).includes('일반발송'), '#1119 C1 주문 글을 눌러도 일반발송 체크 안 켜짐', await pg.textContent('#om-card-save')); }
         await pg.locator('.om-norm input[data-v="2099110300002"]').check(); ok((await pg.textContent('#om-card-save')).includes('일반발송 1건'), '저장 단추에 표시', await pg.textContent('#om-card-save'));
         await pg.locator('#om-card [data-act="cancel"], #om-card .om-card-x, #om-card-x').first().click().catch(() => {}); await pg.waitForTimeout(150);
         if (await pg.locator('#om-card:not([hidden])').count()) await pg.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
@@ -98,7 +99,7 @@ const K = '010-5555-0001', KD = '01055550001', KC = '050-7777-0002', KCD = '0507
         console.log('⑥ 폭·야간');
         for (const [w, h, dark, lb] of [[390, 800, false, '390'], [900, 800, false, '900'], [1280, 900, true, '1280 야간'], [390, 800, true, '390 야간']]) {
             const p = await open({ width: w, height: h }, dark); await badgeOf(p, K).click(); await p.waitForSelector('.om-norm input[data-cact="normchk"]'); await p.waitForTimeout(400);
-            const m = await p.evaluate(() => { const b = document.querySelector('.om-norm'), r = b.getBoundingClientRect(), o = document.getElementById('om-card').getBoundingClientRect(), lab = b.querySelector('label').getBoundingClientRect(), cs = getComputedStyle(b.querySelector('label span')); return { over: r.right - o.right, lab: lab.height, fg: cs.color, dark: document.documentElement.getAttribute('data-ao-theme') }; });
+            const m = await p.evaluate(() => { const b = document.querySelector('.om-norm'), r = b.getBoundingClientRect(), o = document.getElementById('om-card').getBoundingClientRect(), lab = b.querySelector('label').getBoundingClientRect(), cs = getComputedStyle(b.querySelector('.om-norm-li > span') || b.querySelector('label span')); return { over: r.right - o.right, lab: lab.height, fg: cs.color, dark: document.documentElement.getAttribute('data-ao-theme') }; });
             ok(m.over <= 1 && (w > 960 || m.lab >= 44), lb + ': 넘침 0 · 44px', m); await p.close();
         }
         ok(errs.length === 0, '콘솔 오류 0', errs.slice(0, 3));

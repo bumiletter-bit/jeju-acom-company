@@ -741,6 +741,12 @@ html[data-ao-theme="dark"] .om-ml-l.c-bad { color: #FDA29B; }
 .om-norm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--d-line); display: grid; gap: 6px; }
 .om-norm b { color: var(--d-ink); font-size: 13px; }
 .om-norm-warn { color: var(--d-err); font-weight: 700; }
+/* #1119 C1 일반발송 = 체크 칸(+「일반발송」 글자)만 눌림 · 주문 글은 눌러도 안 켜짐 · 개인결제창 경고는 체크했을 때만 */
+.om-pair-l .om-norm-li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.om-pair-l .om-norm-ck { flex: none; font-weight: 700; color: var(--d-ink); padding-right: 4px; }
+.om-norm-li > span:not(.om-norm-warn) { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.om-norm-pw { display: none; flex-basis: 100%; }
+.om-norm-li:has(input:checked) .om-norm-pw { display: block; }
 /* #1021 박스별 카드(메모함 · 정리 결과·고치기 카드의 주문 안내 줄 「n박스 · 박스별로」 단추 → 판) · 색 = 종전 토큰·알약 재사용(야간 저절로) */
 .om-lk .om-boxbtn { display: inline-flex; vertical-align: baseline; margin: 0 2px; padding: 0 10px; min-height: 30px; border-color: var(--d-accent); color: var(--d-accent); font-weight: 800; }
 .om-ordl .om-boxbtn { flex: none; min-height: 32px; padding: 0 10px; font-weight: 800; }

@@ -243,6 +243,7 @@ function indivBadge(line, rows, orders, base, opt) {
     else if (b.m == null) b.state = 'unknown';
     else if (nmN && !od.length && n + laterN === 0) b.state = 'allnormal';
     else if (nmN && !od.length && n === 0) b.state = 'normal_later';   // #970 점검 ⑤ 전부 일반발송 + 주소 줄은 전부 뒤 날짜(「0/0 매칭완료」 아님)
+    else if (nmN && !od.length && laterN > 0) b.state = 'normal_split';   // #1119 C2 전부 일반발송 + 주소 줄이 오늘 n · 뒤 날짜 later 로 나뉨(종전 = m 0 이라 「초과」 빨강) · 오늘 줄만(later 0)은 종전 over 그대로
     else if (b.pre) b.state = 'pre';
     else if (n + laterN === b.m && laterN > 0) b.state = 'split';
     else if (n === b.m) { b.state = 'ok'; if (ch !== 'cafe24') { const want = new Map(), have = new Map(); od.forEach(o => add(want, itemKeyOf(o.option_text), q(o.qty))); now.forEach(r => add(have, itemKeyOf(r.cells[4]), q(r.cells[5]))); b.item_diff = want.size !== have.size || [...want].some(([k, v]) => have.get(k) !== v); } }
