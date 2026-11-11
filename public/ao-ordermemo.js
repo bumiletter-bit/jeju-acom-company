@@ -880,9 +880,10 @@
     const INDIV_WORD = /\s*입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]\s*/g;
     function lineShowText(r, hideDate) {   /* 목록에 보이는 글만 다듬음(r.line·저장 글 그대로) = 끝 판매처 낱말 · 「입력o삭제x」 · (날짜 알약이 있으면) 맨 앞 M/D · 박스별 요약 「박스1=S」 → 「1박스 S」 */
         const a = String(r.line || '').split('\t').map(x => x.trim()).filter(Boolean);
-        if (a.length > 1 && /^(네이버|쿠팡|자사몰)$/.test(a[a.length - 1])) a.pop();
-        if (hideDate && a.length > 1 && /^\d{1,2}\/\d{1,2}$/.test(a[0])) a.shift();
-        return a.map(x => x.replace(INDIV_WORD, ' ').replace(/^박스별\s+\d+박스\s*·\s*/, '').replace(/박스(\d+)=/g, '$1박스 ').trim()).filter(Boolean).join(' ');
+        let t = a.map(x => x.replace(INDIV_WORD, ' ').replace(/^박스별\s+\d+박스\s*·\s*/, '').replace(/박스(\d+)=/g, '$1박스 ').trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+        t = t.replace(/\s(네이버|쿠팡|자사몰)$/, '');   /* 줄 끝 판매처 낱말 하나만(실자료 = 탭 아닌 빈칸으로 이어진 줄도 · #1132-b) · 글 안 다른 낱말은 그대로 */
+        if (hideDate) t = t.replace(/^\d{1,2}\/\d{1,2}\s+/, '');
+        return t;
     }
     function memoLineHtml(r) {
         const b = badgeOf(r), on = OM.sel.has(String(r.id)), w = whoOf(r), lb = lineBadge(r), ib = indivBadge(r);

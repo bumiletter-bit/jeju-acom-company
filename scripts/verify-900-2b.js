@@ -44,6 +44,9 @@ function pxList() {
             L(406, '010-1111-0006', 'S사이즈로', '네이버', null, { badge: { kind: 'line', state: 'ok', t: '매칭완료', why: '', type: 'size' } }),
             L(407, '010-1111-0007', '보내는이 홍길동', '쿠팡', D, { badge: { kind: 'line', state: 'ok', t: '매칭완료', why: '', type: 'other' } }),
             L(408, '2026111200000001', '입력o삭제x', '네이버', null, { badge: ib('ok', { m: 2, n: 2 }), checked: { plat: '네이버', as: 'order', at: '2026-11-11T03:00:00.000Z' } }),
+            L(409, '010-8613-6904', '입력o삭제x', '네이버', null, { line: '010-8613-6904 입력o삭제x 네이버', badge: ib('ok') }),   /* #1132-b 실자료 꼴 = 탭 아닌 빈칸 */
+            L(410, '010-7617-1206', 'S사이즈로', '네이버', null, { line: '010-7617-1206 S사이즈로 네이버', badge: { kind: 'line', state: 'ok', t: '매칭완료', why: '', type: 'size' } }),
+            L(411, '010-1111-0011', '네이버 리뷰 보고 샀어요 메모', '쿠팡', null, { line: '010-1111-0011 네이버 리뷰 보고 샀어요 메모 쿠팡' }),
         ] });
     }
     if (S.px3) ents[0].rows = ents[0].rows.map(r => r.id === 193 ? cash(193, '이형주 드림', PXO, '김보은', CAT[1], 1, '010-4787-4217', PXK, '충남 보령시 동대동 8', Object.assign({ indiv: true }, S.px3Later ? { ship_date: '2026-12-31' } : {})) : r);   // #935 193 = 「풀림」(「!」 없음 · K 3292 · 그 번호 입력삭제 줄 없음 = 11/1 12:26 실사례 꼴)
@@ -666,6 +669,12 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             const want = { ok: ['15/15 매칭완료', 'k-ok'], short: ['12/15 · 3박스 모자람', 'k-short'], over: ['16/15 · 1박스 초과', 'k-over'], unknown: ['15/? 주문 확인 중', 'k-unk'], personal: ['개인결제창 매칭완료 · 총 1박스', 'k-pers'], tails: ['15/15 매칭완료 · 서비스 1 · 품목 다름', 'k-ok', '입력삭제|오늘 14박스|11/4 대기 1박스'], shortLater: ['13/15 오늘 · 1박스 11/4 대기 · 1박스 모자람', 'k-short'], allLater: ['3/3 매칭완료', 'k-ok', '입력삭제|11/4 대기 3박스'],   /* #1132 나뉜 입력삭제 = 매칭 알약 + 종류 알약 + 날짜 알약 둘 */ unsure: ['15/15 · 확인 필요 2', 'k-short'], fixed: ['15/15 매칭완료', 'k-ok'], overUnsure: ['16/15 · 1박스 초과 · 확인 필요 1', 'k-over'] };
             for (const k of Object.keys(B)) { S.badges = { 190: B[k] }; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1)); const st = await readBadge(); ok(st.has && st.t === '네이버 ' + want[k][0] && st.k === want[k][1] && !st.px, `배지 ${k} = 「${want[k][0]}」 · ${want[k][1]} · 글 단추 없음`, st);
                 if (want[k][2]) { const pl = await p.evaluate(() => [...document.querySelectorAll('#om-list .om-ml-h .om-pill:not(.om-badge)')].map(e => e.textContent.trim()).join('|')); ok(pl === want[k][2], `🆕 #1132 ${k} 뒤 알약 = 「${want[k][2]}」(종류 → 날짜 · 긴 배지 한 덩어리 대신)`, pl); } }
+            {   // #1132-b 실자료 꼴(탭 아닌 빈칸으로 이어진 줄) = 줄 끝 판매처 낱말만 숨김 · 글 안 「네이버」는 그대로
+                const px0 = S.px; S.px = true; S.shot1132 = true; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length >= 9));
+                const tx = await p.evaluate(() => Object.fromEntries([...document.querySelectorAll('#om-list .om-ml')].map(li => [li.dataset.id, (li.querySelector('.om-ml-l') || {}).textContent])));
+                ok(tx[409] === '010-8613-6904' && tx[410] === '010-7617-1206 S사이즈로' && tx[411] === '010-1111-0011 네이버 리뷰 보고 샀어요 메모', '🆕 #1132-b 빈칸 줄 = 끝 판매처·「입력o삭제x」 숨김 · 손님 글 안 「네이버」 그대로', tx);
+                S.shot1132 = false; S.px = px0;
+            }
             S.badges = {}; await openMemo(p, 'new', 4, 1); await until(() => p.evaluate(() => document.querySelectorAll('#om-list .om-ml').length === 1));
             let st = await readBadge(); ok(!st.has && st.px, '옛 서버(badge 없음) = 알약 없음 · 종전 [추가 매칭] 글 단추', st);
             // 누르면 ④ 판 + 붙은 주소 줄(201) 서비스 체크 → POST /service
