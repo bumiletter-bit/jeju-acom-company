@@ -73,6 +73,16 @@ function unit() {
     ok('「오후 1:30」 = 13:30', q.visit_seen.time === '13:30');
     q = VM.parseRow({ text: '확정 예약번호 1396624487 이용일시 26.11.09.(일) 오전 10:00 예약자 홍길동 010-1234-5678 이용고객 김영희 010-9999-8888', cells: [] }, '1396624487');
     ok('줄 안 낱말 꼴 = 둘 다', q.how === 'labels' && q.visitor_phone === '01099998888' && q.booker_phone === '01012345678' && q.visit_seen.time === '10:00');
+    q = VM.parseRow({ text: '확정 AL KINDI YOUSUF AHMED MASOUD 외국인 알 킨디 유수프 아메드 마수드 010-4198-6472 1405826719 26.11.13.금 11:00 체험 1', cells: [] }, '1405826719');
+    ok('#1135 외국인 표식 + 음역 5낱말 = line · 영문 이름만', q.how === 'line' && q.name_seen === 'AL KINDI YOUSUF AHMED MASOUD' && q.booker_phone === '01041986472' && q.status_seen === '확정' && q.visit_seen.date === '2026-11-13' && q.visit_seen.time === '11:00');
+    q = VM.parseRow({ text: '확정 AL KINDI YOUSUF 외국인 010-4198-6472 1405826719 26.11.13.금 11:00', cells: [] }, '1405826719');
+    ok('#1135 「외국인」만 · 음역 없음', q.how === 'line' && q.name_seen === 'AL KINDI YOUSUF' && q.booker_phone === '01041986472');
+    q = VM.parseRow({ text: '확정 Oyungerel Oyuntsetseg 오윤게렐 오윤트세그 010-1111-2222 1405000001 26.11.11.수 10:00', cells: [] }, '1405000001');
+    ok('#1106-d 음역 2낱말 꼴 그대로', q.how === 'line' && q.name_seen === 'Oyungerel Oyuntsetseg' && q.booker_phone === '01011112222');
+    q = VM.parseRow({ text: '확정 Oyungerel Oyuntsetseg 010-1111-2222 1405000001 26.11.11.수 10:00', cells: [] }, '1405000001');
+    ok('#1106 음역 0낱말 꼴 그대로', q.how === 'line' && q.name_seen === 'Oyungerel Oyuntsetseg' && q.booker_phone === '01011112222');
+    q = VM.parseRow({ text: '확정 홍길동 외국인 010-1234-5678 1396624487 26.11.09.(일) 12:30', cells: [] }, '1396624487');
+    ok('한글 이름 뒤 다른 낱말 = 종전처럼 꼴 모름(저장 안 함)', !q.how && !q.booker_phone);
     q = VM.parseRow({ text: '이상한 꼴 1396624487', cells: [] }, '1396624487');
     ok('꼴 모름 = how 빈칸(저장 안 함)', !q.how && !q.booker_phone);
     let js = VM.JS_READ('1396624487'); let syn = true; try { new Function('return ' + js); } catch (e) { syn = false; }

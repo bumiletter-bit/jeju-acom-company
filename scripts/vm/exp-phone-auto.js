@@ -125,7 +125,8 @@ function parseRow(row, no) {
     }
     // #997 꼴 = 「확정 홍길동 010-1234-5678 1396624487 26.11.09.(일) 12:30 …」
     // #1106 종전 한 낱말 꼴 먼저 · 안 맞으면 외국 이름(띄어쓰기) · 실화면 = 외국 이름 뒤에 한글 음역이 붙어 나옴(「Oyungerel Oyuntsetseg 오윤게렐 오윤트세그」) → 음역은 이름에서 뺌
-    const m = new RegExp(STATUS_RE.source + '\\s+(?:([^\\s\\d]{1,20}?)|(' + FOREIGN_NAME + ')(?:\\s+[가-힣]{1,10}){0,4})\\s+(' + PHONE_RE.source + ')\\s+' + String(no)).exec(text);
+    // #1135 실화면 = 「AL KINDI YOUSUF AHMED MASOUD 외국인 알 킨디 유수프 아메드 마수드」(「외국인」 표식 + 음역 5낱말) → 한글 낱말 0~12 · 번호·예약번호 닻은 그대로
+    const m = new RegExp(STATUS_RE.source + '\\s+(?:([^\\s\\d]{1,20}?)|(' + FOREIGN_NAME + ')(?:\\s+[가-힣]{1,10}){0,12})\\s+(' + PHONE_RE.source + ')\\s+' + String(no)).exec(text);
     if (m) { out.how = 'line'; out.status_seen = m[1]; out.name_seen = m[2] || m[3]; out.booker_phone = m[4].replace(/\D/g, ''); }
     return out;
 }
