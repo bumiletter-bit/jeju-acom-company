@@ -1162,6 +1162,21 @@ async function initDB() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mall_game_scores_rank ON mall_game_scores (game, score DESC, created_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mall_game_scores_member ON mall_game_scores (member_id, game)`);
+    // #1139 귤나무 베타 친구 초대(성립 = 초대받은 사람이 게임 1판 끝냄 → 양쪽 그날 추가 판) — 베타 길만 씀
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS mall_game_invites (
+            id SERIAL PRIMARY KEY,
+            inviter_member_id INTEGER NOT NULL,
+            friend_member_id INTEGER NOT NULL UNIQUE,
+            code VARCHAR(16) NOT NULL,
+            accepted_at TIMESTAMPTZ DEFAULT NOW(),
+            done_at TIMESTAMPTZ,
+            done_day DATE,
+            inviter_plays INTEGER DEFAULT 0,
+            friend_plays INTEGER DEFAULT 0
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mall_game_invites_inviter ON mall_game_invites (inviter_member_id, done_day)`);
     // #340: 지급 처리 이력 컬럼(누가·언제 줬는지)
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_by TEXT`);

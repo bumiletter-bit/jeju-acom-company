@@ -1,3 +1,10 @@
+## v5.9.789 (2026-11-13) — #1139 베타 「친구 초대 = 게임 횟수 추가」 서버 길(베타만)
+
+- 대표 결정: 카카오 초대는 물이 아니라 게임을 더 할 수 있게 · 보상은 판 수뿐(물방울·쿠폰 0)
+- GET /api/mall-beta/pub/invite-code(회원마다 고정 8자 · 아이디 되짚기 불가) · POST /pub/invite-accept {mid, code}(자기 코드·없는 코드·이미 수락(평생 1번)·맞초대 거절) · 성립 = 초대받은 사람이 수락 뒤 처음 끝낸 game-end → 초대한 사람 +2판·친구 +1판(그날) · 하루 상한 3판·주간 성립 10명(설정 mall_beta_game_config.game invite_*) · wallet.game 에 bonus·invite {done_today, cap} · max = daily_max + 오늘 추가 판
+- 새 표 mall_game_invites(베타 길만) · 초대 코드는 points_ledger delta 0 줄 · 성립 처리는 SAVEPOINT(표 문제여도 물방울 그대로) · 실서비스 길 무변
+- 워커1 시공 · 총괄 diff 읽음 · verify-1136-beta 81/81(TZ=UTC 81/81) · ro-preload 기동 version 200 · 게임 화면 4종(모음·귤 따기·귤 포장·택배 트럭)은 skin6 새 파일로 올라감(기존 index·farm·roulette 해시 무변)
+
 ## v5.9.788 (2026-11-13) — #1138-b 베타 게임 순위 길 + 새 표 mall_game_scores(베타만)
 
 - 대표: 「게임 하나로 끝나지 말고 여러 개 · 기록을 공유해 승부욕 · 자랑하기로 홍보」 → 서버 = GET /api/mall-beta/pub/game-rank?mid=&game=&period=week|all(주간 = KST 월요일 0시 · 회원당 최고 1줄 · 동점 먼저 낸 사람 · 30위 + 내 순위 · 이름 가림 · 아이디 전체 0)

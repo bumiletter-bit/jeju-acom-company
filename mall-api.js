@@ -635,16 +635,34 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const lo = int(g.drops_min, 1, 0, 20);
             let hi = int(g.drops_max, 3, 0, 20);
             if (hi < lo) hi = lo;
-            return { daily_max: int(g.daily_max, 3, 0, 50), drops_min: lo, drops_max: hi, score_cap: int(g.score_cap, 5000, 1, 999999999) };   /* #1138-b score_cap 넘는 점수 = 순위 표에 안 넣음 */
+            return { daily_max: int(g.daily_max, 3, 0, 50), drops_min: lo, drops_max: hi, score_cap: int(g.score_cap, 5000, 1, 999999999),
+                invite_plays_inviter: int(g.invite_plays_inviter, 2, 0, 20), invite_plays_friend: int(g.invite_plays_friend, 1, 0, 20),
+                invite_daily_cap: int(g.invite_daily_cap, 3, 0, 50), invite_weekly_cap: int(g.invite_weekly_cap, 10, 0, 500) };   /* #1139 친구 초대 = 판 수만(물방울·쿠폰 0) */   /* #1138-b score_cap 넘는 점수 = 순위 표에 안 넣음 */
         };
         const kstToday = async (q) => (await q.query(`SELECT to_char((now() AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS d`)).rows[0].d;
         const gameUsed = async (q, memberId, day) => (await q.query(
             `SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND idem_key LIKE $2`,
             [memberId, 'gamestart:' + memberId + ':' + day + ':%'])).rows[0].n;
+        /* #1139 그날(KST) 초대로 받은 추가 판 = mall_game_invites 의 성립 줄(초대한 사람 inviter_plays · 초대받은 사람 friend_plays) · 표 없거나 실패 = 0 */
+        const WEEK_START = `(date_trunc('week', now() AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul')`;
+        const gameBonus = async (q, memberId, day) => {
+            try {
+                const r = await q.query(
+                    `SELECT COALESCE(SUM(CASE WHEN inviter_member_id=$1 THEN inviter_plays ELSE 0 END), 0)::int AS inv_p,
+                            COALESCE(SUM(CASE WHEN friend_member_id=$1 THEN friend_plays ELSE 0 END), 0)::int AS fr_p,
+                            (COUNT(*) FILTER (WHERE inviter_member_id=$1))::int AS done_today
+                       FROM mall_game_invites WHERE done_day = $2::date AND (inviter_member_id=$1 OR friend_member_id=$1)`, [memberId, day]);
+                const x = r.rows[0] || {};
+                return { bonus: (Number(x.inv_p) || 0) + (Number(x.fr_p) || 0), done_today: Number(x.done_today) || 0 };
+            } catch (e) { return { bonus: 0, done_today: 0 }; }
+        };
         gameStatus = async (memberId) => {
             const gc = await gameCfg();
-            const used = await gameUsed(pool, memberId, await kstToday(pool));
-            return { left: Math.max(0, gc.daily_max - used), max: gc.daily_max };
+            const day = await kstToday(pool);
+            const used = await gameUsed(pool, memberId, day);
+            const bn = await gameBonus(pool, memberId, day);
+            const max = gc.daily_max + bn.bonus;   /* bonus_plays 자리 = 그날 초대 추가 판 */
+            return { left: Math.max(0, max - used), max, bonus: bn.bonus, invite: { done_today: bn.done_today, cap: gc.invite_daily_cap } };
         };
         /* #1138-b 최고 기록 = 새 표 mall_game_scores 에서(게임별 best {게임:{score,stage}} + 전체 best_score·best_stage) · 표 없거나 실패 = 0(지갑은 그대로 뜸) */
         const gameBest = async (memberId) => {
@@ -689,19 +707,21 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             if (!GAME_RE.test(game)) throw gameErr('게임 이름 오류');
             const gc = await gameCfg();
             const member = await resolveMember(mid, null);
+            const bonus = (await gameBonus(pool, member.id, await kstToday(pool))).bonus;   /* #1139 트랜잭션 밖에서 읽음(표 오류가 트랜잭션을 깨지 않게) */
+            const cap = gc.daily_max + bonus;
             const out = await withTx(async (client) => {
                 await lockMember(client, member.id);   /* 같은 회원 동시 시작 = 직렬화 → 하루 판 수 넘침 0 */
                 const day = await kstToday(client);
                 const used = await gameUsed(client, member.id, day);
-                if (used >= gc.daily_max) return { limit: true };
+                if (used >= cap) return { limit: true };
                 const playId = crypto.randomBytes(12).toString('hex');
                 await insertLedger(client, { memberId: member.id, delta: 0, reason: '게임 시작(' + game + ')', refType: 'game', refId: playId,
                     idemKey: 'gamestart:' + member.id + ':' + day + ':' + (used + 1) });
-                return { playId, left: gc.daily_max - used - 1 };
+                return { playId, left: cap - used - 1 };
             });
-            if (out.limit) return res.json({ ok: false, reason: 'limit', left: 0, max: gc.daily_max });
+            if (out.limit) return res.json({ ok: false, reason: 'limit', left: 0, max: cap });
             await audit('create', 'mall_game_play', member.id, { beta: true, game, play_id: out.playId });
-            res.json({ ok: true, play_id: out.playId, left: out.left, max: gc.daily_max });
+            res.json({ ok: true, play_id: out.playId, left: out.left, max: cap });
         }));
 
         router.post('/pub/game-end', pubGate, pubWrap(async (req, res) => {
@@ -734,7 +754,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const game = gm ? gm[1] : null;
             const gc = await gameCfg();
             const drops = gc.drops_min + crypto.randomInt(gc.drops_max - gc.drops_min + 1);
-            let row;
+            let row, inviteDone = null;
             try {
                 row = await withTx(async (client) => {
                     await lockMember(client, member.id);
@@ -749,6 +769,21 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                             await client.query('RELEASE SAVEPOINT gs');
                         } catch (e) { await client.query('ROLLBACK TO SAVEPOINT gs'); console.error('[mall-beta] 순위 기록 실패:', e && e.message); }
                     }
+                    /* #1139 초대 성립 = 초대받은 사람이 수락 뒤 처음 끝낸 판 → 양쪽 그날 추가 판(하루 상한 · 초대한 사람 주간 인원 상한) · 실패해도 물방울 그대로(SAVEPOINT) */
+                    await client.query('SAVEPOINT gi');
+                    try {
+                        const iv = (await client.query(`SELECT id, inviter_member_id FROM mall_game_invites WHERE friend_member_id=$1 AND done_at IS NULL FOR UPDATE`, [member.id])).rows[0];
+                        if (iv) {
+                            const day = await kstToday(client);
+                            const got = async (mId) => (await gameBonus(client, mId, day)).bonus;
+                            const wk = (await client.query(`SELECT COUNT(*)::int AS n FROM mall_game_invites WHERE inviter_member_id=$1 AND done_at >= ${WEEK_START}`, [iv.inviter_member_id])).rows[0].n;
+                            const invP = wk >= gc.invite_weekly_cap ? 0 : Math.min(gc.invite_plays_inviter, Math.max(0, gc.invite_daily_cap - await got(iv.inviter_member_id)));
+                            const frP = Math.min(gc.invite_plays_friend, Math.max(0, gc.invite_daily_cap - await got(member.id)));
+                            await client.query(`UPDATE mall_game_invites SET done_at=now(), done_day=$2::date, inviter_plays=$3, friend_plays=$4 WHERE id=$1`, [iv.id, day, invP, frP]);
+                            inviteDone = { friend_plays: frP, inviter_plays: invP };
+                        }
+                        await client.query('RELEASE SAVEPOINT gi');
+                    } catch (e) { await client.query('ROLLBACK TO SAVEPOINT gi'); inviteDone = null; console.error('[mall-beta] 초대 성립 실패:', e && e.message); }
                     return led;
                 });
             } catch (err) {
@@ -756,7 +791,10 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                 throw err;
             }
             await audit('grant', 'mall_game_play', member.id, { beta: true, play_id: playId, score, drops, stage, stats });
-            res.json({ ok: true, drops, left: (await gameStatus(member.id)).left, balance: Number(row.balance_after) });
+            if (inviteDone) await audit('grant', 'mall_game_invite', member.id, Object.assign({ beta: true }, inviteDone));
+            const body = { ok: true, drops, left: (await gameStatus(member.id)).left, balance: Number(row.balance_after) };
+            if (inviteDone) body.invite = { done: true, plays: inviteDone.friend_plays };   /* #1139 초대 성립 = 이 판으로 내 추가 판 n */
+            res.json(body);
         }));
 
         /* #1138-b 게임 순위 = 게임별 · 주간(KST 월요일 0시부터) 또는 전체 · 회원당 그 기간 최고 점수 1줄 · 동점은 먼저 낸 사람 · 위 30 + 내 자리 */
@@ -778,6 +816,56 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const top = r.rows.filter(x => x.rank <= 30).map(x => ({ rank: x.rank, name: maskName(x.nickname, x.member_key), score: Number(x.score), stage: x.stage == null ? 0 : Number(x.stage), me: x.member_id === member.id }));
             const mine = r.rows.find(x => x.member_id === member.id);
             res.json({ game, period, top, me: mine ? { rank: mine.rank, score: Number(mine.score), stage: mine.stage == null ? 0 : Number(mine.stage) } : { rank: null, score: 0, stage: 0 } });
+        }));
+
+        /* ══ #1139 친구 초대 = 게임 판 수 추가(대표 · 물방울·쿠폰 0) ══
+           코드 = 회원마다 고정 8자 무작위(points_ledger delta 0 줄 · idem 'invcode:<회원id>' · ref_id = 코드) · 아이디를 되짚을 수 없음
+           수락 = 자기 코드 X · 초대받은 사람 평생 1번(friend_member_id UNIQUE) · 맞초대 X → 그 뒤 게임 1판 끝내면 성립(위 game-end) */
+        const CODE_AB = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const CODE_RE = /^[A-Z0-9]{8}$/;
+        router.get('/pub/invite-code', pubGate, pubWrap(async (req, res) => {
+            const mid = pubMid(req.query.mid);
+            const member = await resolveMember(mid, null);
+            const key = 'invcode:' + member.id;
+            if (!(await findLedgerByIdem(key))) {
+                let code = '';
+                for (let t = 0; t < 5 && !code; t++) {
+                    let c = '';
+                    for (let i = 0; i < 8; i++) c += CODE_AB[crypto.randomInt(CODE_AB.length)];
+                    const ex = await pool.query(`SELECT 1 FROM points_ledger WHERE ref_type='invite_code' AND ref_id=$1 LIMIT 1`, [c]);
+                    if (!ex.rows.length) code = c;
+                }
+                if (!code) throw gameErr('잠시 뒤 다시 해 주세요', 503);
+                try {
+                    await withTx(async (client) => {
+                        await lockMember(client, member.id);
+                        return insertLedger(client, { memberId: member.id, delta: 0, reason: '초대 코드', refType: 'invite_code', refId: code, idemKey: key });
+                    });
+                } catch (err) { if (!isUniqueViolation(err, 'idem')) throw err; }
+            }
+            const r = await pool.query(`SELECT ref_id FROM points_ledger WHERE idem_key=$1`, [key]);
+            res.json({ ok: true, code: r.rows[0].ref_id });
+        }));
+        router.post('/pub/invite-accept', pubGate, pubWrap(async (req, res) => {
+            const b = req.body || {};
+            const mid = pubMid(b.mid);
+            const code = String(b.code || '').trim().toUpperCase();
+            if (!CODE_RE.test(code)) return res.json({ ok: false, reason: 'bad_code' });
+            const member = await resolveMember(mid, null);
+            const own = await pool.query(
+                `SELECT l.member_id FROM points_ledger l JOIN mall_members m ON m.id = l.member_id AND m.deleted_at IS NULL AND m.member_key LIKE $2
+                  WHERE l.ref_type='invite_code' AND l.ref_id=$1 LIMIT 1`, [code, KP + '%']);
+            if (!own.rows.length) return res.json({ ok: false, reason: 'bad_code' });
+            const inviter = own.rows[0].member_id;
+            if (inviter === member.id) return res.json({ ok: false, reason: 'self' });
+            const had = await pool.query(
+                `SELECT friend_member_id FROM mall_game_invites WHERE friend_member_id=$1 OR (inviter_member_id=$1 AND friend_member_id=$2) LIMIT 1`, [member.id, inviter]);
+            if (had.rows.length) return res.json({ ok: false, reason: had.rows[0].friend_member_id === member.id ? 'already' : 'mutual' });
+            try {
+                await pool.query(`INSERT INTO mall_game_invites (inviter_member_id, friend_member_id, code) VALUES ($1,$2,$3)`, [inviter, member.id, code]);
+            } catch (err) { if (isUniqueViolation(err)) return res.json({ ok: false, reason: 'already' }); throw err; }
+            await audit('create', 'mall_game_invite', member.id, { beta: true, inviter_member_id: inviter });
+            res.json({ ok: true, state: 'accepted', need: 'play_one' });
         }));
 
         /* 베타는 공개 길(/pub)만 — 토큰 내부 길(회원·포인트 적립·나무 등)은 베타 장착에서 열지 않는다 */

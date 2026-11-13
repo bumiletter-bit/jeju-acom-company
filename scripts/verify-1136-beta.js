@@ -22,6 +22,7 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         CREATE TABLE tree_state (member_id INTEGER PRIMARY KEY, level INTEGER DEFAULT 1, water_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT NOW());
         CREATE TABLE reward_grants (id SERIAL PRIMARY KEY, member_id INTEGER NOT NULL, kind VARCHAR(20), amount INTEGER, status VARCHAR(20) DEFAULT 'pending', month_key VARCHAR(7), idem_key VARCHAR(120) UNIQUE, created_at TIMESTAMP DEFAULT NOW(), granted_at TIMESTAMPTZ, granted_by TEXT, coupon_no TEXT, issue_no TEXT, issued_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, used_at TIMESTAMPTZ, used_order_id TEXT, notify_issue_status TEXT, notify_issue_at TIMESTAMPTZ, notify_expire_status TEXT, notify_expire_at TIMESTAMPTZ, grant_error TEXT);
         CREATE TABLE mall_game_scores (id SERIAL PRIMARY KEY, member_id INTEGER NOT NULL, game VARCHAR(20) NOT NULL, score INTEGER NOT NULL, stage INTEGER, stats JSONB, play_id VARCHAR(40) UNIQUE NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());
+        CREATE TABLE mall_game_invites (id SERIAL PRIMARY KEY, inviter_member_id INTEGER NOT NULL, friend_member_id INTEGER NOT NULL UNIQUE, code VARCHAR(16) NOT NULL, accepted_at TIMESTAMPTZ DEFAULT NOW(), done_at TIMESTAMPTZ, done_day DATE, inviter_plays INTEGER DEFAULT 0, friend_plays INTEGER DEFAULT 0);
         CREATE TABLE season_waitlist (id SERIAL PRIMARY KEY, item TEXT, notified BOOLEAN DEFAULT false, member_key VARCHAR(60), created_at TIMESTAMP DEFAULT NOW(), deleted_at TIMESTAMP);`);
     const CFG = {
         mall_pub: { on: true },
@@ -205,6 +206,34 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         ok(r.j.game.best['gyul-pick'].score === 300 && r.j.game.best['gyul-pack'].score === 77 && r.j.game.best_score === 300, 'wallet game.best = 게임별 최고', r.j.game);
         ok((await row('beta:kim1')) && (await db.query(`SELECT nickname FROM mall_members WHERE member_key='beta:kim1'`)).rows[0].nickname === '전승범' && !(await db.query(`SELECT nickname FROM mall_members WHERE member_key='kim1'`)).rows[0].nickname, 'game-end name = 글자만 추려 베타 회원 nickname 저장 · 실회원 행 무변');
         r = await call('GET', '/api/mall/pub/game-rank?mid=kim1&game=gyul-pick'); ok(r.s === 503, '실서비스엔 순위 길 없음', r.s);
+
+        console.log('Ⅴ-e 친구 초대 = 판 수 추가(#1139)');
+        CFG.mall_beta_game_config = { game: { daily_max: 2 } };   /* 초대 기본값 = 초대한 사람 +2 · 친구 +1 · 하루 상한 3 · 주간 10 */
+        CFG.mall_beta.members.push('jung6', 'han7', 'song8', 'yoon9', 'kang10');
+        let c1 = await call('GET', '/api/mall-beta/pub/invite-code?mid=jung6'); const c2 = await call('GET', '/api/mall-beta/pub/invite-code?mid=jung6');
+        const code = c1.j.code;
+        ok(c1.s === 200 && /^[A-Z2-9]{8}$/.test(code) && c2.j.code === code && !/jung/i.test(JSON.stringify(c1.j)), '초대 코드 = 8자 · 두 번 불러도 같음 · 응답에 아이디 0', [c1.j, c2.j]);
+        r = await call('POST', '/api/mall-beta/pub/invite-accept', { mid: 'jung6', code }); ok(r.j.ok === false && r.j.reason === 'self', '자기 코드 = 거절(self)', r.j);
+        r = await call('POST', '/api/mall-beta/pub/invite-accept', { mid: 'han7', code: 'ZZZZZZZZ' }); ok(r.j.ok === false && r.j.reason === 'bad_code', '없는 코드 = bad_code', r.j);
+        r = await call('POST', '/api/mall-beta/pub/invite-accept', { mid: 'han7', code: code.toLowerCase() }); ok(r.j.ok === true && r.j.state === 'accepted', '친구 han7 수락(소문자도) = accepted', r.j);
+        const hanCode = (await call('GET', '/api/mall-beta/pub/invite-code?mid=han7')).j.code;
+        const kangCode = (await call('GET', '/api/mall-beta/pub/invite-code?mid=kang10')).j.code;
+        r = await call('POST', '/api/mall-beta/pub/invite-accept', { mid: 'han7', code: kangCode }); ok(r.j.ok === false && r.j.reason === 'already', '두 번째 수락 = 거절(already · 평생 1번)', r.j);
+        r = await call('POST', '/api/mall-beta/pub/invite-accept', { mid: 'jung6', code: hanCode }); ok(r.j.ok === false && r.j.reason === 'mutual', '맞초대 = 거절(mutual)', r.j);
+        r = await call('GET', '/api/mall-beta/pub/wallet?mid=jung6');
+        ok(r.j.game.bonus === 0 && r.j.game.max === 2 && r.j.game.invite.done_today === 0 && r.j.game.invite.cap === 3, '친구가 게임 끝내기 전 = 미성립(추가 판 0)', r.j.game);
+        r = await playAs('han7', 'gyul-pick', 10);
+        ok(r.s === 200 && r.j.invite && r.j.invite.done === true && r.j.invite.plays === 1, '친구 첫 판 끝 = 성립 · 친구 +1', r.j);
+        const hw = (await call('GET', '/api/mall-beta/pub/wallet?mid=han7')).j.game, jw = (await call('GET', '/api/mall-beta/pub/wallet?mid=jung6')).j.game;
+        ok(hw.bonus === 1 && hw.max === 3 && hw.left === 2 && jw.bonus === 2 && jw.max === 4 && jw.left === 4 && jw.invite.done_today === 1, '성립 뒤 = 친구 max 3(남은 2) · 초대한 사람 max 4(남은 4)', { hw, jw });
+        r = await playAs('han7', 'gyul-pick', 10); ok(r.s === 200 && !r.j.invite, '친구 둘째 판 = 다시 안 줌', r.j);
+        for (const f of ['song8', 'yoon9']) { await call('POST', '/api/mall-beta/pub/invite-accept', { mid: f, code }); await playAs(f, 'gyul-pick', 10); }
+        const jw2 = (await call('GET', '/api/mall-beta/pub/wallet?mid=jung6')).j.game;
+        const ivs = (await db.query(`SELECT inviter_plays FROM mall_game_invites ORDER BY id`)).rows.map(x => x.inviter_plays);
+        ok(jw2.bonus === 3 && jw2.max === 5 && jw2.invite.done_today === 3 && JSON.stringify(ivs) === '[2,1,0]', '하루 상한 3 = 2 → 1 → 0 판(성립 인원은 3 셈)', { jw2, ivs });
+        r = await call('POST', '/api/mall-beta/pub/game-start', { mid: 'jung6', game: 'gyul-pick' }); ok(r.j.ok === true && r.j.max === 5 && r.j.left === 4, '초대한 사람 게임 시작 = max 5 · 남은 4', r.j);
+        r = await call('GET', '/api/mall/pub/invite-code?mid=jung6'); ok(r.s === 503, '실서비스엔 초대 길 없음', r.s);
+        ok((await db.query(`SELECT COUNT(*)::int AS n FROM points_ledger WHERE ref_type='invite_code' AND delta <> 0`)).rows[0].n === 0, '초대 코드 줄 = 물방울 0');
 
         console.log('Ⅵ server.js 실코드 = 공개 「오늘 당첨자」·관리자 당첨 지급 목록에 베타 0');
         const fs = require('fs');
