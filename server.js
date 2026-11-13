@@ -1147,6 +1147,21 @@ async function initDB() {
         )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_reward_grants_month ON reward_grants (month_key, kind)`);
+    // #1138-b 귤나무 베타 게임 점수(순위·최고 기록) — 베타 길(/api/mall-beta)만 씀 · 기존 표 무접촉
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS mall_game_scores (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL,
+            game VARCHAR(20) NOT NULL,
+            score INTEGER NOT NULL,
+            stage INTEGER,
+            stats JSONB,
+            play_id VARCHAR(40) UNIQUE NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mall_game_scores_rank ON mall_game_scores (game, score DESC, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mall_game_scores_member ON mall_game_scores (member_id, game)`);
     // #340: 지급 처리 이력 컬럼(누가·언제 줬는지)
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_by TEXT`);

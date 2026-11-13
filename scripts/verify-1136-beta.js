@@ -21,6 +21,7 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         CREATE TABLE roulette_spins (id SERIAL PRIMARY KEY, member_id INTEGER NOT NULL, spin_date DATE NOT NULL, result_key VARCHAR(30), points INTEGER, created_at TIMESTAMP DEFAULT NOW());
         CREATE TABLE tree_state (member_id INTEGER PRIMARY KEY, level INTEGER DEFAULT 1, water_count INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT NOW());
         CREATE TABLE reward_grants (id SERIAL PRIMARY KEY, member_id INTEGER NOT NULL, kind VARCHAR(20), amount INTEGER, status VARCHAR(20) DEFAULT 'pending', month_key VARCHAR(7), idem_key VARCHAR(120) UNIQUE, created_at TIMESTAMP DEFAULT NOW(), granted_at TIMESTAMPTZ, granted_by TEXT, coupon_no TEXT, issue_no TEXT, issued_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, used_at TIMESTAMPTZ, used_order_id TEXT, notify_issue_status TEXT, notify_issue_at TIMESTAMPTZ, notify_expire_status TEXT, notify_expire_at TIMESTAMPTZ, grant_error TEXT);
+        CREATE TABLE mall_game_scores (id SERIAL PRIMARY KEY, member_id INTEGER NOT NULL, game VARCHAR(20) NOT NULL, score INTEGER NOT NULL, stage INTEGER, stats JSONB, play_id VARCHAR(40) UNIQUE NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());
         CREATE TABLE season_waitlist (id SERIAL PRIMARY KEY, item TEXT, notified BOOLEAN DEFAULT false, member_key VARCHAR(60), created_at TIMESTAMP DEFAULT NOW(), deleted_at TIMESTAMP);`);
     const CFG = {
         mall_pub: { on: true },
@@ -161,7 +162,7 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         const rs2 = (await db.query(`SELECT reason FROM points_ledger WHERE idem_key=$1`, ['gameend:' + r.pid])).rows[0].reason;
         ok(r.s === 200 && rs2 === '게임 물방울(점수 10)', '이상한 stage·stats = 버리고 통과(종전 reason 꼴)', { s: r.s, rs2 });
         r = await call('GET', '/api/mall-beta/pub/wallet?mid=kim1');
-        ok(r.j.game && r.j.game.best_score === 999999 && r.j.game.best_stage === 4 && 'left' in r.j.game, 'wallet game 에 best_score(999999)·best_stage(4) 덧붙음', r.j.game);
+        ok(r.j.game && r.j.game.best_score === 50 && r.j.game.best_stage === 4 && r.j.game.best && r.j.game.best.catch && r.j.game.best.catch.score === 50 && 'left' in r.j.game, 'wallet game 에 best_score(50 · 999999 는 상한 5000 넘어 순위 표 밖)·best_stage(4)·best{catch}', r.j.game);
         const rr0 = await call('GET', '/api/mall/pub/wallet?mid=kim1'); ok(!('game' in rr0.j), '실서비스 wallet 은 여전히 game 칸 없음', Object.keys(rr0.j));
         const realGames = (await db.query(`SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND ref_type='game'`, [kim.id])).rows[0].n;
         ok(realGames === 0, '실회원 kim1 원장에 게임 줄 0', realGames);
@@ -178,6 +179,32 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         r = await call('GET', '/api/mall-beta/pub/wallet?mid=kim1'); const rr = await call('GET', '/api/mall/pub/wallet?mid=kim1');
         ok(r.j.goal === 150 && rr.j.goal === 120, '베타에 level_thresholds 있으면 그 칸만 베타 값 · 실서비스는 그대로', { beta: r.j.goal, real: rr.j.goal });
         CFG.mall_game_config.level_thresholds = [0, 2, 100];
+
+        console.log('Ⅴ-d 게임 순위(#1138-b)');
+        CFG.mall_beta_game_config = { game: { daily_max: 50 } };
+        CFG.mall_beta.members.push('lee4', 'choi5');
+        const playAs = async (mid, game, score, extra) => { const s0 = await call('POST', '/api/mall-beta/pub/game-start', { mid, game }); await db.query(`UPDATE points_ledger SET created_at = created_at - interval '10 seconds' WHERE ref_id=$1`, [s0.j.play_id]); return call('POST', '/api/mall-beta/pub/game-end', Object.assign({ mid, play_id: s0.j.play_id, score, stage: 3 }, extra || {})); };
+        await playAs('kim1', 'gyul-pick', 300, { name: '전승범<>1!' });
+        await new Promise(res => setTimeout(res, 20));
+        await playAs('park3', 'gyul-pick', 300);
+        const over = await playAs('lee4', 'gyul-pick', 6000, { name: '이몽룡' });
+        await playAs('kim1', 'gyul-pack', 77);
+        const pk = await row('beta:park3');
+        await db.query(`INSERT INTO mall_game_scores (member_id, game, score, stage, play_id, created_at) VALUES ($1, 'gyul-pick', 900, 5, 'old-week-row', now() - interval '10 days')`, [pk.id]);
+        r = await call('GET', '/api/mall-beta/pub/game-rank?mid=kim1&game=gyul-pick&period=week');
+        ok(r.s === 200 && r.j.game === 'gyul-pick' && r.j.period === 'week' && r.j.top.length === 2 && r.j.top[0].name === '전*범' && r.j.top[0].me === true && r.j.top[1].name === 'pa***' && r.j.top[1].score === 300 && r.j.me.rank === 1,
+            '주간 = 동점 300 은 먼저 낸 kim1 이 1위 · 이름 가림(전*범 · 이름 없음 = pa***) · 지난주 900 은 빠짐', r.j);
+        ok(over.s === 200 && over.j.drops >= 1 && !r.j.top.some(x => x.score === 6000), '상한(5000) 넘은 6000 = 물방울은 주고 순위 표엔 안 들어감', { over: over.j, top: r.j.top });
+        const txt = JSON.stringify(r.j);
+        ok(!/beta:|kim1|park3|lee4/.test(txt), '응답에 아이디·member_key 전체 0', txt);
+        r = await call('GET', '/api/mall-beta/pub/game-rank?mid=choi5&game=gyul-pick&period=all');
+        ok(r.j.period === 'all' && r.j.top[0].score === 900 && r.j.top[0].name === 'pa***' && r.j.top.length === 2 && r.j.me.rank === null && r.j.me.score === 0, '전체 = 회원당 최고 1줄(park3 900) · 기록 없는 회원 me.rank null', r.j);
+        r = await call('GET', '/api/mall-beta/pub/game-rank?mid=kim1&game=gyul-pack');
+        ok(r.j.period === 'week' && r.j.top.length === 1 && r.j.top[0].score === 77, '게임별로 따로(gyul-pack) · period 없으면 week', r.j);
+        r = await call('GET', '/api/mall-beta/pub/wallet?mid=kim1');
+        ok(r.j.game.best['gyul-pick'].score === 300 && r.j.game.best['gyul-pack'].score === 77 && r.j.game.best_score === 300, 'wallet game.best = 게임별 최고', r.j.game);
+        ok((await row('beta:kim1')) && (await db.query(`SELECT nickname FROM mall_members WHERE member_key='beta:kim1'`)).rows[0].nickname === '전승범' && !(await db.query(`SELECT nickname FROM mall_members WHERE member_key='kim1'`)).rows[0].nickname, 'game-end name = 글자만 추려 베타 회원 nickname 저장 · 실회원 행 무변');
+        r = await call('GET', '/api/mall/pub/game-rank?mid=kim1&game=gyul-pick'); ok(r.s === 503, '실서비스엔 순위 길 없음', r.s);
 
         console.log('Ⅵ server.js 실코드 = 공개 「오늘 당첨자」·관리자 당첨 지급 목록에 베타 0');
         const fs = require('fs');

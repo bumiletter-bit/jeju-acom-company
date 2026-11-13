@@ -1,3 +1,9 @@
+## v5.9.788 (2026-11-13) — #1138-b 베타 게임 순위 길 + 새 표 mall_game_scores(베타만)
+
+- 대표: 「게임 하나로 끝나지 말고 여러 개 · 기록을 공유해 승부욕 · 자랑하기로 홍보」 → 서버 = GET /api/mall-beta/pub/game-rank?mid=&game=&period=week|all(주간 = KST 월요일 0시 · 회원당 최고 1줄 · 동점 먼저 낸 사람 · 30위 + 내 순위 · 이름 가림 · 아이디 전체 0)
+- 새 표 mall_game_scores(member_id·game·score·stage·stats·play_id unique) · game-end 가 물방울 줄과 같은 트랜잭션에서 1줄(SAVEPOINT · 표 문제여도 물방울 그대로) · 점수 상한(game.score_cap 기본 5000) 넘으면 순위 밖 · game-end 본문 name → 베타 회원 nickname · wallet.game.best {게임:{score,stage}}
+- 실서비스 길 무변 · 워커1 시공 · 총괄 diff 읽음 · verify-1136-beta 67/67(TZ=UTC 67/67) · ro-preload 기동 version 200 · 화면(게임 모음·귤 포장·택배 트럭·자랑하기)은 워커2·3 제작 중
+
 ## v5.9.787 (2026-11-13) — #1137 「⏰ 미처리 문의」 알림에서 [처리함] 누른 건 빼기
 
 - 발단: 상품문의 695706307(불만 글 = 직원 몫 · 손님이 글을 지움 · 발주컴퓨터가 처리함)이 네이버 답글이 없다는 이유로 2시간마다 계속 알림 · 대표 「처리함 누르면 된 건 빼도록」

@@ -635,7 +635,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const lo = int(g.drops_min, 1, 0, 20);
             let hi = int(g.drops_max, 3, 0, 20);
             if (hi < lo) hi = lo;
-            return { daily_max: int(g.daily_max, 3, 0, 50), drops_min: lo, drops_max: hi };
+            return { daily_max: int(g.daily_max, 3, 0, 50), drops_min: lo, drops_max: hi, score_cap: int(g.score_cap, 5000, 1, 999999999) };   /* #1138-b score_cap 넘는 점수 = 순위 표에 안 넣음 */
         };
         const kstToday = async (q) => (await q.query(`SELECT to_char((now() AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS d`)).rows[0].d;
         const gameUsed = async (q, memberId, day) => (await q.query(
@@ -646,14 +646,27 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const used = await gameUsed(pool, memberId, await kstToday(pool));
             return { left: Math.max(0, gc.daily_max - used), max: gc.daily_max };
         };
-        /* #1136-g 그 회원 최고 점수·단계 = gameend 줄 reason 「게임 물방울(점수 N · 단계 S)」 에서 뽑음(새 표 0 · 옛 줄은 단계 없음 = 빠짐) */
+        /* #1138-b 최고 기록 = 새 표 mall_game_scores 에서(게임별 best {게임:{score,stage}} + 전체 best_score·best_stage) · 표 없거나 실패 = 0(지갑은 그대로 뜸) */
         const gameBest = async (memberId) => {
-            const r = await pool.query(
-                `SELECT MAX(substring(reason from '점수 ([0-9]+)')::bigint) AS bs, MAX(substring(reason from '단계 ([0-9]+)')::int) AS bst
-                   FROM points_ledger WHERE member_id=$1 AND ref_type='game' AND idem_key LIKE 'gameend:%'`, [memberId]);
-            const x = r.rows[0] || {};
-            return { best_score: x.bs == null ? 0 : Number(x.bs), best_stage: x.bst == null ? 0 : Number(x.bst) };
+            const best = {}; let bs = 0, bst = 0;
+            try {
+                const r = await pool.query(`SELECT game, MAX(score)::int AS s, MAX(stage)::int AS st FROM mall_game_scores WHERE member_id=$1 GROUP BY game`, [memberId]);
+                for (const x of r.rows) {
+                    best[x.game] = { score: Number(x.s) || 0, stage: x.st == null ? 0 : Number(x.st) };
+                    bs = Math.max(bs, best[x.game].score); bst = Math.max(bst, best[x.game].stage);
+                }
+            } catch (e) { console.error('[mall-beta] 최고 기록 읽기 실패:', e && e.message); }
+            return { best_score: bs, best_stage: bst, best };
         };
+        /* 순위 이름 = 가린 이름(전*범 · 두 글자 = 전*) · 이름 없으면 아이디 앞 2자 + *** · 아이디·번호 전체는 응답에 안 넣음 */
+        const maskName = (nick, mkey) => {
+            const a = [...String(nick || '').trim()];
+            if (a.length >= 3) return a[0] + '*'.repeat(a.length - 2) + a[a.length - 1];
+            if (a.length >= 1) return a[0] + '*';
+            return String(mkey || '').slice(KP.length).slice(0, 2) + '***';
+        };
+        /* 화면이 읽은 회원 이름(game-end 본문 name) = 한글·영문·빈칸만 20자 · 이상하면 버림 */
+        const cleanName = (v) => String(v == null ? '' : v).replace(/[^가-힣A-Za-z ]/g, '').replace(/ +/g, ' ').trim().slice(0, 20);
         gameBestFn = gameBest;
         const STAT_KEYS = ['gold', 'max_combo', 'miss', 'rot_tap', 'clears', 'sec', 'goal', 'goal_hit'];
         /* 게임 v2 기록용 = 숫자만 추림(정수 0~1천만 · goal_hit 은 참/거짓 → 1/0) · 이상한 값은 버림 · JSON 300자 안 */
@@ -701,7 +714,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const stn = Number(b.stage);
             const stage = (b.stage != null && Number.isInteger(stn) && stn >= 0 && stn <= 999) ? stn : null;   /* #1136-g 도달 단계 · 이상하면 버림 */
             const stats = cleanStats(b.stats);
-            const member = await resolveMember(mid, null);
+            const member = await resolveMember(mid, cleanName(b.name) || null);   /* #1138-b 이름 있으면 베타 회원 nickname 에 저장(없으면 그대로) */
             const endKey = 'gameend:' + playId;
             const replay = async (row) => {
                 if (row.member_id !== member.id) throw gameErr('다른 회원의 판이에요', 403);
@@ -710,21 +723,33 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const prior = await findLedgerByIdem(endKey);
             if (prior) return replay(prior);
             const st = await pool.query(
-                `SELECT member_id, EXTRACT(EPOCH FROM (LOCALTIMESTAMP - created_at))::float8 AS age
+                `SELECT member_id, reason, EXTRACT(EPOCH FROM (LOCALTIMESTAMP - created_at))::float8 AS age
                    FROM points_ledger WHERE ref_type='game' AND ref_id=$1 AND idem_key LIKE 'gamestart:%' LIMIT 1`, [playId]);
             if (!st.rows.length) throw gameErr('시작하지 않은 판이에요', 403);
             if (st.rows[0].member_id !== member.id) throw gameErr('다른 회원의 판이에요', 403);
             const age = Number(st.rows[0].age);
             if (!(age >= GAME_MIN_SEC)) throw gameErr('너무 빨리 끝났어요');
             if (age > GAME_MAX_SEC) throw gameErr('시간이 지난 판이에요');
+            const gm = /^게임 시작\(([a-z0-9_-]{1,20})\)$/.exec(String(st.rows[0].reason || ''));
+            const game = gm ? gm[1] : null;
             const gc = await gameCfg();
             const drops = gc.drops_min + crypto.randomInt(gc.drops_max - gc.drops_min + 1);
             let row;
             try {
                 row = await withTx(async (client) => {
                     await lockMember(client, member.id);
-                    return insertLedger(client, { memberId: member.id, delta: drops, reason: ('게임 물방울(점수 ' + score + (stage != null ? ' · 단계 ' + stage : '') + ')').slice(0, 100),
+                    const led = await insertLedger(client, { memberId: member.id, delta: drops, reason: ('게임 물방울(점수 ' + score + (stage != null ? ' · 단계 ' + stage : '') + ')').slice(0, 100),
                         refType: 'game', refId: playId, idemKey: endKey });
+                    if (game && score <= gc.score_cap) {
+                        /* #1138-b 순위 표 1줄(같은 트랜잭션) · 표 문제로 실패해도 물방울은 그대로(SAVEPOINT) */
+                        await client.query('SAVEPOINT gs');
+                        try {
+                            await client.query(`INSERT INTO mall_game_scores (member_id, game, score, stage, stats, play_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT (play_id) DO NOTHING`,
+                                [member.id, game, score, stage, JSON.stringify(stats), playId]);
+                            await client.query('RELEASE SAVEPOINT gs');
+                        } catch (e) { await client.query('ROLLBACK TO SAVEPOINT gs'); console.error('[mall-beta] 순위 기록 실패:', e && e.message); }
+                    }
+                    return led;
                 });
             } catch (err) {
                 if (isUniqueViolation(err, 'idem')) { const again = await findLedgerByIdem(endKey); if (again) return replay(again); }
@@ -732,6 +757,27 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             }
             await audit('grant', 'mall_game_play', member.id, { beta: true, play_id: playId, score, drops, stage, stats });
             res.json({ ok: true, drops, left: (await gameStatus(member.id)).left, balance: Number(row.balance_after) });
+        }));
+
+        /* #1138-b 게임 순위 = 게임별 · 주간(KST 월요일 0시부터) 또는 전체 · 회원당 그 기간 최고 점수 1줄 · 동점은 먼저 낸 사람 · 위 30 + 내 자리 */
+        router.get('/pub/game-rank', pubGate, pubWrap(async (req, res) => {
+            const mid = pubMid(req.query.mid);
+            const game = String(req.query.game || '').trim();
+            if (!GAME_RE.test(game)) throw gameErr('게임 이름 오류');
+            const period = req.query.period === 'all' ? 'all' : 'week';
+            const member = await resolveMember(mid, null);
+            const r = await pool.query(`
+                WITH b AS (SELECT DISTINCT ON (s.member_id) s.member_id, s.score, s.stage, s.created_at
+                             FROM mall_game_scores s JOIN mall_members m ON m.id = s.member_id AND m.deleted_at IS NULL AND m.member_key LIKE $3
+                            WHERE s.game = $1 AND ($2::text = 'all' OR s.created_at >= (date_trunc('week', now() AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul'))
+                            ORDER BY s.member_id, s.score DESC, s.created_at ASC, s.id ASC),
+                     k AS (SELECT b.*, (ROW_NUMBER() OVER (ORDER BY b.score DESC, b.created_at ASC, b.member_id ASC))::int AS rank FROM b)
+                SELECT k.rank, k.member_id, k.score, k.stage, m.nickname, m.member_key
+                  FROM k JOIN mall_members m ON m.id = k.member_id
+                 WHERE k.rank <= 30 OR k.member_id = $4 ORDER BY k.rank`, [game, period, KP + '%', member.id]);
+            const top = r.rows.filter(x => x.rank <= 30).map(x => ({ rank: x.rank, name: maskName(x.nickname, x.member_key), score: Number(x.score), stage: x.stage == null ? 0 : Number(x.stage), me: x.member_id === member.id }));
+            const mine = r.rows.find(x => x.member_id === member.id);
+            res.json({ game, period, top, me: mine ? { rank: mine.rank, score: Number(mine.score), stage: mine.stage == null ? 0 : Number(mine.stage) } : { rank: null, score: 0, stage: 0 } });
         }));
 
         /* 베타는 공개 길(/pub)만 — 토큰 내부 길(회원·포인트 적립·나무 등)은 베타 장착에서 열지 않는다 */
