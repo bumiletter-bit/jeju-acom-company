@@ -149,6 +149,20 @@ function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof
         await db.query(`UPDATE points_ledger SET created_at = created_at - interval '10 seconds' WHERE ref_id=$1`, [r.j.play_id]);
         r = await call('POST', '/api/mall-beta/pub/game-end', { mid: 'kim1', play_id: r.j.play_id, score: 0 });
         ok(r.j.drops === 7, '설정 drops 7~7 = 7', r.j);
+        console.log('Ⅴ-c 게임 v2 기록(stage·stats) = 기록만 · 물방울 무변');
+        CFG.mall_beta_game_config.game.daily_max = 9;
+        const endWith = async (body) => { const s0 = await call('POST', '/api/mall-beta/pub/game-start', { mid: 'kim1', game: 'catch' }); await db.query(`UPDATE points_ledger SET created_at = created_at - interval '10 seconds' WHERE ref_id=$1`, [s0.j.play_id]); return Object.assign(await call('POST', '/api/mall-beta/pub/game-end', Object.assign({ mid: 'kim1', play_id: s0.j.play_id }, body)), { pid: s0.j.play_id }); };
+        r = await endWith({ score: 50, stage: 4, stats: { gold: 12, max_combo: 3.7, miss: -1, rot_tap: 'x', clears: 2, sec: 40, goal: 10, goal_hit: true, evil: '<script>', sec2: 1e12 } });
+        const au = calls.audit.filter(a => a.targetType === 'mall_game_play' && a.changes && a.changes.play_id === r.pid).slice(-1)[0];
+        const rs = (await db.query(`SELECT reason FROM points_ledger WHERE idem_key=$1`, ['gameend:' + r.pid])).rows[0].reason;
+        ok(r.s === 200 && r.j.drops === 7 && au && au.changes.stage === 4 && JSON.stringify(au.changes.stats) === JSON.stringify({ gold: 12, max_combo: 3, clears: 2, sec: 40, goal: 10, goal_hit: 1 }) && rs === '게임 물방울(점수 50 · 단계 4)',
+            'stage·stats 기록 = 숫자만 추림(음수·글자·모르는 칸 버림 · 참→1) · 원장 reason 에 단계 · 물방울 종전 계산', { drops: r.j.drops, au: au && au.changes, rs });
+        r = await endWith({ score: 10, stage: 'abc', stats: 'nope' });
+        const rs2 = (await db.query(`SELECT reason FROM points_ledger WHERE idem_key=$1`, ['gameend:' + r.pid])).rows[0].reason;
+        ok(r.s === 200 && rs2 === '게임 물방울(점수 10)', '이상한 stage·stats = 버리고 통과(종전 reason 꼴)', { s: r.s, rs2 });
+        r = await call('GET', '/api/mall-beta/pub/wallet?mid=kim1');
+        ok(r.j.game && r.j.game.best_score === 999999 && r.j.game.best_stage === 4 && 'left' in r.j.game, 'wallet game 에 best_score(999999)·best_stage(4) 덧붙음', r.j.game);
+        const rr0 = await call('GET', '/api/mall/pub/wallet?mid=kim1'); ok(!('game' in rr0.j), '실서비스 wallet 은 여전히 game 칸 없음', Object.keys(rr0.j));
         const realGames = (await db.query(`SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND ref_type='game'`, [kim.id])).rows[0].n;
         ok(realGames === 0, '실회원 kim1 원장에 게임 줄 0', realGames);
         ok(calls.notify.length === 0 && calls.grant.length === g1, '끝까지 베타 알림·발급 0');

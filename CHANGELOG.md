@@ -1,3 +1,9 @@
+## v5.9.786 (2026-11-13) — #1136-g 베타 게임 기록 칸(단계·통계) · 베타 길만
+
+- 베타 game-end 가 stage·stats(gold·max_combo·miss·rot_tap·clears·sec·goal·goal_hit · 숫자만 · 300자 안)를 받아 audit mall_game_play 에 기록 · 원장 reason 「게임 물방울(점수 N · 단계 S)」 · 물방울 계산 무변 · wallet.game 에 best_score·best_stage(새 표 0) · 실서비스 길 무변
+- 실DB mall_beta on · 허용 1명(대표 · audit 25150) · 베타 화면 4개(index-beta·farm-beta·roulette-beta + game-beta 올리는 중)는 skin6 새 파일 · 기존 index·farm·roulette 해시 무변 확인(워커2) · 기존 자사몰 홈·상세→담기→주문 화면 실클릭 이상 0
+- 워커1 시공 · 총괄 diff 읽음 · verify-1136-beta 59/59(TZ=UTC 59/59)
+
 ## v5.9.785 (2026-11-13) — #1136 자사몰 귤나무 「베타」 서버 길 /api/mall-beta(닫힌 채 배포 · 실서비스 무변)
 
 - 대표(11/13): 자사몰 귤나무 플랫폼(게임·초대·앱·분양)은 실서비스를 그대로 두고 베타판을 따로 만들어 써 보며 넣고 빼고 고친 뒤 최종본을 한 번에 반영 · 결정 = 우선 한국 · 초대 = 게임 횟수 · 게임 보상 물방울까지 · 모든 가입자 · 무료 귤 발송·룰렛 쿠폰 그대로 · 분양 1,000그루

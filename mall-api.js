@@ -358,7 +358,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             attend_today: attend.rows.length > 0,
             join_bonus: joined,
         };
-        if (BETA && gameStatus) body.game = await gameStatus(member.id);   /* #1136-a 베타만 · 실서비스 응답 무변 */
+        if (BETA && gameStatus) body.game = Object.assign(await gameStatus(member.id), gameBestFn ? await gameBestFn(member.id) : {});   /* #1136-a 베타만 · 실서비스 응답 무변 · #1136-g 최고 점수·단계 */
         res.json(body);
     }));
 
@@ -621,7 +621,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
        판 기록 = points_ledger 줄(새 표 0): 시작 = delta 0 · idem 'gamestart:<회원id>:<KST날짜>:<n>' · ref_type 'game' · ref_id = play_id
        끝 = delta 물방울 · idem 'gameend:<play_id>'(같은 판 두 번 = 처음 결과). 날짜·경과 시간은 SQL 안에서(KST · 렌더 = UTC).
        점수는 기록만 · 물방울은 서버가 설정 범위 안에서 정함(점수 조작 이득 0). bonus_plays 칸은 자리만(2판에서 씀). */
-    let gameStatus = null;
+    let gameStatus = null, gameBestFn = null;
     if (BETA) {
         const GAME_RE = /^[a-z0-9_-]{1,20}$/;
         const PLAY_RE = /^[a-f0-9]{24}$/;
@@ -645,6 +645,28 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             const gc = await gameCfg();
             const used = await gameUsed(pool, memberId, await kstToday(pool));
             return { left: Math.max(0, gc.daily_max - used), max: gc.daily_max };
+        };
+        /* #1136-g 그 회원 최고 점수·단계 = gameend 줄 reason 「게임 물방울(점수 N · 단계 S)」 에서 뽑음(새 표 0 · 옛 줄은 단계 없음 = 빠짐) */
+        const gameBest = async (memberId) => {
+            const r = await pool.query(
+                `SELECT MAX(substring(reason from '점수 ([0-9]+)')::bigint) AS bs, MAX(substring(reason from '단계 ([0-9]+)')::int) AS bst
+                   FROM points_ledger WHERE member_id=$1 AND ref_type='game' AND idem_key LIKE 'gameend:%'`, [memberId]);
+            const x = r.rows[0] || {};
+            return { best_score: x.bs == null ? 0 : Number(x.bs), best_stage: x.bst == null ? 0 : Number(x.bst) };
+        };
+        gameBestFn = gameBest;
+        const STAT_KEYS = ['gold', 'max_combo', 'miss', 'rot_tap', 'clears', 'sec', 'goal', 'goal_hit'];
+        /* 게임 v2 기록용 = 숫자만 추림(정수 0~1천만 · goal_hit 은 참/거짓 → 1/0) · 이상한 값은 버림 · JSON 300자 안 */
+        const cleanStats = (st) => {
+            const out = {};
+            if (!st || typeof st !== 'object' || Array.isArray(st)) return out;
+            for (const k of STAT_KEYS) {
+                let v = st[k];
+                if (k === 'goal_hit' && typeof v === 'boolean') v = v ? 1 : 0;
+                if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 10000000) continue;
+                out[k] = Math.floor(v);
+            }
+            return JSON.stringify(out).length <= 300 ? out : {};
         };
 
         router.post('/pub/game-start', pubGate, pubWrap(async (req, res) => {
@@ -676,6 +698,9 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             if (!PLAY_RE.test(playId)) throw gameErr('판 번호 오류');
             const sn = Number(b.score);
             const score = Number.isFinite(sn) ? Math.max(0, Math.min(999999999, Math.floor(sn))) : 0;
+            const stn = Number(b.stage);
+            const stage = (b.stage != null && Number.isInteger(stn) && stn >= 0 && stn <= 999) ? stn : null;   /* #1136-g 도달 단계 · 이상하면 버림 */
+            const stats = cleanStats(b.stats);
             const member = await resolveMember(mid, null);
             const endKey = 'gameend:' + playId;
             const replay = async (row) => {
@@ -698,14 +723,14 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             try {
                 row = await withTx(async (client) => {
                     await lockMember(client, member.id);
-                    return insertLedger(client, { memberId: member.id, delta: drops, reason: ('게임 물방울(점수 ' + score + ')').slice(0, 100),
+                    return insertLedger(client, { memberId: member.id, delta: drops, reason: ('게임 물방울(점수 ' + score + (stage != null ? ' · 단계 ' + stage : '') + ')').slice(0, 100),
                         refType: 'game', refId: playId, idemKey: endKey });
                 });
             } catch (err) {
                 if (isUniqueViolation(err, 'idem')) { const again = await findLedgerByIdem(endKey); if (again) return replay(again); }
                 throw err;
             }
-            await audit('grant', 'mall_game_play', member.id, { beta: true, play_id: playId, score, drops });
+            await audit('grant', 'mall_game_play', member.id, { beta: true, play_id: playId, score, drops, stage, stats });
             res.json({ ok: true, drops, left: (await gameStatus(member.id)).left, balance: Number(row.balance_after) });
         }));
 
