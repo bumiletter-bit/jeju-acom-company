@@ -6128,24 +6128,33 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
 //   ⚠️ 아래 「detectSize ~ 채널 초기화 표식」·「qtyAggregated ~ resetInvoiceQty」 두 구간은 v2(invoice-v2.js)가 그대로 잘라 실행한다 — 표식 줄·함수 이름을 바꾸지 말 것.
 
 // 사이즈 감지
+// #1140(대표 11/13 실사고 「크기는 “S싸이즈“로 … 지난번 2s는 작아서 불편」 → 2S 로 나감): 오매칭보다 미매칭 — 애매하면 자동으로 정하지 않는다(null)
+//   ①「싸이즈」 = 「사이즈」 ②서로 다른 사이즈 낱말(2S·S·M · 투에스·에스·엠 등)이 둘 이상이면 null ③사이즈 낱말 바로 뒤(10자 안)에 부정·비교 말(말고·빼고·아닌·싫·작아·커서·불편 …)이 붙으면 null
+//   한글 낱말을 먼저 찾아 그 자리를 지운 뒤 영문을 찾는다(「투에스」 안의 「에스」를 S 로 또 세지 않게)
 function detectSize(msg) {
     if (!msg) return null;
-    const lower = msg.toLowerCase().trim();
-    const koreanMap = [
-        { patterns: ['투에스', '2에스'], size: '2S' },
-        { patterns: ['에스', '스몰'], size: 'S' },
-        { patterns: ['엠', '미디엄', '미듐'], size: 'M' },
-    ];
-    for (const item of koreanMap) {
-        for (const p of item.patterns) {
-            if (lower.includes(p)) return item.size;
-        }
-    }
-    let match = lower.match(/(2s|s|m)\s*사이즈/);
-    if (match) return match[1].toUpperCase();
-    match = lower.match(/\b(2s)\b/) || lower.match(/\b([sm])\b/);
-    if (match) return match[1].toUpperCase();
-    return null;
+    const r = sizeScan(msg.trim());
+    if (r.sizes.length !== 1 || r.neg) return null;
+    return r.sizes[0];
+}
+const SIZE_NEG_AFTER = /말고|빼고|아닌|아니|싫|작아|작았|작더|작던|커서|컸|크더|크던|불편|별로/;
+function sizeScan(msg) {
+    const low = String(msg || '').toLowerCase().replace(/싸이즈/g, '사이즈');
+    let s = low; const hits = [];
+    const take = (re, f) => { s = s.replace(re, function (m) { const a = arguments, off = a[a.length - 2]; hits.push({ size: f(a), end: off + m.length }); return ' '.repeat(m.length); }); };
+    take(/투에스|2에스/g, () => '2S');
+    take(/에스|스몰/g, () => 'S');
+    take(/엠|미디엄|미듐/g, () => 'M');
+    take(/(2s|s|m)\s*사이즈/g, a => a[1].toUpperCase());
+    take(/\b(2s|s|m)\b/g, a => a[1].toUpperCase());
+    return { low, hits, sizes: [...new Set(hits.map(h => h.size))], neg: hits.some(h => SIZE_NEG_AFTER.test(low.slice(h.end, h.end + 10))) };
+}
+// #1140: 손님 메모의 사이즈 말이 애매한가(사이즈 둘 이상 · 사이즈 뒤 부정·비교 말 · 사이즈 낱말 없이 「소과·작은」 말에 부정·비교 말) — 참이면 꼬리를 붙이지 않는다(최종발주가 확인 카드로)
+function sizeAmbig(msg) {
+    if (!msg) return false;
+    const r = sizeScan(msg.trim());
+    if (r.sizes.length > 1 || (r.sizes.length === 1 && r.neg)) return true;
+    return !r.sizes.length && /작은|작게|작다|작아|소과/.test(r.low) && /말고|빼고|싫|아닌|아니|작아서|작았|작더|작던|불편|별로/.test(r.low);
 }
 
 // 품목명 카탈로그 (품목명 추가(03.03).xlsx 기준)
@@ -6546,7 +6555,7 @@ function addSizeSuffix(optionInfo, msg) {
     const sizeOk = /귤/.test(optionInfo) && /로얄과/.test(optionInfo) && !/선물용/.test(optionInfo);
     let detectedSize = sizeOk ? detectSize(msg) : null;
     // #623(대표 확정 10/10): 로얄과 주문의 「소과」「작은·작게·작다·작아」 = 2S(로얄과에서 가장 작은 사이즈 · 종전 S)
-    if (sizeOk && !detectedSize && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = '2S';
+    if (sizeOk && !detectedSize && !sizeAmbig(msg) && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = '2S';   // #1140: 애매한 메모는 2S 길도 안 탐
     if (detectedSize) optionInfo = optionInfo.trim() + ' ' + detectedSize + '사이즈로!';
     return optionInfo;
 }

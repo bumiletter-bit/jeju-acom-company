@@ -723,6 +723,24 @@
             upRes.set(u.srcLine, { id, hit, okE, size, skip: d === 'skip' });
         });
         st.upRes = upRes;
+        // #1140(대표 11/13 실사고 「S싸이즈로 … 지난번 2s는 작아서」 → 2S 로 나감): 손님 메모의 사이즈 말이 애매해 v2 가 꼬리를 안 붙인 귤 로얄과 주문 = 「사이즈 확인」 카드 한 장(같은 구매자·같은 메모 묶음)
+        //   고르기 전엔 안 붙음 · 고른 사이즈만 꼬리 · 메모 줄(번호 + 사이즈)·박스별·직접 고침으로 이미 정해진 주문은 카드 없음(종전 길 우선) · 판정 = app.js sizeAmbig(전역 · 없으면 이 길 통째 건너뜀)
+        const ambG = new Map();
+        if (typeof sizeAmbig === 'function') s.merged.forEach(e => {
+            const opt = String(e.conv['옵션정보'] || ''), k = keyOf(e), p = st.patch.get(k);
+            if (!sizeItem(opt) || /사이즈로!\s*$/.test(opt) || e.individual || (e.excluded && !e.userTouched)) return;
+            if (tails.has(k) || boxes.has(k) || szOf(k) || (p && (p.tail != null || p.boxes)) || (st.omBoxes && st.omBoxes.get(k))) return;
+            const raw = rawOf(e), memo = String(raw['배송메세지'] || raw['배송메시지'] || e.conv['배송메세지'] || '').trim();
+            if (!memo || !sizeAmbig(memo)) return;
+            const id = 'lszm:' + e.ch + '|' + (buyerTel(e) || keyOf(e)) + '|' + memo, g = ambG.get(id) || { id, keys: [], es: [], memo };
+            g.keys.push(k); g.es.push(e); ambG.set(id, g);
+        });
+        ambG.forEach(g => {
+            const d = st.dec.get(g.id); if (!/^(?:2S|S|M)$/.test(String(d || ''))) return;
+            g.keys.forEach(k => tails.set(k, d + '사이즈로!'));
+            info.push({ t: `사이즈 확인(손님 메모)으로 정함: 「${g.memo}」 → 귤 로얄과 주문 ${g.keys.length}건에 「${d}사이즈로!」`, keys: g.keys });
+        });
+        st.sizeAmb = [...ambG.values()];
         gwaApply(s, tails, boxes, res, info);
         st.sizeTail = tails; st.sizeBoxes = boxes; st.boxAsk = asks; st.sizeRes = res; return info;
     }
@@ -1205,6 +1223,10 @@
         (st.sizeDup || []).forEach(g => cards.push({ id: g.id, type: 'line', tag: '메모 줄', title: `같은 손님에 사이즈 요청이 둘이에요(${g.sizes.join(' · ')})`, keys: g.keys,
             lines: [...g.raws.map((r, i) => [`메모 줄 ${i + 1}`, r]), ...g.es.slice(0, 4).map((e, i) => [g.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ['처리', '고른 사이즈만 귤 로얄과 주문에 붙여요 · 「안 붙임」이면 사이즈 없이 나가요']],
             choices: [...g.sizes.map((z, i) => [z, z + '사이즈로!', i ? 0 : 1]), ['skip', '안 붙임']] }));
+        // #1140 손님 메모 사이즈가 애매한 귤 로얄과 주문 — 고르기 전엔 안 붙음(sizeApply 가 고른 것만 붙임)
+        (st.sizeAmb || []).forEach(g => cards.push({ id: g.id, type: 'line', tag: '사이즈 확인', title: groupTitle(g.es), keys: g.keys,
+            lines: [telLine(g.es[0]), ['손님 메모', g.memo], ...g.es.slice(0, 4).map((e, i) => [g.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ['이유', '손님 메모에 사이즈 말이 둘 이상이거나 「말고·작아서」 같은 말이 붙어 자동으로 정하지 않았어요'], ['처리', '고른 사이즈만 귤 로얄과 주문 옵션 끝에 붙어요 · 「안 붙임」이면 사이즈 없이 나가요']],
+            choices: [['2S', '2S사이즈로!'], ['S', 'S사이즈로!'], ['M', 'M사이즈로!'], ['skip', '안 붙임']] }));
         // #883 과수 줄 카드(만감류 아님 · 받는 분 번호 · 박스 수 · 과수 둘 · 사이즈+과수)
         (st.gwaAsk || []).forEach(a => cards.push({ id: a.id, type: 'line', tag: '메모 줄', title: a.title, keys: (a.es || []).map(keyOf), lines: [...(a.raws || []).map((r, i) => [`메모 줄 ${i + 1}`, r]), ['이유', a.why], ...(a.es || []).slice(0, 4).map((e, i) => [a.es.length > 1 ? `주문 ${i + 1}` : '주문', orderLine(e)]), ...(a.note ? [['처리', a.note]] : [])], choices: a.choices || [['ok', '확인함', 1]] }));
         // #583 ⑥ 「번호 업그레이드」 줄 — 사이즈를 카드에서 눌러 고른다(귤 로얄과만 · 아니면 이유)
@@ -1434,7 +1456,7 @@
     const closed = cd => cd.type === 'fix' || st.dec.has(cd.id) || !!patchDec(cd);
     const pending = () => st.cards.filter(cd => !closed(cd));
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
-    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lsz: 'line', lgwa: 'line', lgwad: 'line', lgwab: 'line', lszgwa: 'line', lgbad: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cdup: 'cash-dup', citem: 'cash-boxdiff', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
+    const KIND = { aimiss: 'ai-miss', lup: 'size-up', lfix: 'line-fix', fix: 'fix', ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lbox: 'line', lsz: 'line', lszm: 'line', lgwa: 'line', lgwad: 'line', lgwab: 'line', lszgwa: 'line', lgbad: 'line', lpbad: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', lrecv: 'line-recv', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cdup: 'cash-dup', citem: 'cash-boxdiff', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
     // #525: AI가 손님 메모에서 읽은 「품목 뒤에 붙일 말」 입력칸 — 사람이 [이대로 넣기]를 눌러야 옵션 칸 끝에 붙는다(비우면 안 붙임)
     const tailBoxHtml = (cd, d) => (cd.tail ? `<label class="wide">품목 뒤에 붙일 말(옵션 칸 끝에 붙어요 · 비우면 안 붙임)<input type="text" data-f="tail" value="${esc(d && d.tail != null ? d.tail : cd.tail)}" maxlength="80"></label>` : '');
