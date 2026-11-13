@@ -182,10 +182,14 @@ function isUniqueViolation(err, constraintIncludes) {
 }
 
 // ============================================================================
-function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, notify, onRewardGrant }) {   /* #467: onRewardGrant = 실물 당첨 후처리(쿠폰 자동 발급·안내) — 미주입이면 종전 텔레그램 안내 */
+function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, notify, onRewardGrant, keyPrefix, beta }) {   /* #467: onRewardGrant = 실물 당첨 후처리(쿠폰 자동 발급·안내) — 미주입이면 종전 텔레그램 안내 */
     if (!pool || !express || typeof cfgGet !== 'function' || typeof writeAudit !== 'function') {
         throw new Error('createMallRouter: pool/express/cfgGet/writeAudit 주입 필수');
     }
+    /* #1136-a 귤나무 베타: keyPrefix = mall_members.member_key 앞머리(기본 '' = 종전 그대로) · beta = 베타 장착(게이트 mall_beta ·
+       게임 설정 mall_beta_game_config 우선 · 알림·쿠폰 발급 0 · 당첨 기록은 status 'beta' · 토큰 내부 길 막음 · 게임 길 2개) */
+    const KP = (typeof keyPrefix === 'string') ? keyPrefix : '';
+    const BETA = beta === true;
     void cfgSet; // 계약상 주입받지만 이 모듈은 설정을 쓰지 않음(메인 담당)
 
     const router = express.Router();
@@ -219,6 +223,17 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         next();
     });
     const pubGate = async (req, res, next) => {
+        if (BETA) {
+            /* #1136-a 베타 게이트 = 설정 mall_beta {on:true, members:[아이디…]} 만 봄(mall_pub 무관) · 없음·꺼짐 503 · 명단 밖 403 */
+            try {
+                const bc = await cfgGet('mall_beta');
+                if (!bc || bc.on !== true) return res.status(503).json({ error: '준비 중' });
+                const mid = String((req.query && req.query.mid) || (req.body && req.body.mid) || '').trim();
+                const list = Array.isArray(bc.members) ? bc.members.map(x => String(x).trim()) : [];
+                if (!mid || list.indexOf(mid) === -1) return res.status(403).json({ error: '베타 참여 회원이 아니에요' });
+                return next();
+            } catch (e) { return res.status(503).json({ error: '준비 중' }); }
+        }
         try {
             const sw = await cfgGet('mall_pub');
             if (!sw || sw.on !== true) return res.status(503).json({ error: '준비 중' });
@@ -252,6 +267,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         return v;
     }
     async function countPaidOrders(memberKey, statuses) {
+        if (KP && String(memberKey).indexOf(KP) === 0) memberKey = String(memberKey).slice(KP.length);   /* #1136-a 카페24 주문은 실아이디로 셈 */
         const ST = statuses || 'N10,N20,N21,N22,N30,N40';
         if (!cafe24 || typeof cafe24.apiGet !== 'function') return 0;
         const since = await ticketSince();
@@ -330,7 +346,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             countDeliveredOrders(mid),   // #277: 룰렛권 = 배송완료 기준
         ]);
         const joined = !!(await findLedgerByIdem('join:' + member.id));
-        res.json({
+        const body = {
             water: balance,
             given: tree.rows.length ? Number(tree.rows[0].water_count) : 0,
             goal: (await loadConfig()).level_thresholds.slice(-1)[0] || 100,
@@ -341,7 +357,9 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             review_window_days: REVIEW_WINDOW_DAYS,
             attend_today: attend.rows.length > 0,
             join_bonus: joined,
-        });
+        };
+        if (BETA && gameStatus) body.game = await gameStatus(member.id);   /* #1136-a 베타만 · 실서비스 응답 무변 */
+        res.json(body);
     }));
 
     /* ══════ #355(대표 8/11): 마이 > 「시즌 대기 목록」·「리뷰 관리」 실목록 ══════
@@ -519,7 +537,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     // 나무 물주기 −1 (+수확 알림)
     router.post('/pub/tree-water', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid((req.body || {}).mid);
-        const idem = 'pubwater:' + checkIdemKey(String((req.body || {}).idem_key || ''));
+        const idem = (BETA ? 'betawater:' : 'pubwater:') + checkIdemKey(String((req.body || {}).idem_key || ''));   /* #1136-a 베타 idem 이 실회원 줄과 안 겹치게 */
         const cfg = await loadConfig();
         const member = await resolveMember(mid, null);
         const prior = await findLedgerByIdem(idem);
@@ -539,7 +557,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             return { ledger, waterCount };
         });
         const goal = cfg.level_thresholds.slice(-1)[0] || 100;
-        if (out.waterCount === goal && typeof notify === 'function') {
+        if (!BETA && out.waterCount === goal && typeof notify === 'function') {   /* #1136-a 베타 = 수확 알림 0 */
             notify(`🌳 [귤나무 수확!] 회원 ${mid} — 물 ${goal}개 달성. **지금 제일 싱싱한 제철 귤 4.5kg** 발송 안내 필요(배송지 확인)`);
         }
         res.json({ ok: true, replayed: false, balance: Number(out.ledger.balance_after), given: out.waterCount });
@@ -570,13 +588,13 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             if (/^coupon/.test(prize.key) || prize.key === 'box' || prize.key === 'upgrade') {
                 const gr = await client.query(
                     `INSERT INTO reward_grants (member_id, kind, amount, status, month_key, idem_key)
-                     VALUES ($1,$4,1,'pending',$2,$3) ON CONFLICT (idem_key) DO NOTHING RETURNING id`,
+                     VALUES ($1,$4,1,'${BETA ? 'beta' : 'pending'}',$2,$3) ON CONFLICT (idem_key) DO NOTHING RETURNING id`,
                     [member.id, kstMonthKey(), 'spin-' + prize.key + ':' + spinId, prize.key]);
                 grantId = gr.rows[0] ? gr.rows[0].id : null;   /* #467: 후처리(자동 발급·안내)용 — 충돌(중복)이면 null */
             }
             return { spinId, prize, ledger, grantId };
         });
-        if (/^coupon/.test(out.prize.key) || out.prize.key === 'box' || out.prize.key === 'upgrade') {
+        if (!BETA && (/^coupon/.test(out.prize.key) || out.prize.key === 'box' || out.prize.key === 'upgrade')) {   /* #1136-a 베타 = 쿠폰 발급·알림 0(기록만) */
             if (typeof onRewardGrant === 'function') {
                 // #467(대표 GO 9/23): 쿠폰 = 당첨 즉시 자동 발급 + 발급 안내 알림톡 — 응답을 막지 않도록 비동기. 텔레그램 안내도 후처리가 담당(성공/실패 문구 분기).
                 const payload = { grantId: out.grantId, member: { id: member.id, member_key: member.member_key, nickname: member.nickname }, prize: { key: out.prize.key, label: out.prize.label } };
@@ -591,13 +609,109 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                 notify(`🎡 [룰렛 실물 당첨] ${out.prize.label}\n회원ID ${member.member_key}${member.nickname ? ' (' + member.nickname + ')' : ''}${pend}\n→ 카페24 관리자에서 회원ID로 찾아 발급 후, 문의 관리 > 🎁 당첨 지급에서 [지급완료]`);
             }
         }
-        await audit('create', 'roulette_spin', out.spinId, { member_id: member.id, result: out.prize.key, pub: true });
+        await audit('create', 'roulette_spin', out.spinId, BETA ? { member_id: member.id, result: out.prize.key, pub: true, beta: true } : { member_id: member.id, result: out.prize.key, pub: true });
         res.json({
             ok: true, result: { key: out.prize.key, label: out.prize.label, points: out.prize.points },
             balance: out.ledger ? Number(out.ledger.balance_after) : (await currentBalance(member.id)),
             tickets: Math.max(0, orders - used.rows[0].n - 1),
         });
     }));
+
+    /* ══════ #1136-a 베타 전용 게임 길 2개 — beta:true 장착에서만 생김(실서비스 /api/mall 엔 없음) ══════
+       판 기록 = points_ledger 줄(새 표 0): 시작 = delta 0 · idem 'gamestart:<회원id>:<KST날짜>:<n>' · ref_type 'game' · ref_id = play_id
+       끝 = delta 물방울 · idem 'gameend:<play_id>'(같은 판 두 번 = 처음 결과). 날짜·경과 시간은 SQL 안에서(KST · 렌더 = UTC).
+       점수는 기록만 · 물방울은 서버가 설정 범위 안에서 정함(점수 조작 이득 0). bonus_plays 칸은 자리만(2판에서 씀). */
+    let gameStatus = null;
+    if (BETA) {
+        const GAME_RE = /^[a-z0-9_-]{1,20}$/;
+        const PLAY_RE = /^[a-f0-9]{24}$/;
+        const GAME_MIN_SEC = 5, GAME_MAX_SEC = 1800;
+        const gameErr = (msg, status) => { const e = new Error(msg); e.status = status || 400; return e; };
+        const gameCfg = async () => {
+            let raw = null;
+            try { raw = await cfgGet('mall_beta_game_config'); } catch (_) { raw = null; }
+            const g = (raw && typeof raw === 'object' && raw.game && typeof raw.game === 'object') ? raw.game : {};
+            const int = (v, d, lo, hi) => { const n = Number(v); return (v !== null && v !== '' && Number.isInteger(n) && n >= lo && n <= hi) ? n : d; };
+            const lo = int(g.drops_min, 1, 0, 20);
+            let hi = int(g.drops_max, 3, 0, 20);
+            if (hi < lo) hi = lo;
+            return { daily_max: int(g.daily_max, 3, 0, 50), drops_min: lo, drops_max: hi };
+        };
+        const kstToday = async (q) => (await q.query(`SELECT to_char((now() AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS d`)).rows[0].d;
+        const gameUsed = async (q, memberId, day) => (await q.query(
+            `SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND idem_key LIKE $2`,
+            [memberId, 'gamestart:' + memberId + ':' + day + ':%'])).rows[0].n;
+        gameStatus = async (memberId) => {
+            const gc = await gameCfg();
+            const used = await gameUsed(pool, memberId, await kstToday(pool));
+            return { left: Math.max(0, gc.daily_max - used), max: gc.daily_max };
+        };
+
+        router.post('/pub/game-start', pubGate, pubWrap(async (req, res) => {
+            const b = req.body || {};
+            const mid = pubMid(b.mid);
+            const game = String(b.game || '').trim();
+            if (!GAME_RE.test(game)) throw gameErr('게임 이름 오류');
+            const gc = await gameCfg();
+            const member = await resolveMember(mid, null);
+            const out = await withTx(async (client) => {
+                await lockMember(client, member.id);   /* 같은 회원 동시 시작 = 직렬화 → 하루 판 수 넘침 0 */
+                const day = await kstToday(client);
+                const used = await gameUsed(client, member.id, day);
+                if (used >= gc.daily_max) return { limit: true };
+                const playId = crypto.randomBytes(12).toString('hex');
+                await insertLedger(client, { memberId: member.id, delta: 0, reason: '게임 시작(' + game + ')', refType: 'game', refId: playId,
+                    idemKey: 'gamestart:' + member.id + ':' + day + ':' + (used + 1) });
+                return { playId, left: gc.daily_max - used - 1 };
+            });
+            if (out.limit) return res.json({ ok: false, reason: 'limit', left: 0, max: gc.daily_max });
+            await audit('create', 'mall_game_play', member.id, { beta: true, game, play_id: out.playId });
+            res.json({ ok: true, play_id: out.playId, left: out.left, max: gc.daily_max });
+        }));
+
+        router.post('/pub/game-end', pubGate, pubWrap(async (req, res) => {
+            const b = req.body || {};
+            const mid = pubMid(b.mid);
+            const playId = String(b.play_id || '');
+            if (!PLAY_RE.test(playId)) throw gameErr('판 번호 오류');
+            const sn = Number(b.score);
+            const score = Number.isFinite(sn) ? Math.max(0, Math.min(999999999, Math.floor(sn))) : 0;
+            const member = await resolveMember(mid, null);
+            const endKey = 'gameend:' + playId;
+            const replay = async (row) => {
+                if (row.member_id !== member.id) throw gameErr('다른 회원의 판이에요', 403);
+                return res.json({ ok: true, replayed: true, drops: Number(row.delta), left: (await gameStatus(member.id)).left });
+            };
+            const prior = await findLedgerByIdem(endKey);
+            if (prior) return replay(prior);
+            const st = await pool.query(
+                `SELECT member_id, EXTRACT(EPOCH FROM (LOCALTIMESTAMP - created_at))::float8 AS age
+                   FROM points_ledger WHERE ref_type='game' AND ref_id=$1 AND idem_key LIKE 'gamestart:%' LIMIT 1`, [playId]);
+            if (!st.rows.length) throw gameErr('시작하지 않은 판이에요', 403);
+            if (st.rows[0].member_id !== member.id) throw gameErr('다른 회원의 판이에요', 403);
+            const age = Number(st.rows[0].age);
+            if (!(age >= GAME_MIN_SEC)) throw gameErr('너무 빨리 끝났어요');
+            if (age > GAME_MAX_SEC) throw gameErr('시간이 지난 판이에요');
+            const gc = await gameCfg();
+            const drops = gc.drops_min + crypto.randomInt(gc.drops_max - gc.drops_min + 1);
+            let row;
+            try {
+                row = await withTx(async (client) => {
+                    await lockMember(client, member.id);
+                    return insertLedger(client, { memberId: member.id, delta: drops, reason: ('게임 물방울(점수 ' + score + ')').slice(0, 100),
+                        refType: 'game', refId: playId, idemKey: endKey });
+                });
+            } catch (err) {
+                if (isUniqueViolation(err, 'idem')) { const again = await findLedgerByIdem(endKey); if (again) return replay(again); }
+                throw err;
+            }
+            await audit('grant', 'mall_game_play', member.id, { beta: true, play_id: playId, score, drops });
+            res.json({ ok: true, drops, left: (await gameStatus(member.id)).left, balance: Number(row.balance_after) });
+        }));
+
+        /* 베타는 공개 길(/pub)만 — 토큰 내부 길(회원·포인트 적립·나무 등)은 베타 장착에서 열지 않는다 */
+        router.use((req, res) => res.status(404).json({ error: '베타는 공개 길만 열려 있어요' }));
+    }
 
     // ── 전역 게이트 ──────────────────────────────────────────────
     // 🔴 프로토타입 인증: 단일 서버 토큰 — member_key 신원 위조는 못 막음.
@@ -638,13 +752,19 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     async function loadConfig() {
         let raw = null;
         try { raw = await cfgGet('mall_game_config'); } catch (_) { /* 폴백 */ }
+        if (BETA) {
+            /* #1136-a 베타 = 실서비스 설정 위에 베타 칸만 덮음(game 칸만 있어도 확률·레벨·물 값은 실서비스와 같게 · 실서비스 값 무변) */
+            let b = null;
+            try { b = await cfgGet('mall_beta_game_config'); } catch (_) { b = null; }
+            raw = Object.assign({}, (raw && typeof raw === 'object') ? raw : {}, (b && typeof b === 'object') ? b : {});
+        }
         return normalizeConfig(raw);
     }
 
     // 회원 조회 (없으면 404 — 자동 생성은 resolve/spin만)
     async function getMember(memberKey) {
         const r = await pool.query(
-            `SELECT id, member_key, nickname, deleted_at FROM mall_members WHERE member_key=$1`, [memberKey]);
+            `SELECT id, member_key, nickname, deleted_at FROM mall_members WHERE member_key=$1`, [KP + memberKey]);
         if (!r.rows.length) { const e = new Error('회원 없음 — POST /members/resolve 먼저'); e.status = 404; throw e; }
         const m = r.rows[0];
         if (m.deleted_at) { const e = new Error('사용할 수 없는 회원입니다'); e.status = 403; throw e; }
@@ -659,7 +779,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
              ON CONFLICT (member_key) DO UPDATE SET nickname = COALESCE(EXCLUDED.nickname, mall_members.nickname)
              RETURNING id, member_key, nickname, created_at, deleted_at,
                        (xmax = 0) AS is_new`,   // xmax=0 → 신규 INSERT 판별
-            [memberKey, nick]);
+            [KP + memberKey, nick]);   /* #1136-a 베타 = 'beta:아이디' 행 따로 */
         const m = r.rows[0];
         if (m.deleted_at) { const e = new Error('사용할 수 없는 회원입니다'); e.status = 403; throw e; }
         return m;

@@ -6194,6 +6194,11 @@ app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgG
     cafe24: { apiGet: (...a) => require('./cafe24.js').apiGet(...a) },   /* #256: 지연 참조 — const cafe24(8350행)가 이 마운트보다 뒤라 직접 참조 시 TDZ 기동 실패(v5.9.220 배포 실패 원인) */
     notify: (...a) => notifyTelegram(...a),
     onRewardGrant: (p) => rouletteOnRewardGrant(p) }));   /* #467: 쿠폰 당첨 = 즉시 자동 발급 + 발급 안내(함수 선언은 아래 — 호이스팅·호출은 기동 뒤) */
+/* #1136-a 귤나무 베타 = 같은 라우터 한 번 더 · 회원 행 'beta:아이디' 따로 · 게이트 설정 mall_beta · 게임 설정 mall_beta_game_config 우선
+   notify·onRewardGrant 는 안 넘김(알림·쿠폰 발급 0) · 카페24 는 주문·후기 읽기만 */
+app.use('/api/mall-beta', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit,
+    cafe24: { apiGet: (...a) => require('./cafe24.js').apiGet(...a) },
+    keyPrefix: 'beta:', beta: true }));
 
 // ── 지시 #94: 공개 안내 페이지 /guide — 알림톡 E 버튼 착지 (인증 불필요·PII 0·모바일 퍼스트)
 //    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.
@@ -10749,7 +10754,7 @@ app.post('/api/agent-office/reward-grants/:id/grant', authMiddleware, async (req
 app.get('/api/agent-office/reward-grants', authMiddleware, async (req, res) => {
     try {
         const status = String(req.query.status || 'pending');
-        const cond = status === 'all' ? '' : 'WHERE g.status = $1';
+        const cond = status === 'all' ? "WHERE g.status IS DISTINCT FROM 'beta'" : 'WHERE g.status = $1';   /* #1136-a 「전체」에서도 베타 당첨 줄 숨김(?status=beta 로만 보임) */
         const params = status === 'all' ? [] : [status];
         const r = await pool.query(`
             SELECT g.id, g.kind, g.amount, g.status, g.created_at, g.granted_at, g.granted_by,
@@ -10771,6 +10776,7 @@ app.put('/api/agent-office/reward-grants/:id', authMiddleware, async (req, res) 
         const cur = await pool.query(`SELECT g.*, m.member_key FROM reward_grants g JOIN mall_members m ON m.id=g.member_id WHERE g.id=$1`, [Number(req.params.id)]);
         if (!cur.rows.length) throw { status: 404, message: '해당 당첨 건을 찾을 수 없습니다' };
         const before = cur.rows[0];
+        if (before.status === 'beta') throw { status: 409, message: '베타 시험 당첨 건은 상태를 바꿀 수 없습니다' };   /* #1136-a 베타 줄 → pending 되면 [발급] 길이 열림 */
         const r = await pool.query(
             // 🔴 $2를 값·비교 양쪽에 쓰면 PostgreSQL이 타입을 못 정한다(inconsistent types deduced) → 명시 캐스팅 필수
             `UPDATE reward_grants SET status = $2::text,
@@ -10794,7 +10800,7 @@ app.get('/api/public/roulette-winners', async (req, res) => {
                            WHEN s.result_key ILIKE '%coupon%' THEN 3 ELSE 4 END`;
         const r = await pool.query(`
             SELECT m.nickname, s.result_key, s.created_at
-            FROM roulette_spins s JOIN mall_members m ON m.id = s.member_id AND m.deleted_at IS NULL
+            FROM roulette_spins s JOIN mall_members m ON m.id = s.member_id AND m.deleted_at IS NULL AND m.member_key NOT LIKE 'beta:%'
             WHERE s.spin_date = (NOW() AT TIME ZONE 'Asia/Seoul')::date
               AND s.result_key IS NOT NULL AND s.result_key NOT ILIKE 'w%' AND s.result_key <> 'lose'
             ORDER BY ${rank}, s.created_at DESC LIMIT 2`);
