@@ -6933,9 +6933,9 @@ async function alertNightAcc(kind, n) {
     } catch (e) { console.error('[야간누적] 실패:', e.message); }
 }
 // 직원 답변 대기(미답변·미게시) 건수 + 가장 오래된 경과시간 — 발송 시점 DB 실계산 (답변되면 자동 제외)
-async function inquiryStaffPending() {
-    const q = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_qnas WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0];
-    const i = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_inquiries WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0];
+async function inquiryStaffPending() {   /* #1137 [처리함](reviewed_at) 누른 건 빼기 = 손님 연락 「답 안 한 것」·묵은 미답변(cs_stale)과 같은 기준 */
+    const q = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_qnas WHERE answered IS NOT TRUE AND posted_at IS NULL AND reviewed_at IS NULL`)).rows[0];
+    const i = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_inquiries WHERE answered IS NOT TRUE AND posted_at IS NULL AND reviewed_at IS NULL`)).rows[0];
     const oldest = [q.o, i.o].filter(Boolean).map(x => new Date(x).getTime()).sort()[0] || null;
     return { n: q.n + i.n, hours: oldest ? Math.max(0, Math.floor((Date.now() - oldest) / 3600000)) : 0 };
 }

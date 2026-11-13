@@ -1,3 +1,9 @@
+## v5.9.787 (2026-11-13) — #1137 「⏰ 미처리 문의」 알림에서 [처리함] 누른 건 빼기
+
+- 발단: 상품문의 695706307(불만 글 = 직원 몫 · 손님이 글을 지움 · 발주컴퓨터가 처리함)이 네이버 답글이 없다는 이유로 2시간마다 계속 알림 · 대표 「처리함 누르면 된 건 빼도록」
+- 고침: server.js inquiryStaffPending 두 표(naver_qnas·naver_inquiries)에 reviewed_at IS NULL → 리마인더·아침 브리핑 「답 안 한 문의 n건」 둘 다 따라감 · 묵은 미답변 알림·할 일 카드·응대 현황 숫자는 원래 처리함 건을 뺐음(무변)
+- 워커1 시공 · 총괄 diff 읽음 · 실DB 읽기 1회 = 종전 1건 → 0건
+
 ## v5.9.786 (2026-11-13) — #1136-g 베타 게임 기록 칸(단계·통계) · 베타 길만
 
 - 베타 game-end 가 stage·stats(gold·max_combo·miss·rot_tap·clears·sec·goal·goal_hit · 숫자만 · 300자 안)를 받아 audit mall_game_play 에 기록 · 원장 reason 「게임 물방울(점수 N · 단계 S)」 · 물방울 계산 무변 · wallet.game 에 best_score·best_stage(새 표 0) · 실서비스 길 무변
