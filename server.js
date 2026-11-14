@@ -11680,7 +11680,7 @@ app.get('/api/delivery/summary', authMiddleware, async (req, res) => {
     res.json({ ok: true, from, to, shipments: r.rows.length, checked, unchecked: r.rows.length - checked, counts, dup: { person: dupExtra }, summary_text,
         by_date: Object.values(byKey), trouble, checked_at: checkedAt, job: deliveryJob && deliveryJob.state === 'running' ? deliveryJob : null });
 });
-// 한 줄 꼴(summary.trouble 과 list.rows 공용) — 손님 번호 끝 4자리 · 시군구만 · 기사 번호는 직원용이라 그대로
+// 한 줄 꼴(summary.trouble 과 list.rows 공용) — 손님 번호 전체(phone · #1141) + 끝 4자리(phone_tail · 묶음 열쇠) · 시군구만 · 기사 번호는 직원용이라 그대로
 function deliveryRow(x, today) {
     const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
     const region = ad => String(ad || '').trim().split(/\s+/).slice(0, 2).join(' ');
@@ -11688,7 +11688,7 @@ function deliveryRow(x, today) {
     // #613(대표 10/10): 며칠째 = 발송일 기준 — 배송완료 건은 완료된 날까지(발송 다음 날 도착 = 1일째) · 아직이면 오늘까지(종전은 늘 오늘 기준이라 완료 건도 날마다 늘었음)
     const doneDay = (x.delivered || b === '배송완료') && /^\d{4}-\d{2}-\d{2}/.test(String(x.event_time || '')) ? String(x.event_time).slice(0, 10) : null;
     const days = Math.round((new Date(doneDay || today || kstDateStr()) - new Date(x.ship_date)) / 86400e3);
-    return { tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone_tail: tail4(x.phone), region: region(x.addr),
+    return { tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone: String(x.phone || '').replace(/\D/g, ''), phone_tail: tail4(x.phone), region: region(x.addr),   /* #1141 phone = 손님 전체 번호(숫자만 · 직원 로그인 응답만 · 대표 11/14 「다 보이도록」) */
         option: x.option_text || '', qty: x.qty, bucket: b === '집화' && days >= 1 ? '집화 정체' : b, label: x.label || '', msg: x.msg || '', event_time: x.event_time || '', branch: x.branch || '',
         driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days, delivered: !!(x.delivered || b === '배송완료'), delivered_at: doneDay ? String(x.event_time) : null, since_trouble: x.first_trouble_at, memo: x.memo || '',
         handled_at: x.handled_at || null, handled_by: x.handled_by || '' };

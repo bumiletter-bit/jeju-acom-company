@@ -36,7 +36,8 @@ for (const r of idx.rows) {
 }
 hits.sort((a, b) => String(b.d || '').localeCompare(String(a.d || '')) || b.f.localeCompare(a.f));
 const limit = opt.limit || 40;
-const mask = t => t ? t.replace(/^(\d{3})(\d+)(\d{4})$/, '$1-****-$3') : '';
-const items = hits.slice(0, limit).map(r => Object.assign({ date: r.d, partner: r.pt, name: r.nm, option: r.op, qty: r.q, matched: r.how, phone_hint: mask(r.how === '구매자' ? r.tb : r.t1), tracking: (r.trs && r.trs.length ? r.trs.join(', ') : r.tr) || '', memo: r.ms, file: path.join('★송장', r.f.replace(/^★송장\\/, '')) }, opt.addr ? { address: r.ad } : {}));
+// #1141(대표 11/14 「직원들이 보고 응대하고 찾을 때 쓰는 거야 · 다 보이도록」): 번호 가림 없음 = 전체 번호(010-1234-5678 꼴) · phone_hint 도 같은 값(옛 규칙 문장 호환)
+const fullTel = t => { const d = String(t || '').replace(/\D/g, ''); if (d.length === 11) return d.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 12) return d.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 10) return d.startsWith('02') ? d.replace(/^(02)(\d{4})(\d{4})$/, '$1-$2-$3') : d.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3'); if (d.length === 9 && d.startsWith('02')) return d.replace(/^(02)(\d{3})(\d{4})$/, '$1-$2-$3'); return d; };
+const items = hits.slice(0, limit).map(r => Object.assign({ date: r.d, partner: r.pt, name: r.nm, option: r.op, qty: r.q, matched: r.how, phone: fullTel(r.how === '구매자' ? r.tb : r.t1), phone_hint: fullTel(r.how === '구매자' ? r.tb : r.t1),tracking: (r.trs && r.trs.length ? r.trs.join(', ') : r.tr) || '', memo: r.ms, file: path.join('★송장', r.f.replace(/^★송장\\/, '')) }, opt.addr ? { address: r.ad } : {}));
 const people = new Set(hits.map(r => r.nm + '|' + (r.t1 || r.tb)));
 console.log(JSON.stringify({ ok: true, query: term, by: byPhone ? '전화번호' : '이름', total: hits.length, shown: items.length, distinct_people: people.size, indexed_at: idx.at, note: byPhone && dg.length < 9 ? '끝자리만으로 찾아 여러 손님이 섞일 수 있어요 — 전체 번호로 다시 찾는 것이 정확합니다' : undefined, items }, null, 1));

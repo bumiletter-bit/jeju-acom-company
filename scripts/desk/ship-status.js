@@ -1,7 +1,7 @@
 // #593 손님 배송 확인 — 사용: node scripts/desk/ship-status.js "<이름 | 전화번호 | 끝 4자리>" [--days 60] [--limit 10] [--no-track]
 //   송장 색인에서 그 손님의 최근 주문(운송장)을 찾아 지금 배송 상태를 붙여 준다. 「○○ 손님 배송 완료됐어?」「송장 번호 알려줘」「아직 안 받았대」에 쓴다.
 //   상태 = DB 표 delivery_status 에 있으면 그것(배송완료로 확정됐거나 6시간 안에 확인한 것) · 없거나 오래됐으면 그 자리에서 CJ 배송조회를 물어 표에 적어 둔다.
-//   답에 나오는 것 = 날짜 · 거래처 · 옵션 · 수량 · 운송장 · 상태(문구 · 시각 · 지점 · 담당 기사). 번호는 끝 4자리만 · 주소는 내지 않는다.
+//   답에 나오는 것 = 날짜 · 거래처 · 옵션 · 수량 · 운송장 · 상태(문구 · 시각 · 지점 · 담당 기사). 번호 = 전체(#1141 대표 11/14 「직원들이 보고 응대하고 찾을 때 쓰는 거야 · 다 보이도록」 · phone 칸 · phone_tail 끝 4자리도 그대로) · 주소는 내지 않는다.
 //   쓰기는 delivery_status 표 한 곳뿐(조회 결과 적어 두기). 발송·알림 0.
 const fs = require('fs'), path = require('path');
 const up = require('./ship-upload.js');
@@ -15,6 +15,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const TROUBLE = cj.TROUBLE_BUCKETS || ['미배송', '사고', '기타', '정보없음', '조회실패'];
 const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
 const hyphen = tr => tr.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+const fullTel = t => { const d = String(t || '').replace(/\D/g, ''); if (d.length === 11) return d.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 12) return d.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 10) return d.startsWith('02') ? d.replace(/^(02)(\d{4})(\d{4})$/, '$1-$2-$3') : d.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3'); if (d.length === 9 && d.startsWith('02')) return d.replace(/^(02)(\d{3})(\d{4})$/, '$1-$2-$3'); return d; };
 
 (async () => {
     // 색인이 오래됐으면 뒤에서 새로 만들고(다음 질문부터 반영) 있던 색인으로 바로 답한다 — invoice-find 와 같은 규칙
@@ -37,7 +38,7 @@ const hyphen = tr => tr.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
     for (const r of hits) {
         const tr = String(r.tr || '').replace(/\D/g, ''); const ok = /^\d{10}(\d{2})?$/.test(tr); const q = parseInt(r.q, 10) || 0;
         if (ok && byTr.has(tr)) { const o = byTr.get(tr); if (r.op && !o.opts.includes(r.op)) o.opts.push(r.op); o.qty += q; continue; }
-        const o = { date: r.d, partner: r.pt, name: r.nm, phone_tail: tail4(r.how === '구매자' ? r.tb : r.t1), matched: r.how, opts: r.op ? [r.op] : [], qty: q, tr: ok ? tr : '' };
+        const o = { date: r.d, partner: r.pt, name: r.nm, phone: fullTel(r.how === '구매자' ? r.tb : r.t1), phone_tail: tail4(r.how === '구매자' ? r.tb : r.t1), matched: r.how, opts: r.op ? [r.op] : [], qty: q, tr: ok ? tr : '' };
         orders.push(o); if (ok) byTr.set(tr, o);
     }
     // 색인은 한 분께 상자가 둘 이상 가면 운송장 하나만 잡는다 → 서버 표(delivery_shipments · 엑셀 둘째 시트 기준)에 그 손님의 다른 운송장이 있으면 보탠다
@@ -47,7 +48,7 @@ const hyphen = tr => tr.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
             ? (dg.length >= 9 ? `SELECT tracking, ship_date::text AS d, partner, recipient, phone, option_text, qty FROM delivery_shipments WHERE phone = $1 AND ship_date >= $2::date`
                 : `SELECT tracking, ship_date::text AS d, partner, recipient, phone, option_text, qty FROM delivery_shipments WHERE right(phone, ${dg.length}) = $1 AND ship_date >= $2::date`)
             : `SELECT tracking, ship_date::text AS d, partner, recipient, phone, option_text, qty FROM delivery_shipments WHERE replace(recipient, ' ', '') LIKE '%' || $1 || '%' AND ship_date >= $2::date`, [needle, since]);
-        for (const r of more.rows) if (!byTr.has(r.tracking)) { const o = { date: r.d, partner: r.partner, name: r.recipient, phone_tail: tail4(r.phone), matched: byPhone ? '수취인' : '이름', opts: r.option_text ? [r.option_text] : [], qty: r.qty || 0, tr: r.tracking }; orders.push(o); byTr.set(r.tracking, o); }
+        for (const r of more.rows) if (!byTr.has(r.tracking)) { const o = { date: r.d, partner: r.partner, name: r.recipient, phone: fullTel(r.phone), phone_tail: tail4(r.phone), matched: byPhone ? '수취인' : '이름', opts: r.option_text ? [r.option_text] : [], qty: r.qty || 0, tr: r.tracking }; orders.push(o); byTr.set(r.tracking, o); }
         orders.sort((a, b) => String(b.date).localeCompare(String(a.date)));
     } catch (e) { /* 표가 없거나 DB 에 못 닿으면 색인 결과만으로 */ }
     const people = new Set(orders.map(o => o.name + '|' + o.phone_tail));
@@ -81,7 +82,7 @@ const hyphen = tr => tr.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
         } catch (e) { dbNote = 'DB·조회 중 오류: ' + String(e && e.message || e).slice(0, 140); }
         finally { await pool.end(); }
     }
-    const items = shown.map(o => ({ date: o.date, partner: o.partner, name: o.name, phone_tail: o.phone_tail, matched: o.matched, option: o.opts.join(' + '), qty: o.qty, tracking: o.tr ? hyphen(o.tr) : '', status: o.tr ? (st.get(o.tr) || { bucket: '확인 안 됨', label: opt.noTrack ? '저장된 조회 없음' : '조회하지 못함' }) : { bucket: '운송장 없음', label: '송장 파일에 운송장번호가 아직 없습니다(접수 전이거나 다른 택배)' } }));
+    const items = shown.map(o => ({ date: o.date, partner: o.partner, name: o.name, phone: o.phone, phone_tail: o.phone_tail, matched: o.matched, option: o.opts.join(' + '), qty: o.qty, tracking: o.tr ? hyphen(o.tr) : '', status: o.tr ? (st.get(o.tr) || { bucket: '확인 안 됨', label: opt.noTrack ? '저장된 조회 없음' : '조회하지 못함' }) : { bucket: '운송장 없음', label: '송장 파일에 운송장번호가 아직 없습니다(접수 전이거나 다른 택배)' } }));
     say({ ok: true, query: byPhone ? '번호 ' + (dg.length >= 9 ? '끝 ' + dg.slice(-4) : dg) : term, by: byPhone ? '전화번호' : '이름', since, total: orders.length, shown: items.length, distinct_people: people.size,
         note: people.size > 1 ? '여러 손님이 섞여 있습니다 — 이름·최근 날짜만 후보로 보여 주고 전체 번호(또는 어느 분인지)를 다시 물으세요' : (byPhone && dg.length < 9 ? '끝자리만으로 찾았습니다 — 다른 손님이 섞일 수 있어요' : undefined),
         asked_cj: asked, failed_cj: failed || undefined, warn: dbNote, items });

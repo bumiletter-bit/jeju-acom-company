@@ -1,11 +1,12 @@
 // #610-H 직원 몫 문자 뽑기 — 사용: node scripts/desk/sms-pending.js [--all]
 //   회사 휴대폰으로 온 문자 가운데 사람이 봐야 하는 대화(상태 staff_needed)만 내준다. --all 이면 봇이 초안만 만들어 둔 대화(draft)도.
 //   읽기만(SELECT) · 발송 없음. 문자 답 보내기는 창구가 하지 않는다 — 에이전트 오피스 「문자」 카드에서 사람이 보낸다.
-//   🔴 손님 번호 전체·주소는 내지 않는다: tail = 끝 4자리 · masked = 010****1234 꼴 · hint = 주문 한 줄(거래처·발송일·옵션·상태).
-//   last_in = 손님 마지막 글 80자(글 속 전화번호 → (번호) · 주소 꼴 → [주소]) · draft = 봇이 만들어 둔 답 초안 앞 200자(있을 때만) · why = 왜 직원 몫인지(마지막 받은 글의 갈래).
+//   #1141(대표 11/14 「직원들이 보고 응대하고 찾을 때 쓰는 거야 · 다 보이도록」): 사내 답 카드용이라 가림 없음 — phone = 전체 번호(010-1234-5678 꼴) · masked 도 같은 전체 값(옛 규칙 호환) · tail = 끝 4자리 · hint = 주문 한 줄(거래처·발송일·옵션·상태).
+//   last_in = 손님 마지막 글 80자(원문 그대로) · draft = 봇이 만들어 둔 답 초안 앞 200자(있을 때만 · 원문 그대로) · why = 왜 직원 몫인지(마지막 받은 글의 갈래).
+//   손님에게 나가는 글·텔레그램·로그의 가림은 이 도구와 무관(종전 그대로).
 const { pool } = require('./_db');
 const tail = d => String(d || '').slice(-4);
-const masked = d => { d = String(d || ''); return d.length >= 7 ? d.slice(0, 3) + '****' + d.slice(-4) : (d ? '***' + d.slice(-2) : ''); };
+const fullTel = t => { const d = String(t || '').replace(/\D/g, ''); if (d.length === 11) return d.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 12) return d.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3'); if (d.length === 10) return d.startsWith('02') ? d.replace(/^(02)(\d{4})(\d{4})$/, '$1-$2-$3') : d.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3'); if (d.length === 9 && d.startsWith('02')) return d.replace(/^(02)(\d{3})(\d{4})$/, '$1-$2-$3'); return d; };
 // 손님이 글에 적은 주소 꼴 가림 — 「○○시 ○○구 ○○로 12」「○○로 12길 3 101동 202호」
 const ADDR_RES = [
     new RegExp('(?:[가-힣]{2,5}(?:특별자치도|특별자치시|특별시|광역시|도)\\s*)?[가-힣]{1,5}(?:시|군|구)\\s+[가-힣0-9\\s]{0,24}?[가-힣0-9]+(?:로|길|동|읍|면|리)\\s*\\d+(?:(?:번길|길)\\s*\\d+)?(?:[-~]\\d+)?(?:\\s*번지)?(?!\\d|\\s*(?:일|시|개|분|번째|kg|박스|상자|원|차|월|명|과))(?:\\s*,?\\s*[가-힣A-Za-z0-9]{0,12}\\s*\\d+\\s*(?:동|호|층))*', 'g'),
@@ -28,10 +29,10 @@ const WHY = { claim: '불만·문제 낱말', photo: '사진', ship_q: '배송 �
          WHERE t.status = ANY($1::text[])
          ORDER BY t.last_in_at ASC NULLS LAST, t.id ASC LIMIT 100`, [all ? ['staff_needed', 'draft'] : ['staff_needed']]);
     const items = r.rows.map(x => ({
-        id: x.id, tail: tail(x.phone_digits), masked: masked(x.phone_digits), status: x.status, hint: x.order_hint || null,
-        last_in: maskText(x.last_in),   // 손님이 글에 적은 전화번호 → (번호) · 주소 꼴 → [주소]
+        id: x.id, phone: fullTel(x.phone_digits), tail: tail(x.phone_digits), masked: fullTel(x.phone_digits), status: x.status, hint: x.order_hint || null,
+        last_in: String(x.last_in || '').trim(),   // #1141 원문 그대로(종전 maskText 는 아래에 남겨 둠 · 안 씀)
         last_in_at: x.last_in_at, has_image: !!x.has_image, why: WHY[x.bucket] || x.bucket || null, in_3d: x.in_3d,
-        draft: x.draft ? maskText(x.draft) : null, draft_kind: x.draft_kind || null,   // 초안은 앞 200자만
+        draft: x.draft ? String(x.draft).trim() : null, draft_kind: x.draft_kind || null,   // 초안은 앞 200자만
     }));
     console.log(JSON.stringify({ count: items.length, staff_needed: items.filter(x => x.status === 'staff_needed').length, draft: items.filter(x => x.status === 'draft').length,
         mode: mode.mode || null, enabled: mode.enabled || null, items }, null, 2));

@@ -1620,7 +1620,7 @@
         const inp = $('fo-find-q'), box = $('fo-find-list'), q = String(inp.value || '').trim();
         if (!q || !st.judged) { FD.open = false; FD.keys = []; box.hidden = true; box.innerHTML = ''; inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-activedescendant'); return; }
         const all = findOrders(q), show = all.slice(0, FIND_MAX); FD.keys = show.map(keyOf); FD.open = true; box.hidden = false; inp.setAttribute('aria-expanded', 'true');
-        const tel4 = e => { const d = buyerTel(e); return d ? '번호 끝 ' + d.slice(-4) : ''; };
+        const tel4 = e => { const d = buyerTel(e); return !d ? '' : d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? (d.startsWith('02') ? `02-${d.slice(2, 6)}-${d.slice(6)}` : `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`) : d; };   /* #1141 전체 번호(대표 11/14 「다 보이도록」 · 종전 「번호 끝 1234」) */
         box.innerHTML = show.length ? show.map((e, i) => { const stt = findState(e); return `<button type="button" role="option" class="fo-find-row" id="fo-find-row-${i}" data-find="${i}" aria-selected="false"><span class="fo-find-t"><b>${esc(whoOf(e))}</b><span>${esc(CH_LABEL[e.ch] || '')} · ${esc(optOf(e))} · ${esc(String(qtyNow(e)))}박스${tel4(e) ? ' · ' + esc(tel4(e)) : ''}</span></span><span class="fo-ibadge" data-k="${stt[1]}">${esc(stt[0])}</span></button>`; }).join('') + (all.length > show.length ? `<p class="fo-find-more">외 ${all.length - show.length}건 — 글자를 더 적어 좁혀 주세요.</p>` : '') : '<p class="fo-find-more" data-find-none="1">맞는 주문이 없어요 — 이름·번호 끝자리·옵션 낱말을 다시 확인해 주세요.</p>';
         findAct(show.length ? 0 : -1);
     }
@@ -3447,9 +3447,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         box.scrollIntoView({ block: 'nearest' });
     }
     // 서버 수기 파일(manual_file · 네이버 일괄발송 시트 꼴)이 있으면 그것 · 없거나 못 받으면 화면에서 만든 표
-    function downloadUm() {   // #961 주문에 안 붙은 운송장 파일(받는 분 = 가림 · 이유 칸)
+    function downloadUm() {   // #961 주문에 안 붙은 운송장 파일(받는 분 = 전체 이름·번호 #1141 · 이유 칸)
         const rows = unmatchedRows(); if (!rows.length || typeof XLSX === 'undefined') return;
-        const ws = XLSX.utils.aoa_to_sheet([['운송장', '받는 분(가림)', '상품', '이유'], ...rows.map(u => [u.x.tracking || '', u.x.recipient_masked || '', u.x.product || '', u.why])]);
+        const ws = XLSX.utils.aoa_to_sheet([['운송장', '받는 분', '상품', '이유'], ...rows.map(u => [u.x.tracking || '', who(u.x), u.x.product || '', u.why])]);   /* #1141 who = 전체 이름·번호(없으면 종전 가림 값) */
         ws['!cols'] = [{ wch: 16 }, { wch: 18 }, { wch: 36 }, { wch: 60 }];
         const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '주문에 안 붙은 운송장');
         XLSX.writeFile(wb, `자동송장등록_안붙은운송장_${(ia.res && ia.res.ship_date) || ''}.xlsx`);

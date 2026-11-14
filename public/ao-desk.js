@@ -787,7 +787,7 @@
                 const state = fin ? `<b class="ship-st ok">도착</b>${finAt ? `<small>${esc(finAt)}</small>` : ''}`
                     : `<b class="ship-st no${days >= 3 ? ' late' : ''}">미도착</b>${days > 0 ? `<small>${days}일째</small>` : ''}`;
                 return `<tr><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
-                    + `<td class="ship-who">${esc(x.recipient || '')}${n > 1 ? ` <em class="ship-box">× ${n}상자</em>` : ''}${x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
+                    + `<td class="ship-who">${esc(x.recipient || '')}${n > 1 ? ` <em class="ship-box">× ${n}상자</em>` : ''}${x.phone ? `<small><a class="ship-tel" href="tel:${esc(x.phone)}">${esc(smsFmtNo(x.phone))}</a></small>` : x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
                     + `<td class="ship-opt">${opts}</td>`
                     + `<td class="ship-what">${what || '<i>내용 없음</i>'}${where ? `<small>${where}</small>` : ''}${x.memo ? `<small class="memo" title="${esc(x.memo)}">손님 메모 · ${esc(x.memo)}</small>` : ''}</td>`
                     + `<td class="num ship-date">${esc(uniq(g.items.map(i => shipMd(i.ship_date))).join(' · '))}</td>`
