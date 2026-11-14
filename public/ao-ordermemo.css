@@ -666,6 +666,34 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 @supports (field-sizing: content) {   /* 배송지 = 1줄(44)부터 · 글이 길면 저절로 늘어남(지원 안 하는 브라우저 = 종전 2줄 70) */
     .om-card .om-f textarea { field-sizing: content; min-height: 44px; max-height: 9.5em; }
 }
+/* #1152(대표 11/14 「수취인 입력란 크게 · 구매자번호·보내는이 변경과 구분선」) 현금 줄 칸 묶음 = 품목·수량 → [받는 분] → [주문한 분] → 배송메세지·발송일 → [보내는이 변경]
+   받는 분 = 옅은 인디고 바탕 + 칸 한 단계 크게 · 주문한 분·보내는 분 = 옅은 회색 바탕 + 선 · 색은 --d-* 토큰만(야간 저절로) · 칸 차례(탭)·id 종전 그대로 */
+.om-card .om-grp { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 12px 12px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-soft); }
+.om-card .om-grp-recv { border-color: color-mix(in srgb, var(--d-accent) 24%, transparent); background: var(--d-accent-soft); }
+.om-card .om-grp-h { display: flex; align-items: baseline; gap: 6px; margin: 0 0 2px; font-size: 14px; font-weight: 800; color: var(--d-ink); }
+.om-card .om-grp-recv > .om-grp-h { color: var(--d-accent); }
+.om-card .om-grp-h small { color: var(--d-dim); font-size: 12px; font-weight: 600; }
+.om-card .om-grp-recv .om-f-l label { font-size: 13px; }
+.om-card .om-grp-recv .om-f input, .om-card .om-grp-recv .om-f textarea { min-height: 48px; font-size: 17px; font-weight: 600; }
+@supports (field-sizing: content) { .om-card .om-grp-recv .om-f textarea { min-height: 48px; } }
+@media (max-width: 960px), (pointer: coarse) { .om-card .om-grp-recv .om-f input, .om-card .om-grp-recv .om-f textarea { min-height: 50px; font-size: 18px; } }
+.om-card .om-rowcard > details.om-more { padding: 0 12px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-soft); }
+.om-card .om-rowcard > details.om-more[open] { padding-bottom: 12px; }
+.om-card .om-grid.cash.om-g-what > .om-f, .om-card .om-grid.cash.om-grp-recv-g > .om-f, .om-card .om-grid.cash.om-grp-buyer-g > .om-f, .om-card .om-grid.cash.om-g-etc > .om-f { order: 0; }
+@media (min-width: 721px) {   /* PC·폴드 펼침 = 품목 | 수량(148) · 받는 분 | 받는 분 연락처 / 배송지 · 구매자 연락처(반 폭) · 배송메세지 | 발송일 */
+    .om-card .om-grid.cash.om-g-what { grid-template-columns: minmax(0, 1fr) 148px; }
+    .om-card .om-grid.cash.om-grp-recv-g, .om-card .om-grid.cash.om-grp-buyer-g { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .om-card .om-grid.cash.om-g-etc { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+    .om-card .om-grid.cash.om-g-what > .om-f, .om-card .om-grid.cash.om-grp-recv-g > .om-f, .om-card .om-grid.cash.om-grp-buyer-g > .om-f, .om-card .om-grid.cash.om-g-etc > .om-f { grid-column: auto; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-8 { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {   /* 폰 = 품목 / 수량 · 받는 분 | 연락처 / 배송지 · 구매자 연락처 · 배송메세지 | 발송일 */
+    .om-card .om-grp { padding: 8px 10px 10px; }
+    .om-card .om-rowcard > details.om-more { padding: 0 10px; }
+    .om-card .om-rowcard > details.om-more[open] { padding-bottom: 10px; }
+    .om-card .om-grid.cash.om-g-etc { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+    .om-card .om-grid.cash.om-g-etc > .fk-9 { grid-column: auto; }
+}
 /* #934 추가 매칭(번호 다른 현금 줄 고르기) · ⑤ 입력삭제 주문에 붙이기 — 색은 .om-pair 토큰 그대로(새 색 0 · 야간 규칙 상속) */
 .om-pairx-q { margin: 0; }
 .om-pairx-b { display: grid; gap: 4px; min-width: 0; }

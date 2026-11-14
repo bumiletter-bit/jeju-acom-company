@@ -979,6 +979,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-thumb.fail { width: auto; height: auto; padding: 8px 10px; color: var(--d-sub); font: inherit; font-size: 12px; cursor: default; }
 .sms-reply { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--d-line); }
 .sms-draft { color: var(--d-accent); font-size: 12.5px; font-weight: 600; }
+.sms-invnote { margin: -2px 0 0; color: var(--d-sub); font-size: 12.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }   /* #1151 [초안 만들기] 송장 찾은 안내 = 답 칸 바로 아래 작은 글(색 = 토큰 · 야간 저절로) */
 .sms-draft[data-k="new"] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sms-draft[data-k="new"][hidden] { display: none; }
 .sms-draft .desk-btn { flex: none; min-height: 44px; }

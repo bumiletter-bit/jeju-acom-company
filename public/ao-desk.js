@@ -1758,6 +1758,7 @@
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
+            + `<p class="sms-invnote" id="sms-invnote" role="status" hidden></p>`
             + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="sms-clear" title="답 칸 글을 비워요(초안 그대로면 초안도 지워요)" disabled>지우기</button><span class="sms-len" id="sms-len"></span><button type="button" class="desk-btn sms-mkdraft" id="sms-mkdraft">초안 만들기</button><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`   // #853 [발주 메모로] 대신 [지우기](답 칸만 비움 · 서버 초안 그대로 · 같은 초안은 다시 안 채움 = SMS.filled) · 발주 메모는 말풍선 칩·꾹 누르기
             + `</form>`;
         TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
@@ -2016,6 +2017,7 @@
         { const band = $('sms-draft'), fresh = dr && SMS.newDraft && SMS.newDraft === t.draft_text && v.trim() !== String(t.draft_text).trim(), k = fresh ? 'new' : (dr && SMS.chgAt && Date.now() - SMS.chgAt < 8000 && v.trim() === String(t.draft_text).trim()) ? 'chg' : 'std';
             band.hidden = !dr;
             if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>손님 글이 더 와서 봇이 초안을 새로 만들었어요.</span><button type="button" class="desk-btn sm" id="sms-draft-new">새 초안으로 바꾸기</button>' : k === 'chg' ? '초안이 새로 바뀌었어요. 읽어 보고 보내 주세요.' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; } }
+        { const n = $('sms-invnote'), x = SMS.invNote, on = !!(x && x.id === SMS.open && dr && x.draft.trim() === String(t.draft_text).trim()); if (n) { n.hidden = !on; if (n.textContent !== (on ? x.note : '')) n.textContent = on ? x.note : ''; } }   // #1151 [초안 만들기] 송장 찾은 안내(invoice_note) = 그 초안이 남아 있는 동안만 · 지우거나 보내면 사라짐
         { const cl = $('sms-clear'); if (cl) cl.disabled = !has; }   // #853 비어 있으면 흐림
         { const mk = $('sms-mkdraft'); if (mk) { mk.disabled = !!SMS.sending || !!SMS.drafting || !SMS.thread; mk.textContent = SMS.drafting ? '만드는 중…' : dr ? '초안 다시 만들기' : '초안 만들기'; if (SMS.drafting) mk.setAttribute('aria-busy', 'true'); else mk.removeAttribute('aria-busy'); } }   // #1109
         $('sms-len').textContent = has ? smsLenText(v) : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
@@ -2050,7 +2052,7 @@
             const j = await r.json().catch(() => ({}));
             if (r.status === 401 && typeof akmSessionExpired === 'function') akmSessionExpired();
             if (!r.ok || !j || j.ok === false) err = (j && j.error) || '초안을 만들지 못했어요';
-            else if (SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = j.draft_text || null; SMS.thread.thread.draft_kind = j.draft_kind || null; SMS.tsig = ''; SMS.manual = { id, text: String(j.draft_text || '') }; }
+            else if (SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = j.draft_text || null; SMS.thread.thread.draft_kind = j.draft_kind || null; SMS.tsig = ''; SMS.manual = { id, text: String(j.draft_text || '') }; SMS.invNote = typeof j.invoice_note === 'string' && j.invoice_note.trim() && j.draft_text ? { id, draft: String(j.draft_text), note: j.invoice_note.trim() } : null; }
         } catch (e) { err = '통신이 끊겼어요. 다시 눌러 주세요'; }
         finally { SMS.drafting = false; }
         if (SMS.open !== id) return;

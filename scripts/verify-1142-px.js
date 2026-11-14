@@ -186,6 +186,16 @@ function mut(L) {
             for (const v of ['204', '192']) {
                 await pz.click(`#om-card [data-cact="pxrowopen"][data-v="${v}"]`); await pz.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await pz.evaluate(() => document.querySelectorAll('#om-card details.om-more').forEach(d => d.open = true)); await pz.waitForTimeout(150);
                 const a0 = await pz.evaluate(ALIGN); if (a0.row.length || a0.cover.length || a0.wrap.length || a0.over || a0.sw > w) bad.push([v, '처음', a0]);
+                // #1152 묶음 구분 = 받는 분(이름·번호·주소) · 주문한 분(구매자 연락처) · 보내는 분(보내는이 변경) 세 묶음 · 머리 보임 · 받는 분 칸 한 단계 크게 · 바탕 다름 · 칸 차례(탭) 종전 그대로
+                const G = await pz.evaluate(() => { const C = document.getElementById('om-card'), R = e => e.getBoundingClientRect(), ids = s => [...C.querySelectorAll(s + ' [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')), cs = e => e && getComputedStyle(e);
+                    const rh = C.querySelector('.om-grp-recv > .om-grp-h'), bh = C.querySelector('.om-grp-buyer > .om-grp-h'), ri = C.querySelector('#om-f-0-c3'), bi = C.querySelector('#om-f-0-c10');
+                    return { recv: ids('.om-grp-recv'), buyer: ids('.om-grp-buyer'), more: ids('details.om-more'), rh: rh && R(rh).height > 0 ? rh.textContent.trim() : '', bh: bh && R(bh).height > 0 ? bh.textContent.trim() : '',
+                        rH: Math.round(R(ri).height), bH: Math.round(R(bi).height), rF: parseFloat(cs(ri).fontSize), bF: parseFloat(cs(bi).fontSize), rBg: cs(C.querySelector('.om-grp-recv')).backgroundColor, bBg: cs(C.querySelector('.om-grp-buyer')).backgroundColor, cBg: cs(C.querySelector('.om-card-b') || C).backgroundColor,
+                        tab: [...C.querySelectorAll('.om-rowcard [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')) }; });
+                const touch = w <= 720;
+                ok(G.recv.join() === 'c3,c6,c8' && G.buyer.join() === 'c10' && G.more.join() === 'c0,c1,c12' && /^받는 분 정보/.test(G.rh) && G.bh === '주문한 분 정보' && G.tab.join() === 'c4,c5,c3,c6,c8,c10,c9,date,c0,c1,c12'
+                    && G.rH >= (touch ? 50 : 48) && G.rF >= (touch ? 18 : 17) && G.rF > G.bF && G.rH > G.bH && G.rBg !== G.bBg && G.rBg !== 'rgba(0, 0, 0, 0)',
+                    nm + ' 줄 카드 ' + v + ' 묶음 = 받는 분(c3·c6·c8 · 머리 · 칸 ' + (touch ? '50/18px' : '48/17px') + '↑) · 주문한 분(c10) · 보내는 분(c0·c1·c12) · 바탕 다름 · 탭 순서 종전 그대로', G);
                 const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox])', a => a.map(e => e.id));
                 for (const id of ids) {
                     const v0 = await pz.inputValue('#' + id); await pz.fill('#' + id, id.endsWith('date') ? '11/30' : /-c(1|6|10)$/.test(id) ? '010-1234-56789012' : (v0 || '') + '고침'); await pz.locator('#' + id).blur(); await pz.waitForTimeout(80);

@@ -204,6 +204,7 @@
             + '<div class="sms-draft" id="inb-draft" hidden></div>'
             + `<label class="desk-sr" for="inb-text">${esc(c.ph)}</label>`
             + `<textarea class="sms-text" id="inb-text" rows="3" maxlength="${max}" placeholder="${esc(c.ph)}"${pub ? ' aria-describedby="inb-public"' : ''}></textarea>`
+            + '<p class="sms-invnote" id="inb-invnote" role="status" hidden></p>'
             + `<div class="sms-reply-row"><button type="button" class="desk-btn sms-clear" id="inb-clear" title="답 칸 글을 비워요(초안 그대로면 초안도 지워요)" disabled>지우기</button><span class="sms-len" id="inb-len"></span>${mkd ? '<button type="button" class="desk-btn sms-mkdraft" id="inb-mkdraft">초안 만들기</button>' : ''}<button type="submit" class="desk-btn primary" id="inb-send" disabled>${esc(c.send)}</button></div>`;
         const ta = $('inb-text'); if (keep) ta.value = keep; else if (I.texts.has(I.open)) ta.value = I.texts.get(I.open);
     }
@@ -219,6 +220,7 @@
         const band = $('inb-draft'), fresh = dr && I.newDraft && I.newDraft === dt && !same, k = fresh ? 'new' : 'std';
         band.hidden = !dr;
         if (band.dataset.k !== k) { band.dataset.k = k; band.innerHTML = fresh ? '<span>초안이 새로 만들어졌어요.</span><button type="button" class="desk-btn sm" id="inb-draft-new">새 초안으로 바꾸기</button>' : '봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.'; }
+        { const n = $('inb-invnote'), x = I.invNote, on = !!(x && x.k === I.open && dr && x.draft.trim() === dt.trim()); if (n) { n.hidden = !on; if (n.textContent !== (on ? x.note : '')) n.textContent = on ? x.note : ''; } }   // #1151 [초안 만들기] 송장 찾은 안내(invoice_note) = 그 초안이 칸에 남아 있는 동안만 · 지우거나 보내면(초안 없어짐) 사라짐
         { const w = $('inb-warn'), pe = I.thread && I.thread.post_error; if (w) { w.hidden = !pe; w.textContent = pe ? '자동 등록이 실패했던 문의예요: ' + pe : ''; } }
         $('inb-len').textContent = has ? nfmt(v.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
     }
@@ -322,16 +324,16 @@
         const k = I.open, ch = I.ch; if (!k || !(ch === 'talk' || (I.thread && I.thread.can_draft === true)) || I.sending || I.drafting || !I.thread) return;   // #1130 상품·주문문의 = 누를 때만 초안
         const id = k.slice(k.indexOf(':') + 1);
         I.drafting = true; sync();
-        let msg = '', nd = '';
+        let msg = '', nd = '', note = '';
         try {
             const r = await call('/api/inbox/threads/' + ch + '/' + encodeURIComponent(id) + '/draft', 'POST', {});
             if (!r.ok || r.body.ok === false) msg = errText(r);
-            else nd = String(r.body.draft != null ? (typeof r.body.draft === 'object' ? r.body.draft.text || '' : r.body.draft) : (r.body.draft_text || r.body.text || ''));
+            else { nd = String(r.body.draft != null ? (typeof r.body.draft === 'object' ? r.body.draft.text || '' : r.body.draft) : (r.body.draft_text || r.body.text || '')); note = typeof r.body.invoice_note === 'string' ? r.body.invoice_note.trim() : ''; }
         } catch (e) { msg = '통신이 끊겼어요'; }
         finally { I.drafting = false; }
         if (I.open !== k) return;
         if (msg || !nd) { toast('초안을 만들지 못했어요: ' + (msg || '봇이 답을 만들지 못했어요. 직접 적어 주세요'), 5000); sync(); return; }
-        I.thread.draft = nd; I.tsig = '';
+        I.thread.draft = nd; I.tsig = ''; I.invNote = note ? { k, draft: nd, note } : null;
         fillDraft(); sync();
         const ta = $('inb-text'); if (ta && !I.newDraft) ta.focus({ preventScroll: true });
         toast(I.newDraft ? '초안을 만들었어요. 적던 글은 그대로 뒀어요' : '초안을 칸에 넣었어요. 읽어 보고 보내 주세요', 3500);

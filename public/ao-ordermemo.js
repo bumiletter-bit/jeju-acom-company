@@ -1256,6 +1256,16 @@
         const wide = f.kind === 'area' || f.kind === 'option' || f.kind === 'platform' || (r.kind === 'line' && f.k === 'note');
         return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}${r.kind === 'cash' ? ' fk-' + (f.kind === 'shipdate' ? 'ship' : f.i) : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
+    // #1152(대표 11/14 「수취인 입력란 크게 · 구매자번호·보내는이 변경과 구분」) 현금 줄 칸 = 묶음 넷(품목·수량 → 받는 분 → 주문한 분 → 배송메세지·발송일) + 아래 「보내는이 변경」 묶음
+    //   칸 차례(탭 순서)·id·저장·판정 = 종전 그대로(묶음 틀만 씌움) · 받는 분 묶음만 옅은 인디고 바탕 + 칸 한 단계 크게
+    function cashGroupsHtml(ri, r) {
+        const F = fieldsOf(r).filter(f => !f.more), by = k => F.find(f => (k === 'ship' ? f.kind === 'shipdate' : f.i === k)), h = ks => ks.map(by).filter(Boolean).map(f => fieldHtml(ri, r, f)).join('');
+        const grp = (cls, id, t, s, ks) => `<div class="om-grp ${cls}" role="group" aria-labelledby="${id}"><p class="om-grp-h" id="${id}">${t}${s ? ` <small>${s}</small>` : ''}</p><div class="om-grid cash ${cls}-g">${h(ks)}</div></div>`;
+        return `<div class="om-grid cash om-g-what">${h([4, 5])}</div>`
+            + grp('om-grp-recv', `om-gh-r-${ri}`, '받는 분 정보', '택배가 가는 곳', [3, 6, 8])
+            + grp('om-grp-buyer', `om-gh-b-${ri}`, '주문한 분 정보', '', [10])
+            + `<div class="om-grid cash om-g-etc">${F.filter(f => ![4, 5, 3, 6, 8, 10].includes(f.i) || f.kind === 'shipdate').map(f => fieldHtml(ri, r, f)).join('')}</div>`;   /* 남은 칸(배송메세지·발송일 · 새 칸이 생겨도 여기로) */
+    }
     const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
     const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary${saveBlocked() ? ' om-blocked' : ''}" id="om-card-save" data-cact="save"${saveBlocked() ? ' aria-disabled="true"' : ''}>${saveLabel(n)}</button>`; };
     // #868 막힌 저장(입력삭제 받는 분 번호·번호 확인 중) = 회색·흐림 + aria-disabled · 누르면 그대로 안내+초점(disabled 를 안 씀 = 눌러서 이유를 들을 수 있게) · 풀리면 원래 색
@@ -1333,7 +1343,7 @@
                 <h4 id="om-rc-${ri}"${c.rows.length > 1 ? '' : ' class="om-sr"'}>${r.kind === 'cash' ? '현금 줄' : '메모 칸 줄'}${c.rows.length > 1 ? ' ' + (ri + 1) : ''}${c.mode === 'new' && c.rows.length > 1 ? `<button type="button" class="om-x sm" data-cact="droprow" data-ri="${ri}" aria-label="이 줄 빼기">${ICON_X}</button>` : ''}</h4>
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
                 ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
-                <div class="om-grid${r.kind === 'cash' ? ' cash' : ''}">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>
+                ${r.kind === 'cash' ? cashGroupsHtml(ri, r) : `<div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>`}
                 ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}${expRowHtml(c, r, ri)}
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c, r))}</p>${outNote(r) ? `<p class="om-indiv om-out" role="note">${esc(outNote(r))}</p>` : ''}${c.mode === 'edit' && !r.service && r.id != null ? (c.toCash ? `<div class="om-acts om-pend"><button type="button" class="om-btn sm om-pend-b" data-cact="tocash" data-ri="${ri}" aria-pressed="true">현금으로 변경 취소</button><span>[고친 대로 저장]을 누르면 현금 손님 줄로 바뀌어요(「!」 다시 붙음 · 고친 칸 같이) · 다시 누르면 취소</span></div>` : lostOf(r) ? `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}" aria-pressed="false">현금으로 변경하기</button><span>누른 뒤 [고친 대로 저장]을 눌러야 바뀌어요 · 구매자·보내는 분 번호는 매칭 전으로 돌아가요</span></div>` : `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}" aria-pressed="false">현금으로 변경하기</button><span>이 줄을 현금 손님 줄로 되돌려요 · 누른 뒤 [고친 대로 저장]을 눌러야 바뀌어요 · 「!」 다시 붙고 구매자·보내는 분 번호는 매칭 전으로 돌아가요</span></div>`) : ''}` : ''}
                 ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] || senderTelOwn(r) ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
