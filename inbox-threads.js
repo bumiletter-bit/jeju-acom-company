@@ -16,7 +16,8 @@
  */
 'use strict';
 const crypto = require('crypto');
-const DRAFT = require('./inbox-talk-draft-note.js');   // #1107-D 톡톡 초안 = 앞 대화 맥락 조립·결과 거르기·금액 자리표
+const DRAFT = require('./inbox-talk-draft-note.js');
+const INV = (() => { try { return require('./invoice-reply.js'); } catch (e) { return null; } })();   // #1151 송장번호 요청 초안   // #1107-D 톡톡 초안 = 앞 대화 맥락 조립·결과 거르기·금액 자리표
 
 const DAYS = 30;                 // 목록·대화가 보는 기간
 const FRESH_DAYS = 3, OPEN_DAYS = 14;   // 안 읽음으로 세는 기간: 봇이 답한 글은 3일 · 아무도 안 답한 글은 14일(「확인 필요 문의」 칸과 같은 기준 — 옛 자동 답이 숫자에 쌓이지 않게)
@@ -253,6 +254,21 @@ module.exports = function mountInboxThreads(app, deps) {
         throw bad(504, '보내는 중인데 결과를 아직 받지 못했어요 — 잠시 뒤 이 대화를 다시 열어 나갔는지 확인해 주세요(다시 보내면 두 번 나갈 수 있어요).', { code: 'timeout_unknown' });
     }
     const drafting = new Set();
+    // #1151(대표 11/14) 톡톡 송장번호 요청 — 요청 판정 = 마지막 직원 답 뒤 손님 글 최대 3통 중 하나라도 invoiceReq · 번호 = 최근 7일 손님 글에 적힌 010 번호
+    //   null = 요청 아님(종전 길) · { note } = 목록 없음(종전 초안 + 직원 줄) · { text, note } = 목록 고정 초안(AI 0)
+    async function talkInvoice(rows) {
+        if (!INV || typeof deps.invoiceReq !== 'function') return null;
+        const cust = x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY && m !== PHOTO_ONLY && m !== ENTRY && m !== ENTRY2 ? m : ''; };
+        let k = -1; rows.forEach((x, i) => { if (staffParts(x.staff_response).length || STAFF_FIRST.test(String(x.bot_response || ''))) k = i; });
+        const after = rows.slice(k + 1).filter(x => (Number(x.age) || 0) <= INV.DAYS).map(cust).filter(Boolean).slice(-3);   // 워커3 점검: 최근 7일 안 글만
+        if (!after.some(m => deps.invoiceReq(m))) return null;
+        const week = rows.filter(x => (Number(x.age) || 0) <= INV.DAYS).map(cust).filter(Boolean);
+        const p = await INV.pickFromText(pool, week, { testMode: !!deps.testMode });
+        if (!p.rows) return { note: INV.NOTE[p.why] ? INV.NOTE[p.why]() : INV.NOTE.not_found() };
+        const c = INV.compose(p.rows, 'talk');
+        const ours = rows.some(x => (Number(x.age) || 0) <= 7 && ((x.answered && String(x.bot_response || '').trim()) || staffParts(x.staff_response).length));
+        return { text: ours ? DRAFT.stripHello(c.text) : c.text, note: INV.NOTE.talk_found(p.d, c.total, !p.rows.some(x => x.is_b)), n: c.total };
+    }
     async function talkMakeDraft(tkey, actor) {
         if (typeof deps.generate !== 'function') throw bad(503, '초안을 만드는 길이 꺼져 있어요');
         const d = await talkDetail(tkey);
@@ -262,6 +278,15 @@ module.exports = function mountInboxThreads(app, deps) {
         if (drafting.has(tkey)) throw bad(409, '초안을 만드는 중이에요', { code: 'busy' });
         drafting.add(tkey);
         try {
+            let inv = null; try { inv = await talkInvoice(d.rows); } catch (e) { log.error('[문의 창] 송장 안내 초안 실패(종전 초안으로):', e.message); inv = null; }
+            if (inv && inv.text) {   // #1151 목록 초안 = AI 없이 바로 저장(하루 상한 셈 안 함)
+                const lastIn0 = [...d.rows].reverse().find(x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY; });
+                await pool.query(`INSERT INTO ${T.drafts} (ch, tkey, body, src_id, made_by) VALUES ('talk', $1, $2, $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET body = EXCLUDED.body, src_id = EXCLUDED.src_id, made_by = EXCLUDED.made_by, made_at = NOW()`, [tkey, clip(inv.text, TALK_MAX), lastIn0.id, clip(actor.name, 50)]);
+                talkInvalidate();
+                if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: 'talk', draft_made: true, kind: 'invoice', n: inv.n } }, source: 'inbox_threads', actor }).catch(() => { });
+                return { ok: true, draft: clip(inv.text, TALK_MAX), kind: 'invoice', invoice_note: inv.note };
+            }
+            const invNote = inv && inv.note ? { invoice_note: inv.note } : {};
             const cap = await draftCap(); const day = kstDay();
             // 셈과 늘리기를 한 문장으로(둘이 같은 순간 눌러도 상한을 넘지 않게) — 상한이면 줄이 안 돌아온다
             const up = await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, jsonb_build_object('day', $2::text, 'n', 1))
@@ -275,11 +300,11 @@ module.exports = function mountInboxThreads(app, deps) {
             if (!ctx) throw bad(400, '손님 글이 없어 초안을 만들 수 없어요(사진만 온 대화는 직접 적어 주세요)');
             let gen = null; try { gen = await deps.generate(ctx.input, d.thread.sub || ''); } catch (e) { log.error('[문의 창] 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
             const body = gen && DRAFT.cleanDraft(gen.answer, ctx.staffAmounts, { noHello: ctx.hasOurReply });   // #1109 우리 답이 이미 있으면 첫머리 인사 뗌   // 「[사람]」 줄·꼬리 거름 · 보상 금액 = 자리표(우리 직원이 말한 금액만 살림)
-            if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
+            if (!body) return Object.assign({ ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' }, invNote);
             const lastIn = [...d.rows].reverse().find(x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY; });
             await pool.query(`INSERT INTO ${T.drafts} (ch, tkey, body, src_id, made_by) VALUES ('talk', $1, $2, $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET body = EXCLUDED.body, src_id = EXCLUDED.src_id, made_by = EXCLUDED.made_by, made_at = NOW()`, [tkey, clip(body, TALK_MAX), lastIn.id, clip(actor.name, 50)]);
             talkInvalidate();   // #702 has_draft 가 바뀜
-            return { ok: true, draft: clip(body, TALK_MAX), used_today: n + 1, cap };
+            return Object.assign({ ok: true, draft: clip(body, TALK_MAX), used_today: n + 1, cap }, invNote);
         } finally { drafting.delete(tkey); }
     }
 
@@ -293,6 +318,17 @@ module.exports = function mountInboxThreads(app, deps) {
         const dk = c + ':' + String(x.id); if (drafting.has(dk)) throw bad(409, '초안을 만드는 중이에요', { code: 'busy' });
         drafting.add(dk);
         try {
+            // #1151 송장번호 요청 = 상품문의(공개 게시판)는 송장·성함 없는 고정 초안(AI 0) · 주문문의는 주문 연결이 없어 종전 초안 + 직원 줄
+            const qText = c === 'qna' ? String(raw.question || '') : [raw.title, raw.content].filter(Boolean).join('\n');
+            const invReq = !!(INV && typeof deps.invoiceReq === 'function' && deps.invoiceReq(qText));
+            if (invReq && c === 'qna') {
+                const w0 = await pool.query(`UPDATE ${P.table()} SET ai_draft = $2, ai_scenarios = $3 WHERE ${P.id}::text = $1 AND NOT COALESCE(answered, false) AND posted_at IS NULL RETURNING ${P.id}`, [String(x.id), INV.QNA_TEXT, JSON.stringify([])]);
+                if (!w0.rowCount) throw bad(409, ALREADY, { code: 'already' });
+                _cnt = null;
+                if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: c, id: String(x.id), draft_made: true, kind: 'invoice' } }, source: 'inbox_threads', actor }).catch(() => { });
+                return { ok: true, draft: clip(INV.QNA_TEXT, POST_MAX), kind: 'invoice', invoice_note: INV.NOTE.qna() };
+            }
+            const invNote = invReq ? { invoice_note: INV.NOTE.inquiry() } : {};
             const cap = await draftCap(); const day = kstDay();
             const up = await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, jsonb_build_object('day', $2::text, 'n', 1))
                 ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('day', $2::text, 'n', CASE WHEN agent_office_config.value->>'day' = $2::text THEN COALESCE((agent_office_config.value->>'n')::int, 0) + 1 ELSE 1 END), updated_at = NOW()
@@ -301,12 +337,12 @@ module.exports = function mountInboxThreads(app, deps) {
             if (!up.rows.length) throw bad(429, `오늘 초안 만들기 상한(${cap}번)을 다 썼어요 — 직접 적어 주세요`, { code: 'draft_cap' });
             let g = null; try { g = c === 'qna' ? await gen0(String(raw.question || ''), String(raw.product_name || '')) : await gen0(raw); } catch (e) { log.error('[문의 창] ' + P.name + ' 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
             const body = g && String(g.answer || '').trim();
-            if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
+            if (!body) return Object.assign({ ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' }, invNote);
             const w = await pool.query(`UPDATE ${P.table()} SET ai_draft = $2, ai_scenarios = $3 WHERE ${P.id}::text = $1 AND NOT COALESCE(answered, false) AND posted_at IS NULL RETURNING ${P.id}`, [String(x.id), body, JSON.stringify(Array.isArray(g.used) ? g.used : [])]);
             if (!w.rowCount) throw bad(409, ALREADY, { code: 'already' });
             _cnt = null;
             if (writeAudit) await writeAudit({ action: 'update', targetType: 'inbox_thread', targetId: null, changes: { after: { ch: c, id: String(x.id), draft_made: true } }, source: 'inbox_threads', actor }).catch(() => { });
-            return { ok: true, draft: clip(body, POST_MAX), used_today: up.rows[0].n, cap };
+            return Object.assign({ ok: true, draft: clip(body, POST_MAX), used_today: up.rows[0].n, cap }, invNote);
         } finally { drafting.delete(dk); }
     }
 

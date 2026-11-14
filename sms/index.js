@@ -1533,6 +1533,19 @@ module.exports = function mountSms(app, deps) {
         const text = body ? smsSafe(String(body).replace(/스마트스토어\s*톡톡|네이버\s*톡톡|톡톡/g, '문자')) : '';
         return text ? { text, kind: 'ai', why: 'context_draft' } : null;
     }
+    // #1151(대표 11/14) 송장번호 요청 글(우리 마지막 답 뒤 손님 글 최대 3통 중 하나라도 server.js invoiceReq) = 보낸 번호의 최근 7일 송장 목록 고정 초안(AI 0)
+    //   null = 요청 아님(종전 길 그대로) · { note } = 요청인데 기록 없음(종전 초안 + 직원 줄) · { text, note } = 목록 초안
+    const invMod = (() => { try { return require('../invoice-reply.js'); } catch (e) { return null; } })();
+    async function invoiceDraft(t, msg) {
+        if (!invMod || typeof deps.invoiceReq !== 'function') return null;
+        const recent = (await pool.query(`SELECT body FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND COALESCE(bucket, 'other') NOT IN ('otp','ad','carrier') AND created_at > now() - interval '7 days'
+            AND id > COALESCE((SELECT max(id) FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND state NOT IN ('cancelled','failed')), 0) ORDER BY id DESC LIMIT 3`, [t.id])).rows.map(x => x.body);
+        if (!recent.some(x => deps.invoiceReq(x))) return null;   /* 워커3 점검: 최근 7일 안 글만(옛 요청에 오늘 다른 글이 와도 목록 초안 X) */
+        const rows = await invMod.findShipments(pool, t.phone_digits, { testMode: !!deps.testMode });
+        if (!rows.length) return { note: invMod.NOTE.not_found() };
+        const c = invMod.compose(rows, 'sms', safeMod && safeMod.smsBytes);
+        return { text: staffFull(c.text), note: invMod.NOTE.sms_found(t.phone_digits, c.total), n: c.total };
+    }
     app.post('/api/sms/threads/:id/draft', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요' });
@@ -1542,23 +1555,31 @@ module.exports = function mountSms(app, deps) {
             const msg = (await pool.query(`SELECT * FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND COALESCE(bucket, 'other') NOT IN ('otp','ad','carrier') ORDER BY id DESC LIMIT 1`, [t.id])).rows[0];
             if (!msg) return res.status(400).json({ ok: false, error: '손님 글이 없어 초안을 만들 수 없어요', code: 'no_message' });
             const imgs = (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [msg.id])).rows.map(x => ({ contentType: x.content_type, data: x.data.toString('base64') }));
+            let inv = null; try { inv = await invoiceDraft(t, msg); } catch (e) { log.error('[문자] 송장 안내 초안 실패(종전 초안으로):', e.message); inv = null; }
+            if (inv && inv.text) {   // #1151 목록 초안 = AI 없이 바로 저장(하루 상한·AI 무관)
+                const text = await helloTrim(t, inv.text);
+                await pool.query(`UPDATE sms_threads SET draft_text = $2, draft_kind = $3, updated_at = now() WHERE id = $1`, [t.id, text, 'invoice']);
+                await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { draft_made: true, kind: 'invoice', why: 'invoice_list', n: inv.n } }, source: 'sms', actor: who(req) }).catch(() => { });
+                return res.json({ ok: true, draft_text: text, draft_kind: 'invoice', invoice_note: inv.note, thread: pub(await withUnread(t.id)) });
+            }
+            const invNote = inv && inv.note ? { invoice_note: inv.note } : {};
             const cDraft = Object.assign({}, c, { mode: 'draft' });
             let ans;
             // #1109 ② 첫 불만 글은 대표 확정 글(#1065·#1077) 먼저 · 이미 우리가 답한 뒤(7일 안)의 불만 글(보상·반품 요구 등)은 바로 맥락 초안
             const priorOut = msg.bucket === 'claim' && (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND state NOT IN ('cancelled','failed') AND id < $2 AND created_at > now() - interval '7 days' LIMIT 1`, [t.id, msg.id])).rowCount > 0;
-            if (priorOut) { try { ans = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); } if (!ans) return res.json({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }); }
+            if (priorOut) { try { ans = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); } if (!ans) return res.json(Object.assign({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }, invNote)); }
             else try { ans = await makeAnswer(t, msg, cDraft, {},{ bodyText: String(msg.body || ''), images: imgs, aiOpts: { noAi: false, aiUsed: false, manual: true } }); }
             catch (e) { log.error('[문자] 초안 만들기(누름) 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
             if (!ans || ans.toStaff || !ans.text) {   // #1109 ② 엔진이 사람 몫(불만 재발·보상/반품 요구·요청·전화·계좌·AI 넘김 등)으로 넘기면 = 톡톡 초안 엔진으로 맥락 초안
                 let ctxAns = null;
                 try { ctxAns = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
-                if (!ctxAns) return res.json({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' });
+                if (!ctxAns) return res.json(Object.assign({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }, invNote));
                 ans = ctxAns;
             }
             ans.text = await helloTrim(t, ans.text);   // #1109 우리 글이 이미 있는 대화 = 첫머리 인사 뗌
             await pool.query(`UPDATE sms_threads SET draft_text = $2, draft_kind = $3, updated_at = now() WHERE id = $1`, [t.id, ans.text, ans.kind || null]);
             await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { draft_made: true, kind: ans.kind || null, why: ans.why || null } }, source: 'sms', actor: who(req) }).catch(() => { });
-            res.json({ ok: true, draft_text: ans.text, draft_kind: ans.kind || null, thread: pub(await withUnread(t.id)) });
+            res.json(Object.assign({ ok: true, draft_text: ans.text, draft_kind: ans.kind || null, thread: pub(await withUnread(t.id)) }, invNote));
         } finally { _drafting.delete(t.id); }
     }));
     // #1109-b(대표 11/11 폴드7 「지우면 없어져야 해 · 초안 누르고 남기면 그대로 초안으로」) [지우기] = 답 칸 글이 지금 서버 초안 그대로면 서버 초안도 비움(누른 초안·봇 자동 초안 가리지 않음)

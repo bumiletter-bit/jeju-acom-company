@@ -11845,7 +11845,7 @@ const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgG
     // #610-G 발송 전 주문 보관(sms/preorders.js · 설정 sms_gateway.preorders 가 true 일 때만 60분 1회) — cafe24 는 const 가 뒤(10324행)라 지연 참조(TDZ)
     // #667 발주확인 전 주문도(네이버 NOT_YET · 쿠팡 ACCEPT) — 대표가 아침에 손으로 발주확인하기 전에 문자한 손님도 찾게. 이 줄에서만 켠다(행에 _x.placeOrderStatus · _status 가 실림)
     ordersBusy: () => _ordersBusy > 0,   // #667-b: 다른 곳이 주문을 조회 중이면 true(문자 수집 자신의 조회는 Core 직행이라 안 셈)
-    fetchNaver: d => _naverFetchInvoiceOrdersCore(d, { extended: true, placeStatuses: ['OK', 'NOT_YET'] }), fetchCoupang: d => _coupangFetchInvoiceOrdersCore(d, { statuses: ['ACCEPT', 'INSTRUCT'] }), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
+    fetchNaver: d => _naverFetchInvoiceOrdersCore(d, { extended: true, placeStatuses: ['OK', 'NOT_YET'] }), fetchCoupang: d => _coupangFetchInvoiceOrdersCore(d, { statuses: ['ACCEPT', 'INSTRUCT'] }), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d), invoiceReq: t => invoiceReq(t) });   /* #1151 invoiceReq = 송장번호 요청 판정(#1112 그대로) · [초안 만들기] 송장 목록 초안 */
 // #1022(대표 11/5 「B 고」) 발송 전 주문 표의 수집 창 밖 줄 = 상품주문번호로 개별 상태 조회(읽기 · 상세조회 POST query · 300개씩 · 350ms 간격 · 429 백오프 = naverCallWithRetry) → PAYED = 'wait'(아직 배송준비 · 발주확인 전 포함) · 그 밖 = 'gone'
 //   네이버만(쿠팡 = 중계서버 허용 조회가 목록 2종뿐 · 자사몰 = 주문번호 조회 미연결) → null = 종전 동작 · 던지면 preorders.js 가 그 줄들을 유예
 try { require('./sms/preorders.js').setStatusFetcher(async (ch, keys) => {
@@ -20168,7 +20168,7 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate, isOwner: isOwnerUser });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
 // #1130 genQna·genInquiry = 손님 연락 [초안 만들기](사람 몫 문의 · 수집기와 같은 채널 = 공개 게시판·고객문의 꼴 · 결과 { answer, used } 그대로)
-const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), genQna: (question, product) => qnaGenerate(question, product), genInquiry: item => inquiryGenerate(item), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
+const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), genQna: (question, product) => qnaGenerate(question, product), genInquiry: item => inquiryGenerate(item), invoiceReq: t => invoiceReq(t), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
 // ── #1111-B 직원 알림 6종(staff-alerts.js · 대표 11/11) — 1분 틱 · 실서버(RENDER)만 · 스위치 = 설정 staff_alerts.enabled(기본 꺼짐 = 아무것도 안 함) · 받는 사람 = notify_routes
 //   순위 문제·3채널 가격 어긋남(민주) · 묵은 미답변·답변 재료 점검(지현·승협) · 클레임 요약(지현) · 정산 자동 수집 실패(가영) · 받는 사람마다 그 사람 근무일에만(workdays.js)
 //   가격 = /api/price-check 와 같은 build(쿠팡 포함) · 실패해도 다른 일은 돎 · 한 번에 하나(busy)
