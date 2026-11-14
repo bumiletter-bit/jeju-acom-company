@@ -323,19 +323,29 @@
     // 기록(뒤로가기) — 평소 = ao-desk.js 의 겹 기록(AkmAoDesk.hbPush/hbDrop) · 최종발주 화면 위에서 열면(그 화면은 popstate 한 번에 닫힘 · ao-desk 기록도 멈춤)
     //   이 창만의 칸을 쌓고, 그 칸의 뒤로가기는 여기서 먼저 받아 최종발주 쪽으로 안 넘긴다(이 파일이 final-order.js 보다 먼저 불려 듣는 순서가 앞)
     const A = () => window.AkmAoDesk || {};
-    const OWN = { on: false, stack: [], skip: 0 };
+    //   #1148(대표 11/14 「메모 고치기에서 뒤로가기 누르면 꺼짐」) 칸 쌓기·되돌리기 = ao-desk hbSync 꼴 한 곳(ownSync) — 되돌리기(history.go · 비동기)가 끝나기 전에 새 칸을 쌓으면
+    //   (판 → 줄 카드 = 판 칸 되돌림 + 줄 카드 칸 쌓기) 되돌림이 새 칸 기준으로 걸려 기록이 한 칸 모자람 → 뒤로가기 한 번에 줄 카드·판·메모함이 다 닫혔다 · 이제 되돌림이 끝난 뒤(popstate) 모자란 칸을 쌓는다
+    const OWN = { on: false, stack: [], skip: 0, mt: 0 };
     const ownDepth = () => { try { return (history.state && history.state.omOwn) | 0; } catch (e) { return 0; } };
+    function ownSync() {
+        if (!OWN.on || OWN.skip) return;
+        const d = ownDepth(), want = OWN.stack.length;
+        try {
+            if (d > want) { OWN.skip = 1; clearTimeout(OWN.mt); OWN.mt = setTimeout(() => { OWN.skip = 0; try { if (OWN.on && ownDepth() > OWN.stack.length) history.replaceState(Object.assign({}, history.state || {}, { omOwn: OWN.stack.length }), ''); } catch (er) { /* 그대로 */ } ownSync(); }, 700); history.go(want - d); }   /* go 는 몇 칸이든 popstate 한 번 · 답이 없으면 700ms 뒤 풂 */
+            else for (let i = d; i < want; i++) history.pushState(Object.assign({}, history.state || {}, { omOwn: i + 1 }), '');
+        } catch (e) { OWN.skip = 0; }
+    }
     function hbPush(k, fn) {
-        if (OWN.on) { if (OWN.stack.some(e => e.k === k)) return; OWN.stack.push({ k, fn }); try { history.pushState(Object.assign({}, history.state || {}, { omOwn: OWN.stack.length }), ''); } catch (e) { /* 기록 못 쌓아도 단추로 닫힘 */ } return; }
+        if (OWN.on) { if (OWN.stack.some(e => e.k === k)) return; OWN.stack.push({ k, fn }); ownSync(); return; }   // 기록 못 쌓아도 단추로 닫힘
         const a = A(); if (typeof a.hbPush === 'function') a.hbPush(k, fn);
     }
     function hbDrop() {
-        if (OWN.on) { let n = 0; for (const k of arguments) { const i = OWN.stack.findIndex(e => e.k === k); if (i >= 0) { OWN.stack.splice(i, 1); n++; } } if (n) { OWN.skip += n; try { history.go(-n); } catch (e) { OWN.skip = 0; } } return; }
+        if (OWN.on) { let n = 0; for (const k of arguments) { const i = OWN.stack.findIndex(e => e.k === k); if (i >= 0) { OWN.stack.splice(i, 1); n++; } } if (n) ownSync(); return; }
         const a = A(); if (typeof a.hbDrop === 'function') a.hbDrop.apply(null, arguments);
     }
     window.addEventListener('popstate', e => {
         if (!OWN.on && !OWN.skip) return;
-        if (OWN.skip > 0) { OWN.skip--; e.stopImmediatePropagation(); return; }   // 우리가 단추로 닫으며 되돌린 칸
+        if (OWN.skip > 0) { OWN.skip = 0; clearTimeout(OWN.mt); e.stopImmediatePropagation(); ownSync(); return; }   // 우리가 단추로 닫으며 되돌린 칸 · 그사이 쌓인 겹이 있으면 이제 쌓음
         const d = ownDepth(); if (OWN.stack.length <= d) return;
         e.stopImmediatePropagation();   // 이 창의 칸 = 최종발주는 그대로
         while (OWN.stack.length > d) { const x = OWN.stack.pop(); try { x.fn(); } catch (er) { console.error(er); } }
@@ -2518,7 +2528,7 @@
         const el = OM.el;
         if (el.hidden) {
             let fo = false; try { fo = !!(history.state && history.state.foPanel); } catch (e) { fo = false; }
-            OWN.on = fo; OWN.stack = []; OWN.skip = 0;
+            OWN.on = fo; OWN.stack = [];   /* #1148 되돌리던 칸(skip)은 그대로 — 닫자마자 다시 열면 그 popstate 를 마저 삼키고 쌓는다 */
             OM.tpLast = null; OM.tpSaved = null; el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
         }
         OM.tab = 'open'; syncTabs(); inState(); load();
