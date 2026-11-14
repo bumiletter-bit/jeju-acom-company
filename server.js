@@ -7090,6 +7090,10 @@ function talkPick(x) {
     const br = String((x && x.bot_response) || ''), msg = String((x && x.message) || '');
     if (!x || br === '[쿨다운-무응답]' || br.startsWith('[직원응답')) return null;   // 직원 대화 중 · 직원 답 줄(발송취소 포함)
     if ((x.staff_response != null && String(x.staff_response).trim()) || x.staff_at) return null;
+    // #1154 톡톡봇 자동 송장 안내 줄(response_source) — 목록 보냄 = 🟩 한 통(송장·번호 0 · #644) · 못 찾음 = 🟥 + 「→ 송장번호 보내 드리기」 · 되묻기(invoice_ask) = 아래 종전 판정 그대로(틱이 30분 미뤄 그 뒤 목록·못 찾음 줄이 있으면 버림)
+    //   그 밖 줄 = response_source 를 보지 않음(종전 바이트)
+    if (x.response_source === 'invoice_auto') { const n = /\((\d+)건\)/.exec(String(x.scenario_name || '')); return { mode: 'inv_ok', n: n ? Number(n[1]) : null }; }
+    if (x.response_source === 'invoice_fail') return { mode: 'staff', botLine: true, memo: needsMemo(msg), inv: true };
     const botAnswered = !!br.trim() && !br.trim().startsWith('[');
     const unanswered = br === '[SKIP-무응답]' || br.startsWith('[AI에러');
     const req = TALKTALK_REQUEST_RE.test(msg), memo = needsMemo(msg);
@@ -7105,10 +7109,12 @@ function talkPick(x) {
 function talkBlock(ch, pick, message, botAnswer, meta) {   // #1108-D meta = { id, at(「M/D HH:MM」 KST), item } → 머리 아래 「톡톡 #줄번호 · M/D HH:MM · 상품」 한 줄(없으면 종전 꼴)
     const tail = [pick.addr ? '→ 배송지 수정' : '', pick.inv ? '→ 송장번호 보내 드리기' : '', pick.memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
     const sub = meta ? [ch + (meta.id ? ' #' + meta.id : ''), meta.at || '', meta.item && meta.item !== '기타' ? meta.item : ''].filter(Boolean).join(' · ') : '';
+    if (pick.mode === 'inv_ok') return `🟩 <b>송장 안내함</b> · ${tgEsc([ch + (meta && meta.id ? ' #' + meta.id : ''), pick.n ? pick.n + '건' : ''].filter(Boolean).join(' · '))}` + (meta && meta.at ? '\n' + tgEsc(meta.at) : '');   // #1154 손님 글·봇 글(번호·송장)은 싣지 않음
     if (pick.mode === 'memo') return tgBlock(redHead('메모 필요', `${ch} 답변완료`), [['손님', message], ['봇', botAnswer]], tail, sub);
     return tgBlock(redHead('확인 필요', `${ch}(${pick.botLine ? '봇 답함 · 처리 필요' : '봇이 답 못함'})`), pick.botLine ? [['손님', message], ['봇', botAnswer]] : [['손님', message]], tail, sub);
 }
 let _ttReqBusy = false;
+const TT_INV_ASK_WAIT_MS = 30 * 60 * 1000;   // #1154 톡톡봇 송장 되묻기 줄의 종전 🟥 알림을 미루는 시간(그 사이 손님 답 → 목록·못 찾음이면 그 알림이 대신함)
 setInterval(async () => {
     if (_ttReqBusy) return;
     _ttReqBusy = true;
@@ -7120,7 +7126,7 @@ setInterval(async () => {
             return;
         }
         const r = await pool.query(
-            `SELECT id, user_id, message, bot_response, staff_response, staff_at, item, to_char(received_at + interval '9 hours', 'FMMM/FMDD HH24:MI') AS at_kst FROM message_logs
+            `SELECT id, user_id, message, bot_response, staff_response, staff_at, item, response_source, scenario_name, to_char(received_at + interval '9 hours', 'FMMM/FMDD HH24:MI') AS at_kst FROM message_logs
              WHERE id > $1 AND bot_response IS NOT NULL AND bot_response NOT IN ('[직원응답]','[직원 직접답변]')
              ORDER BY id ASC LIMIT 50`, [st.last_id]);
         if (!r.rows.length) { /* 신규 없음 — 야간 보류분 방출만 검사 */ }
@@ -7141,11 +7147,14 @@ setInterval(async () => {
             // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
             // #522(대표 10/5 「톡톡은 내용이 얼추 나오게 · 봇 답변도 보이게 · 편하게」): 라벨 한 줄 + 손님 글 150자 + 봇이 답한 건은 봇 답변 첫머리 80자. 매번 붙던 설명 4줄은 뺐다.
             // #1069(대표 11/9): 자르지 않음(4,000자 넘을 때만 「…」) · 건마다 한 통 · 색 머리(🟨 답 못함 · 🟧 답했지만 확인필요) · HTML 굵게 → 큐에는 다 만든 글 { h } 로
-            queue.push({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response, { id: h.id, at: h.at_kst, item: h.item }), id: h.id, uid: h.user_id == null ? null : String(h.user_id) });   // #1074 id·uid = 보내기 직전 직원 답 확인용
+            queue.push(Object.assign({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response, { id: h.id, at: h.at_kst, item: h.item }), id: h.id, uid: h.user_id == null ? null : String(h.user_id) },   // #1074 id·uid = 보내기 직전 직원 답 확인용
+                h.response_source === 'invoice_ask' ? { ask: 1, due: Date.now() + TT_INV_ASK_WAIT_MS } : {}));   // #1154 되묻기 줄 = 30분 뒤에(그 사이 목록·못 찾음 줄이 오면 버림)
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietFor('talk');   // #1103 night_pass 에 talk 있으면 밤에도 바로
         let lastAlert = st.last_alert || null;
+        const nowMs = Date.now(), waitQ = queue.filter(m => m && typeof m === 'object' && m.ask && Number(m.due) > nowMs);   // #1154 아직 때가 안 된 되묻기 알림 = 이번 틱엔 건드리지 않고 끝에 그대로 되붙임(없으면 queue 종전 그대로)
+        if (waitQ.length) queue = queue.filter(m => !waitQ.includes(m));
         if (!quiet && queue.length) {   // (queue 가 #1074 거름으로 비면 아래 batch 가 빈 배열 = 0통)
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
             // #1069: 건마다 한 통 · 한 틱 최대 10통(1.1초 간격 · 남은 건 다음 틱) · 보낸 건만 큐에서 뺌 · 배포 전 쌓인 옛 글자 줄(문자열)은 이스케이프해 그대로
@@ -7154,12 +7163,13 @@ setInterval(async () => {
             try {
                 const head = queue.slice(0, 10).filter(m => m && typeof m === 'object' && Number.isInteger(Number(m.id)) && Number(m.id) > 0);
                 if (head.length) {
+                    const askOn = head.some(m => m.ask);   // #1154 되묻기 알림이 낀 틱만 아래 한 갈래를 더함(없으면 SQL 종전 글자 그대로)
                     const done = new Set((await pool.query(
-                        `SELECT q.id FROM unnest($1::int[], $2::text[]) AS q(id, uid)
+                        `SELECT q.id FROM unnest($1::int[], $2::text[]${askOn ? ', $3::boolean[]' : ''}) AS q(id, uid${askOn ? ', ask' : ''})
                           WHERE EXISTS (SELECT 1 FROM message_logs m
                                          WHERE ((q.uid IS NULL AND m.id = q.id) OR (m.user_id = q.uid AND m.id >= q.id))
-                                           AND ((m.staff_response IS NOT NULL AND btrim(m.staff_response) <> '') OR m.staff_at IS NOT NULL OR m.bot_response LIKE '[직원응답%'))`,
-                        [head.map(m => Number(m.id)), head.map(m => m.uid == null ? null : String(m.uid))])).rows.map(x => Number(x.id)));
+                                           AND ((m.staff_response IS NOT NULL AND btrim(m.staff_response) <> '') OR m.staff_at IS NOT NULL OR m.bot_response LIKE '[직원응답%'${askOn ? " OR (q.ask AND m.id > q.id AND m.response_source IN ('invoice_auto', 'invoice_fail'))" : ''}))`,
+                        [head.map(m => Number(m.id)), head.map(m => m.uid == null ? null : String(m.uid))].concat(askOn ? [head.map(m => !!m.ask)] : []))).rows.map(x => Number(x.id)));
                     if (done.size) queue = queue.filter(m => !(m && typeof m === 'object' && done.has(Number(m.id))));
                 }
             } catch (e) { console.error('[요청형알림] 직원 답 확인 실패(그대로 보냄):', e.message); }
@@ -7171,6 +7181,7 @@ setInterval(async () => {
                 if (sentN) queue = queue.slice(sentN);
             }
         }
+        if (waitQ.length) queue = queue.concat(waitQ);
         await naverCfgSet('talktalk_request_state', { last_id: lastId, queue, last_alert: lastAlert });
     } catch (e) { console.error('[요청형알림] 오류:', e.message); }
     finally { _ttReqBusy = false; }
