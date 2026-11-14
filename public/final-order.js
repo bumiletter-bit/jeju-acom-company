@@ -344,7 +344,8 @@
         OMF.lines = lines.length ? lines.map(x => ({ id: x.id, text: String(x.line || ''), checked: x.checked || null, lstate: x.state || null, sd: x.ship_date || null, split: x.split && typeof x.split === 'object' ? x.split : null, splitSent: /^\d{4}-\d{2}-\d{2}$/.test(String(x.split_sent || '')) ? x.split_sent : null })).filter(x => x.text.trim()) : String(r.memo_text || '').split('\n').filter(l => l.trim()).map(l => ({ id: null, text: l }));
         const parsed = Array.isArray(r.cash_aoa) && r.cash_aoa.length > 1 ? core().parseCash(r.cash_aoa) : null, cids = Array.isArray(r.cash_ids) ? r.cash_ids : [];
         const svcIds = new Set((Array.isArray(r.cash_service) ? r.cash_service : []).map(String));   // #900 서비스 줄(A칸 「!」 꼴 · 대조·짝 밖)
-        OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {})) : [];
+        const couts = Array.isArray(r.cash_out) ? r.cash_out : [];   // #1146 양식에 찍을 B·K(옛 서버 = 없음 = 종전)
+        OMF.cash = parsed && parsed.ok ? parsed.rows.map((x, i) => Object.assign({}, x, { omId: cids[i] != null ? cids[i] : null }, cids[i] != null && svcIds.has(String(cids[i])) ? { service: true } : {}, couts[i] && couts[i].b && couts[i].k ? { out: { b: String(couts[i].b), k: String(couts[i].k) } } : {})) : [];
         OMF.shipMemos = Array.isArray(r.ship_memos) ? r.ship_memos : [];   // #955
         OMF.boxRows = Array.isArray(r.box_rows) ? r.box_rows.filter(m => m && Array.isArray(m.boxes) && m.boxes.length >= 1) : [];   // #1021 메모함 박스별 줄(옛 서버 = 없음 = 아무 일 없음) · #1027 1박스 판도
         OMF.normal = Array.isArray(r.normal_orders) ? r.normal_orders : []; st.omNormOff = new Set();   // #970
@@ -2301,7 +2302,9 @@
                     key = row.key + '\u0001b' + program2.length;
                 }
                 program2.push({ key, cells }); }); });
-        const out = core().buildRows({ program: program2, cash: cashRowsWithSize(cashLive()), byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
+        // #1146(대표 11/14) 입력삭제에 묶인 메모함 주소 줄 = 택배 양식에는 처음 넣은 보내는 분 번호(B)·구매자 연락처(K) · 짝짓기·카드·수량은 위에서 끝남(열쇠 번호 그대로) · 여기서 양식 칸만 바꿔 끼움
+        const cashOut = rows => rows.map(r => { if (!r || !r.om || !r.out) return r; const cells = r.cells.slice(); cells[1] = r.out.b; cells[10] = r.out.k; return Object.assign({}, r, { cells }); });
+        const out = core().buildRows({ program: program2, cash: cashOut(cashRowsWithSize(cashLive())), byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
         if (out.unknown && out.unknown.length) { buildCards(); applyOrderDecisions(); renderReview(); throw new Error('거래처를 못 정한 품목이 새로 생겼어요. 위에서 골라 주세요.'); }
         const dot = mdDot(s.shipDate), files = [];
         const colorOf = name => (/!$/.test(name) && !inCatalog(name) && core().stripTail(name, inCatalog) !== name ? CAT_RGB.orange : CAT_RGB[typeof window.qtyCategory === 'function' ? window.qtyCategory(name) : '']) || null;   // #525: 요청 꼬리가 붙은 줄 = 사이즈 꼬리 줄과 같은 주황

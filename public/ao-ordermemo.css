@@ -913,3 +913,7 @@ html[data-ao-theme="dark"] .om-pill.k-kind { background: #0C4A6E; color: #BAE6FD
 .om-pxs-after { font-weight: 800; color: var(--d-accent); overflow-wrap: anywhere; }
 .om-pxs-after small { font-size: 12px; font-weight: 600; color: var(--px-sub, var(--d-sub)); }
 .om-pxs-pick { margin: 0; font-size: 13px; font-weight: 700; color: var(--d-ink); line-height: 1.45; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* #1146 입력삭제 주소 줄 = 택배 양식에 나갈 보내는 분 번호·구매자 연락처(표시만) */
+.om-out-t { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--px-sub, var(--d-sub)); line-height: 1.4; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.om-pxs-wrap .om-px-paired .om-out-t { margin: 0 0 4px; }
+.om-indiv.om-out { font-variant-numeric: tabular-nums; }

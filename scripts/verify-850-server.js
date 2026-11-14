@@ -91,7 +91,7 @@ function mkPool(db) {
             ok(ind.cells[0] === '홍길동 드림' && ind.indiv === true, '#863 입력삭제 주소 줄 = 뒤 「!」도 뗌(현금 아님)', ind.cells[0]);
             const fs63 = OM.pickForShip([{ id: 9, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!홍길동', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] },
                 { id: 10, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['구매자', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] }], '2026-10-26');
-            ok(fs63.cash_aoa[1][0] === '홍길동 드림!' && fs63.cash_aoa[2][0] === '구매자', '#863 이미 저장된 열린 줄 for-ship = 앞 「!」 → 뒤 · 「!」 없는 입력삭제 줄은 그대로', fs63.cash_aoa.slice(1).map(c => c[0]));
+            ok(fs63.cash_aoa[1][0] === '홍길동 드림!' && fs63.cash_aoa[2][0] === '구매자 드림', '#863 이미 저장된 열린 줄 for-ship = 앞 「!」 → 뒤 · 「!」 없는 입력삭제 줄 = 「!」 없이 「드림」(#1143)', fs63.cash_aoa.slice(1).map(c => c[0]));
         }
         const fs8 = OM.pickForShip([{ id: 1, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] },
             { id: 2, state: 'open', sure: true, kind: 'cash', ship_date: null, cells: ['!제주아꼼이네', '010-1212-3434', '', '박받음', CAT[0], '1', '010-7777-8888', '', '제주시 1', '', '010-5555-6666', '', ''] }], '2026-10-26');

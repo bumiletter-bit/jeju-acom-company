@@ -315,6 +315,15 @@ function toCashCells(cells, oldK, orig) {
     if (String(c[6] || '').trim()) { c[1] = String(c[6]).trim(); c[10] = String(c[6]).trim(); }   // B 가 옛 K(입력삭제 번호)면 B 도 받는 분 번호(안 그러면 ②·④ 판이 B 로 잡아 다시 붙음 · 총괄 결정) · 사람이 넣은 다른 B 는 그대로
     return c;
 }
+// #1146(대표 11/14 「입력삭제는 매칭이고 우리가 입력한 정보로 나가야 해 · 보내는이 번호랑 구매자 연락처도 주문 입력한 건으로」) 택배 양식에 찍을 B·K = 입력삭제에 묶이기 전 값(pair_orig)
+//   저장값·짝 열쇠(K = 입력삭제 번호)는 그대로 · 양식 출력 때만(최종발주가 buildRows 직전에 바꿔 끼움) · B 판정 = toCashCells 와 같은 규칙(B 빈칸 / ab 없음 / B = 묶을 때 값 → 묶기 전 B · 아니면 사람이 고친 B) · 묶기 전 B 빈칸 = K(cash_aoa 와 같은 채움)
+//   대상 = 「!」 없는 주소 줄 · 서비스 X · pair_orig 있음 · 없으면 null(종전 그대로)
+function outBK(r) {
+    if (!r || r.kind !== 'cash' || r.service || !Array.isArray(r.cells) || /[!！]/.test(String(r.cells[0] || ''))) return null;
+    const o = cleanOrig(r.pair_orig); if (!o) return null;
+    const c = r.cells, b = (!dg(c[1]) || !o.ab || dg(c[1]) === dg(o.ab)) ? o.b : String(c[1] || '').trim();
+    return { b: core.fmtPhone(dg(b) ? b : o.k), k: core.fmtPhone(o.k) };
+}
 // #944 되돌리기(현금 줄 → 다시 주소 줄) = 「!」 떼고 K 는 보낸 값(옛 칸 = 입력삭제 번호) 그대로 · PUT to_indiv:true(to_cash 반대 · DB A칸 「!」로 판정하면 보낸 「!」 없는 칸에 다시 「!」가 붙어 되돌리기가 헛돎 · 워커2 재현)
 const toCashDate = (sent, orig) => { const o = cleanOrig(orig), s0 = isDay(sent) ? sent : null; return o && 'ad' in o && s0 === o.ad ? o.d : sent; };   // #949 발송일 = 묶을 때 바뀐 값 그대로일 때만 묶기 전으로
 function toIndivCells(cells) {
@@ -432,6 +441,7 @@ function pickForShip(rows, date) {
     }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
         cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); else c[0] = indivSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
+        cash_out: cash.map(r => outBK(r)),   // #1146 양식에 찍을 B·K(cash_ids 와 같은 순서 · null = cash_aoa 그대로) · 짝짓기(cash_aoa)는 무변경
         cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
         waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, split_sent: splitSent, ids: lines.map(l => l.id).filter(id => id != null).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
 }
@@ -606,6 +616,7 @@ function mount(app, deps) {
         indiv: r.kind === 'cash' ? !/[!！]/.test(String((r.cells || [])[0] || '')) : undefined,
         split_done: r.kind === 'cash' && r.checked && isDay(r.checked.split_done) ? r.checked.split_done : undefined,   // #1121-b 번호 줄 지운 뒤 남은 주소 줄 = 「입력삭제 · 발송처리 끝」 알약
         pair_orig: r.kind === 'cash' ? (r.pair_orig || null) : undefined,   // #949
+        out_b: r.kind === 'cash' ? ((outBK(r) || {}).b || null) : undefined, out_k: r.kind === 'cash' ? ((outBK(r) || {}).k || null) : undefined,   // #1146 택배 양식에 나갈 보내는 분 번호·구매자 연락처(전체 번호 · null = 줄 값 그대로)
         exp_site: r.kind === 'cash' ? !!r.exp_site : undefined,   // #1003 체험장 현금 줄(화면 알약 「현금 · 체험장」만)
         service: r.kind === 'cash' ? !!r.service : undefined,   // #900 서비스 줄(indiv = false · 화면 알약 「서비스」)   // cash: true = 입력삭제 주문의 주소 줄 · false = 현금 손님
         stale: !r.sure && r.state === 'open' && !!r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) > STALE_DAYS * 86400e3 });   // #850 점검 c 「오래된 확인」(7일 넘게 안 고친 🟠)
@@ -1187,4 +1198,4 @@ function mount(app, deps) {
     return { purge, preview, ensure, preHook, preEnsure, preMap };
 }
 
-module.exports = { cleanBoxes, isBoxRow, BOX_NOTE, shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, lineBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };
+module.exports = { outBK, cleanBoxes, isBoxRow, BOX_NOTE, shipMemoOf, mount, ruleLine, checkLine, checkCash, checkRow, toCashCells, toCashDate, cleanOrig, toIndivCells, pairCash, pairHint, indivBadge, lineBadge, itemKeyOf, cashFromAi, cleanChecked, depositName, applySms, markIndiv, indivKeysOf, pickForShip, pickClear, loadV2, V2, DEFAULTS, AI_SCHEMA };

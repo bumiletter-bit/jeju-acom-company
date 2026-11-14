@@ -30,6 +30,7 @@ function mut(L) {
     const e140 = L.entries.find(e => e.id === 140); if (e140 && !S.noExtra) e140.rows.push(extra(204, S.longName ? '둘째주소손님 아주아주 긴 이름 받는 분 선물용 회사 단체 주문 담당자 홍길동 과장님 앞' : '둘째주소손님', 2), extra(205, '서비스주소손님', 1, { service: true, indiv: false, cells: ['서비스!', PXL, '제주시 연삼로 1066-31', '서비스주소손님', CAT[0], '1', '010-3300-0205', '', '서울 중구 세종대로 1', '', PXL, '', ''] }));
     if (e140 && S.bare) e140.rows.forEach(r => { if (r.id === 204) r.cells[0] = '김철수'; });   // #1143 이름만 저장된 입력삭제 주소 줄
     if (e140 && S.mix) e140.rows.forEach(r => { if (r.id === 204) r.cells[4] = CAT[2]; });   // #1144 품목 2종 섞임
+    if (e140 && S.out) e140.rows.forEach(r => { if (r.id === 204) { r.out_b = '010-2222-5315'; r.out_k = '010-2222-5316'; } if (r.id === 201) { r.out_b = PXL; r.out_k = PXL; } });   // #1146 양식 B·K(204 = 처음 값 다름 · 201 = 같음)
     if (e140 && S.many) for (let i = 0; i < 8; i++) e140.rows.push(extra(210 + i, '여러줄손님' + i, 1));   // 대표 사진 꼴 = ② 10줄 넘음
     if (S.splitBadge) L.entries.forEach(e => e.rows.forEach(r => { if (r.id === 190) r.badge = { kind: 'line', state: 'sent_split', m: null, n: 0, later: 3, later_date: '2026-11-20', service: 0, pre: false, item_diff: false, t: '', why: '' }; }));
     const all = L.entries.flatMap(e => e.rows);
@@ -44,7 +45,7 @@ function mut(L) {
     const PORT = Number(process.env.PORT1142 || 3462);
     const srv = await serve(PORT), base = `http://127.0.0.1:${PORT}/`;
     const browser = await chromium.launch();
-    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
+    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, out: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
     const openPanel = async p => {
         S.n = 4; S.ent = 1; await p.goto(base + '?v=new'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true }));
         await p.waitForSelector('#om-list .om-ml'); await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click();
@@ -146,6 +147,21 @@ function mut(L) {
         ok(vis === 1 && /합 3박스$/.test(t.pick) && /6박스/.test(t.after), '찾기로 안 보이는 체크 줄(203)도 합계에 셈', { vis, t });
         ok(S.puts.length + S.services.length + S.pairs.length === 0, '합계 셈 = 서버 쓰기 0', { puts: S.puts.length, svc: S.services.length, pairs: S.pairs.length });
         await c6.close();
+        // #1146 택배 양식에 나갈 보내는 분 번호·구매자 연락처(표시만)
+        console.log('①-d #1146 택배 양식 번호 안내');
+        reset(); S.out = true; const c7 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const p7 = await c7.newPage(); p7.on('pageerror', e => pe.push('out ' + String(e)));
+        await openPanel(p7);
+        const outs = await p7.evaluate(() => Object.fromEntries([...document.querySelectorAll('#om-card .om-px-paired li')].map(li => [li.querySelector('[data-cact="pxrowopen"]').dataset.v, (li.querySelector('.om-out-t') || {}).textContent || ''])));
+        const OUTT = '택배 양식에는 보내는 분 번호 010-2222-5315 · 구매자 연락처 010-2222-5316 로 나가요';
+        ok(outs['204'] === OUTT && outs['201'] === '' && outs['205'] === '', '② = 처음 값이 다른 줄(204)만 「택배 양식에는 보내는 분 번호 … · 구매자 연락처 … 로 나가요」 · 같은 줄(201)·서비스 줄(205) 없음', outs);
+        await p7.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await p7.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p7.waitForTimeout(150);
+        const cn = await p7.evaluate(() => (document.querySelector('#om-card .om-out') || {}).textContent || '');
+        await p7.fill('#om-f-0-c1', '010-9999-0000'); await p7.waitForTimeout(100); const cn2 = await p7.evaluate(() => (document.querySelector('#om-card .om-out') || {}).textContent || '');
+        await p7.click('#om-card [data-cact="cancel"]'); await p7.waitForTimeout(200); if (await p7.isVisible('#om-card [data-cact="discard"]')) await p7.click('#om-card [data-cact="discard"]'); await p7.waitForSelector('#om-card:not([hidden]) .om-pxs-sum');
+        await p7.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="201"]'); await p7.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p7.waitForTimeout(150);
+        const cn3 = await p7.evaluate(() => !!document.querySelector('#om-card .om-out'));
+        ok(cn === OUTT && cn2 === OUTT && !cn3 && S.puts.length === 0, '줄 카드 안내 글 자리 = 같은 문구(치는 중엔 저장된 값 기준 그대로) · 같은 줄(201) 카드엔 없음 · 쓰기 0', { cn, cn2, cn3, puts: S.puts.length });
+        await c7.close();
         // ── 나뉜 입력삭제 · ③ 현금 줄 0 ────────────────
         console.log('② 나뉜 입력삭제(sent_split) · ③ 현금 줄 0');
         reset(); S.deleted = new Set([191, 192, 193, 203]); S.splitBadge = true;
@@ -179,12 +195,12 @@ function mut(L) {
                     if (R(li).bottom < rt.bottom - 0.5 || R(li).bottom < ra.bottom - 0.5) { out.inOverlap++; (out.why = out.why || []).push(['삐', L.className, Math.round(R(li).bottom), Math.round(rt.bottom), Math.round(ra.bottom), (() => { const g = getComputedStyle(li), q = getComputedStyle(a); return [g.display, g.height, g.maxHeight, g.overflow, g.gridTemplateRows, g.paddingTop, g.paddingBottom, q.height, q.minHeight, q.display, [...a.children].map(e => Math.round(R(e).height) + ':' + getComputedStyle(e).marginTop + '/' + getComputedStyle(e).marginBottom).join(' ')].join(' | '); })()]); } }); });
             const pl = [...C.querySelectorAll('.om-px-paired li')]; out.svcL = [...new Set(pl.map(li => Math.round(R(li.querySelector('.om-px-svc')).left)))]; out.btnL = [...new Set(pl.map(li => li.querySelector('[data-cact="pxdetach"], .om-px-ph')).filter(Boolean).map(b => Math.round(R(b).left)))];
             out.minH = Math.min(...[...C.querySelectorAll('.om-px-paired button, .om-px-paired label, .om-pairx-b button, .om-pairx-b label')].filter(e => R(e).height).map(e => Math.round(R(e).height)));
-            out.pendOut = [...C.querySelectorAll('.om-pend-t')].filter(e => { const r = R(e), q = R(e.closest('li')); return r.top < q.top - 0.5 || r.bottom > q.bottom + 0.5 || r.left < q.left - 0.5 || r.right > q.right + 0.5; }).length; out.pendN = C.querySelectorAll('.om-pend-t').length;
+            out.pendOut = [...C.querySelectorAll('.om-pend-t, .om-out-t')].filter(e => { const r = R(e), q = R(e.closest('li')); return r.top < q.top - 0.5 || r.bottom > q.bottom + 0.5 || r.left < q.left - 0.5 || r.right > q.right + 0.5; }).length; out.pendN = C.querySelectorAll('.om-pend-t').length;
             out.svcTop = [...new Set(pl.map(li => Math.round(R(li.querySelector('.om-px-svc')).top - R(li).top)))];
             return out; });
         const LAY = {};
         for (const [w, h, dark] of [[1500, 940, false], [720, 900, false], [390, 844, false], [1500, 940, true], [390, 844, true]]) {
-            reset(); S.longName = true; S.many = true;
+            reset(); S.longName = true; S.many = true; S.out = true;
             const cx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: w <= 720, isMobile: w <= 720 }); const px = await cx.newPage(); px.on('pageerror', e => pe.push(w + ' ' + String(e)));
             await openPanel(px); if (dark) { await px.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await px.waitForTimeout(150); }
             const nm = w + (dark ? ' 야간' : ''); const a = await lay(px);
