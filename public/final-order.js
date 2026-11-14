@@ -432,7 +432,7 @@
         const tbl = k.rows ? `<table class="fo-cbx-t" style="border-collapse:collapse;margin:4px 0;font-variant-numeric:tabular-nums"><thead><tr><th style="text-align:left;padding:2px 10px 2px 0">품목</th><th style="padding:2px 8px">주문</th><th style="padding:2px 8px">입력</th><th style="padding:2px 8px">차이</th></tr></thead><tbody>${k.rows.map(r => `<tr data-cbx-it="${esc(r.it)}"><td style="padding:2px 10px 2px 0">${esc(r.lab)}</td><td style="text-align:right;padding:2px 8px">${r.o2}</td><td style="text-align:right;padding:2px 8px">${r.c2}</td><td style="text-align:right;padding:2px 8px;font-weight:${r.o2 !== r.c2 ? 700 : 400}">${r.o2 - r.c2 > 0 ? '−' + (r.o2 - r.c2) : r.o2 - r.c2 < 0 ? '+' + (r.c2 - r.o2) : '0'}</td></tr>`).join('')}</tbody></table>` : '';
         const ord = b.orders.map(o => `<label class="fo-check" style="display:flex;gap:6px;align-items:center;min-height:44px"><input type="checkbox" data-cbx-ord="${esc(o.key)}" data-cbx-id="${esc(cd.id)}"${sel.ord.has(o.key) ? ' checked' : ''}${o.block ? ' disabled' : ''}> 일반발송 · ${esc(o.lab)}${o.block ? ` <small>(${esc(o.block)})</small>` : ''}</label>`).join('');
         const rws = b.rows.map(r => r.id != null ? `<label class="fo-check" style="display:flex;gap:6px;align-items:center;min-height:44px"><input type="checkbox" data-cbx-svc="${esc(String(r.id))}" data-cbx-id="${esc(cd.id)}"${sel.svc.has(String(r.id)) ? ' checked' : ''}> 서비스 · ${esc(r.lab)}</label>` : `<p class="fo-hint">${esc(r.lab)} · 현금파일 엑셀 줄(서비스는 엑셀에서 「!」로)</p>`).join('');
-        return `<div class="fo-cbx" data-cbx="${esc(cd.id)}">${tbl}<div class="fo-line"><span>입력삭제 주문</span><div>${ord || '(없음)'}</div></div><div class="fo-line"><span>주소 줄</span><div>${rws || '(없음)'}</div></div>${cbxPairHtml(cd)}<p class="fo-hint" data-cbx-left="1">${k.ok ? (k.oSel.length || k.rSel.length ? '차이 0 — [적용]을 누르세요' : '') : esc('아직 ' + k.left + ' 차이')}</p><button type="button" class="fo-btn sm primary" data-cbx-apply="${esc(cd.id)}"${k.ok && (k.oSel.length || k.rSel.length) ? '' : ' disabled'}>적용</button><button type="button" class="fo-btn sm" data-choice="ok" data-fo-act="ok" data-id="${esc(cd.id)}">확인함 — 이대로</button></div>`;
+        return `<div class="fo-cbx" data-cbx="${esc(cd.id)}">${tbl}<div class="fo-line"><span>입력삭제 주문</span><div>${ord || '(없음)'}</div></div><div class="fo-line"><span>주소 줄</span><div>${rws || '(없음)'}</div></div>${cbxPairHtml(cd)}<p class="fo-hint" data-cbx-left="1">${k.ok ? (k.oSel.length || k.rSel.length ? '차이 0 — [적용]을 누르세요' : '') : b.swap && !k.oSel.length && !k.rSel.length ? '품목만 바뀐 주문이면 [확인함 — 이대로]' : esc('아직 ' + k.left + ' 차이')}</p><button type="button" class="fo-btn sm primary" data-cbx-apply="${esc(cd.id)}"${k.ok && (k.oSel.length || k.rSel.length) ? '' : ' disabled'}>적용</button><button type="button" class="fo-btn sm" data-choice="ok" data-fo-act="ok" data-id="${esc(cd.id)}">확인함 — 이대로</button></div>`;
     }
     document.addEventListener('change', e => {
         const el = e.target.closest && e.target.closest('#fo-cards input[data-cbx-ord], #fo-cards input[data-cbx-svc]'); if (!el) return;
@@ -1338,11 +1338,16 @@
             const v = st.dec.get(id), normKeys = typeof v === 'string' && v.startsWith('norm:') ? v.slice(5).split(',').filter(Boolean) : [];
             es.filter(e => normKeys.includes(keyOf(e))).forEach(e => info.push({ t: `입력삭제에서 뺌(일반발송): ${orderLine(e)} — 박스 확인 카드에서 고름 · 택배사 양식에 주문 주소로`, keys: [keyOf(e)] }));
             const shortN = table ? table.reduce((n, t) => n + Math.max(0, t.o - t.c), 0) : Math.max(0, oq - cq);
+            // #1145(대표 11/14 「고치면 좋을 것 손질」) 박스 합은 같고 품목만 다름(손님이 품목을 바꿔 주소 줄 품목을 고친 꼴) = 「모자란 n박스」 글 대신 무엇이 나가는지 · 카드 조건·[확인함]·파일 만들기 막기는 그대로
+            const swap = sum && oq === cq && table ? (() => { const part = k => table.filter(t => t[k] > 0).map(t => `${t.lab} ${t[k]}박스`).join(' · '); return { o: part('o'), c: part('c') }; })() : null;
             cards.push({ id, type: 'cashbox', tag: '박스 수', title: `${buyer} · 입력삭제 확인 필요 · 주문 ${oq}박스 / 입력 ${cq}박스`,
-                lines: [['이유', sum ? '박스 합은 같은데 품목별 박스가 달라요.' : oq > cq ? '입력(주소 줄)이 주문보다 적어요. 빠진 박스가 없는지, 새로 추가된 주문은 아닌지 확인해 주세요.' : '입력(주소 줄)이 주문보다 많아요(서비스·추가 발송일 수 있어요).'],
+                lines: swap ? [['이유', '박스 합은 같은데 품목이 주문과 달라요(품목을 바꾼 주문일 수 있어요).'],
+                    ['나가는 것', `주문 = ${swap.o} · 주소 줄 = ${swap.c} → 주소 줄 품목으로 ${cq}박스가 나가요`],
+                    ['처리', '맞으면 [확인함 — 이대로] · 주문 품목으로 보내려면 메모함에서 주소 줄 품목을 고쳐 주세요']]
+                  : [['이유', sum ? '박스 합은 같은데 품목별 박스가 달라요.' : oq > cq ? '입력(주소 줄)이 주문보다 적어요. 빠진 박스가 없는지, 새로 추가된 주문은 아닌지 확인해 주세요.' : '입력(주소 줄)이 주문보다 많아요(서비스·추가 발송일 수 있어요).'],
                     ['처리', '모자라면 주문을 「일반발송」(스토어 주소로) · 남으면 주소 줄을 「서비스」(주문과 별개 현금건 · 운송장 등록 안 함) · 품목별 차이가 0 이 되면 [적용]'],
                     ...(shortN ? [['확인함', `확인함 = 모자란 ${shortN}박스는 오늘 안 나가요 · 새로 추가된 주문이면 「일반발송」`]] : [])],
-                box: { digits: d, buyer, oq, cq, table, orders, rows, pair, normKeys }, pair, choices: [['ok', '확인함 — 이대로', 1]] });
+                box: { digits: d, buyer, oq, cq, table, orders, rows, pair, normKeys, swap: !!swap }, pair, choices: [['ok', '확인함 — 이대로', 1]] });
         });
         // #900 1-E 입력삭제인데 주소 줄 0(cmiss) = 그 번호 짝 안 된 현금 줄을 바로 [바꾸기]
         cards.forEach(cd => { if (/^cmiss:/.test(cd.id)) { const p = cbxPairCand(cd.id.split(':')[1]); if (p.length) cd.pair = p; } });
