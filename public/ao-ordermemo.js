@@ -1465,18 +1465,38 @@
         if (!all.length) return `<p class="om-pair-n">아직 짝 없는 현금 줄이 메모함에 없어요</p>`;
         const head = `<p class="om-pair-n">${all.length}줄 중 <b>${on.length}줄</b> · ${onRows.reduce((t, r) => t + qtyOf(r), 0)}박스${x.q ? ` · 찾은 ${hit.length}줄` : ''}${hit.length > PX_MAX ? (x.q && allOn ? ` · ${PX_MAX}줄까지 보여요 · ${hit.length - PX_MAX}줄 더 · 전부 선택됨` : ` · ${PX_MAX}줄까지만 보여요 · 찾기로 좁혀 주세요`) : ''}</p>${x.q && hit.length > 1 ? `<label class="om-px-all"><input type="checkbox" data-cact="pxall" data-k="${esc(d)}"${allOn ? ' checked' : ''}> <span>찾은 ${hit.length}줄 전체 선택</span></label>` : ''}`;   // #947 단체 입력삭제 = 찾은 줄 전부(표시 50줄과 무관) · 찾기 글자가 있을 때만(글자 없이 전체 = 남의 줄까지)
         if (!shown.length) return head + `<p class="om-pair-s">찾는 줄이 없어요 · 이름·번호 끝자리·주소·품목으로 찾아요</p>`;
-        if (c.pxOnly && c.mode === 'edit') return head + `<ul class="om-pair-l om-pxc-l">${shown.map(r => { const id = esc(String(r.id)), w = esc(pxWho(r, d)); return `<li class="om-pxc"><label class="om-pxc-ck"><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${id}"${x.sel.has(String(r.id)) ? ' checked' : ''} aria-label="${w} 고르기"></label><button type="button" class="om-pxrow-open" data-cact="pxrowopen" data-v="${id}" aria-label="${w} · 줄 정보 보고 고치기"><span>${w}</span></button></li>`; }).join('')}</ul>`;   // #1142 ④ 판 = 체크 칸 따로 · 줄 글 = 그 줄 고치기 카드(체크는 펼침으로 안 침)
+        if (c.pxOnly && c.mode === 'edit') return head + (onRows.length ? `<p class="om-pxs-pick" role="status">고른 줄 ${onRows.length}줄 · ${esc(pxItems(onRows))} · 합 ${pxBox(onRows)}박스</p>` : '') + `<ul class="om-pair-l om-pxc-l">${shown.map(r => { const id = esc(String(r.id)), w = esc(pxWho(r, d)); return `<li class="om-pxc"><label class="om-pxc-ck"><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${id}"${x.sel.has(String(r.id)) ? ' checked' : ''} aria-label="${w} 고르기"></label><button type="button" class="om-pxrow-open" data-cact="pxrowopen" data-v="${id}" aria-label="${w} · 줄 정보 보고 고치기"><span>${w}</span></button></li>`; }).join('')}</ul>`;   // #1142 ④ 판 = 체크 칸 따로 · 줄 글 = 그 줄 고치기 카드(체크는 펼침으로 안 침)
         return head + `<ul class="om-pair-l">${shown.map(r => `<li><label><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${esc(String(r.id))}"${x.sel.has(String(r.id)) ? ' checked' : ''}> <span>${esc(pxWho(r, d))}</span></label></li>`).join('')}</ul>`;
     }
     // #1131-b ④ 판 맨 위 요약 = 「입력삭제 번호 · 주문 n박스 ↔ 매칭된 주소 줄 m박스」 + 그 줄 배지(서버 판정 그대로 · 새 판정 없음) + 저장 안내 한 번(대기 n 꼬리)
     const pxPendN = (c, d) => { const x = c.norm, sv = x && x.state === 'done' ? normSaved(c.rows[0]) : null; const nd = sv ? [...x.sel].filter(v => !sv.includes(v)).length + sv.filter(v => !x.sel.has(v)).length : 0; const px = c.pairX && c.pairX[d], seed = px && px.seedIds || new Set(), on = pxSelIds(c, d).map(String); const pn = on.filter(v => !seed.has(v)).length + [...seed].filter(v => !on.includes(v)).length; return pn + cashJobs(c).length + svcJobs(c).length + nd + (c.toCash ? 1 : 0); };
     const pxSumTail = (c, d) => { const n = pxPendN(c, d); return (n ? `저장 전 · 바뀐 것 ${n} · ` : '') + '체크·변경은 아래 [고친 대로 저장]을 눌러야 저장돼요'; };
-    function pxSumHtml(c, d, x) {
+    // #1144(대표 11/14 「고르는 대로 품목과 박스 수량이 연동」) ②·③ 박스 합계 = 화면 셈만(쓰기·API 0) · 박스 = cells[5](qtyOf) · 서버 indivBadge 와 같은 셈(서비스 줄 뺌)
+    //   ② 저장하면 남는 줄 = [현금으로 변경] 대기 줄 · 서비스 체크(대기 포함 · 이미 서비스) 줄을 뺀 것 · ③ 고른 줄(찾기로 안 보이는 체크 줄도) = 저장하면 더해짐
+    const pxItem = r => String(r.cells[4] || '').split(/[:：]/).pop().replace(/\s+[^\s]*로!$/, '').trim() || '품목 없음';
+    const pxBox = rows => rows.reduce((t, r) => t + qtyOf(r), 0);
+    const pxItems = rows => { const m = new Map(); rows.forEach(r => { const k = pxItem(r); m.set(k, (m.get(k) || 0) + qtyOf(r)); }); return [...m].map(([k, n]) => `${k} ${n}박스`).join(' · '); };
+    const pxStay = (c, d) => pxPaired(d).filter(r => !cashPend(c, r) && !svcOn(c, r));
+    const pxPick = (c, d) => { const on = new Set(pxSelIds(c, d).map(String)); return pxCands(c, d).filter(r => on.has(String(r.id))); };
+    function pxTotHtml(c, d) {
+        const now = pxPaired(d).filter(r => !r.service), st = pxStay(c, d), same = now.length === st.length && now.every(r => st.includes(r)), nb = pxBox(now), sb = pxBox(st), df = nb - sb;
+        return `<span class="om-pxs-tot" role="status">${same ? '' : `<b>→ 저장하면 ${st.length}줄 · ${sb}박스</b> <span class="om-pxs-df">(${df >= 0 ? '빠짐 ' + df : '더해짐 ' + (-df)}박스)</span>`}${st.length ? ` <small>${esc(pxItems(st))}</small>` : ''}</span>`;   // ② 머리 p 안(목록 바로 앞 형제는 머리 p 그대로)
+    }
+    function pxSumTHtml(c, d, x) {
         const nx = c.norm, oq = nx && nx.state === 'done' ? nx.list.filter(o => !(o.pno && nx.sel.has(String(o.pno)))).reduce((t, o) => t + (Number(o.qty) || 1), 0) : null, pq = pxPaired(d).filter(r => !r.service).reduce((t, r) => t + qtyOf(r), 0);   /* #1131-c 주문 = 일반발송 체크 뺀 입력삭제 몫 · 매칭 = 서비스 줄 뺌(배지 n 과 같은 셈) */
         const r0 = c.rows[0] && (OM.list || []).find(y => String(y.id) === String(c.rows[0].id)), b = r0 && r0.badge;
-        return `<div class="om-pxs-sum" role="status"><p class="om-pxs-sum-t"><strong>입력삭제 ${esc(x.key)}</strong><span>주문 ${oq == null ? '…' : oq}박스 ↔ 매칭된 주소 줄 ${pq}박스</span>${b ? `<span class="om-pill om-badge k-${badgeK(b)}">${esc(badgeText(b))}</span>` : ''}</p><p class="om-pxs-sum-s">${esc(pxSumTail(c, d))}</p></div>`;
+        const pk = pxPick(c, d), pb = pxBox(pk), after = pxBox(pxStay(c, d)) + pb;   /* #1144 저장하면 = ② 남는 줄 + ③ 고른 줄 · 배지는 저장된 값 그대로 */
+        return `<strong>입력삭제 ${esc(x.key)}</strong><span>주문 ${oq == null ? '…' : oq}박스 ↔ 매칭된 주소 줄 ${pq}박스</span>${after !== pq || pk.length ? `<span class="om-pxs-after">→ 저장하면 ${after}박스${pk.length ? ` <small>(③ 고른 ${pk.length}줄 ${pb}박스 포함)</small>` : ''}</span>` : ''}${b ? `<span class="om-pill om-badge k-${badgeK(b)}">${esc(badgeText(b))}</span>` : ''}`;
     }
-    const pxSumSync = () => { const c = OM.card, e = c && c.pxOnly && $('om-card') && $('om-card').querySelector('.om-pxs-sum-s'); if (e) { const t = pxSumTail(c, c.pxOnly.d); if (e.textContent !== t) e.textContent = t; } };
+    function pxSumHtml(c, d, x) {
+        return `<div class="om-pxs-sum" role="status"><p class="om-pxs-sum-t">${pxSumTHtml(c, d, x)}</p><p class="om-pxs-sum-s">${esc(pxSumTail(c, d))}</p></div>`;
+    }
+    const pxSumSync = () => {
+        const c = OM.card, card = $('om-card'); if (!c || !c.pxOnly || !card) return; const d = c.pxOnly.d, x = c.pairX && c.pairX[d];
+        const e = card.querySelector('.om-pxs-sum-s'); if (e) { const t = pxSumTail(c, d); if (e.textContent !== t) e.textContent = t; }
+        const s = card.querySelector('.om-pxs-sum-t'); if (s && x) s.innerHTML = pxSumTHtml(c, d, x);   // #1144 저장하면 박스(안에 누를 것 없음)
+        const tt = card.querySelector('.om-pxs-tot'); if (tt) tt.outerHTML = pxTotHtml(c, d);
+    };
     function pxHtml(c, d, show) {
         const x = c.pairX && c.pairX[d]; if (!x) return '';
         if (x.picked && x.picked.length && !x.open) return `<div class="om-pair ok" role="status"><b>저장하면 번호가 다른 현금 줄 ${x.picked.length}개도 입력삭제 ${esc(x.key)} 주소 줄로 바꿔요</b><div class="om-acts"><button type="button" class="om-btn sm" data-cact="pxundo" data-k="${esc(d)}">안 바꿀래요</button><button type="button" class="om-btn sm" data-cact="pxopen" data-k="${esc(d)}" data-show="${esc(x.key)}">더 고르기</button></div></div>`;
@@ -1524,7 +1544,7 @@
     const pxPaired = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && r.id != null && (r.indiv || r.service) && [r.cells[10], r.cells[1]].map(digits).includes(d));
     function pxPairedHtml(c, d) {
         const L = pxPaired(d); if (!L.length) return '';
-        return `<div class="om-pxs om-pxs-paired"><p class="om-pair-n om-pxs-h"><i class="om-pxs-no" aria-hidden="true">2</i>매칭된 주소 줄 ${L.length}줄 · ${L.reduce((t, r) => t + qtyOf(r), 0)}박스 <small class="om-pxs-d">이 입력삭제로 나가는 줄이에요 · 서비스 = 주문과 별개 현금 건 · 잘못 매칭했으면 [현금으로 변경] · 줄 글을 누르면 정보·고치기</small></p>
+        return `<div class="om-pxs om-pxs-paired"><p class="om-pair-n om-pxs-h"><i class="om-pxs-no" aria-hidden="true">2</i>매칭된 주소 줄 ${L.filter(r => !r.service).length}줄 · ${pxBox(L.filter(r => !r.service))}박스${L.some(r => r.service) ? ` <span class="om-pxs-svcn">· 서비스 ${L.filter(r => r.service).length}줄</span>` : ''} ${pxTotHtml(c, d)}<small class="om-pxs-d">이 입력삭제로 나가는 줄이에요 · 서비스 = 주문과 별개 현금 건 · 잘못 매칭했으면 [현금으로 변경] · 줄 글을 누르면 정보·고치기</small></p>
                 <ul class="om-pair-l om-pxs-l om-px-paired">${L.map(r => { const id = esc(String(r.id)), pend = cashPend(c, r); return `<li class="om-pxrow${pend ? ' om-pxrow-pend' : ''}"><span class="om-pxrow-t"><button type="button" class="om-pxrow-open" data-cact="pxrowopen" data-v="${id}" aria-label="${esc(pairWhoQ(r))} · 줄 정보 보고 고치기">${esc(pairWhoQ(r))}</button>${pend ? '<small class="om-pend-t">저장하면 현금으로</small>' : ''}</span><span class="om-px-r om-pxrow-a"><label class="om-px-svc"><input type="checkbox" data-cact="pxsvc" data-v="${id}"${svcOn(c, r) && !pend ? ' checked' : ''}${pend ? ' disabled' : ''}> <span>서비스</span></label>${r.indiv && !r.service ? `<button type="button" class="om-btn sm${pend ? ' om-pend-b' : ''}" data-cact="pxdetach" data-v="${id}" aria-pressed="${pend ? 'true' : 'false'}">${pend ? '변경 취소' : '현금으로 변경'}</button>` : '<span class="om-px-ph" aria-hidden="true"></span>'}</span></li>`; }).join('')}</ul></div>`;   // #944 · #1125 대기 · #1142(대표 11/14) 줄 글 = 그 줄 카드 · 대기 표시는 줄 안(줄 높이가 늘어남) · 단추 없는 줄은 빈 자리(오른쪽 조작 같은 세로 선)
     }
     // #1125(대표 11/11) 서비스 체크 = 누르는 즉시 저장 → 화면에만(c.svc) · [고친 대로 저장]·[이 줄도 주소 줄로] 때 같이 저장 · 저장 안 하고 닫으면 버림(일반발송 체크와 같은 꼴)

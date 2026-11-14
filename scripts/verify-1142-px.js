@@ -29,6 +29,7 @@ function mut(L) {
     const extra = (id, nm, qty, more) => Object.assign({ id, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null, indiv: true, service: false, cells: ['홍길동 드림', PXL, '제주시 연삼로 1066-31', nm, CAT[0], String(qty), '010-3300-0' + id, '', '경기 성남시 분당구 판교역로 ' + id + ' 아주 긴 주소 101동 1203호(삼평동 판교푸르지오그랑블)', '', PXL, '', ''] }, more || {});
     const e140 = L.entries.find(e => e.id === 140); if (e140 && !S.noExtra) e140.rows.push(extra(204, S.longName ? '둘째주소손님 아주아주 긴 이름 받는 분 선물용 회사 단체 주문 담당자 홍길동 과장님 앞' : '둘째주소손님', 2), extra(205, '서비스주소손님', 1, { service: true, indiv: false, cells: ['서비스!', PXL, '제주시 연삼로 1066-31', '서비스주소손님', CAT[0], '1', '010-3300-0205', '', '서울 중구 세종대로 1', '', PXL, '', ''] }));
     if (e140 && S.bare) e140.rows.forEach(r => { if (r.id === 204) r.cells[0] = '김철수'; });   // #1143 이름만 저장된 입력삭제 주소 줄
+    if (e140 && S.mix) e140.rows.forEach(r => { if (r.id === 204) r.cells[4] = CAT[2]; });   // #1144 품목 2종 섞임
     if (e140 && S.many) for (let i = 0; i < 8; i++) e140.rows.push(extra(210 + i, '여러줄손님' + i, 1));   // 대표 사진 꼴 = ② 10줄 넘음
     if (S.splitBadge) L.entries.forEach(e => e.rows.forEach(r => { if (r.id === 190) r.badge = { kind: 'line', state: 'sent_split', m: null, n: 0, later: 3, later_date: '2026-11-20', service: 0, pre: false, item_diff: false, t: '', why: '' }; }));
     const all = L.entries.flatMap(e => e.rows);
@@ -43,7 +44,7 @@ function mut(L) {
     const PORT = Number(process.env.PORT1142 || 3462);
     const srv = await serve(PORT), base = `http://127.0.0.1:${PORT}/`;
     const browser = await chromium.launch();
-    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
+    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
     const openPanel = async p => {
         S.n = 4; S.ent = 1; await p.goto(base + '?v=new'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true }));
         await p.waitForSelector('#om-list .om-ml'); await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click();
@@ -67,7 +68,7 @@ function mut(L) {
         await openPanel(p);
         let st = await panel(p);
         ok(st.title.trim() === '메모 고치기' && st.wide && st.w === 1100 && st.h >= 640 && st.h <= Math.round(940 * 0.92) + 1, '판 = 「메모 고치기」 · 넓은 꼴 폭 1100 · 높이 640~92vh', st);
-        ok(st.p2.join() === '201,204,205' && /3줄 · 4박스/.test(st.p2head) && /매칭된 주소 줄 3박스/.test(st.sum), '② 3줄(201·204·서비스 205) · 제목 4박스 · 요약 3박스(서비스 뺌)', { p2: st.p2, h: st.p2head, s: st.sum });
+        ok(st.p2.join() === '201,204,205' && /2줄 · 3박스 · 서비스 1줄/.test(st.p2head) && /매칭된 주소 줄 3박스/.test(st.sum), '② 3줄(201·204·서비스 205) · 제목 「2줄 · 3박스 · 서비스 1줄」(#1144 서비스 뺀 셈) · 요약 3박스', { p2: st.p2, h: st.p2head, s: st.sum });
         ok(/체크·변경은 아래 \[고친 대로 저장\]을 눌러야 저장돼요/.test(await sumS(p)), '요약 안내 = 종전 「체크·변경은 아래 [고친 대로 저장]을 눌러야 저장돼요」');
         // 대기 여러 줄 = 201·204 [현금으로 변경] + 서비스 205 끔 + 추가 매칭 193 체크
         await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await p.waitForTimeout(120);
@@ -124,6 +125,27 @@ function mut(L) {
         await p5.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p5.click('#om-card .om-pairx-b [data-cact="pxrowopen"][data-v="191"]'); await p5.waitForSelector('#om-card:not([hidden]) #om-f-0-c0', { state: 'attached' });
         const vc = await p5.inputValue('#om-f-0-c0'); ok(vc === '강명희 드림', '현금 줄(「강명희 드림!」) = 종전대로 「강명희 드림」', vc);
         await c5.close();
+        // #1144 ②·③ 고르는 대로 박스 합계(화면 셈만)
+        console.log('①-c #1144 고르는 대로 품목·박스 합계');
+        reset(); S.mix = true; const c6 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const p6 = await c6.newPage(); p6.on('pageerror', e => pe.push('tot ' + String(e)));
+        await openPanel(p6);
+        const tot = () => p6.evaluate(() => { const C = document.getElementById('om-card'); const g = s => { const e = C.querySelector(s); return e ? e.textContent.replace(/\s+/g, ' ').trim() : ''; }; return { tot: g('.om-pxs-tot'), after: g('.om-pxs-after'), sum: g('.om-pxs-sum-t'), pick: g('.om-pxs-pick'), head: g('.om-pxs-paired .om-pxs-h') }; });
+        let t = await tot();
+        ok(t.tot === '타이벡감귤 5kg 1박스 · 황금향 3kg 2박스' && /매칭된 주소 줄 2줄 · 3박스 · 서비스 1줄/.test(t.head) && !t.after && /주문 3박스 ↔ 매칭된 주소 줄 3박스/.test(t.sum) && !t.pick, '처음 = 머리 「2줄 · 3박스 · 서비스 1줄」 + 품목 2종(타이벡 1 · 황금향 2) · 요약 「저장하면」 없음 · ③ 고른 줄 없음', t);
+        await p6.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p6.waitForTimeout(150); t = await tot();
+        ok(/^→ 저장하면 1줄 · 1박스 \(빠짐 2박스\) 타이벡감귤 5kg 1박스$/.test(t.tot) && /→ 저장하면 1박스$/.test(t.after) && /매칭된 주소 줄 3박스/.test(t.sum), '[현금으로 변경] 대기 1줄(황금향 2박스) = 「저장하면 1줄 · 1박스(빠짐 2박스)」 · 품목 타이벡만 · 요약 「매칭 3박스 → 저장하면 1박스」(지금 값 그대로)', t);
+        await p6.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p6.waitForTimeout(150); t = await tot();
+        ok(!/저장하면/.test(t.tot) && !t.after, '[변경 취소] = 원복', t);
+        await p6.check('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="201"]'); await p6.waitForTimeout(120); t = await tot();
+        ok(/^→ 저장하면 1줄 · 2박스 \(빠짐 1박스\) 황금향 3kg 2박스$/.test(t.tot) && /→ 저장하면 2박스$/.test(t.after), '서비스 체크(201) = 그 줄 빠짐 · 바로 반영(다시 그리기 없이)', t);
+        await p6.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="201"]'); await p6.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await p6.waitForTimeout(120); t = await tot();
+        ok(/^→ 저장하면 3줄 · 4박스 \(더해짐 1박스\)/.test(t.tot) && /→ 저장하면 4박스$/.test(t.after), '이미 서비스인 205 체크 해제 = 더해짐 1박스', t);
+        await p6.check('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await p6.check('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="191"]'); await p6.check('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="203"]'); await p6.waitForTimeout(150); t = await tot();
+        ok(t.pick === '고른 줄 2줄 · 타이벡감귤 3kg 1박스 · 타이벡감귤 5kg 2박스 · 합 3박스' && /→ 저장하면 6박스 \(③ 고른 2줄 3박스 포함\)$/.test(t.after) && !/저장하면/.test(t.tot), '③ 체크 2줄 = 「고른 줄 2줄 · 품목별 · 합 3박스」 · 요약 「→ 저장하면 6박스(③ 고른 2줄 3박스 포함)」', t);
+        await p6.fill('#om-card .om-pairx input[data-cact="pxq"]', '이하정'); await p6.waitForTimeout(300); t = await tot(); const vis = await p6.$$eval('#om-card .om-pairx-b [data-cact="pxrowopen"]', b => b.length);
+        ok(vis === 1 && /합 3박스$/.test(t.pick) && /6박스/.test(t.after), '찾기로 안 보이는 체크 줄(203)도 합계에 셈', { vis, t });
+        ok(S.puts.length + S.services.length + S.pairs.length === 0, '합계 셈 = 서버 쓰기 0', { puts: S.puts.length, svc: S.services.length, pairs: S.pairs.length });
+        await c6.close();
         // ── 나뉜 입력삭제 · ③ 현금 줄 0 ────────────────
         console.log('② 나뉜 입력삭제(sent_split) · ③ 현금 줄 0');
         reset(); S.deleted = new Set([191, 192, 193, 203]); S.splitBadge = true;
@@ -167,8 +189,8 @@ function mut(L) {
             await openPanel(px); if (dark) { await px.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await px.waitForTimeout(150); }
             const nm = w + (dark ? ' 야간' : ''); const a = await lay(px);
             const b0 = await px.evaluate(() => { const C = document.getElementById('om-card'), s = getComputedStyle(C.querySelector('.om-pxs-paired')); return { bg: s.backgroundColor, fg: getComputedStyle(C.querySelector('.om-pxrow-open')).color, w: Math.round(C.getBoundingClientRect().width) }; });
-            await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await px.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await px.waitForTimeout(250); const b = await lay(px);
-            if (process.env.SHOT1142) await px.screenshot({ path: path.join(process.env.SHOT1142, 'px1142-' + w + (dark ? '-dark' : '') + '.png'), fullPage: false });
+            await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await px.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await px.check('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="191"]'); await px.check('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="203"]'); await px.waitForTimeout(250); const b = await lay(px);
+            if (process.env.SHOT1142) { await px.evaluate(() => { const q = document.querySelector('#om-card .om-card-b'); if (q) q.scrollTop = 0; }); await px.screenshot({ path: path.join(process.env.SHOT1142, 'px1142-' + w + (dark ? '-dark' : '') + '.png'), fullPage: false }); }
             await px.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await px.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await px.waitForTimeout(200);
             const cc = await px.evaluate(() => { const vw = document.documentElement.clientWidth, C = document.getElementById('om-card'), cr = C.getBoundingClientRect(); return { sw: document.documentElement.scrollWidth, vw, out: [...C.querySelectorAll('*')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > cr.right + 0.5; }).length, w: Math.round(cr.width) }; });
             if (process.env.SHOT1142) await px.screenshot({ path: path.join(process.env.SHOT1142, 'px1142-' + w + (dark ? '-dark' : '') + '-card.png') });

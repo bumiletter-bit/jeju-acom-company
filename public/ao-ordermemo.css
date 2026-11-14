@@ -905,3 +905,11 @@ html[data-ao-theme="dark"] .om-pill.k-kind { background: #0C4A6E; color: #BAE6FD
    → ② 는 높이 제한 없이(카드 본문이 스크롤) · ②·③ 줄 높이 = 내용 그대로(max-content · ③ 은 스크롤 그대로) */
 .om-pxs-wrap .om-pair-l.om-px-paired { max-height: none; overflow: visible; grid-auto-rows: max-content; }
 .om-pxs-wrap .om-pairx-b .om-pair-l { grid-auto-rows: max-content; }
+/* #1144 ②·③ 고르는 대로 박스 합계 · 길면 접힘(넘침 0) */
+.om-pxs-tot { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--d-ink); line-height: 1.45; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.om-pxs-tot b { font-weight: 800; color: var(--d-accent); }
+.om-pxs-tot .om-pxs-df { font-weight: 700; color: var(--px-pend-fg, var(--d-warn)); }
+.om-pxs-wrap .om-pxs-h .om-pxs-tot small { display: block; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--px-sub); }
+.om-pxs-after { font-weight: 800; color: var(--d-accent); overflow-wrap: anywhere; }
+.om-pxs-after small { font-size: 12px; font-weight: 600; color: var(--px-sub, var(--d-sub)); }
+.om-pxs-pick { margin: 0; font-size: 13px; font-weight: 700; color: var(--d-ink); line-height: 1.45; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
