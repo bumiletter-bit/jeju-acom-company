@@ -150,7 +150,7 @@
     const nameOf = r => r.kind === 'cash' ? (r.cells[3] || '') : '';
     // #1146(대표 11/14 「입력삭제는 우리가 입력한 정보로」) 입력삭제에 묶인 주소 줄 = 택배 양식엔 처음 넣은 보내는 분 번호·구매자 연락처(서버 out_b·out_k · 저장된 목록 값 기준) · 지금 줄 값과 같으면 안 보임 · 표시만
     const outSaved = r => (r && r.id != null && (OM.list || []).find(y => String(y.id) === String(r.id))) || r;
-    const outNote = r => { const x = outSaved(r); if (!x || x.kind !== 'cash' || !x.indiv || x.service) return ''; const b = String(x.out_b || ''), k = String(x.out_k || ''); if (!digits(b) || !digits(k)) return ''; const cb = digits(x.cells[1]) || digits(x.cells[10]), ck = digits(x.cells[10]); return digits(b) === cb && digits(k) === ck ? '' : `택배 양식에는 보내는 분 번호 ${b} · 구매자 연락처 ${k} 로 나가요`; };
+    const outNote = r => { const x = outSaved(r); if (!x || x.kind !== 'cash' || !x.indiv || x.service) return ''; const b = String(x.out_b || ''), k = String(x.out_k || ''), cb = digits(x.cells[1]) || digits(x.cells[10]), ck = digits(x.cells[10]); const t = [digits(b) && digits(b) !== cb ? `보내는 분 번호 ${b}` : '', digits(k) && digits(k) !== ck ? `구매자 연락처 ${k}` : ''].filter(Boolean).join(' · '); return t ? `택배 양식에는 ${t} 로 나가요` : ''; };   /* #1150 줄 값과 다른 칸만 적음(#1149 = 같으면 out_b·out_k 가 null 로 옴) */
     const numOf = r => r.kind === 'cash' ? (r.cells[6] || r.cells[10]) : r.key;
     const shortOpt = s => String(s || '').replace(/\s*\/\s*상품 및 과수:\s*/, ' · ');
     const previewOf = r => r.kind === 'cash' ? [shortOpt(r.cells[4]), r.cells[5] ? r.cells[5] + '박스' : '', r.cells[8]].filter(Boolean).join(' · ') : lineView(r.line);

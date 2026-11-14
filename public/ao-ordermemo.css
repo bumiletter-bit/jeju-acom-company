@@ -639,6 +639,12 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 .om-card .om-f-l { min-height: 18px; }
 .om-card .om-f-l .om-undo1 { margin-block: -5px; }   /* 「처음 값」 단추(28)가 나와도 이름 줄 높이 18 그대로 = 옆 칸과 입력 칸 높이가 어긋나지 않게 */
 @media (max-width: 960px), (pointer: coarse) { .om-card .om-f-l .om-undo1 { margin-block: -9px; } }   /* 손가락 화면 단추 36 그대로 */
+/* #1150(대표 11/14 「보내는이 번호·구매자 연락처 넣을 때 줄이 틀어졌어」) 칸 하나만 고치면 그 칸 이름 줄에만 「처음 값」이 붙어 이름이 두 줄로 접힘 → 그 칸 입력 칸만 14px 내려감(폰 보내는 분 이름·번호 · PC 발송일)
+   + 「처음 값」 단추가 입력 칸 윗줄을 덮음(PC 1 · 손가락 화면 5px) → 이름 줄 = 늘 한 줄(넘치면 … ) · 단추는 이름 줄 안에서만 · 좁은 칸(≤560)은 단추 글자 숨김(아이콘 · 이름 「○○ 처음 값으로」 그대로) */
+.om-card .om-f-l label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.om-card .om-f-l .om-undo1 { position: relative; flex: none; min-height: 26px; margin-block: -4px; }   /* 이름 줄 18 + 4 아래 = 칸 사이 4 안에서 끝(입력 칸 안 덮음) · 줄 높이·카드 높이 종전 그대로 */
+.om-card .om-f-l .om-undo1::after { content: ""; position: absolute; inset: -5px 0; }   /* 누르는 자리 = 36(손가락 화면 종전 크기) · 보이는 단추만 26 */
+@media (max-width: 560px) { .om-card .om-f-l .om-undo1 { width: 36px; padding: 0; justify-content: center; } .om-card .om-f-l .om-undo1 span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; } }
 .om-card .om-f-l label { font-size: 12px; }
 .om-card .om-f-l label small { font-size: 11px; }
 .om-card .om-grid.cash, .om-card .om-grid.cash-more { gap: 10px; }

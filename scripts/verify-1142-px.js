@@ -31,6 +31,7 @@ function mut(L) {
     if (e140 && S.bare) e140.rows.forEach(r => { if (r.id === 204) r.cells[0] = '김철수'; });   // #1143 이름만 저장된 입력삭제 주소 줄
     if (e140 && S.mix) e140.rows.forEach(r => { if (r.id === 204) r.cells[4] = CAT[2]; });   // #1144 품목 2종 섞임
     if (e140 && S.out) e140.rows.forEach(r => { if (r.id === 204) { r.out_b = '010-2222-5315'; r.out_k = '010-2222-5316'; } if (r.id === 201) { r.out_b = PXL; r.out_k = PXL; } });   // #1146 양식 B·K(204 = 처음 값 다름 · 201 = 같음)
+    if (e140 && S.outBK) e140.rows.forEach(r => { if (r.id === 204) { r.out_b = S.outBK[0]; r.out_k = S.outBK[1] === 'ROWK' ? r.cells[10] : S.outBK[1]; } });   // #1150 #1149 꼴(같은 칸 null)
     if (e140 && S.many) for (let i = 0; i < 8; i++) e140.rows.push(extra(210 + i, '여러줄손님' + i, 1));   // 대표 사진 꼴 = ② 10줄 넘음
     if (S.splitBadge) L.entries.forEach(e => e.rows.forEach(r => { if (r.id === 190) r.badge = { kind: 'line', state: 'sent_split', m: null, n: 0, later: 3, later_date: '2026-11-20', service: 0, pre: false, item_diff: false, t: '', why: '' }; }));
     const all = L.entries.flatMap(e => e.rows);
@@ -45,7 +46,7 @@ function mut(L) {
     const PORT = Number(process.env.PORT1142 || 3462);
     const srv = await serve(PORT), base = `http://127.0.0.1:${PORT}/`;
     const browser = await chromium.launch();
-    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, out: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
+    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, out: false, outBK: null, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
     const openPanel = async p => {
         S.n = 4; S.ent = 1; await p.goto(base + '?v=new'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true }));
         await p.waitForSelector('#om-list .om-ml'); await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click();
@@ -162,6 +163,41 @@ function mut(L) {
         const cn3 = await p7.evaluate(() => !!document.querySelector('#om-card .om-out'));
         ok(cn === OUTT && cn2 === OUTT && !cn3 && S.puts.length === 0, '줄 카드 안내 글 자리 = 같은 문구(치는 중엔 저장된 값 기준 그대로) · 같은 줄(201) 카드엔 없음 · 쓰기 0', { cn, cn2, cn3, puts: S.puts.length });
         await c7.close();
+        // #1150 택배 양식 안내 = 줄 값과 다른 칸만(#1149 = 같은 칸은 null)
+        for (const [ob, okk, want, nm] of [['010-2222-5315', null, '택배 양식에는 보내는 분 번호 010-2222-5315 로 나가요', 'B만 다름(K null)'], [null, '010-2222-5316', '택배 양식에는 구매자 연락처 010-2222-5316 로 나가요', 'K만 다름(B null)'], ['010-2222-5315', 'ROWK', '택배 양식에는 보내는 분 번호 010-2222-5315 로 나가요', 'B 다름 · K = 줄 값'], [null, null, '', '둘 다 null']]) {
+            reset(); S.out = false; S.outBK = [ob, okk]; const cq = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const pq = await cq.newPage(); pq.on('pageerror', e => pe.push('outbk ' + String(e)));
+            await openPanel(pq); const t = await pq.evaluate(() => (document.querySelector('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]').closest('li').querySelector('.om-out-t') || {}).textContent || '');
+            await pq.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await pq.waitForSelector('#om-card:not([hidden]) .om-rowcard'); const t2 = await pq.evaluate(() => (document.querySelector('#om-card .om-out') || {}).textContent || '');
+            ok(t === want && t2 === want, '#1150 양식 안내 ' + nm + ' = ' + (want || '안 보임') + '(판 · 줄 카드)', { t, t2 }); await cq.close();
+        }
+        // #1150 줄 카드 칸 정렬(대표 11/14 「보내는이 번호·구매자 연락처 넣을 때 줄이 틀어졌어」) = 칸 하나만 고쳐 「처음 값」이 그 칸에만 나와도 같은 줄 이름·입력 칸 선 하나 · 단추가 입력 칸 안 덮음 · 이름 한 줄 · 넘침 0
+        console.log('①-e #1150 줄 카드 칸 정렬(칸 하나씩 고치기 · 세 폭 · 야간)');
+        const ALIGN = () => { const R = e => e.getBoundingClientRect(), C = document.getElementById('om-card'), vw = document.documentElement.clientWidth, out = { row: [], cover: [], wrap: [], over: 0 };
+            C.querySelectorAll('.om-rowcard .om-grid').forEach(g => { const rows = {}; [...g.children].filter(k => k.classList.contains('om-f') && R(k).height > 0).forEach(k => { const t = Math.round(R(k).top); (rows[t] = rows[t] || []).push(k); });
+                Object.values(rows).forEach(fs => { if (fs.length < 2) return; const m = fs.map(f => { const c = f.querySelector('input:not([type=checkbox]), textarea, .om-combo, .om-step'); return [R(f.querySelector('.om-f-l')).top, R(f.querySelector('.om-f-l')).bottom, c ? R(c).top : null]; });
+                    for (let i = 0; i < 3; i++) { const v = m.map(x => x[i]).filter(x => x != null); if (Math.max(...v) - Math.min(...v) > 1) out.row.push(fs.map(f => f.dataset.fwrap).join('|') + ' #' + i + ' ' + Math.round(Math.max(...v) - Math.min(...v))); } }); });
+            C.querySelectorAll('.om-rowcard .om-undo1:not([hidden])').forEach(u => { const i = document.getElementById(u.dataset.f); if (i && R(u).bottom > R(i).top + 0.5) out.cover.push(u.dataset.f + ' ' + Math.round(R(u).bottom - R(i).top)); });
+            C.querySelectorAll('.om-rowcard .om-f-l label').forEach(l => { if (R(l).height > 0 && new Set([...l.getClientRects()].map(q => Math.round(q.top))).size > 1) out.wrap.push(l.htmlFor); });
+            C.querySelectorAll('*').forEach(e => { const r = R(e); if (r.width > 0 && (r.right > vw + 0.5 || r.left < -0.5)) out.over++; }); out.sw = document.documentElement.scrollWidth; return out; };
+        for (const [w, h, dark] of [[1500, 940, false], [720, 900, false], [390, 844, false], [1500, 940, true], [390, 844, true]]) {
+            reset(); const cz = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: w <= 720, isMobile: w <= 720 }); const pz = await cz.newPage(); pz.on('pageerror', e => pe.push('align ' + w + ' ' + String(e)));
+            await openPanel(pz); if (dark) await pz.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark'));
+            const nm = w + (dark ? ' 야간' : ''), bad = [];
+            for (const v of ['204', '192']) {
+                await pz.click(`#om-card [data-cact="pxrowopen"][data-v="${v}"]`); await pz.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await pz.evaluate(() => document.querySelectorAll('#om-card details.om-more').forEach(d => d.open = true)); await pz.waitForTimeout(150);
+                const a0 = await pz.evaluate(ALIGN); if (a0.row.length || a0.cover.length || a0.wrap.length || a0.over || a0.sw > w) bad.push([v, '처음', a0]);
+                const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox])', a => a.map(e => e.id));
+                for (const id of ids) {
+                    const v0 = await pz.inputValue('#' + id); await pz.fill('#' + id, id.endsWith('date') ? '11/30' : /-c(1|6|10)$/.test(id) ? '010-1234-56789012' : (v0 || '') + '고침'); await pz.locator('#' + id).blur(); await pz.waitForTimeout(80);
+                    const a = await pz.evaluate(ALIGN); if (a.row.length || a.cover.length || a.wrap.length || a.over || a.sw > w) bad.push([v, id, a]);
+                    const u = pz.locator(`#om-card [data-f="${id}"]`); if (await u.isVisible()) { await u.click(); await pz.waitForTimeout(60); }
+                }
+                if (v === '204') ok(ids.includes('om-f-0-c1') && ids.includes('om-f-0-c10') && ids.includes('om-f-0-c0'), nm + ' 입력삭제 주소 줄 카드 = 보내는 분 이름·번호·구매자 연락처 칸 있음', ids);
+                await pz.click('#om-card [data-cact="cancel"]'); await pz.waitForTimeout(150); if (await pz.isVisible('#om-card [data-cact="discard"]')) await pz.click('#om-card [data-cact="discard"]'); await pz.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await pz.waitForTimeout(150);
+            }
+            ok(bad.length === 0, nm + ' 줄 카드 2장(입력삭제 주소 줄 204 · 현금 줄 192) × 칸 하나씩 고치기 = 같은 줄 이름·입력 칸 선 차 ≤1px · 「처음 값」이 입력 칸 안 덮음 · 이름 한 줄 · 넘침 0', bad.slice(0, 4));
+            await cz.close();
+        }
         // ── 나뉜 입력삭제 · ③ 현금 줄 0 ────────────────
         console.log('② 나뉜 입력삭제(sent_split) · ③ 현금 줄 0');
         reset(); S.deleted = new Set([191, 192, 193, 203]); S.splitBadge = true;
