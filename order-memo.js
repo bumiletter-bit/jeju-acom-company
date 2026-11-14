@@ -373,16 +373,51 @@ function cashFromAi(x, opt) {
     const sender = s(x.sender, 30).trim(), buyer = s(x.buyer, 30).trim(), dep = sender ? '' : depositName(o.text);
     const who = sender || dep;
     const c0 = who ? (/드림$/.test(who) ? who : who + ' 드림') : (buyer ? buyer + '(제주아꼼이네)' : '제주아꼼이네');
+    if (o.smsOrder) {   // #1156 문자 보낸 분 = 받는 분(그 주문 하나) → K = 그 주문 구매자 번호(없으면 빈칸 · 「구매자 번호 확인」) · B = 글에 적힌 보내는 분 번호만(비면 checkCash 가 K 로 채움 = 종전 #858)
+        const kb = o.smsOrder.buyer ? core.fmtPhone(o.smsOrder.buyer) : '';
+        return { kind: 'cash', src: 'ai', ship_date: isDay(x.date) ? x.date : null, _smsRecv: !kb,
+            cells: [c0 + '!', x.sender_phone || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, kb, '', x.sender_addr] };
+    }
     const buyerPhone = sms || x.buyer_phone || x.phone1;
     return { kind: 'cash', src: 'ai', ship_date: isDay(x.date) ? x.date : null,
         cells: [c0 + '!',x.sender_phone || (sms || x.buyer_phone) || '', '', x.recv, x.option, x.qty == null ? '' : String(x.qty), x.phone1, x.phone2, x.addr, x.memo, buyerPhone || '', '', x.sender_addr] };
 }
 // 사람이 붙인·고친 현금 줄(규칙·저장)에도 문자 출처면 빈 구매자·보내는사람 번호만 채움(적힌 값은 그대로)
-function applySms(rows, smsPhone) {
+//   #1156 smsOrder(문자 보낸 분 = 받는 분 · 주문 하나) = 빈 K 만 그 주문 구매자 번호로(없으면 빈칸 · 「구매자 번호 확인」) · B 는 안 채움(checkCash 가 K 로)
+function applySms(rows, smsPhone, smsOrder) {
     if (!smsPhone) return rows;
+    if (smsOrder) {
+        const kb = smsOrder.buyer ? core.fmtPhone(smsOrder.buyer) : '';
+        (rows || []).forEach(r => { if (r && r.kind === 'cash' && Array.isArray(r.cells) && !String(r.cells[10] || '').trim()) { if (kb) r.cells[10] = kb; else r._smsRecv = true; } });
+        return rows;
+    }
     const p = core.fmtPhone(smsPhone);
     (rows || []).forEach(r => { if (r && r.kind === 'cash' && Array.isArray(r.cells)) { if (!String(r.cells[10] || '').trim()) r.cells[10] = p; if (!String(r.cells[1] || '').trim()) r.cells[1] = p; } });
     return rows;
+}
+// #1156 문자 보낸 분 = 받는 분(주문 하나 = smsOrder) 일 때
+//   ① 번호·주문번호가 없는 글 줄 = 그 주문번호를 앞에 붙여 규칙 줄로 읽어 봄(읽히면 #938 주문번호 줄 · 안 읽히면 null = AI 몫) — 글에 8자리 넘는 숫자가 있으면 손님이 적은 번호가 우선(안 붙임)
+//   ② 그 주문번호 줄 = plat 빈칸이면 그 판매처 · checked = { plat, as: 'order', buyer(구매자 번호 · 있으면) }(화면 expandOrders 의 #938 줄과 같은 꼴) · 사람이 [저장]해야 들어감
+const HAS_NUM = t => /\d{8,}/.test(String(t || '').replace(/[\s\-.]/g, ''));
+function smsOrderRule(ln, so, today) {
+    if (!so || !so.pno || HAS_NUM(ln) || !String(ln || '').trim()) return null;
+    const r = ruleLine(so.pno + ' ' + String(ln).trim(), today);
+    return r && r.kind === 'line' && dg(r.key) === dg(so.pno) ? r : null;
+}
+function smsOrderMark(rows, so) {
+    if (!so || !so.pno) return rows;
+    (rows || []).forEach(r => {
+        if (!r || r.kind !== 'line' || !dg(r.key) || dg(r.key) !== dg(so.pno)) return;
+        if (!String(r.plat || '').trim()) r.plat = so.plat;
+        if (!r._checked) r._checked = Object.assign({ plat: r.plat || so.plat, as: 'order', at: new Date().toISOString() }, so.buyer ? { buyer: core.fmtPhone(so.buyer) } : {});
+    });
+    return rows;
+}
+// checkMarked 뒤 — 미리보기 줄에 checked(#938) 싣기 · 현금 줄 「구매자 번호 확인」(받는 분 문자 · 구매자 번호 모름)
+function smsOrderOut(r, src) {
+    if (src && src._checked && r && r.kind === 'line') r.checked = src._checked;
+    if (src && src._smsRecv && r && r.kind === 'cash' && !String((r.cells || [])[10] || '').trim()) { r.check_why = (r.check_why || []).concat('구매자 번호 확인(받는 분이 보낸 문자예요 · 주문한 분 번호를 넣어 주세요)'); r.sure = false; }
+    return r;
 }
 
 // #850-d 판매처 확인 표시 = { plat: 네이버|쿠팡|자사몰, as: buyer|recv|order, at: ISO } 꼴만 · 그 밖 값·칸은 버림(이름·주소·번호 안 받음)
@@ -532,14 +567,14 @@ function mount(app, deps) {
     }
     const ctxOf = async () => { const today = kstToday(); const c = await cfg(); return { today, catalog: await catalogSet(today), origin: c.origin_addr, cfg: c }; };
 
-    async function callAi(text, tags, ctx) {
+    async function callAi(text, tags, ctx, smsOrder) {
         const c = ctx.cfg.ai;
         if (!c.enabled) return { used: false, why: '꺼짐' };
         if (!anthropic) return { used: false, why: 'AI 열쇠 없음' };
         let cal = null; try { cal = await shipCal(); } catch (_) { /* 달력 없이 */ }
         const names = [...ctx.catalog].slice(0, 300);
         const wd = '일월화수목금토'[new Date(ctx.today + 'T00:00:00Z').getUTCDay()];
-        const user = `오늘 ${ctx.today}(${wd})\nshipDays ${(cal && cal.shipDays || []).join(', ') || '(모름)'}\n꼬리표 ${(tags || []).join(', ') || '없음'}\n\n품목 이름 목록:\n${names.join('\n')}\n\n발주 메모:\n${text}`;
+        const user = `오늘 ${ctx.today}(${wd})\nshipDays ${(cal && cal.shipDays || []).join(', ') || '(모름)'}\n꼬리표 ${(tags || []).join(', ') || '없음'}\n\n품목 이름 목록:\n${names.join('\n')}\n\n발주 메모:\n${text}` + (smsOrder ? `\n\n문자 보낸 분 = 받는 분 · 그 주문이 하나로 확정됨: sms_order_key ${smsOrder.pno}(${smsOrder.plat}) — 번호·주문번호가 안 적힌 그 주문 지시(사이즈·날짜·입력삭제·보내는이)는 lines 의 key 를 이 값으로 · 주소 변경 요청은 cash 로 만들지 말고 unsure(「주소 변경 · 주문번호 ${smsOrder.pno}」)` : '');
         const t0 = Date.now();
         try {
             const msg = await anthropic.messages.create({
@@ -561,7 +596,9 @@ function mount(app, deps) {
         (Array.isArray(d && d.lines) ? d.lines : []).slice(0, MAX_ROWS).filter(x => x && (String(x.note || '').trim() || isDay(x.date))).forEach(x => raw.push(   // #850-g 할 일 없는(비고·날짜 없는) 메모 줄은 안 만듦
             { kind: 'line', key: x && x.key, note: x && x.note, plat: x && x.plat, ship_date: x && isDay(x.date) ? x.date : null, src: 'ai' }));
         (Array.isArray(d && d.cash) ? d.cash : []).slice(0, MAX_ROWS).forEach(x => raw.push(cashFromAi(x || {}, opt)));
-        const rows = markIndiv(raw, extraKeys).map(r => checkMarked(r, ctx));
+        const so = opt && opt.smsOrder && opt.smsOrder.pno ? opt.smsOrder : null;
+        if (so) raw.forEach(r => { if (r.kind === 'line' && !dg(r.key)) r.key = so.pno; });   // #1156 받는 분 문자 · 주문 하나 = 번호 없는 지시 줄은 그 주문번호(창구가 key 를 비워 보내도)
+        const rows = so ? markIndiv(smsOrderMark(raw, so), extraKeys).map(r => smsOrderOut(checkMarked(r, ctx), r)) : markIndiv(raw, extraKeys).map(r => checkMarked(r, ctx));
         const un = (Array.isArray(d && d.unsure) ? d.unsure : []).filter(x => x && x.text);
         let sms = s(d && d.sms_draft, 400).trim();
         if (!sms && rows.some(r => r.kind === 'cash' && r.missing.length)) sms = '안녕하세요 제주아꼼이네입니다. 보내 드릴 받는 분 성함·주소·연락처를 알려 주시면 바로 준비해 드릴게요.';
@@ -587,12 +624,28 @@ function mount(app, deps) {
         const d = dg(phone); if (/^0\d{8,11}$/.test(d)) return d;
         try { const r = (await pool.query(`SELECT phone_digits FROM sms_threads WHERE id = $1`, [Number(m[1])])).rows[0]; const t = dg(r && r.phone_digits); return /^0\d{8,11}$/.test(t) ? t : ''; } catch (_) { return ''; }
     }
-    async function preview(raw, tags, ctx, req, smsPhone) {
-        const rows = [], rest = [];
+    // #1156(대표 11/14 「고」 · 받는 분 …9733 주소 변경 문자 실례) 문자 보낸 번호가 「받는 분」으로만 걸린 발송 전 주문이 딱 하나면 그 주문 = { pno, plat, buyer }
+    //   조건 = order_memo_preorders miss=0 · recv_digits = 그 번호 · buyer_digits ≠ 그 번호(빈칸 포함) 인 주문번호가 하나 · 그 번호가 구매자인 주문은 0(본인 주문도 있으면 애매 = null)
+    //   주문번호 = product_order_no(네이버는 비면 order_key = 상품주문번호) · 둘 이상·0건·표 없음·실패 = null(종전 그대로 · 오매칭보다 미매칭)
+    const PLAT_KO = { naver: '네이버', coupang: '쿠팡', cafe24: '자사몰' };
+    async function smsOrderOf(smsPhone) {
+        const d = dg(smsPhone); if (!/^0\d{8,11}$/.test(d)) return null;
+        try {
+            const r = (await pool.query(`SELECT channel, COALESCE(NULLIF(btrim(COALESCE(product_order_no, '')), ''), CASE WHEN channel = 'naver' THEN NULLIF(order_key, '') END) AS pno, buyer_digits, (buyer_digits = $1) AS own
+                FROM order_memo_preorders WHERE miss = 0 AND (recv_digits = $1 OR buyer_digits = $1)`, [d])).rows;
+            if (!r.length || r.some(x => x.own)) return null;
+            const ks = [...new Map(r.filter(x => x.pno).map(x => [x.channel + '|' + x.pno, x])).values()];
+            if (ks.length !== 1 || r.some(x => !x.pno) || !PLAT_KO[ks[0].channel]) return null;
+            const b = [...new Set(r.map(x => dg(x.buyer_digits)).filter(x => /^0\d{8,11}$/.test(x)))];
+            return { pno: String(ks[0].pno).trim().slice(0, 40), plat: PLAT_KO[ks[0].channel], buyer: b.length === 1 ? b[0] : null };
+        } catch (_) { return null; }
+    }
+    async function preview(raw, tags, ctx, req, smsPhone, smsOrder) {
+        const rows = [], rest = [], so = smsPhone && smsOrder && smsOrder.pno ? smsOrder : null;
         // #850-g(대표 폰 실사고) 받는 분·주소·입금 단서가 있는 줄 = 현금 손님 글 → 메모 줄 규칙이 집지 않고 AI(창구)로(엑셀 13칸 붙여넣기는 규칙) ·
         //   🔴 「번호 입력o삭제x」 같은 주문 지시 줄은 그대로 규칙(같은 묶음의 개별 주소를 주소 줄로 짝짓는 #850 워커3 시험 ① 이 그 줄에 기댐)
-        for (const ln of raw.split('\n')) { const r = CASH_CUE.test(ln) && ln.split('\t').length < 9 ? null : ruleLine(ln, ctx.today); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }
-        const ruleRows = markIndiv(applySms(rows, smsPhone)).map(r => checkMarked(r, ctx));
+        for (const ln of raw.split('\n')) { const cue = CASH_CUE.test(ln) && ln.split('\t').length < 9; const r = cue ? null : (ruleLine(ln, ctx.today) || (so ? smsOrderRule(ln, so, ctx.today) : null)); if (r) rows.push(r); else if (ln.trim()) rest.push(ln); }   // #1156 받는 분 문자 = 번호 없는 지시 줄도 그 주문번호로 규칙 줄
+        const ruleRows = so ? markIndiv(smsOrderMark(applySms(rows, smsPhone, so), so)).map(r => smsOrderOut(checkMarked(r, ctx), r)) : markIndiv(applySms(rows, smsPhone)).map(r => checkMarked(r, ctx));
         const ruleKeys = [...indivKeysOf(ruleRows).values()];   // 규칙으로 읽은 입력삭제 줄 번호 → AI 현금 줄이 그 주문의 주소 줄인지 가를 때
         const base = { rows: ruleRows, leftover: '', rule_count: ruleRows.length, ai_count: 0, ai: { used: false, why: '남은 글 없음' }, sms_draft: '', desk: null };
         if (!rest.length) return base;
@@ -601,16 +654,17 @@ function mount(app, deps) {
         // 「섞기」(#850 점검 d · 준비만 · 기본 꺼짐) = staff_direct true 면 대표 요금제 계정(desk_subscription_users)만 창구 · 그 밖 계정은 서버 직접(창구 콘솔 1회 ≈ 400~800원 대신)
         const staffDirect = ctx.cfg.ai.staff_direct === true && !(await isSubUser(req.user.id));
         if (ctx.cfg.ai.direct || staffDirect) {
-            const ai = await callAi(text, tags, ctx);
+            const ai = await callAi(text, tags, ctx, so);
             ai.via = ctx.cfg.ai.direct ? 'direct' : 'staff_direct';
             if (!ai.data) return Object.assign(base, { leftover: text, ai });
-            const x = aiDataToRows(ai.data, ctx, ruleKeys, { smsPhone, text: raw }); delete ai.data;
+            const x = aiDataToRows(ai.data, ctx, ruleKeys, Object.assign({ smsPhone, text: raw }, so ? { smsOrder: so } : {})); delete ai.data;
             return Object.assign(base, { rows: ruleRows.concat(x.rows), ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft, ai });
         }
         let alive = false; try { alive = await deskAlive(); } catch (_) { alive = false; }
         if (!alive) return Object.assign(base, { leftover: text, ai: { used: false, why: '창구 꺼짐' }, desk: { state: 'off', message: '창구가 꺼져 있어 지금은 규칙으로만 정리했어요 · 남은 글은 직접 채워 주세요' } });
         let cal = null; try { cal = await shipCal(); } catch (_) { /* 달력 없이 */ }
-        const payload = { type: 'order_memo', today: ctx.today, shipDays: (cal && cal.shipDays) || [], tags: tags || [], catalog: [...ctx.catalog].slice(0, 300), text, indiv_keys: ruleKeys, sms_phone: smsPhone || '', from_sms: !!smsPhone, raw_hint: depositName(raw) };   // sms_phone·raw_hint = 기다리기 결과에 쓸 문자 번호·입금자명(#850-b)
+        const payload = { type: 'order_memo', today: ctx.today, shipDays: (cal && cal.shipDays) || [], tags: tags || [], catalog: [...ctx.catalog].slice(0, 300), text, indiv_keys: ruleKeys, sms_phone: smsPhone || '', from_sms: !!smsPhone, raw_hint: depositName(raw) };
+        if (so) Object.assign(payload, { sms_order_key: so.pno, sms_order_plat: so.plat, sms_order: so });   // #1156 창구 지침(발주메모_정리.md) = 받는 분 문자 · 그 주문 하나 → 번호 없는 지시는 이 key   // sms_phone·raw_hint = 기다리기 결과에 쓸 문자 번호·입금자명(#850-b)
         const row = (await pool.query(`INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
             [`${DESK_PREFIX} 남은 글 ${rest.length}줄`, JSON.stringify(payload), actorName(req), req.user.id || null])).rows[0];
         await audit(req, 'desk_request', row.id, { lines: rest.length });
@@ -659,7 +713,8 @@ function mount(app, deps) {
         if (b.length >= PREVIEW_PER_MIN) throw err(429, '잠시 뒤 다시 해 주세요');
         b.push(now); rate.set(k, b); if (rate.size > 500) rate.clear();
         const tags = (Array.isArray(req.body.tags) ? req.body.tags : []).filter(t => /^(cash|indiv|size|date|sender)$/.test(t)).slice(0, 5);
-        const out = await preview(raw, tags, await ctxOf(), req, await smsPhoneOf(req.body.source, req.body.phone));
+        const smsPhone = await smsPhoneOf(req.body.source, req.body.phone);
+        const out = await preview(raw, tags, await ctxOf(), req, smsPhone, smsPhone ? await smsOrderOf(smsPhone) : null);
         res.json(Object.assign({ ok: true }, out));
     }));
 
@@ -670,7 +725,7 @@ function mount(app, deps) {
         const text = r.payload && typeof r.payload.text === 'string' ? r.payload.text : '';
         if (!r.payload) return res.json({ ok: true, state: 'fail', leftover: '', message: '그만둔 요청이에요 — 다시 [정리하기] 를 눌러 주세요' });   // #850 점검 a · 받은 뒤·그만둔 뒤엔 창구가 늦게 답해도 안 내줌
         if (state === 'wait') return res.json({ ok: true, state, status: r.status });
-        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60) : [], { smsPhone: dg(r.payload.sms_phone), text: r.payload.raw_hint ? '입금 ' + r.payload.raw_hint + '으로 했어요' : r.payload.text }); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
+        if (state === 'done' && rs.data && typeof rs.data === 'object') { const x = aiDataToRows(rs.data, await ctxOf(), Array.isArray(r.payload.indiv_keys) ? r.payload.indiv_keys.slice(0, 60) : [], Object.assign({ smsPhone: dg(r.payload.sms_phone) }, r.payload.sms_order && r.payload.sms_order.pno ? { smsOrder: r.payload.sms_order } : {}, { text: r.payload.raw_hint ? '입금 ' + r.payload.raw_hint + '으로 했어요' : r.payload.text })); return res.json({ ok: true, state, rows: x.rows, ai_count: x.rows.length, leftover: x.leftover, sms_draft: x.sms_draft }); }
         res.json({ ok: true, state: 'fail', leftover: text, message: state === 'done' ? '창구 답에 정리 결과가 없어요 — 남은 글은 직접 채워 주세요' : String(rs.error || rs.question || rs.notice || rs.answer || '창구가 처리하지 못했어요').slice(0, 300) });
     }));
     app.delete('/api/order-memo/preview/:id', authMiddleware, wrap(async (req, res) => {
