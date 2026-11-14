@@ -142,15 +142,15 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         const R = (await E.rows()).filter(r => r.kind === 'cash');
         ok(R.every(r => dg(r.cells[1]) === K2D && dg(r.cells[10]) === K2D && !/!/.test(r.cells[0]) && r.pair_orig && dg(r.pair_orig.b) === B5D && dg(r.pair_orig.k) === B5D && dg(r.pair_orig.ab) === K2D), '저장값 = B·K 입력삭제 번호 · pair_orig {b,k 센터장 · ab 입력삭제}(실DB 꼴)', R.slice(0, 1).map(r => [r.cells[0], r.cells[1], r.cells[10], r.pair_orig]));
         ok(R.every(r => r.cells[0] === SENDER + ' 드림'), '#1143 A칸 = 「… 센터장 드림」(「!」 없음 · 저장값)', vals(R.map(r => r.cells), 0));
-        const li = (await E.list()).filter(r => r.kind === 'cash'); ok(li.every(r => r.out_b === B5 && r.out_k === B5 && r.cells[0] === SENDER + ' 드림'), '목록 out_b·out_k = 센터장 번호 · 화면 A칸 드림 한 번', li.slice(0, 1).map(r => [r.out_b, r.out_k, r.cells[0]]));
+        const li = (await E.list()).filter(r => r.kind === 'cash'); ok(li.every(r => r.out_b === B5 && r.out_k === K2 && r.cells[0] === SENDER + ' 드림'), '#1149 목록 out_b 센터장 번호 · out_k 입력삭제 번호 · 화면 A칸 드림 한 번', li.slice(0, 1).map(r => [r.out_b, r.out_k, r.cells[0]]));
         const orders = [nv(PA, K2, 25)];
         const d = await day(E, D1, orders);
         ok(d.st[PA] === 'indiv', '최종발주 = 주문 입력삭제(양식에서 빠짐)', d.st);
-        ok(d.fs1.cash_aoa.length === 26 && d.fs1.cash_out.length === 25 && d.fs1.cash_out.every(x => x && x.b === B5 && x.k === B5) && d.fs1.cash_ids.length === 25, 'for-ship = cash_aoa 25 · cash_out 25 전부 {센터장,센터장} · cash_ids 같은 길이', [d.fs1.cash_aoa.length, d.fs1.cash_out.slice(0, 2)]);
+        ok(d.fs1.cash_aoa.length === 26 && d.fs1.cash_out.length === 25 && d.fs1.cash_out.every(x => x && x.b === B5 && x.k === K2) && d.fs1.cash_ids.length === 25, 'for-ship = cash_aoa 25 · cash_out 25 전부 {센터장,입력삭제 번호}(#1149) · cash_ids 같은 길이', [d.fs1.cash_aoa.length, d.fs1.cash_out.slice(0, 2)]);
         ok(d.fs1.cash_aoa.slice(1).every(c => c[0] === SENDER + ' 드림' && c[1] === K2 && c[10] === K2), 'cash_aoa(짝짓기용) = A 드림 한 번 · B·K 입력삭제 번호 그대로', d.fs1.cash_aoa[1]);
-        ok(d.omc.length === 25 && d.omc.every(r => r.out && r.out.b === B5 && r.out.k === B5 && r.digits === K2D && !r.bang), '최종발주 OMF.cash = out 칸 25 · digits(짝 열쇠) 입력삭제 번호 · bang 아님', d.omc[0] && [d.omc[0].out, d.omc[0].digits]);
+        ok(d.omc.length === 25 && d.omc.every(r => r.out && r.out.b === B5 && r.out.k === K2 && r.digits === K2D && !r.bang), '최종발주 OMF.cash = out 칸 25 · digits(짝 열쇠) 입력삭제 번호 · bang 아님', d.omc[0] && [d.omc[0].out, d.omc[0].digits]);
         ok(!d.chk.boxDiff.length && !d.chk.notIndiv.length && !d.chk.missing.length && !d.chk.strangers.length && !(d.chk.itemDiff || []).length && !d.cards.length, '카드 0(25 vs 25)', d.chk);
-        ok(d.form.length === 25 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === B5 && vals(d.form, 0).join() === SENDER + ' 드림', '🔴 양식 25행 = B·K 전부 센터장 번호 · 보내는 분 「… 드림」', [d.form.length, vals(d.form, 1), vals(d.form, 10), vals(d.form, 0)]);
+        ok(d.form.length === 25 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === K2 && vals(d.form, 0).join() === SENDER + ' 드림', '🔴 양식 25행 = B 센터장 번호 · K 입력삭제 번호(#1149) · 보내는 분 「… 드림」', [d.form.length, vals(d.form, 1), vals(d.form, 10), vals(d.form, 0)]);
         ok(d.qty.length === 1 && d.qty[0].length === 1 && d.qty[0][0].qty === 25 && d.qty[0][0].name === TY, '수량표 = 거래처 1 · 품목 1 · 25박스', d.qty);
         ok(d.ships.length === 25 && d.ships.every(s => s.stel === B5), '운송장 25장 · 보내는분전화 = 센터장 번호(양식 B)', d.ships.length);
         ok(d.memoAddr.length === 0, '최종발주가 「오늘 씀」을 찍기 전 = memoAddr 0(주소 줄 날짜 없음 · used_on 없음)', d.memoAddr.length);
@@ -175,7 +175,7 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         ok(q.ok && (q.base.items || []).filter(x => x.name === TY).reduce((s, x) => s + x.qty, 0) === 25 && !(q.base.urows || []).length, '중간발주 qtyBuild = 25(주소 줄 박스 · 수량표와 같음 · 미매칭 0)', q.base);
         // 만든 양식을 현금파일로 다시 올리면(정상 흐름 아님)
         const pc = core.parseCash([core.HEADERS.slice(), ...d2.form]), chk2 = core.cashCheck({ orders: [{ key: PA, digits: K2D, qty: 25, individual: true, excluded: false, buyer: '가', opt: TY }], cash: pc.rows });
-        ok(pc.ok && pc.rows.every(r => !r.bang && r.digits === B5D) && chk2.missing.length === 1 && chk2.strangers.length === 1, '🔵 만든 양식을 현금파일로 다시 읽으면 K = 센터장 번호라 입력삭제 번호와 짝이 안 맞음 → 「주소 줄 없음」+「현금파일에만 있는 구매자」 카드(종전엔 그대로 짝 · 재업로드는 정상 흐름 아님)', { digits: [...new Set(pc.rows.map(r => r.digits))], missing: chk2.missing.length, strangers: chk2.strangers.length });
+        ok(pc.ok && pc.rows.every(r => !r.bang && r.digits === K2D) && chk2.missing.length === 0 && chk2.strangers.length === 0, '#1149 만든 양식을 현금파일로 다시 읽어도 K = 입력삭제 번호라 그대로 짝(카드 0 · #1146 전과 같음)', { digits: [...new Set(pc.rows.map(r => r.digits))], missing: chk2.missing.length, strangers: chk2.strangers.length });
         // TZ 확인용 날짜 글
         ok(d2.fs1.lines.length === 1 && d2.fs1.lines[0].state === 'nodate' && d2.fs1.date === D1, 'for-ship 날짜 = 11/15 · 줄 nodate(종전)', d2.fs1.lines);
     } finally { await E.close(); } }
@@ -203,7 +203,7 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         ok(ownRows.length === 5 && ownRows.every(r => dg(r.cells[10]) === B5D && !/!/.test(r.cells[0]) && r.pair_orig && dg(r.pair_orig.ab) === B5D), '자기 묶음 5줄 = 주소 줄(markIndiv) · pair_orig ab = 자기 번호', ownRows[0] && [ownRows[0].cells[0], ownRows[0].pair_orig]);
         const f2 = await E.forShip(D1); await E.used(D1, f2);
         const orders2 = [nv(PA, K2, 25), nv(PX, B5, 5)]; d = await day(E, D1, orders2);
-        ok(d.st[PA] === 'indiv' && d.st[PX] === 'indiv' && d.form.length === 30 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === B5, '두 묶음 다 입력삭제 · 양식 30행 B·K 전부 센터장 번호', [d.st, d.form.length, vals(d.form, 1), vals(d.form, 10)]);
+        ok(d.st[PA] === 'indiv' && d.st[PX] === 'indiv' && d.form.length === 30 && vals(d.form, 1).join() === B5 && vals(d.form, 10).slice().sort().join() === [K2, B5].sort().join(), '두 묶음 다 입력삭제 · 양식 30행 B 전부 센터장 번호 · K 각 묶음 입력삭제 번호(#1149)', [d.st, d.form.length, vals(d.form, 1), vals(d.form, 10)]);
         ok(!d.cards.length && !d.chk.boxDiff.length && !d.chk.missing.length, '카드 0(25 vs 25 · 5 vs 5)', d.chk);
         ok(d.sum.a.length === 2 && d.sum.a.every(x => /^indiv_/.test(x[1]) && x[2] === 1) && d.sum.td.length === 0 && d.sum.um + d.sum.ex === 28, '(c) 두 입력삭제 주문 각 1장 · 할 일 0 · 나머지 28 = extra/unmatched', d.sum);
         ok(d.sum.um <= 2, '(c) 겹친 받는 분(받는3) 2장만 구매자 둘이라 안 묶임(unmatched ≤ 2 · 등록 안 막음)', [d.sum.um, d.sum.why]);
@@ -213,27 +213,27 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
     { const E = await mk([{ pid: PA, qty: 6 }]); try {
         const S0 = await setupA(E, 5, null); let R = (await E.rows()).filter(r => r.kind === 'cash');
         // 사람이 B 고침
-        const c1 = R[0].cells.slice(); c1[1] = '010-2600-7777'; let pu = await E.put(R[0].id, { cells: c1, ship_date: null }); ok(pu.s === 200 && pu.j.row.out_b === '010-2600-7777' && pu.j.row.out_k === B5 && dg(pu.j.row.cells[10]) === K2D, '묶인 뒤 사람이 B 고침 = 양식 B 고친 번호 · K 센터장 · 저장 K 입력삭제(설계)', [pu.j.row.out_b, pu.j.row.out_k, pu.j.row.cells[10]]);
+        const c1 = R[0].cells.slice(); c1[1] = '010-2600-7777'; let pu = await E.put(R[0].id, { cells: c1, ship_date: null }); ok(pu.s === 200 && pu.j.row.out_b === null && pu.j.row.out_k === null && dg(pu.j.row.cells[10]) === K2D, '묶인 뒤 사람이 B 고침 = 양식 = 줄 값 그대로(고친 B · K 입력삭제) → out null(안내 없음 · #1149)', [pu.j.row.out_b, pu.j.row.out_k, pu.j.row.cells[10]]);
         // pair_orig 없는 옛 줄(DB 직접)
         await E.db.query('UPDATE order_memo_rows SET pair_orig = NULL WHERE id = $1', [R[1].id]);
         // 처음 B 빈칸(「!」 줄 B='' K=센터장) → pair
         const bl = await E.save([bangRow(9, SENDER + '!', '', K2)]); const pb = await pairUI(E, K2, bl, { b: '' }); ok(pb.j.n === 1, 'B 빈칸 줄 /pair(origs b 빈칸)', pb.j);
         let d = await day(E, D1, [nv(PA, K2, 6)]); const fm = new Map(d.form.map(c => [c[3], c]));
-        ok(fm.get('받는1')[1] === '010-2600-7777' && fm.get('받는1')[10] === B5, '양식 받는1 = B 고친 번호 · K 센터장', fm.get('받는1').slice(0, 2).concat(fm.get('받는1')[10]));
+        ok(fm.get('받는1')[1] === '010-2600-7777' && fm.get('받는1')[10] === K2, '양식 받는1 = B 고친 번호 · K 입력삭제 번호(#1149)', fm.get('받는1').slice(0, 2).concat(fm.get('받는1')[10]));
         ok(fm.get('받는2')[1] === K2 && fm.get('받는2')[10] === K2, 'pair_orig 없는 옛 줄 = 종전(B·K 입력삭제 번호)', [fm.get('받는2')[1], fm.get('받는2')[10]]);
-        ok(fm.get('받는9')[1] === B5 && fm.get('받는9')[10] === B5, '처음 B 빈칸 = 양식 B·K 센터장 번호(K 로 채움)', [fm.get('받는9')[1], fm.get('받는9')[10]]);
+        ok(fm.get('받는9')[1] === K2 && fm.get('받는9')[10] === K2, '처음 B 빈칸 = 양식 B·K 입력삭제 번호(줄 K 로 채움 · #1149)', [fm.get('받는9')[1], fm.get('받는9')[10]]);
         ok(!d.cards.length && d.form.length === 6 && !d.chk.boxDiff.length, '6 vs 6 카드 0', d.chk.boxDiff);
         // rekey: 번호 줄 번호 고침 K2 → K3
         const K3 = '010-2600-3333'; const ln = (await E.rows()).find(r => r.kind === 'line'); pu = await E.put(ln.id, { key: K3 }); ok(pu.s === 200 && pu.j.rekeyed === 6, 'rekey = 「!」 없는 짝 줄 6(B 고친 줄은 K 만)', pu.j);
         R = (await E.rows()).filter(r => r.kind === 'cash');
         ok(R.every(r => dg(r.cells[10]) === dg(K3)) && R.filter(r => dg(r.cells[1]) === dg(K3)).length === 5 && R.find(r => r.cells[3] === '받는1').cells[1] === '010-2600-7777', 'rekey 뒤 K 전부 새 번호 · B 는 따라간 5 · 사람이 고친 B 그대로', R.map(r => [r.cells[3], r.cells[1], r.cells[10]]));
-        const li = (await E.list()).filter(r => r.kind === 'cash'); ok(li.filter(r => r.out_b === B5 && r.out_k === B5).length === 5 && li.find(r => r.cells[3] === '받는2').out_b === null, 'rekey 뒤 out = 센터장 번호 그대로 5 · 옛 줄 null', li.map(r => [r.cells[3], r.out_b]));
+        const li = (await E.list()).filter(r => r.kind === 'cash'); ok(li.filter(r => r.out_b === B5 && r.out_k === K3).length === 4 && li.find(r => r.cells[3] === '받는2').out_b === null && li.find(r => r.cells[3] === '받는9').out_b === null, 'rekey 뒤 out = B 센터장 · K 새 번호 4(받는1·3·4·5) · 옛 줄·처음 B 빈칸 줄 null(줄 값 그대로 · #1149)', li.map(r => [r.cells[3], r.out_b]));
         await E.setPre([{ pid: PC, buyer: K3, qty: 6 }]); d = await day(E, D1, [nv(PC, K3, 6)]); await E.used(D1, d.fs1); d = await day(E, D1, [nv(PC, K3, 6)]);
         ok(d.st[PC] === 'indiv' && !d.cards.length && d.sum.a.length === 1 && d.sum.a[0][0] === PC && d.sum.um === 0, 'rekey 뒤 한 바퀴 = 입력삭제 · 카드 0 · 운송장 1장 붙음', [d.st, d.sum]);
         // 번호 줄 지움 = 풀림
         await E.del(ln.id); d = await day(E, D1, [nv(PC, K3, 6)]);
         ok(d.st[PC] === 'go' && d.form.length === 6 && d.chk.notIndiv.length === 1 && d.chk.notIndiv[0].cashRows.length === 6, '풀림 = 주문이 양식(주문 주소)으로도 나가고 주소 줄 6 도 나감 → 「현금파일 줄이 있는데 입력삭제 아님」 카드(종전 · 이중 발송 경고)', [d.st, d.form.length, d.chk.notIndiv.length]);
-        ok(fm.get('받는9') && d.form.find(c => c[3] === '받는9')[1] === B5 && d.form.find(c => c[3] === '받는9')[10] === B5, '풀림 줄도 양식 B·K = 센터장 번호(pair_orig 남아 있음)', d.form.find(c => c[3] === '받는9').slice(0, 2));
+        ok(fm.get('받는9') && d.form.find(c => c[3] === '받는9')[1] === K3 && d.form.find(c => c[3] === '받는9')[10] === K3, '풀림 줄(처음 B 빈칸) 양식 B·K = 줄 K(새 번호 · #1149)', d.form.find(c => c[3] === '받는9').slice(0, 2));
         const lp = (await E.list()).filter(r => r.kind === 'cash'); ok(lp.every(r => r.indiv === true && r.split_done === undefined), '목록 = 풀림(indiv true · 번호 줄 없음 · split_done 없음 = 화면 「입력삭제 풀림」 알약)', lp.slice(0, 1).map(r => [r.indiv, r.split_done]));
         // 풀림 줄 [현금으로 변경](PUT to_cash)
         R = (await E.rows()).filter(r => r.kind === 'cash'); const r9 = R.find(r => r.cells[3] === '받는9'), r1 = R.find(r => r.cells[3] === '받는1'), r2 = R.find(r => r.cells[3] === '받는2');
@@ -247,6 +247,25 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         ok(d.sum.cash === 3 && d.sum.a.length === 1 && d.sum.a[0][0] === PC && d.sum.a[0][2] === 6 && d.sum.um === 3 && d.sum.td.length === 0, '자동 송장 = 현금 운송장 3 따로(m.cash) · 주문엔 자기(주문 주소) 운송장 6 · 풀린 주소 줄 3 = unmatched(종전)', d.sum);
     } finally { await E.close(); } }
 
+    console.log('Ⅲ-b #1149 실DB 손으로 맞춘 entry 443 꼴(cells[1] = 처음 B · pair_orig {b:처음 B, k:입력삭제 번호, ab:처음 B}) · outDiff null ↔ outBK(자동 송장) 일치');
+    { const E = await mk([{ pid: PA, qty: 3 }]); try {
+        await setupA(E, 3, null); let R = (await E.rows()).filter(r => r.kind === 'cash');
+        const r443 = R.find(r => r.cells[3] === '받는2'); const c443 = r443.cells.slice(); c443[1] = B5;
+        await E.db.query('UPDATE order_memo_rows SET cells = $2, pair_orig = $3 WHERE id = $1', [r443.id, JSON.stringify(c443), JSON.stringify({ a: SENDER, b: B5, k: K2, ab: B5, d: null })]);
+        R = (await E.rows()).filter(r => r.kind === 'cash'); const x = OM.outBK(R.find(r => r.id === r443.id));
+        ok(x && dg(x.b) === B5D && dg(x.k) === K2D, '443 꼴 outBK = {B 처음 B(센터장), K 입력삭제 번호}(pair_orig.k 가 입력삭제 번호여도 K 는 줄 K)', x);
+        const li = (await E.list()).filter(r => r.kind === 'cash'); const l443 = li.find(r => r.id === r443.id), lN = li.find(r => r.id !== r443.id);
+        ok(l443.out_b === null && l443.out_k === null && lN.out_b === B5 && lN.out_k === K2, '목록 out = 443 꼴 null(줄 값 그대로 = 안내 없음) · 보통 짝 줄 {센터장, 입력삭제}', [l443.out_b, l443.out_k, lN.out_b, lN.out_k]);
+        const d = await day(E, D1, [nv(PA, K2, 3)]);
+        ok(d.st[PA] === 'indiv' && !d.cards.length && d.form.length === 3 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === K2, '양식 3행 전부 B 센터장 · K 입력삭제 번호(443 꼴 = cash_aoa 그대로 · 나머지 = out 바꿔 끼움 · 결과 같음)', d.form.map(c => [c[3], c[1], c[10]]));
+        ok(d.ships.length === 3 && d.ships.every(s => dg(s.stel) === B5D) && d.memoAddr.length === 0, '운송장 3장 보내는분전화 = 센터장 번호(양식 B)', d.ships.map(s => s.stel));
+        await E.used(D1, d.fs1); const d2 = await day(E, D1, [nv(PA, K2, 3)]);
+        ok(d2.memoAddr.length === 3 && d2.memoAddr.every(m => dg(m.ob) === B5D && dg(m.k) === K2D), 'memoAddr ob 3줄 전부 센터장(outBK · outDiff null 줄도 ob 는 그대로) · k 입력삭제 번호', d2.memoAddr.map(m => [m.ob, m.k]));
+        ok(d2.sum.a.length === 1 && d2.sum.a[0][2] === 1 && d2.sum.ex === 2 && d2.sum.um === 0 && d2.sum.td.length === 0, '자동 송장 = 주문 1장(양식 B 로 K 에 묶음 · 443 꼴 포함) · 2 extra · 할 일 0', d2.sum);
+        const cf = ia.matchShipments({ ships: ia.normShips(d2.ships, '효돈'), orders: [...d2.os, ...ia.normOrders('naver', [nv(PX, B5, 1)])], pricingNames: CAT, indivKeys: d2.ind, holdKeys: [], memoAddr: d2.memoAddr, memoGuard: d2.memoGuard });
+        ok(!cf.assign.some(a => a.o.order_key === PX) && cf.assign.length === 1 && cf.assign[0].o.order_key === PA, '센터장 본인 주문(운송장 없음)이 같은 날 있어도 443 꼴 운송장을 안 뺏음(memoGuard 막이)', cf.assign.map(a => [a.o.order_key, a.rule]));
+    } finally { await E.close(); } }
+
     console.log('Ⅳ #1121 나뉜 입력삭제(오늘 3 + 11/17 22) + #1146');
     { const E = await mk([{ pid: PA, qty: 25 }]); try {
         const cash = await E.save(Array.from({ length: 25 }, (_, i) => bangRow(i + 1, SENDER + '!', K2, K2, TY, 1, i < 3 ? null : D3))); await E.save([lineRow(K2, D3)]); const p = await pairUI(E, K2, cash); ok(p.j.n === 25, '/pair 25(날짜 줄 3 없음 · 22 = 11/17)', p.j);
@@ -256,13 +275,13 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         let d = await day(E, D1, orders);
         ok(d.fs1.lines[0].state === 'today' && d.fs1.lines[0].split && d.fs1.lines[0].split.today === 3 && d.fs1.lines[0].split.later === 22 && d.fs1.cash_out.length === 3 && d.fs1.cash_out.every(x => x && x.b === B5), '11/15 for-ship = 오늘 줄(split 3/22) · cash_out 3 센터장', [d.fs1.lines[0].split, d.fs1.cash_out]);
         ok(d.st[PA] === 'indiv' && !d.cards.length && d.info[0] === '가: 오늘 3박스 · 주문은 오늘 발송처리 · 나머지 22박스는 11/17', '11/15 = 입력삭제 · 카드 0 · 참고 줄', [d.st, d.cards, d.info]);
-        ok(d.form.length === 3 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === B5, '11/15 양식 3행 B·K 센터장', d.form.map(c => [c[1], c[10]]));
+        ok(d.form.length === 3 && vals(d.form, 1).join() === B5 && vals(d.form, 10).join() === K2, '11/15 양식 3행 B 센터장 · K 입력삭제 번호(#1149)', d.form.map(c => [c[1], c[10]]));
         await E.used(D1, d.fs1); d = await day(E, D1, orders);
         ok(d.sum.a.length === 1 && d.sum.a[0][2] === 1 && d.sum.ex === 2 && d.sum.um === 0 && d.sum.td.length === 0, '11/15 자동 송장 = 주문 1장(발송처리 1회) · 2 extra', d.sum);
         R = await E.rows(); ok(R.find(r => r.kind === 'line').checked.split_sent === D1, 'split_sent 11/15', R.find(r => r.kind === 'line').checked);
         await E.setPre([]); d = await day(E, D3, []);
         ok(d.fs1.cash_out.length === 25 || d.fs1.cash_out.length === 22, '11/17 for-ship cash_out 길이 = 주소 줄 수(첫날 줄을 안 지웠으면 25)', d.fs1.cash_out.length);
-        ok(d.fs1.cash_out.every(x => x && x.b === B5 && x.k === B5) && d.form.every(c => c[1] === B5 && c[10] === B5), '11/17 양식 전부 B·K 센터장', [d.form.length, vals(d.form, 1)]);
+        ok(d.fs1.cash_out.every(x => x && x.b === B5 && x.k === K2) && d.form.every(c => c[1] === B5 && c[10] === K2), '11/17 양식 전부 B 센터장 · K 입력삭제 번호(#1149)', [d.form.length, vals(d.form, 1)]);
         ok(!d.chk.notIndiv.length && !d.chk.boxDiff.length && d.chk.strangers.length === 1 && d.sum.a.length === 0 && d.sum.td.length === 0, '11/17 = 주문 없음 → 카드 0 · 참고 줄(strangers) · 운송장 주문에 안 붙음', [d.chk.strangers.length, d.sum]);
     } finally { await E.close(); } }
 
@@ -273,7 +292,7 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         let d = await day(E, D1, [nv(PA, K2, 4, TY2)], { sizeLines: [{ digits: K2D, size: 'S' }] });
         ok(d.fs1.cash_out.filter(Boolean).length === 4 && d.fs1.cash_service.length === 1 && !d.cards.length && !d.chk.boxDiff.length, '서비스 1 + 주소 4 vs 주문 4 = 카드 0 · cash_out 4', [d.fs1.cash_service, d.chk.boxDiff]);
         const sv = d.form.find(c => /!$/.test(c[0])), ad = d.form.filter(c => !/!$/.test(c[0]));
-        ok(sv && sv[1] === K2 && sv[10] === K2 && ad.length === 4 && ad.every(c => c[1] === B5 && c[10] === B5), '양식 = 서비스 줄 B·K 그대로(입력삭제 번호 · 종전) · 주소 줄 4 센터장', [sv && [sv[1], sv[10]], ad.map(c => c[1])]);
+        ok(sv && sv[1] === K2 && sv[10] === K2 && ad.length === 4 && ad.every(c => c[1] === B5 && c[10] === K2), '양식 = 서비스 줄 B·K 그대로(입력삭제 번호 · 종전) · 주소 줄 4 B 센터장 · K 입력삭제 번호(#1149)', [sv && [sv[1], sv[10]], ad.map(c => c[1])]);
         ok(ad.every(c => c[4] === TY2 + ' S사이즈로!'), '사이즈 꼬리 붙은 복사본에도 out 유지(옵션 끝 「S사이즈로!」 + B·K 센터장)', ad.map(c => c[4]));
         await E.used(D1, d.fs1); d = await day(E, D1, [nv(PA, K2, 4, TY2)], { sizeLines: [{ digits: K2D, size: 'S' }] });
         ok(d.sum.a.length === 1 && d.sum.a[0][2] === 1 && d.sum.td.length === 0 && d.sum.um === 0, '자동 송장(품목 꼬리 운송장) = 1장 · 서비스 운송장은 주문에 안 붙음', d.sum);
