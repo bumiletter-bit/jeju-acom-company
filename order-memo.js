@@ -133,10 +133,12 @@ function cashSender(v) {
     else if (!/(?:드림|올림)$|제주아꼼이네\)?$/.test(n)) n += ' 드림';
     return n + '!';
 }
+// #1143(대표 11/14 「입력삭젠 ! 는 없는 게 맞는데 드림은 붙도록 현금과 같이」) 입력삭제 주소 줄 보내는 분 = cashSender 와 같은 판정에서 끝 「!」만 뺌(판정이 갈리지 않게 한 곳)
+const indivSender = v => cashSender(v).replace(/[!！]$/, '');
 function checkCash(r, today, catalog, origin) {
     const c = cashRowFromCells(r.cells || [], r.src || 'edit').cells;
     // 현금 손님 = 「!」 표식(parseCash bang) · 입력삭제 주문의 주소 줄(r.indiv · markIndiv) = 「!」 없이 + 구매자연락처(K) = 주문 번호 → cashCheck 가 주문과 짝을 지음(#850 워커3 시험)
-    if (r.indiv) { c[0] = c[0].replace(/[!！]/g, '').replace(/\s+/g, ' ').trim() || '제주아꼼이네'; if (r.indivKey) c[10] = r.indivKey; }
+    if (r.indiv) { c[0] = indivSender(c[0]); if (r.indivKey) c[10] = r.indivKey; }   // #1143 「!」 없이 · 이름만이면 「○○ 드림」(현금 줄과 같은 판정)
     else c[0] = cashSender(c[0]);   // #863 「!」 맨 뒤 · 이름만이면 「드림」 · 입력삭제 줄(위)은 「!」가 뒤에 와도 뗌
     if (!c[2]) c[2] = origin;
     // #858(대표 10/26 사진 「!제주아꼼이네」·B 빈칸) 보내는사람연락처(B)가 비면 구매자연락처(K) · 사람이 「보내는이 변경」으로 넣은 번호는 그대로 · 이름(A)은 안 건드림
@@ -429,7 +431,7 @@ function pickForShip(rows, date) {
         lines.push({ id: null, line: [mdw, pno, mdw + ' 발송', plat].filter(Boolean).join('\t'), ship_date: w.ship_date, checked: { plat: plat || '네이버', as: 'order', at: c.at || null, buyer: c.buyer || null, pno }, state: 'wait', box_hold: w.id });
     }
     return { date, memo_text: lines.map(l => l.line).join('\n'), lines,
-        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
+        cash_aoa: cash.length ? [core.HEADERS.slice(), ...cash.map(r => { const c = r.cells.slice(0, 13); if (!String(c[1] || '').trim() && String(c[10] || '').trim()) c[1] = c[10]; if (/[!！]/.test(String(c[0] || ''))) c[0] = cashSender(c[0]); else c[0] = indivSender(c[0]); return c; })]   /* #858 이미 저장된 줄도 B 빈칸 = K · #863 앞 「!」 → 뒤(입력삭제 주소 줄 = 「!」 없음 = 그대로) */ : [], cash_ids: cash.map(r => r.id),
         cash_service: cash.filter(r => r.service).map(r => r.id),   // #900 서비스 줄(A칸은 이미 「!」 = 현금 꼴) — 최종발주 대조·짝에서 뺄 줄
         waiting, held, ship_memos: shipMemos, ship_memo_wait: shipWait, normal_orders: normalOrders, box_rows: boxRows, box_wait: boxWait, split_sent: splitSent, ids: lines.map(l => l.id).filter(id => id != null).concat(cash.map(r => r.id), shipMemos.map(m => m.id), boxRows.map(m => m.id)) };
 }
@@ -596,7 +598,7 @@ function mount(app, deps) {
     }
 
     const rowOut = r => ({ id: r.id, entry_id: r.entry_id, kind: r.kind, ship_date: r.ship_date ? String(r.ship_date instanceof Date ? r.ship_date.toISOString() : r.ship_date).slice(0, 10) : null,
-        key: r.line_key, note: r.note, plat: r.plat, line: r.line, cells: r.cells, sure: r.sure, check_why: r.check_why || [], src: r.src,
+        key: r.line_key, note: r.note, plat: r.plat, line: r.line, cells: r.kind === 'cash' && Array.isArray(r.cells) && !/[!！]/.test(String(r.cells[0] || '')) ? [indivSender(r.cells[0])].concat(r.cells.slice(1)) : r.cells, sure: r.sure,   /* #1143 저장된 옛 주소 줄도 화면엔 「○○ 드림」(저장값 무변경 · 고쳐 저장하면 checkCash 가 같은 값으로) */ check_why: r.check_why || [], src: r.src,
         missing: r.kind === 'cash' ? Object.keys(REQ_CELLS).map(Number).filter(i => !(r.cells || [])[i]) : ((!r.line_key || /^0+$/.test(dg(r.line_key)) || dg(r.line_key) === '01000000000' || (dg(r.line_key).length < 8 && !/\d{8,}/.test(r.line_key))) ? ['key'] : []),
         state: r.state, used_on: r.used_on ? String(r.used_on instanceof Date ? r.used_on.toISOString() : r.used_on).slice(0, 10) : null,
         cleared_at: r.cleared_at, cleared_by: r.cleared_by, updated_at: r.updated_at, updated_by: r.updated_by, checked: r.kind === 'line' ? (r.checked || null) : null, boxes: r.kind === 'line' ? (Array.isArray(r.boxes) ? r.boxes : null) : undefined,   // #1021

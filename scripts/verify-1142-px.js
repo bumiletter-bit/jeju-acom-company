@@ -1,0 +1,194 @@
+// #1142 검증 — 발주 메모함 「메모 고치기」 매칭 판(입력삭제 줄 ④ 판)
+//   ① ② [현금으로 변경] = #1125 대기 그대로(여러 줄 → [고친 대로 저장] 1번 → PUT n · 닫으면 0) · 대표 11/14 「고친 대로 저장으로」
+//   ② ②·③ 줄 글 = 그 줄 고치기 카드(체크 칸은 펼침 아님) → 닫기·저장하면 판으로(대기 그대로) · 줄 카드 [현금으로 변경하기]도 대기
+//   ③ 깨짐 = 1500 · 720 · 390 · 야간 · 긴 이름 두 줄 · 대기 줄 = 겹침 0 · 넘침 0 · 서비스 칸·단추 세로 선 1 · 높이 같음 · 스크립트 오류 0
+//   🔴 실DB·서버(server.js)·네트워크 0 — verify-900-2b.js 의 가짜 서버·가짜 자료를 그대로 떼어 쓰고(목록이 PUT·pair 를 따라 바뀌게만 덧댐) public/ao-ordermemo.js·css 를 Playwright 로 봄
+//   실행: node scripts/verify-1142-px.js   (PORT1142 로 포트 · 기본 3462)
+'use strict';
+const path = require('path'), http = require('http'), fs = require('fs'), { execSync } = require('child_process');
+const ROOT = path.join(__dirname, '..');
+const { chromium } = require('playwright');
+const XLSX = require('xlsx-js-style');
+let pass = 0, failN = 0;
+const ok = (c, name, extra) => { if (c) { pass++; console.log('  ✅', name); } else { failN++; console.log('  ❌', name, extra !== undefined ? JSON.stringify(extra).slice(0, 700) : ''); } };
+
+// ── verify-900-2b.js 의 가짜 서버 구간(SRC ~ jusoQuiet)을 떼어 씀 + 덧댐 3곳(목록 변형 · PUT 실패 · PUT/pair 기록)
+let B = fs.readFileSync(path.join(__dirname, 'verify-900-2b.js'), 'utf8').split('\r\n').join('\n');
+B = B.slice(B.indexOf('const SRC = {'), B.indexOf('(async () => {'));
+const patch = (a, b) => { if (B.split(a).length !== 2) throw new Error('덧댐 자리 못 찾음: ' + a.slice(0, 60)); B = B.replace(a, () => b); };
+patch('function pxList() {', 'function pxList() { const L = pxList0(); return S.mut ? S.mut(L) : L; }\nfunction pxList0() {');
+patch("if (req.method === 'PUT') {", "if (req.method === 'PUT' && S.putFail) return send(500, { ok: false, error: '가짜 저장 실패' });\n        if (req.method === 'PUT') {");
+patch('try { S.puts.push(JSON.parse(b)); } catch (e) { }', 'try { const j = JSON.parse(b); j._id = Number(u.pathname.split(\'/\').pop()); S.puts.push(j); (S.log = S.log || []).push([\'put\', j._id, j]); } catch (e) { }');
+patch('S.pairs.push(j);', "S.pairs.push(j); if (!j.undo) (S.log = S.log || []).push(['pair', (j.ids || []).map(Number), j.key]);");
+const M = new Function('require', 'ROOT', 'path', 'fs', 'http', 'execSync', 'chromium', 'XLSX', 'ok', B + '\nreturn { S, serve, until, jusoQuiet, PXL, PXK, CAT };')(require, ROOT, path, fs, http, execSync, chromium, XLSX, ok);
+const { S, serve, until, PXL, CAT } = M;
+const dg = s => String(s || '').replace(/\D/g, '');
+
+// 목록 덧댐 = PXL 입력삭제에 붙은 주소 줄 2개 더(204 일반 · 205 서비스) + 로그대로 바꿈(PUT to_cash = 현금 「!」 · pair = 다시 주소 줄 · 그 밖 PUT = 칸 반영)
+function mut(L) {
+    const extra = (id, nm, qty, more) => Object.assign({ id, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null, indiv: true, service: false, cells: ['홍길동 드림', PXL, '제주시 연삼로 1066-31', nm, CAT[0], String(qty), '010-3300-0' + id, '', '경기 성남시 분당구 판교역로 ' + id + ' 아주 긴 주소 101동 1203호(삼평동 판교푸르지오그랑블)', '', PXL, '', ''] }, more || {});
+    const e140 = L.entries.find(e => e.id === 140); if (e140 && !S.noExtra) e140.rows.push(extra(204, S.longName ? '둘째주소손님 아주아주 긴 이름 받는 분 선물용 회사 단체 주문 담당자 홍길동 과장님 앞' : '둘째주소손님', 2), extra(205, '서비스주소손님', 1, { service: true, indiv: false, cells: ['서비스!', PXL, '제주시 연삼로 1066-31', '서비스주소손님', CAT[0], '1', '010-3300-0205', '', '서울 중구 세종대로 1', '', PXL, '', ''] }));
+    if (e140 && S.bare) e140.rows.forEach(r => { if (r.id === 204) r.cells[0] = '김철수'; });   // #1143 이름만 저장된 입력삭제 주소 줄
+    if (e140 && S.many) for (let i = 0; i < 8; i++) e140.rows.push(extra(210 + i, '여러줄손님' + i, 1));   // 대표 사진 꼴 = ② 10줄 넘음
+    if (S.splitBadge) L.entries.forEach(e => e.rows.forEach(r => { if (r.id === 190) r.badge = { kind: 'line', state: 'sent_split', m: null, n: 0, later: 3, later_date: '2026-11-20', service: 0, pre: false, item_diff: false, t: '', why: '' }; }));
+    const all = L.entries.flatMap(e => e.rows);
+    for (const [k, a, b] of (S.log || [])) {
+        if (k === 'put') { const r = all.find(x => x.id === a); if (!r) continue; if (Array.isArray(b.cells)) r.cells = b.cells.slice(); if (b.to_cash) { r.indiv = false; if (!/!/.test(r.cells[0])) r.cells[0] += '!'; } }
+        if (k === 'pair') a.forEach(id => { const r = all.find(x => x.id === id); if (r) { r.indiv = true; r.cells[0] = String(r.cells[0]).replace(/!/g, ''); r.cells[10] = b; } });
+    }
+    return L;
+}
+
+(async () => {
+    const PORT = Number(process.env.PORT1142 || 3462);
+    const srv = await serve(PORT), base = `http://127.0.0.1:${PORT}/`;
+    const browser = await chromium.launch();
+    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
+    const openPanel = async p => {
+        S.n = 4; S.ent = 1; await p.goto(base + '?v=new'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true }));
+        await p.waitForSelector('#om-list .om-ml'); await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click();
+        await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p.waitForTimeout(400);
+    };
+    const panel = p => p.evaluate(() => { const C = document.getElementById('om-card'), pr = C.querySelector('.om-px-paired'), sum = C.querySelector('.om-pxs-sum-t');
+        return { hidden: C.hidden, title: (document.getElementById('om-card-t') || {}).textContent, wide: C.classList.contains('om-card-wide'), w: Math.round(C.getBoundingClientRect().width), h: Math.round(C.getBoundingClientRect().height),
+            p2: pr ? [...pr.querySelectorAll('li')].map(li => li.querySelector('[data-cact="pxrowopen"]').dataset.v) : [], p2head: (C.querySelector('.om-pxs-paired .om-pxs-h') || {}).textContent || '', sum: sum ? sum.textContent : '',
+            p3: [...C.querySelectorAll('.om-pairx-b [data-cact="pxrowopen"]')].map(b => b.dataset.v), p3on: [...C.querySelectorAll('.om-pairx-b input[data-cact="pxchk"]:checked')].map(i => i.dataset.v),
+            p3none: !!C.querySelector('.om-pairx-b .om-pair-n') && /짝 없는 현금 줄이 메모함에 없어요/.test(C.querySelector('.om-pairx-b').textContent),
+            svc: Object.fromEntries([...C.querySelectorAll('.om-px-paired input[data-cact="pxsvc"]')].map(i => [i.dataset.v, i.checked])), norm: [...C.querySelectorAll('input[data-cact="normchk"]:checked')].map(i => i.dataset.v),
+            undo: (C.querySelector('.om-pxs-undo span') || {}).textContent || '', pend: C.querySelectorAll('.om-pxrow-pend, .om-pend-t').length, save: (document.getElementById('om-card-save') || {}).textContent || '', toasts: (window.__toasts || []).slice(-3), sw: document.documentElement.scrollWidth }; });
+    const pe = [];
+    const pendRows = p => p.evaluate(() => [...document.querySelectorAll('#om-card .om-px-paired li.om-pxrow-pend')].map(li => ({ id: li.querySelector('[data-cact="pxrowopen"]').dataset.v, t: (li.querySelector('.om-pend-t') || {}).textContent, b: li.querySelector('[data-cact="pxdetach"]').textContent, dis: li.querySelector('input[data-cact="pxsvc"]').disabled })));
+    const sumS = p => p.textContent('#om-card .om-pxs-sum-s');
+    try {
+        // ── PC 1500 ────────────────────────────────
+        console.log('① PC 1500 · 매칭 판(대기 → [고친 대로 저장])');
+        reset();
+        const c = await browser.newContext({ viewport: { width: 1500, height: 940 }, deviceScaleFactor: 1 }); const p = await c.newPage(); p.on('pageerror', e => pe.push('1500 ' + String(e)));
+        await openPanel(p);
+        let st = await panel(p);
+        ok(st.title.trim() === '메모 고치기' && st.wide && st.w === 1100 && st.h >= 640 && st.h <= Math.round(940 * 0.92) + 1, '판 = 「메모 고치기」 · 넓은 꼴 폭 1100 · 높이 640~92vh', st);
+        ok(st.p2.join() === '201,204,205' && /3줄 · 4박스/.test(st.p2head) && /매칭된 주소 줄 3박스/.test(st.sum), '② 3줄(201·204·서비스 205) · 제목 4박스 · 요약 3박스(서비스 뺌)', { p2: st.p2, h: st.p2head, s: st.sum });
+        ok(/체크·변경은 아래 \[고친 대로 저장\]을 눌러야 저장돼요/.test(await sumS(p)), '요약 안내 = 종전 「체크·변경은 아래 [고친 대로 저장]을 눌러야 저장돼요」');
+        // 대기 여러 줄 = 201·204 [현금으로 변경] + 서비스 205 끔 + 추가 매칭 193 체크
+        await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await p.waitForTimeout(120);
+        await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p.waitForTimeout(120);
+        await p.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await p.check('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="193"]'); await p.waitForTimeout(150);
+        let pr = await pendRows(p);
+        ok(S.puts.length === 0 && S.services.length === 0 && S.pairs.length === 0, '[현금으로 변경]·서비스·추가 매칭 체크 = 서버 쓰기 0(대기 · #1125 그대로)', { puts: S.puts.length, svc: S.services.length, pairs: S.pairs.length });
+        ok(pr.map(x => x.id).join() === '201,204' && pr.every(x => x.t === '저장하면 현금으로' && x.b === '변경 취소' && x.dis) && /저장 전 · 바뀐 것 4/.test(await sumS(p)), '대기 2줄 = 줄 안 「저장하면 현금으로」 · [변경 취소] · 서비스 칸 잠김 · 요약 「바뀐 것 4」', { pr, s: await sumS(p) });
+        await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p.waitForTimeout(120); pr = await pendRows(p);
+        ok(pr.map(x => x.id).join() === '201', '[변경 취소] = 그 줄만 대기 풀림', pr);
+        await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p.waitForTimeout(120);
+        // ③ 체크 칸 = 체크만 · ③ 줄 글 = 줄 카드 → 닫기 = 판(대기 그대로)
+        await p.click('#om-card .om-pairx-b input[data-cact="pxchk"][data-v="191"]'); await p.waitForTimeout(150);
+        st = await panel(p); ok(st.title.trim() === '메모 고치기' && !!(await p.$('#om-card .om-pxs-sum')) && st.p3on.includes('191'), '③ 체크 칸 = 체크만(줄 카드 안 열림)', st.p3on);
+        await p.click('#om-card .om-pairx-b [data-cact="pxrowopen"][data-v="192"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+        let ch = await p.evaluate(() => { const C = document.getElementById('om-card'); return { sum: !!C.querySelector('.om-pxs-sum'), wide: C.classList.contains('om-card-wide'), h: C.querySelector('.om-rowcard h4').textContent, nm: (C.querySelector('#om-f-0-c3') || {}).value, addr: (C.querySelector('#om-f-0-c8') || {}).value, tel: (C.querySelector('#om-f-0-c6') || {}).value, opt: C.querySelector('.om-rowcard').textContent.includes('타이벡감귤 3kg') }; });
+        ok(!ch.sum && !ch.wide && /현금 줄/.test(ch.h) && ch.nm === '이승비' && /충남 아산시 배방읍 동천로 2/.test(ch.addr || '') && dg(ch.tel) === '01020279787' && ch.opt, '③ 줄 글 = 그 줄 고치기 카드(메모함 현금 줄 카드와 같은 꼴 · 받는 분·전체 번호·주소 전체·품목)', ch);
+        await p.click('#om-card [data-cact="cancel"]'); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p.waitForTimeout(500);
+        st = await panel(p); pr = await pendRows(p);
+        ok(st.wide && pr.map(x => x.id).join() === '201,204' && st.svc['205'] === false && st.p3on.includes('193') && st.p3on.includes('191') && S.puts.length === 0, '줄 카드 닫기 = 판으로 · 대기(현금 2줄 · 서비스 끔 · 추가 매칭 2줄) 그대로', { pr, svc: st.svc, on: st.p3on });
+        // ② 대기 줄 글 = 줄 카드 → 이름 고쳐 저장 = PUT 그 줄만(to_cash 아님) → 판 · 대기 그대로
+        await p.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(200);
+        await p.fill('#om-f-0-c3', '둘째주소고침'); await p.click('#om-card-save'); await until(() => S.puts.length); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p.waitForTimeout(700);
+        st = await panel(p); pr = await pendRows(p); const t204 = await p.textContent('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]');
+        ok(S.puts.length === 1 && S.puts[0]._id === 204 && !S.puts[0].to_cash && S.puts[0].cells[3] === '둘째주소고침' && /둘째주소고침/.test(t204) && pr.map(x => x.id).join() === '201,204' && st.p3on.includes('193'), '② 줄 카드 저장 = PUT 그 줄(이름 · to_cash 아님) · 판으로 · ② 글 갱신 · 대기 그대로', { put: S.puts.map(x => [x._id, x.to_cash, x.cells && x.cells[3]]), t204, pr });
+        // [고친 대로 저장] 한 번 = 현금 2줄 PUT to_cash · 서비스 205 끔 · 추가 매칭 193·191
+        S.puts = []; S.services = []; S.pairs = []; await p.click('#om-card-save'); await until(() => S.puts.filter(x => x.to_cash).length >= 2 && S.pairs.length); await p.waitForTimeout(800);
+        ok(S.puts.filter(x => x.to_cash).map(x => x._id).sort().join() === '201,204' && S.services.some(x => (x.ids || []).includes(205) && x.on === false) && S.pairs.some(x => (x.ids || []).includes(193) && (x.ids || []).includes(191)), '[고친 대로 저장] 1번 = PUT to_cash 2(201·204) · 서비스 205 끔 · 추가 매칭 191·193', { puts: S.puts.map(x => [x._id, !!x.to_cash]), svc: S.services, pairs: S.pairs });
+        // 닫으면 버림
+        reset(); await openPanel(p); await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await p.waitForTimeout(120);
+        const pendN = (await pendRows(p)).length; await p.click('#om-card [data-cact="cancel"]'); await p.waitForTimeout(300); if (await p.isVisible('#om-card [data-cact="discard"]')) await p.click('#om-card [data-cact="discard"]'); await p.waitForTimeout(300);
+        ok(pendN === 1 && S.puts.length === 0 && await p.evaluate(() => document.getElementById('om-card').hidden), '대기 뒤 닫기 = PUT 0(버림)', { pendN, puts: S.puts.length });
+        await c.close();
+        // 줄 카드 [현금으로 변경하기] = 대기 → [고친 대로 저장] 때 PUT(#1125 그대로) → 판
+        reset(); const c4 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const p4 = await c4.newPage(); p4.on('pageerror', e => pe.push('tocash ' + String(e)));
+        await openPanel(p4); await p4.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="201"]'); await p4.waitForSelector('#om-card:not([hidden]) [data-cact="tocash"]');
+        await p4.click('#om-card [data-cact="tocash"]'); await p4.waitForTimeout(200); const tc0 = S.puts.length, pendTxt = await p4.textContent('#om-card [data-cact="tocash"]');
+        await p4.click('#om-card-save'); await until(() => S.puts.length); await p4.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p4.waitForTimeout(700); st = await panel(p4);
+        ok(tc0 === 0 && /현금으로 변경 취소/.test(pendTxt) && S.puts.length === 1 && S.puts[0]._id === 201 && S.puts[0].to_cash === true && st.p2.join() === '204,205' && st.p3.includes('201'), '줄 카드 [현금으로 변경하기] = 대기(PUT 0 · 「현금으로 변경 취소」) → [고친 대로 저장] 때 PUT to_cash 1 → 판으로 · ② 2줄 · ③ 에 201', { tc0, pendTxt, puts: S.puts.length, p2: st.p2 });
+        await c4.close();
+        // #1143 입력삭제 주소 줄 보내는 분 = 현금과 같은 「드림」 판정 · 「!」 없음
+        console.log('①-b #1143 입력삭제 주소 줄 보내는 분 「드림」');
+        reset(); S.bare = true; const c5 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const p5 = await c5.newPage(); p5.on('pageerror', e => pe.push('drim ' + String(e)));
+        await openPanel(p5); await p5.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await p5.waitForSelector('#om-card:not([hidden]) #om-f-0-c0', { state: 'attached' });
+        await p5.evaluate(() => { const d = document.querySelector('#om-card details.om-more'); if (d) d.open = true; });
+        const v0 = await p5.inputValue('#om-f-0-c0'), dirty0 = await p5.evaluate(() => !document.querySelector('#om-card [data-cact="reset"]').hidden);
+        ok(v0 === '김철수 드림' && !dirty0, '이름만 저장된 입력삭제 주소 줄 = 카드에 「김철수 드림」(「!」 없음 · 고친 것으로 안 셈)', { v0, dirty0 });
+        await p5.fill('#om-f-0-c0', '이영희'); const typing = await p5.inputValue('#om-f-0-c0'); await p5.click('#om-f-0-c3'); const left = await p5.inputValue('#om-f-0-c0');
+        await p5.fill('#om-f-0-c0', '제주아꼼이네'); await p5.click('#om-f-0-c3'); const keep1 = await p5.inputValue('#om-f-0-c0');
+        await p5.fill('#om-f-0-c0', '박민수 올림'); await p5.click('#om-f-0-c3'); const keep2 = await p5.inputValue('#om-f-0-c0');
+        ok(typing === '이영희' && left === '이영희 드림' && keep1 === '제주아꼼이네' && keep2 === '박민수 올림', '치는 중엔 그대로 · 칸 떠날 때 「이영희 드림」 · 제주아꼼이네·「올림」은 그대로', { typing, left, keep1, keep2 });
+        await p5.fill('#om-f-0-c0', '최지우'); await p5.click('#om-f-0-c3'); await p5.click('#om-card-save'); await until(() => S.puts.length); await p5.waitForTimeout(300);
+        ok(S.puts[0] && S.puts[0]._id === 204 && S.puts[0].cells[0] === '최지우 드림' && !/!/.test(S.puts[0].cells[0]), '저장 = 보내는 분 「최지우 드림」(「!」 없음)', S.puts.map(x => [x._id, x.cells && x.cells[0]]));
+        await p5.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await p5.click('#om-card .om-pairx-b [data-cact="pxrowopen"][data-v="191"]'); await p5.waitForSelector('#om-card:not([hidden]) #om-f-0-c0', { state: 'attached' });
+        const vc = await p5.inputValue('#om-f-0-c0'); ok(vc === '강명희 드림', '현금 줄(「강명희 드림!」) = 종전대로 「강명희 드림」', vc);
+        await c5.close();
+        // ── 나뉜 입력삭제 · ③ 현금 줄 0 ────────────────
+        console.log('② 나뉜 입력삭제(sent_split) · ③ 현금 줄 0');
+        reset(); S.deleted = new Set([191, 192, 193, 203]); S.splitBadge = true;
+        const c3 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const p3 = await c3.newPage(); p3.on('pageerror', e => pe.push('split ' + String(e)));
+        await openPanel(p3); st = await panel(p3);
+        ok(st.p2.join() === '201,204,205' && st.p3none && !st.p3.length, '나뉜 입력삭제 판 · ③ = 짝 없는 현금 줄 없음(0줄 안내)', { p2: st.p2, p3: st.p3, none: st.p3none });
+        await p3.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await p3.click('#om-card-save'); await until(() => S.puts.length); await p3.waitForTimeout(400);
+        ok(S.puts.filter(x => x.to_cash).map(x => x._id).join() === '201', '③ 0줄 판도 대기 → 저장 = PUT to_cash 1(201)', S.puts.map(x => [x._id, x.to_cash]));
+        await c3.close();
+        // ── 폰 390 ──────────────────────────────────
+        console.log('③ 폰 390');
+        reset();
+        const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 }); const p2 = await c2.newPage(); p2.on('pageerror', e => pe.push('390 ' + String(e)));
+        await openPanel(p2); st = await panel(p2);
+        ok(st.w === 390 && st.sw <= 390, '390 = 꽉 찬 꼴(폭 390) · 넘침 0', { w: st.w, sw: st.sw });
+        await p2.click('#om-card .om-pairx-b [data-cact="pxrowopen"][data-v="192"]'); await p2.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p2.waitForTimeout(200);
+        const sw2 = await p2.evaluate(() => document.documentElement.scrollWidth); await p2.click('#om-card [data-cact="cancel"]'); await p2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); st = await panel(p2);
+        ok(sw2 <= 390 && st.p2.join() === '201,204,205', '390 줄 카드 넘침 0 · 닫으면 판으로', { sw2, p2: st.p2 });
+        await c2.close();
+        // ── 깨짐 확인(총괄 · 대표 「칸이랑 깨지는 부분 없도록」) = 1500 · 폴드7 펼침 720 · 폰 390 · 야간 1번 · 긴 이름으로 두 줄 접히는 줄 · 줄 카드 펼친 상태
+        console.log('④ 깨짐 확인(세 폭 · 야간 · 두 줄 줄 · 줄 카드)');
+        const lay = p => p.evaluate(() => {
+            const vw = document.documentElement.clientWidth, C = document.getElementById('om-card'), R = e => e.getBoundingClientRect(), out = { vw, sw: document.documentElement.scrollWidth };
+            out.over = [...C.querySelectorAll('*')].filter(e => { const r = R(e); return r.width > 0 && (r.right > vw + 0.5 || r.left < -0.5); }).length;
+            const lists = [...C.querySelectorAll('.om-px-paired, .om-pairx-b .om-pair-l')];
+            out.liOverlap = 0; out.inOverlap = 0; out.rows = 0; out.twoLine = 0;
+            lists.forEach(L => { const lis = [...L.children].filter(li => R(li).height > 0); out.rows += lis.length;
+                for (let i = 1; i < lis.length; i++) if (R(lis[i]).top < R(lis[i - 1]).bottom - 0.5) out.liOverlap++;
+                lis.forEach(li => { const t = li.querySelector('.om-pxrow-open'), a = li.querySelector('.om-pxrow-a') || li.querySelector('.om-pxc-ck'); if (!t || !a) return; const rt = R(t), ra = R(a); { const rg = document.createRange(); rg.selectNodeContents(t); if (new Set([...rg.getClientRects()].map(q => Math.round(q.top))).size >= 2) out.twoLine++; }
+                    const x = Math.min(rt.right, ra.right) - Math.max(rt.left, ra.left), y = Math.min(rt.bottom, ra.bottom) - Math.max(rt.top, ra.top); if (x > 0.5 && y > 0.5) { out.inOverlap++; (out.why = out.why || []).push(['겹', L.className, Math.round(rt.left), Math.round(rt.right), Math.round(rt.top), Math.round(rt.bottom), Math.round(ra.left), Math.round(ra.right), Math.round(ra.top), Math.round(ra.bottom)]); }
+                    if (R(li).bottom < rt.bottom - 0.5 || R(li).bottom < ra.bottom - 0.5) { out.inOverlap++; (out.why = out.why || []).push(['삐', L.className, Math.round(R(li).bottom), Math.round(rt.bottom), Math.round(ra.bottom), (() => { const g = getComputedStyle(li), q = getComputedStyle(a); return [g.display, g.height, g.maxHeight, g.overflow, g.gridTemplateRows, g.paddingTop, g.paddingBottom, q.height, q.minHeight, q.display, [...a.children].map(e => Math.round(R(e).height) + ':' + getComputedStyle(e).marginTop + '/' + getComputedStyle(e).marginBottom).join(' ')].join(' | '); })()]); } }); });
+            const pl = [...C.querySelectorAll('.om-px-paired li')]; out.svcL = [...new Set(pl.map(li => Math.round(R(li.querySelector('.om-px-svc')).left)))]; out.btnL = [...new Set(pl.map(li => li.querySelector('[data-cact="pxdetach"], .om-px-ph')).filter(Boolean).map(b => Math.round(R(b).left)))];
+            out.minH = Math.min(...[...C.querySelectorAll('.om-px-paired button, .om-px-paired label, .om-pairx-b button, .om-pairx-b label')].filter(e => R(e).height).map(e => Math.round(R(e).height)));
+            out.pendOut = [...C.querySelectorAll('.om-pend-t')].filter(e => { const r = R(e), q = R(e.closest('li')); return r.top < q.top - 0.5 || r.bottom > q.bottom + 0.5 || r.left < q.left - 0.5 || r.right > q.right + 0.5; }).length; out.pendN = C.querySelectorAll('.om-pend-t').length;
+            out.svcTop = [...new Set(pl.map(li => Math.round(R(li.querySelector('.om-px-svc')).top - R(li).top)))];
+            return out; });
+        const LAY = {};
+        for (const [w, h, dark] of [[1500, 940, false], [720, 900, false], [390, 844, false], [1500, 940, true], [390, 844, true]]) {
+            reset(); S.longName = true; S.many = true;
+            const cx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: w <= 720, isMobile: w <= 720 }); const px = await cx.newPage(); px.on('pageerror', e => pe.push(w + ' ' + String(e)));
+            await openPanel(px); if (dark) { await px.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await px.waitForTimeout(150); }
+            const nm = w + (dark ? ' 야간' : ''); const a = await lay(px);
+            const b0 = await px.evaluate(() => { const C = document.getElementById('om-card'), s = getComputedStyle(C.querySelector('.om-pxs-paired')); return { bg: s.backgroundColor, fg: getComputedStyle(C.querySelector('.om-pxrow-open')).color, w: Math.round(C.getBoundingClientRect().width) }; });
+            await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await px.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="204"]'); await px.uncheck('#om-card .om-px-paired input[data-cact="pxsvc"][data-v="205"]'); await px.waitForTimeout(250); const b = await lay(px);
+            if (process.env.SHOT1142) await px.screenshot({ path: path.join(process.env.SHOT1142, 'px1142-' + w + (dark ? '-dark' : '') + '.png'), fullPage: false });
+            await px.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await px.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await px.waitForTimeout(200);
+            const cc = await px.evaluate(() => { const vw = document.documentElement.clientWidth, C = document.getElementById('om-card'), cr = C.getBoundingClientRect(); return { sw: document.documentElement.scrollWidth, vw, out: [...C.querySelectorAll('*')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > cr.right + 0.5; }).length, w: Math.round(cr.width) }; });
+            if (process.env.SHOT1142) await px.screenshot({ path: path.join(process.env.SHOT1142, 'px1142-' + w + (dark ? '-dark' : '') + '-card.png') });
+            await px.click('#om-card [data-cact="cancel"]'); await px.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await px.waitForTimeout(300); const d = await lay(px);
+            LAY[nm] = { 판폭: b0.w, 줄: a.rows, 두줄: a.twoLine, 겹침: a.liOverlap + a.inOverlap + b.liOverlap + b.inOverlap + d.liOverlap + d.inOverlap, 넘침: a.over + b.over + d.over + cc.out, 문서폭: Math.max(a.sw, b.sw, cc.sw, d.sw), 서비스선: a.svcL.length + '/' + b.svcL.length + '/' + d.svcL.length, 단추선: a.btnL.length, 최소접점: a.minH, 줄카드폭: cc.w };
+            ok(a.rows >= 14 && a.liOverlap + a.inOverlap === 0 && b.liOverlap + b.inOverlap === 0 && d.liOverlap + d.inOverlap === 0, nm + ' ②·③ 줄 겹침 0(줄끼리 · 글과 조작 · 줄 밖으로 삐짐) — 처음 · 대기 2줄(+서비스 끔) · 줄 카드 닫은 뒤(대기 그대로)', { a, b, d });
+            ok(a.twoLine >= 1, nm + ' 긴 이름 줄 = 두 줄 이상 접힘(그래도 겹침 0)', a.twoLine);
+            ok(b.pendN === 2 && b.pendOut === 0 && d.pendN === 2 && d.pendOut === 0, nm + ' 대기 2줄 「저장하면 현금으로」 = 줄 안(다음 줄과 안 겹침)', { b: [b.pendN, b.pendOut], d: [d.pendN, d.pendOut] });
+            const flat = v => Math.max(...v) - Math.min(...v) <= 1.5; if (w > 480) ok(flat(a.svcTop) && flat(b.svcTop) && flat(d.svcTop), nm + ' 서비스 칸·단추 높이 = 줄마다 같음(대기·두 줄 줄도 위로/아래로 안 어긋남)', { a: a.svcTop, b: b.svcTop, d: d.svcTop });
+            ok(a.svcL.length === 1 && a.btnL.length === 1 && b.svcL.length === 1 && b.btnL.length === 1 && d.svcL.length === 1, nm + ' ② 서비스 칸·단추 = 세로 선 하나', { a: [a.svcL, a.btnL], b: b.svcL, d: d.svcL });
+            ok(a.over + b.over + d.over === 0 && Math.max(a.sw, b.sw, d.sw) <= w && cc.out === 0 && cc.sw <= w, nm + ' 가로 넘침 0(판 · 대기 2줄 · 줄 카드 펼친 상태)', LAY[nm]);
+            ok(w > 720 ? a.minH >= 36 : a.minH >= 44, nm + ' 접점 높이 ' + (w > 720 ? '36' : '44') + 'px↑', a.minH);
+            if (dark) ok(b0.bg !== 'rgba(0, 0, 0, 0)' && b0.fg !== 'rgb(16, 24, 40)', nm + ' 야간 = 판 색·글 색 야간 값', b0);
+            await cx.close();
+        }
+        console.log('  세 폭 수치', JSON.stringify(LAY));
+        ok(LAY['1500'].판폭 === 1100 && LAY['720'].판폭 === 720 && LAY['390'].판폭 === 390 && LAY['1500'].줄카드폭 <= 700, '판 폭 = 1500 → 1100 · 720 → 720(꽉 참) · 390 → 390 · 줄 카드는 종전 폭(700 이하 = 원래 자리 카드 그대로)', LAY);
+        ok(pe.length === 0, '스크립트 오류 0', pe);
+    } catch (e) { failN++; console.log('  ❌ 예외', e && e.stack || e); }
+    await browser.close(); srv.close();
+    console.log(`\n결과 ${pass}/${pass + failN}`); process.exit(failN ? 1 : 0);
+})();
+let info3 = null;

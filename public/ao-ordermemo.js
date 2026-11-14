@@ -1156,8 +1156,9 @@
         if (c.wait) { const id = c.wait.id; c.wait = null; API.previewDel(id); }   // 정리 중에 닫음 = 그 요청 취소(손님 글 지움)
         OM.card = null;
         if (c.aseq && !c._aseqGo) OM.aseq = null;   // #880-b 이어서 확인 중에 그냥 닫음 = 멈춤
-        const card = $('om-card'), back = $('om-card-back'); if (card) { card.hidden = true; card.innerHTML = ''; } if (back) back.hidden = true;
+        const card = $('om-card'), back = $('om-card-back'); if (card) { card.hidden = true; card.innerHTML = ''; card.classList.remove('om-card-wide'); } if (back) back.hidden = true;
         if (!fromHist) hbDrop('omcard');
+        if (c.back) { const p = c.back; c.back = null; Promise.resolve().then(() => pxBackOpen(p)); }   // #1142 판에서 연 줄 카드 = 닫거나 저장하면 판으로(다른 카드가 바로 열리면 안 돌아감 · pxBackOpen 이 OM.card 를 봄)
         // 초점은 창 안으로만 되돌린다(문자 대화에서 왔으면 그 단추는 창 뒤 — 거기로 가면 다음 Esc·Tab 이 뒤 화면으로 샘)
         const ret = OM.lastFocus && OM.lastFocus.isConnected && OM.el.contains(OM.lastFocus) ? OM.lastFocus : (phoneW() ? $('om-close') : $('om-raw'));
         if (ret && !OM.el.hidden) try { ret.focus({ preventScroll: true }); } catch (e) { /* 그대로 */ }
@@ -1183,7 +1184,7 @@
         if (OM.opt) optRender();
     }
     const fid = (ri, f) => `om-f-${ri}-${f.kind === 'shipdate' ? 'date' : f.i != null ? 'c' + f.i : f.k}`;
-    const getV = (r, f) => f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? senderShow(r.cells[0]) : valOf(r, f);
+    const getV = (r, f) => f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? (r.kind === 'cash' && r.indiv ? senderDrim(r.cells[0]) : senderShow(r.cells[0])) : valOf(r, f);   /* #1143(대표 11/14) 입력삭제 주소 줄 = 이름만 저장돼 있어도 「○○ 드림」으로 보임(「!」 없음 · 서버도 같은 판정) */
     function setV(r, f, v) {
         if (f.kind === 'shipdate') { const iso = toIso(v); r.ship_date = iso === undefined ? r.ship_date : iso; r._dateBad = iso === undefined; }
         else if (f.kind === 'sender') r.cells[0] = senderShow(v);   // #863 이름만 보냄(「!」 = 서버가 맨 뒤에)
@@ -1332,6 +1333,7 @@
           <footer class="om-card-f">${c.confirm ? '' : footHtml()}</footer>
           <p class="om-card-note">${c.mode === 'edit' ? '저장하면 이 줄만 바뀌어요 · 서버가 다시 검사해요.' : '저장 전엔 아무것도 안 남아요 · 저장한 뒤에도 목록에서 고치거나 지울 수 있어요.'}</p>`;
         if (c.confirm) renderConfirm();
+        card.classList.toggle('om-card-wide', !!c.pxOnly);   // #1142 매칭 판 = PC 에서 넓고 높게(폰은 종전 꽉 찬 꼴)
         if (!card._bound) { card._bound = true; card.addEventListener('click', onCard); card.addEventListener('input', onCardInput); card.addEventListener('focusout', onCardLeave); card.addEventListener('change', onCardChange); card.addEventListener('keydown', onCardKey); }
         const nb = card.querySelector('.om-card-b'); if (nb && sc) nb.scrollTop = sc;
     }
@@ -1463,6 +1465,7 @@
         if (!all.length) return `<p class="om-pair-n">아직 짝 없는 현금 줄이 메모함에 없어요</p>`;
         const head = `<p class="om-pair-n">${all.length}줄 중 <b>${on.length}줄</b> · ${onRows.reduce((t, r) => t + qtyOf(r), 0)}박스${x.q ? ` · 찾은 ${hit.length}줄` : ''}${hit.length > PX_MAX ? (x.q && allOn ? ` · ${PX_MAX}줄까지 보여요 · ${hit.length - PX_MAX}줄 더 · 전부 선택됨` : ` · ${PX_MAX}줄까지만 보여요 · 찾기로 좁혀 주세요`) : ''}</p>${x.q && hit.length > 1 ? `<label class="om-px-all"><input type="checkbox" data-cact="pxall" data-k="${esc(d)}"${allOn ? ' checked' : ''}> <span>찾은 ${hit.length}줄 전체 선택</span></label>` : ''}`;   // #947 단체 입력삭제 = 찾은 줄 전부(표시 50줄과 무관) · 찾기 글자가 있을 때만(글자 없이 전체 = 남의 줄까지)
         if (!shown.length) return head + `<p class="om-pair-s">찾는 줄이 없어요 · 이름·번호 끝자리·주소·품목으로 찾아요</p>`;
+        if (c.pxOnly && c.mode === 'edit') return head + `<ul class="om-pair-l om-pxc-l">${shown.map(r => { const id = esc(String(r.id)), w = esc(pxWho(r, d)); return `<li class="om-pxc"><label class="om-pxc-ck"><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${id}"${x.sel.has(String(r.id)) ? ' checked' : ''} aria-label="${w} 고르기"></label><button type="button" class="om-pxrow-open" data-cact="pxrowopen" data-v="${id}" aria-label="${w} · 줄 정보 보고 고치기"><span>${w}</span></button></li>`; }).join('')}</ul>`;   // #1142 ④ 판 = 체크 칸 따로 · 줄 글 = 그 줄 고치기 카드(체크는 펼침으로 안 침)
         return head + `<ul class="om-pair-l">${shown.map(r => `<li><label><input type="checkbox" data-cact="pxchk" data-k="${esc(d)}" data-v="${esc(String(r.id))}"${x.sel.has(String(r.id)) ? ' checked' : ''}> <span>${esc(pxWho(r, d))}</span></label></li>`).join('')}</ul>`;
     }
     // #1131-b ④ 판 맨 위 요약 = 「입력삭제 번호 · 주문 n박스 ↔ 매칭된 주소 줄 m박스」 + 그 줄 배지(서버 판정 그대로 · 새 판정 없음) + 저장 안내 한 번(대기 n 꼬리)
@@ -1521,8 +1524,8 @@
     const pxPaired = d => (OM.list || []).filter(r => r.kind === 'cash' && r.state === 'open' && r.id != null && (r.indiv || r.service) && [r.cells[10], r.cells[1]].map(digits).includes(d));
     function pxPairedHtml(c, d) {
         const L = pxPaired(d); if (!L.length) return '';
-        return `<div class="om-pxs om-pxs-paired"><p class="om-pair-n om-pxs-h"><i class="om-pxs-no" aria-hidden="true">2</i>매칭된 주소 줄 ${L.length}줄 · ${L.reduce((t, r) => t + qtyOf(r), 0)}박스 <small class="om-pxs-d">이 입력삭제로 나가는 줄이에요 · 서비스 = 주문과 별개 현금 건 · 잘못 매칭했으면 [현금으로 변경]</small></p>
-                <ul class="om-pair-l om-pxs-l om-px-paired">${L.map(r => { const pend = cashPend(c, r); return `<li class="om-pxrow${pend ? ' om-pxrow-pend' : ''}"><span class="om-pxrow-t">${esc(pairWhoQ(r))}${pend ? '<small class="om-pend-t">저장하면 현금으로</small>' : ''}</span><span class="om-px-r om-pxrow-a"><label class="om-px-svc"><input type="checkbox" data-cact="pxsvc" data-v="${esc(String(r.id))}"${svcOn(c, r) && !pend ? ' checked' : ''}${pend ? ' disabled' : ''}> <span>서비스</span></label>${r.indiv && !r.service ? `<button type="button" class="om-btn sm${pend ? ' om-pend-b' : ''}" data-cact="pxdetach" data-v="${esc(String(r.id))}" aria-pressed="${pend ? 'true' : 'false'}">${pend ? '변경 취소' : '현금으로 변경'}</button>` : ''}</span></li>`; }).join('')}</ul></div>`;   // #944
+        return `<div class="om-pxs om-pxs-paired"><p class="om-pair-n om-pxs-h"><i class="om-pxs-no" aria-hidden="true">2</i>매칭된 주소 줄 ${L.length}줄 · ${L.reduce((t, r) => t + qtyOf(r), 0)}박스 <small class="om-pxs-d">이 입력삭제로 나가는 줄이에요 · 서비스 = 주문과 별개 현금 건 · 잘못 매칭했으면 [현금으로 변경] · 줄 글을 누르면 정보·고치기</small></p>
+                <ul class="om-pair-l om-pxs-l om-px-paired">${L.map(r => { const id = esc(String(r.id)), pend = cashPend(c, r); return `<li class="om-pxrow${pend ? ' om-pxrow-pend' : ''}"><span class="om-pxrow-t"><button type="button" class="om-pxrow-open" data-cact="pxrowopen" data-v="${id}" aria-label="${esc(pairWhoQ(r))} · 줄 정보 보고 고치기">${esc(pairWhoQ(r))}</button>${pend ? '<small class="om-pend-t">저장하면 현금으로</small>' : ''}</span><span class="om-px-r om-pxrow-a"><label class="om-px-svc"><input type="checkbox" data-cact="pxsvc" data-v="${id}"${svcOn(c, r) && !pend ? ' checked' : ''}${pend ? ' disabled' : ''}> <span>서비스</span></label>${r.indiv && !r.service ? `<button type="button" class="om-btn sm${pend ? ' om-pend-b' : ''}" data-cact="pxdetach" data-v="${id}" aria-pressed="${pend ? 'true' : 'false'}">${pend ? '변경 취소' : '현금으로 변경'}</button>` : '<span class="om-px-ph" aria-hidden="true"></span>'}</span></li>`; }).join('')}</ul></div>`;   // #944 · #1125 대기 · #1142(대표 11/14) 줄 글 = 그 줄 카드 · 대기 표시는 줄 안(줄 높이가 늘어남) · 단추 없는 줄은 빈 자리(오른쪽 조작 같은 세로 선)
     }
     // #1125(대표 11/11) 서비스 체크 = 누르는 즉시 저장 → 화면에만(c.svc) · [고친 대로 저장]·[이 줄도 주소 줄로] 때 같이 저장 · 저장 안 하고 닫으면 버림(일반발송 체크와 같은 꼴)
     const cashPend = (c, r) => !!(c && c.cashQ && c.cashQ.has(String(r.id)) && r.indiv && !r.service);
@@ -1557,6 +1560,21 @@
         const id = String(b.dataset.v), r = (OM.list || []).find(x => String(x.id) === id); if (!r || !r.indiv || r.service) return;
         const q = c.cashQ = c.cashQ || new Set(); if (q.has(id)) q.delete(id); else q.add(id);
         renderCard(); const back = $('om-card').querySelector(`[data-cact="pxdetach"][data-v="${id}"]`); if (back) back.focus({ preventScroll: true });
+    }
+    // 판 다시 그림(치는 칸이 있으면 0.4초마다 미룸 · #857)
+    function pxRedraw(c) { const go = () => { if (OM.card !== c || c._saving) return; if (cardTyping()) { setTimeout(go, 400); return; } renderCard(); }; go(); }
+    // #1142(대표 「매칭된 건 매칭할 건들도 클릭하면 정보 나오고 수정되는 카드」) ②·③ 줄 글 = 메모함 현금 줄을 눌렀을 때와 같은 고치기 카드(editOpen · 같은 저장 길) · 닫거나 저장하면 이 판으로 돌아옴(back · 판의 대기 체크 그대로)
+    function pxRowOpen(c, id) {
+        if (!c.pxOnly || c._saving) return; const r = (OM.list || []).find(x => String(x.id) === String(id)); if (!r) return;
+        c._backFocus = String(id); editOpen(r, { back: c });
+    }
+    function pxBackOpen(p) {
+        if (OM.card || !OM.el || OM.el.hidden) return;
+        p.confirm = false; p._saving = false; OM.card = p;
+        renderCard(); $('om-card').hidden = false; $('om-card-back').hidden = false;
+        hbPush('omcard', () => cardClose(false, true));
+        const f = $('om-card').querySelector(`[data-cact="pxrowopen"][data-v="${p._backFocus}"]`) || $('om-card-save'); if (f) f.focus({ preventScroll: true });
+        load().then(() => pxRedraw(p));
     }
     const pxEmptyHtml = (c, k) => isPhoneKey(k.d) && pxCands(c, k.d).length ? `<div class="om-pair ok" role="group"><b>메모함에 이 번호(${esc(k.show)}) 현금 줄이 없어요 · 다른 번호로 들어온 줄이면 [추가 매칭]으로 고를 수 있어요</b><div class="om-acts">${pxBtn(k.d, k.show)}</div></div>` : '';
     const pxAllHtml = c => { const X = c.pairX || {}; return Object.keys(X).map(d => pxHtml(c, d, X[d].key)).join(''); };
@@ -2207,6 +2225,7 @@
         if (a === 'pxgo') { const d = b.dataset.k, x = pxState(c, d), ids = pxSelIds(c, d); if (!ids.length) return; if (c.mode === 'edit') { pxRunNow(c, d); return; } x.picked = ids.map(Number); x.open = false; renderCard(); toast(`${ids.length}줄을 더 골랐어요 · 저장하면 입력삭제 ${x.key} 주소 줄로 바꿔요`); return; }
         if (a === 'pxsvc') { pxSvc(c, b); return; }   // #936
         if (a === 'pxdetach') { pxDetach(c, b); return; }   // #944
+        if (a === 'pxrowopen') { pxRowOpen(c, b.dataset.v); return; }   // #1142
         if (a === 'ordchk' && r) { const e = r._ord && r._ord.by[b.dataset.o]; if (e) { e.on = !!b.checked; ordRefresh(ri); const back = $('om-card').querySelector(`input[data-cact="ordchk"][data-ri="${ri}"][data-o="${b.dataset.o}"]`); if (back) back.focus({ preventScroll: true }); } return; }   // #938
         if (a === 'ordmerge') { ordMerge(c, c.rows[0], b); return; }   // 고치기 카드 = 줄 하나(단추에 ri 없음)
         if (a === 'pxundo') { const x = c.pairX && c.pairX[b.dataset.k]; if (x) { x.picked = null; x.sel.clear(); } renderCard(); return; }

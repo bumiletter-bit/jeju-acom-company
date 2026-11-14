@@ -2,6 +2,7 @@
 //   🔴 실DB 쓰기 없음 · 서버(server.js) 안 띄움 · 네트워크 0 — 이 스크립트가 띄우는 작은 가짜 서버(가짜 /api/*)에 public/ao-ordermemo.js·css 만 얹어 Playwright 로 봄
 //   무회귀 = 100줄 이하 · 50장 이하 카드는 지금 커밋(HEAD)의 ao-ordermemo.js(+ 지금 css · #909)와 화면 픽셀 비교(같아야 함)
 //   #934(11/1) ⑤ 절 = 「추가 매칭」(번호 다른 현금 줄 · ①②③ 카드 단추 · 찾기 · 저장 뒤 POST pair pick) · ④ 메모함 입력삭제 줄 단추(바로 POST) · ⑤ 현금 줄 고치기 카드 [입력삭제 주문에 붙이기] · 가짜 /preview·/pair·저장 응답은 이 스크립트 안에서만
+//   #1142(11/14) = ④ 판 [현금으로 변경]은 #1125 대기 그대로(대표 「고친 대로 저장으로」) · 줄 글은 줄 카드 단추(li > span:first-child 글 그대로) · 매칭 판 화면 꼴은 verify-1142-px.js
 //   실행: node scripts/verify-900-2b.js   (PORT2B 로 포트 · 기본 3458)
 'use strict';
 const path = require('path'), http = require('http'), fs = require('fs'), { execSync } = require('child_process');
