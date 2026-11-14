@@ -704,6 +704,35 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
 @media (max-width: 720px) {   /* 워커3 지적 = 폰 품목 칸·구매자 칸 한 줄 전체 · 묶인 줄 두 칸은 쌓임 */
     .om-card .om-grid.cash.om-g-what > .fk-4, .om-card .om-grid.cash.om-grp-buyer-g > .om-f { grid-column: 1 / -1; }
 }
+/* #1158(대표 11/15) 받는 분 묶음 = 받는 분 · 연락처 · 배송지 · 배송메세지 · 발송일(받는 분 배송메모) · 보내는 분 = 따뜻한 호박색 묶음(받는 분 인디고와 한눈에 갈림) · 주문한 분 = 회색
+   색만으로 가르지 않게 머리마다 아이콘(상자 · 사람 · 선물) · 색 = --d-* 토큰 섞기만(야간 저절로) · 체험장 체크 = 맨 위 */
+.om-card .om-grp-h { align-items: center; }
+.om-card .om-grp-i { flex: none; }
+.om-card .om-grp-buyer > .om-grp-h .om-grp-i { color: var(--d-sub); }
+.om-card .om-rowcard > details.om-grp-send { border-color: color-mix(in srgb, var(--d-warn) 38%, transparent); background: color-mix(in srgb, var(--d-warn) 9%, var(--d-card)); }
+.om-card .om-grp-send > summary { justify-content: space-between; gap: 8px; color: var(--d-ch-qna-fg); font-size: 14px; }
+.om-card .om-grp-send > summary::-webkit-details-marker { display: none; }
+.om-card .om-send-t { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.om-card .om-send-t b { flex: none; font-weight: inherit; white-space: nowrap; }
+.om-card .om-send-t small { min-width: 0;  overflow: hidden; color: var(--d-dim); font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.om-card .om-grp-send > summary > svg:last-child { flex: none; transition: transform .16s var(--d-ease, ease-out); }
+.om-card .om-grp-send[open] > summary > svg:last-child { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .om-card .om-grp-send > summary > svg:last-child { transition: none; } }
+.om-card .om-grp-send > summary:focus-visible { outline-color: var(--d-ch-qna-fg); }
+@media (min-width: 721px) {   /* PC = 받는 분 | 연락처 / 배송지 / 배송메세지(넓게) | 발송일 */
+    .om-card .om-grid.cash.om-grp-recv-g { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-3, .om-card .om-grid.cash.om-grp-recv-g > .fk-6 { grid-column: span 4; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-8 { grid-column: 1 / -1; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-9 { grid-column: span 5; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-ship { grid-column: span 3; }
+}
+@media (max-width: 720px) {   /* 폰 = 받는 분 | 연락처 / 배송지 / 배송메세지 | 발송일(종전 배송메세지·발송일 줄과 같은 6:4) */
+    .om-card .om-grid.cash.om-grp-recv-g { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-3, .om-card .om-grid.cash.om-grp-recv-g > .fk-6 { grid-column: span 5; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-8 { grid-column: 1 / -1; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-9 { grid-column: span 6; }
+    .om-card .om-grid.cash.om-grp-recv-g > .fk-ship { grid-column: span 4; }
+}
 /* #934 추가 매칭(번호 다른 현금 줄 고르기) · ⑤ 입력삭제 주문에 붙이기 — 색은 .om-pair 토큰 그대로(새 색 0 · 야간 규칙 상속) */
 .om-pairx-q { margin: 0; }
 .om-pairx-b { display: grid; gap: 4px; min-width: 0; }

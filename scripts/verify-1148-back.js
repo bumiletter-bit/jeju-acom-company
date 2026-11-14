@@ -28,6 +28,13 @@ const HBJS = `(function(){\n${DESK.slice(h0, h1)}\nwindow.addEventListener('pops
 const M = new Function('require', 'ROOT', 'path', 'fs', 'http', 'execSync', 'chromium', 'XLSX', 'ok', 'HBJS', B + '\nreturn { S, serve, until, PXL, CAT };')(require, ROOT, path, fs, http, execSync, chromium, XLSX, ok, HBJS);
 const { S, serve, until, PXL, CAT } = M;
 const dg = s => String(s || '').replace(/\D/g, '');
+// #1157 크롬 「기록 조작 막이」 흉내 — 사람 손(누름·키)이 없이 쌓은 기록 칸(pushState)이 있으면, 그 앞 칸은 폰 뒤로가기 단추가 건너뜀(손 한 번 = 칸 하나 · 쌓으면 손 소모)
+//   → 뒤로가기 처리(popstate) 안에서 칸을 다시 쌓으면 다음 뒤로가기가 목록 칸을 건너뛰어 메모함·앱까지 빠짐(설치형 앱 = 바닥에서 앱 꺼짐). page.goBack 은 건너뛰기를 안 해 이 셈으로 잡는다
+const ACT = `(() => { let act = false; window.__noAct = [];
+  ['pointerdown', 'keydown', 'click', 'touchend'].forEach(t => window.addEventListener(t, e => { if (e.isTrusted) act = true; }, true));
+  const P = history.pushState.bind(history);
+  history.pushState = function (st) { if (!act) window.__noAct.push(JSON.stringify(st && (st.k || st.omOwn || st.foPanel) || '?')); act = false; return P.apply(null, arguments); };
+})();`;
 function mut(L) {
     const extra = (id, nm, qty, more) => Object.assign({ id, kind: 'cash', state: 'open', sure: true, check_why: [], addr_ok: null, indiv: true, service: false, cells: ['홍길동 드림', PXL, '제주시 연삼로 1066-31', nm, CAT[0], String(qty), '010-3300-0' + id, '', '경기 성남시 분당구 판교역로 ' + id, '', PXL, '', ''] }, more || {});
     const e140 = L.entries.find(e => e.id === 140); if (e140) e140.rows.push(extra(204, '둘째주소손님', 2));
@@ -47,25 +54,28 @@ function mut(L) {
         const om = vis('desk-om'), card = !!(C && !C.hidden), kind = !card ? '' : C.querySelector('.om-pxs-sum') ? '판' : '줄카드', ask = vis('om-ask'), opt = vis('om-optpop'), conf = !!(C && C.querySelector('.om-confirm'));
         const prev = !!(q('desk-om') && q('desk-om').classList.contains('prev-open'));
         const s = [om ? '메모함' : '', prev ? '현금표' : '', card ? kind : '', opt ? '품목' : '', ask ? '확인창' : '', conf ? '묻기' : ''].filter(Boolean).join('>') || '없음';
-        return { away: false, om, card, kind, ask, opt, conf, s, fo: !!(window.__fo && window.__fo.open), hb: (window.AkmAoDesk._hb.stack || []).map(e => e.k).join(','), pend: C ? C.querySelectorAll('.om-pxrow-pend, .om-pend-t').length : 0, chk: C ? [...C.querySelectorAll('.om-pairx-b input[data-cact="pxchk"]:checked')].map(i => i.dataset.v).join() : '', qv: (C && C.querySelector('[id^="om-px-q-"]') || {}).value || '' };
+        return { na: (window.__noAct || []).slice(), away: false, om, card, kind, ask, opt, conf, s, fo: !!(window.__fo && window.__fo.open), hb: (window.AkmAoDesk._hb.stack || []).map(e => e.k).join(','), pend: C ? C.querySelectorAll('.om-pxrow-pend, .om-pend-t').length : 0, chk: C ? [...C.querySelectorAll('.om-pairx-b input[data-cact="pxchk"]:checked')].map(i => i.dataset.v).join() : '', qv: (C && C.querySelector('[id^="om-px-q-"]') || {}).value || '' };
     });
     const back = async p => { await p.goBack({ waitUntil: 'commit', timeout: 3000 }).catch(() => null); await p.waitForTimeout(900); return layers(p); };
     const settle = p => p.waitForTimeout(900);   // ao-desk hbSync 의 되돌리기(최대 700ms)가 끝나게
     async function newPage(fo) {
         const cx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 }); const p = await cx.newPage(); p.on('pageerror', e => pe.push(String(e)));
+        await cx.addInitScript(ACT);
         await p.goto(base + 'away'); await p.goto(base + (process.env.OLD1148 ? '?v=old' : '?v=new'));   // OLD1148=1 = 고치기 전(HEAD) 동작 표
         if (fo) await p.evaluate(() => { __foListen(); __foOpen(); });
         await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await p.waitForSelector('#om-list .om-ml'); await settle(p);
+        await p.evaluate(() => { window.__noAct = []; });   /* 여기까지 = 시험 틀이 연 것(사람 손 아님) — 셈에서 뺌 */
         return { cx, p };
     }
     const openPanel = async p => { await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click(); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await settle(p); };
     const openRow = async p => { const po = p.locator('#om-prev-open'); if (await po.isVisible()) { await po.click(); await settle(p); } await p.locator('#om-ctw .om-ct-open').first().click(); await p.waitForSelector('#om-card:not([hidden])'); await settle(p); };
     const openRowFromPanel = async p => { await p.click('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await settle(p); };
-    const T = {};
+    const T = {}, NA = {};
     const seq = async (name, fo, setup, n) => {
         reset(); const { cx, p } = await newPage(fo); const st0 = await setup(p); const a = [st0 || await layers(p)];
         for (let i = 0; i < (n || 3); i++) a.push(await back(p));
         T[name + (fo ? ' [최종발주 위]' : '')] = a.map(x => x.s + (x.fo ? '+최종발주' : '')).join(' → ');
+        a.noAct = a.reduce((m, x) => (x.na && x.na.length > m.length ? x.na : m), []); NA[name + (fo ? ' [최종발주 위]' : '')] = a.noAct.join(',');
         await cx.close(); return a;
     };
     try {
@@ -95,6 +105,20 @@ function mut(L) {
             // ③-c 판 → 줄 카드 → 고침 → back = 묻기 → back = …
             a = await seq('③-c 판→줄카드 고침', fo, async p => { await openPanel(p); await openRowFromPanel(p); await p.fill('#om-f-0-c3', '고친주소'); await p.waitForTimeout(100); });
             ok(a[0].s === '메모함>줄카드' && a[1].s === '메모함>줄카드>묻기' && S.puts.length === 0, '③-c' + tag + ' 고친 줄 카드 back = 「저장 안 하고 닫을까요?」(종전 규칙)', T['③-c 판→줄카드 고침' + tag]);
+            // #1157(대표 11/15 「매칭 주소 카드 눌렀다 뒤로가기 → 입력삭제 창 → 거기서 뒤로가기 하면 어플이 꺼져」) = 판 → 줄 카드 → back(판) → back 에서 목록 칸을 건너뜀
+            //   셈 = 뒤로가기 처리 중에 사람 손 없이 쌓은 기록 칸 0(크롬은 그 앞 칸을 건너뜀) + 한 번에 한 겹
+            const no0 = (a, m) => ok(a.noAct.length === 0, m + ' · 손 없이 쌓은 기록 칸 0(앞 칸 건너뜀 없음)', a.noAct);
+            a = await seq('⑥ 판→줄카드→back→back→back', fo, async p => { await openPanel(p); await openRowFromPanel(p); }, 4);
+            ok(a[0].s === '메모함>줄카드' && a[1].s === '메모함>판' && a[2].s === '메모함' && a[3].s === '없음', '⑥' + tag + ' 줄 카드 → back = 판 → back = 목록 → back = 메모함 닫힘', T['⑥ 판→줄카드→back→back→back' + tag]); no0(a, '⑥' + tag);
+            a = await seq('⑥-b 판→줄카드→저장→back', fo, async p => { await openPanel(p); await openRowFromPanel(p); await p.fill('#om-f-0-c3', '고친주소2'); await p.click('#om-card-save'); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum', { timeout: 8000 }); await settle(p); });
+            ok(a[0].s === '메모함>판' && a[1].s === '메모함' && a[2].s === '없음', '⑥-b' + tag + ' 줄 카드 [저장]으로 판에 온 뒤 back = 목록 → back = 메모함 닫힘', T['⑥-b 판→줄카드→저장→back' + tag]); no0(a, '⑥-b' + tag);
+            a = await seq('⑥-c 대기→줄카드→×→back', fo, async p => { await openPanel(p); await p.click('#om-card .om-px-paired [data-cact="pxdetach"][data-v="201"]'); await p.waitForTimeout(200); await openRowFromPanel(p); await p.click('#om-card .om-back[data-cact="cancel"]'); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await settle(p); });
+            ok(a[0].s === '메모함>판' && a[0].pend > 0 && a[1].s === '메모함' && a[2].s === '없음' && S.puts.length === 0, '⑥-c' + tag + ' [현금으로 변경] 대기 뒤 줄 카드 열고 × → 판(대기 그대로) → back = 목록 → back = 메모함 닫힘', T['⑥-c 대기→줄카드→×→back' + tag]); no0(a, '⑥-c' + tag);
+            a = await seq('⑥-d 줄카드 두 번', fo, async p => { await openPanel(p); await openRowFromPanel(p); await back(p); await openRowFromPanel(p); await p.click('#om-card .om-back[data-cact="cancel"]'); await p.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await settle(p); await openRowFromPanel(p); }, 4);
+            ok(a[0].s === '메모함>줄카드' && a[1].s === '메모함>판' && a[2].s === '메모함' && a[3].s === '없음', '⑥-d' + tag + ' 줄 카드를 back·×로 두 번 닫고 세 번째 연 뒤 back = 판 → 목록 → 메모함 닫힘', T['⑥-d 줄카드 두 번' + tag]); no0(a, '⑥-d' + tag);
+            ok(fo ? (a[3].fo && !a[4].fo && !a[4].away) : a[4].away, '⑥-d' + tag + ' 그다음 back = ' + (fo ? '최종발주 창 닫힘' : '그때야 화면 떠남'), T['⑥-d 줄카드 두 번' + tag]);
+            a = await seq('⑥-e 판→줄카드→메모함 닫기', fo, async p => { await openPanel(p); await openRowFromPanel(p); await p.evaluate(() => window.AkmOrderMemo.close()); await settle(p); }, 2);
+            ok(a[0].s === '없음' && (fo ? (a[0].fo && !a[1].fo && !a[1].away) : a[1].away), '⑥-e' + tag + ' 판 위 줄 카드에서 메모함을 닫음 = 감춘 판 칸도 같이 빠짐 → back 한 번에 ' + (fo ? '최종발주 창 닫힘' : '화면 떠남') + '(헛돎 없음)', T['⑥-e 판→줄카드→메모함 닫기' + tag]);
             // ④ 줄 카드 안 확인 창(품목 고르기 판) · 메모함 지우기 확인 창
             a = await seq('④ 줄카드→품목고르기', fo, async p => { await openRow(p); const b = p.locator('#om-card [data-cact="opt"]').first(); if (await b.count()) { await b.click(); await settle(p); } });
             ok(a[0].s === '메모함>현금표>줄카드>품목' && a[1].s === '메모함>현금표>줄카드' && a[2].s === '메모함>현금표' && a[3].s === '메모함', '④' + tag + ' 품목 고르기 → back = 줄 카드 → back = 목록', T['④ 줄카드→품목고르기' + tag]);
@@ -108,6 +132,7 @@ function mut(L) {
             ok(a[0].s.startsWith('메모함>줄카드') && a[1].s !== '없음' && !a[1].away, '⑤' + tag + ' 정리 결과 카드 → back = 묻기 또는 목록(메모함은 안 닫힘)', T['⑤ 정리 결과 카드' + tag]);
         }
         console.log('  지금 동작', JSON.stringify(T, null, 1));
+        console.log('  손 없이 쌓은 기록 칸(장면별)', JSON.stringify(Object.fromEntries(Object.entries(NA).filter(([, v]) => v)), null, 1));
         ok(pe.length === 0, '스크립트 오류 0', pe.slice(0, 5));
     } catch (e) { failN++; console.log('  ❌ 실행 오류', e && e.stack || e); console.log('  지금까지', JSON.stringify(T, null, 1)); }
     finally { await browser.close(); srv.close(); }

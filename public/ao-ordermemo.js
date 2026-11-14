@@ -1146,7 +1146,12 @@
 
     // ── 정리 결과 카드 ────────────────────────────────
     function cardOpen(c) {
-        if (OM.card) cardClose(true);   // 앞 카드가 떠 있으면 먼저 닫음(기다리던 창구 요청은 취소·지움)
+        // #1157(대표 11/15 「매칭 주소 카드 → 뒤로가기 → 입력삭제 창에서 또 뒤로가기 = 앱 꺼짐」) 판에서 연 줄 카드 = 판의 기록 칸은 두고 그 위에 칸 하나(omcard2)
+        //   종전 = 판 칸을 되돌리고 줄 카드 칸을 새로 쌓음 → 뒤로가기로 판에 돌아올 때 판 칸을 popstate 안에서(사람 손 없이) 다시 쌓음 → 크롬이 그 앞 칸(목록)을 「건너뛸 칸」으로 찍어 다음 뒤로가기가 메모함·앱까지 빠짐
+        const onPanel = !!(c.back && OM.card && OM.card === c.back);
+        c.hk = onPanel ? 'omcard2' : 'omcard';
+        if (onPanel) { optClose(false); OM.card = null; }   /* 판은 닫지 않고 감춤(기록 칸 그대로 · 돌아올 때 pxBackOpen 이 그 칸을 다시 씀) */
+        else if (OM.card) cardClose(true);   // 앞 카드가 떠 있으면 먼저 닫음(기다리던 창구 요청은 취소·지움)
         c.rows.forEach(r => {   // #850-c 번호 = 000-0000-0000 꼴로 보이게(전화번호 꼴만 · 주문번호 그대로) — 「처음 값」보다 먼저(고친 것으로 안 셈)
             if (r.kind === 'line') { const k = telShow(r.key); if (k !== r.key) { r.key = k; r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t'); } }
             else { [1, 6, 7, 10].forEach(i => { r.cells[i] = telShow(r.cells[i]); }); if (senderTelSame(r)) r.cells[1] = ''; if (c.mode !== 'edit') tailFromNote(r); }   // #856 손님 글의 사이즈·과수 = 미리 고름(처음 값으로 셈)   // #927 B = K(서버가 채운 값) = 빈 칸으로 보임 · 저장 '' = 서버가 다시 K
@@ -1156,7 +1161,7 @@
         if (!OM.catalog) loadCatalog();
         renderCard(); lkAll(); listRefreshCard(c);   // #935
         $('om-card').hidden = false; $('om-card-back').hidden = false;
-        hbPush('omcard', () => cardClose(false, true));
+        hbPush(c.hk, () => cardClose(false, true));
         if (c.wait) setTimeout(waitTick, 1000);
         requestAnimationFrame(() => { const f = $('om-card').querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || $('om-card-save'); if (f) f.focus({ preventScroll: !phoneW() }); });
     }
@@ -1165,7 +1170,7 @@
         const c = OM.card; if (!c) return;
         if (!force && (c.dirty || c.fileN) && !c.confirm) {   // #895 파일로 넣은 줄 = 고친 것으로 셈(닫을 때 묻기)
             c.confirm = true; renderConfirm();
-            if (fromHist) setTimeout(() => { if (OM.card === c) hbPush('omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
+            if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
             return;
         }
         optClose(false);
@@ -1173,7 +1178,7 @@
         OM.card = null;
         if (c.aseq && !c._aseqGo) OM.aseq = null;   // #880-b 이어서 확인 중에 그냥 닫음 = 멈춤
         const card = $('om-card'), back = $('om-card-back'); if (card) { card.hidden = true; card.innerHTML = ''; card.classList.remove('om-card-wide'); } if (back) back.hidden = true;
-        if (!fromHist) hbDrop('omcard');
+        if (!fromHist) hbDrop(c.hk || 'omcard');
         if (c.back) { const p = c.back; c.back = null; Promise.resolve().then(() => pxBackOpen(p)); }   // #1142 판에서 연 줄 카드 = 닫거나 저장하면 판으로(다른 카드가 바로 열리면 안 돌아감 · pxBackOpen 이 OM.card 를 봄)
         // 초점은 창 안으로만 되돌린다(문자 대화에서 왔으면 그 단추는 창 뒤 — 거기로 가면 다음 Esc·Tab 이 뒤 화면으로 샘)
         const ret = OM.lastFocus && OM.lastFocus.isConnected && OM.el.contains(OM.lastFocus) ? OM.lastFocus : (phoneW() ? $('om-close') : $('om-raw'));
@@ -1268,15 +1273,22 @@
     //   칸 차례(탭 순서)·id·저장·판정 = 종전 그대로(묶음 틀만 씌움) · 받는 분 묶음만 옅은 인디고 바탕 + 칸 한 단계 크게
     // #1153 잠금 기준 = 고치기 카드 · 저장된 줄이 입력삭제에 묶임(indiv · 서비스 아님 · 풀림 아님 = lostOf) — 서버 잠금과 같은 판정 · 풀린 줄·현금 줄·새 줄은 종전
     function kLocked(ri, r) { const c = OM.card, o = origOf(ri) || r; return !!(c && c.mode === 'edit' && o && o.kind === 'cash' && o.indiv && !o.service && o.id != null && !lostOf(o, indivLineKeys())); }
+    // #1158(대표 11/15) 체험장 체크 = 맨 위(옵션정보 위) · 배송메세지·발송일 = 받는 분 묶음 안(받는 분 배송메모) · 보내는 분 = 따뜻한 색 묶음(cashSendHtml) · 주문한 분 = 회색
+    //   화면 순서 = 탭 순서 = 체험장 → 품목 → 수량 → 받는 분 → 연락처 → 배송지 → 배송메세지 → 발송일 → 구매자 연락처 → 보내는 분… (종전 = 구매자 연락처가 배송메세지 앞 · 체험장은 묶음 뒤)
+    const ICON_RECV = '<svg class="om-grp-i" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>';
+    const ICON_SEND = '<svg class="om-grp-i" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 21V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>';
+    const ICON_BUYER = '<svg class="om-grp-i" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg>';
     function cashGroupsHtml(ri, r) {
         const F = fieldsOf(r).filter(f => !f.more), by = k => F.find(f => (k === 'ship' ? f.kind === 'shipdate' : f.i === k)), h = ks => ks.map(by).filter(Boolean).map(f => fieldHtml(ri, r, f)).join('');
-        const grp = (cls, id, t, s, ks) => `<div class="om-grp ${cls}" role="group" aria-labelledby="${id}"><p class="om-grp-h" id="${id}">${t}${s ? ` <small>${s}</small>` : ''}</p><div class="om-grid cash ${cls}-g">${h(ks)}</div></div>`;
-        return `<div class="om-grid cash om-g-what">${h([4, 5])}</div>`
-            + grp('om-grp-recv', `om-gh-r-${ri}`, '받는 분 정보', '택배가 가는 곳', [3, 6, 8])
-            + (kLocked(ri, r) ? `<div class="om-grp om-grp-buyer" role="group" aria-labelledby="om-gh-b-${ri}"><p class="om-grp-h" id="om-gh-b-${ri}">주문한 분 정보</p><div class="om-grid cash om-grp-buyer-g om-g-lock">${h([10])}${fieldHtml(ri, r, OUTK_F)}</div></div>`   /* #1153 묶인 줄 = 구매자 번호 잠금 + 택배 양식 구매자 연락처 */
-                : grp('om-grp-buyer', `om-gh-b-${ri}`, '주문한 분 정보', '', [10]))
-            + `<div class="om-grid cash om-g-etc">${F.filter(f => ![4, 5, 3, 6, 8, 10].includes(f.i) || f.kind === 'shipdate').map(f => fieldHtml(ri, r, f)).join('')}</div>`;   /* 남은 칸(배송메세지·발송일 · 새 칸이 생겨도 여기로) */
+        const grp = (cls, id, ic, t, s, ks, extra) => `<div class="om-grp ${cls}" role="group" aria-labelledby="${id}"><p class="om-grp-h" id="${id}">${ic}${t}${s ? ` <small>${s}</small>` : ''}</p><div class="om-grid cash ${cls}-g${extra ? ' ' + extra : ''}">${h(ks)}${extra ? fieldHtml(ri, r, OUTK_F) : ''}</div></div>`;
+        const rest = F.filter(f => ![4, 5, 3, 6, 8, 9, 10].includes(f.i) && f.kind !== 'shipdate');   /* 새 칸이 생기면 맨 아래 칸 묶음으로(지금은 없음) */
+        return expRowHtml(OM.card, r, ri)
+            + `<div class="om-grid cash om-g-what">${h([4, 5])}</div>`
+            + grp('om-grp-recv', `om-gh-r-${ri}`, ICON_RECV, '받는 분 정보', '택배가 가는 곳 · 배송메모', [3, 6, 8, 9, 'ship'])
+            + grp('om-grp-buyer', `om-gh-b-${ri}`, ICON_BUYER, '주문한 분 정보', '', [10], kLocked(ri, r) ? 'om-g-lock' : '')   /* #1153 묶인 줄 = 구매자 번호 잠금 + 택배 양식 구매자 연락처 */
+            + (rest.length ? `<div class="om-grid cash om-g-etc">${rest.map(f => fieldHtml(ri, r, f)).join('')}</div>` : '');
     }
+    const cashSendHtml = (ri, r) => `<details class="om-more om-grp-send"${senderShow(r.cells[0]) || r.cells[12] || senderTelOwn(r) ? ' open' : ''}><summary><span class="om-send-t">${ICON_SEND}<b>보내는 분 정보</b> <small>선물로 보낼 때 · 보내는이 변경(클릭)</small></span>${ICON_DOWN}</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>`;
     const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
     const footHtml = () => { const n = blankN(); if (OM.card && OM.card.wait) return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary" id="om-card-save" data-cact="save" disabled>정리 중… <small>끝나면 저장할 수 있어요</small></button>`; return `<button type="button" class="om-btn" data-cact="cancel">취소</button><button type="button" class="om-btn primary${saveBlocked() ? ' om-blocked' : ''}" id="om-card-save" data-cact="save"${saveBlocked() ? ' aria-disabled="true"' : ''}>${saveLabel(n)}</button>`; };
     // #868 막힌 저장(입력삭제 받는 분 번호·번호 확인 중) = 회색·흐림 + aria-disabled · 누르면 그대로 안내+초점(disabled 를 안 씀 = 눌러서 이유를 들을 수 있게) · 풀리면 원래 색
@@ -1306,13 +1318,13 @@
         const c = OM.card; if (!c) return; const ri = c.rows.findIndex(rowBlank); if (ri < 0) { jumpSync(); return; }
         cardReveal(c, ri);
         const rc = $('om-card').querySelectorAll('.om-rowcard')[ri]; if (!rc) return;
-        const t = rc.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || rc.querySelector('input, textarea, .om-combo');
+        const t = rc.querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || rc.querySelector('.om-f input, .om-f textarea, .om-f .om-combo');
         rc.scrollIntoView({ block: 'start' }); if (t) t.focus({ preventScroll: true });
     }
     function cardMore() {
         const c = OM.card; if (!cardBig(c)) return; const from = cardShownN(c);
         c.shown = from + CARD_PAGE; renderCard();
-        const rc = $('om-card').querySelectorAll('.om-rowcard')[from], t = rc && rc.querySelector('input, textarea, .om-combo'); if (t) t.focus({ preventScroll: true });
+        const rc = $('om-card').querySelectorAll('.om-rowcard')[from], t = rc && rc.querySelector('.om-f input, .om-f textarea, .om-f .om-combo'); if (t) t.focus({ preventScroll: true });
     }
     function askText(c) {
         if (c.ask) return c.ask;
@@ -1355,9 +1367,9 @@
                 ${whyExtra(r).length ? `<p class="om-why">${esc(whyExtra(r).join(' · '))}</p>` : ''}
                 ${r.kind === 'cash' && r._fromLine ? `<div class="om-f wide om-f-plat"><div class="om-f-l"><label>판매처</label></div>${platSeg(ri, CASH_PLAT)}<p class="om-f-w">현금 손님 칸으로 바꿨어요 · 다른 판매처를 누르면 메모 줄로 돌아가요</p></div>` : ''}
                 ${r.kind === 'cash' ? cashGroupsHtml(ri, r) : `<div class="om-grid">${fieldsOf(r).filter(f => !f.more).map(f => fieldHtml(ri, r, f)).join('')}</div>`}
-                ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}${expRowHtml(c, r, ri)}
+                ${indRowHtml(c, r, ri)}${svcRowHtml(c, r, ri)}${r.kind === 'cash' ? '' : expRowHtml(c, r, ri)}
                 ${r.kind === 'cash' && r.indiv ? `<p class="om-indiv${indivWarn(c) ? ' warn' : ''}" role="note">${esc(indivNote(c, r))}</p>${outNote(r) ? `<p class="om-indiv om-out" role="note">${esc(outNote(r))}</p>` : ''}${c.mode === 'edit' && !r.service && r.id != null ? (c.toCash ? `<div class="om-acts om-pend"><button type="button" class="om-btn sm om-pend-b" data-cact="tocash" data-ri="${ri}" aria-pressed="true">현금으로 변경 취소</button><span>[고친 대로 저장]을 누르면 현금 손님 줄로 바뀌어요(「!」 다시 붙음 · 고친 칸 같이) · 다시 누르면 취소</span></div>` : lostOf(r) ? `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}" aria-pressed="false">현금으로 변경하기</button><span>누른 뒤 [고친 대로 저장]을 눌러야 바뀌어요 · 구매자·보내는 분 번호는 매칭 전으로 돌아가요</span></div>` : `<div class="om-acts"><button type="button" class="om-btn sm" data-cact="tocash" data-ri="${ri}" aria-pressed="false">현금으로 변경하기</button><span>이 줄을 현금 손님 줄로 되돌려요 · 누른 뒤 [고친 대로 저장]을 눌러야 바뀌어요 · 「!」 다시 붙고 구매자·보내는 분 번호는 매칭 전으로 돌아가요</span></div>`) : ''}` : ''}
-                ${r.kind === 'cash' ? `<details class="om-more"${senderShow(r.cells[0]) || r.cells[12] || senderTelOwn(r) ? ' open' : ''}><summary>보내는이 변경(클릭)</summary><div class="om-grid cash-more">${CASH_FIELDS.filter(f => f.more).map(f => fieldHtml(ri, r, f)).join('')}</div></details>` : ''}
+                ${r.kind === 'cash' ? cashSendHtml(ri, r) : ''}
                 ${r.kind === 'line' && r.line ? `<p class="om-linepre"><span>메모 칸에 들어가는 글</span><code>${esc(lineView(r.line))}</code></p>` : ''}
               </section>`).join('')}
             ${cardBig(c) && cardShownN(c) < c.rows.length ? `<button type="button" class="om-btn om-cmore" data-cact="morerows">줄 ${Math.min(CARD_PAGE, c.rows.length - cardShownN(c))}개 더 보기 <small>${cardShownN(c).toLocaleString()} / ${c.rows.length.toLocaleString()}줄</small></button>` : ''}
@@ -2566,7 +2578,7 @@
         if (OM.prevOpen) prevShow(false, hist !== false);
         tpClose(false); askClose(hist !== false); OM.sel.clear(); OM.csel.clear(); OM.cq = ''; OM.cpage = 0; OM.clq = ''; OM.cneed = false; AFAIL.clear(); AF.n = 0; const q = $('om-cash-q'); if (q) q.value = ''; const q2 = $('om-clr-q'); if (q2) q2.value = ''; selSync(); undoHide();   // #859 닫으면 고른 것도 풂 · #878 현금 줄 고른 것·찾기도
         OM.el.hidden = true; document.body.classList.remove('om-open');
-        if (hist !== false) hbDrop('om');
+        if (hist !== false) hbDrop('omcard', 'om');   /* #1157 판 위 줄 카드를 닫으며 메모함을 닫으면 감춰 둔 판 칸(omcard)도 같이 */
         OWN.on = false; OWN.stack = [];
     }
     // #850-g 문자 대화 [발주 메모로] = 이 대화로 마지막 발주 메모를 저장한 뒤의 손님 글 전부(우리 답 사이 것도 · 없으면 최근 24시간 · 사진 글 빼고 · 최대 10개 · 시간순)
