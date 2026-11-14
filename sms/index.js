@@ -1404,13 +1404,28 @@ module.exports = function mountSms(app, deps) {
     async function staffHistoryRead(d, c) {
         const MAX = 60, items = [];   // #657 대표 「수십 건 고객도 있으니」 — 화면이 접어서 보여 준다(종전 20)
         try {
-            const pre = (await pool.query(`SELECT p.channel, min(p.recipient_initial) AS recipient_initial, bool_or(p.recipient_digits = $1) AS is_r, bool_or(p.buyer_digits = $1) AS is_b,
+            // #1155(대표 11/14 「여기선 왜 문**으로 나온거야」) 직원 화면 전용 = 발주 메모함 표(order_memo_preorders · 같은 수집기가 같은 열쇠로 씀 · #1062-B 처럼 읽기만)에서 받는 분·구매자 이름 전체 + 상품주문번호를 붙인다
+            //   sms_preorders 는 그대로(성 한 글자 · #610-G) · 묶음(그룹) 꼴·수량 합은 종전 그대로(열쇠 1:1 LEFT JOIN) · 메모함 표가 없는 서버 = 종전 SELECT(성 한 글자)
+            //   🔴 이 칸들은 이 목록(직원 화면 응답)에만 — 한 줄 요약(hintLineOf)·알림·초안·AI 는 이 칸을 안 읽는다
+            const preSql = memo => `SELECT p.channel, min(p.recipient_initial) AS recipient_initial, bool_or(p.recipient_digits = $1) AS is_r, bool_or(p.buyer_digits = $1) AS is_b,
                     min(COALESCE(p.paid_at, p.created_at)) AS paid_at, bool_and(p.paid_at IS NOT NULL) AS paid_known, array_remove(array_agg(DISTINCT NULLIF(btrim(p.option_text), '')), NULL) AS options, COALESCE(sum(p.qty), 0)::int AS qty
-                FROM sms_preorders p WHERE (p.recipient_digits = $1 OR p.buyer_digits = $1) AND p.miss = 0 AND COALESCE(p.paid_at, p.created_at) >= now() - make_interval(days => $2::int)
-                GROUP BY p.channel, p.recipient_digits, p.recipient_initial, (COALESCE(p.paid_at, p.created_at) AT TIME ZONE 'Asia/Seoul')::date ORDER BY min(COALESCE(p.paid_at, p.created_at)) DESC LIMIT 10`, [d, c.history_days])).rows;
-            for (const p of pre) items.push({ pre: true, ship_date: null, recipient_name: p.recipient_initial || null, option_text: (p.options || []).join(' + ') || null, qty: p.qty || null, boxes: null, trackings: [],
-                status_label: null, status_text: null, boxes_detail: [], delivered: false, event_time: null, partner: null, role: p.is_r && p.is_b ? 'both' : (p.is_r ? 'recipient' : 'buyer'), channel: p.channel || null, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null,
-                ship_plan: await prePlanOf({ pre: true, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null, paid_known: !!p.paid_known, option_text: (p.options || []).join(' + ') }) });
+                    ${memo ? `, array_remove(array_agg(DISTINCT NULLIF(regexp_replace(btrim(COALESCE(o.recv_name, '')), '[[:space:]]+', ' ', 'g'), '')), NULL) AS recv_names,
+                    array_remove(array_agg(DISTINCT NULLIF(regexp_replace(btrim(COALESCE(o.buyer_name, '')), '[[:space:]]+', ' ', 'g'), '')), NULL) AS buyer_names,
+                    array_remove(array_agg(DISTINCT COALESCE(NULLIF(btrim(COALESCE(o.product_order_no, '')), ''), CASE WHEN p.channel = 'naver' THEN NULLIF(p.order_key, '') END)), NULL) AS order_nos` : ''}
+                FROM sms_preorders p ${memo ? 'LEFT JOIN order_memo_preorders o ON o.channel = p.channel AND o.order_key = p.order_key' : ''}
+                WHERE (p.recipient_digits = $1 OR p.buyer_digits = $1) AND p.miss = 0 AND COALESCE(p.paid_at, p.created_at) >= now() - make_interval(days => $2::int)
+                GROUP BY p.channel, p.recipient_digits, p.recipient_initial, (COALESCE(p.paid_at, p.created_at) AT TIME ZONE 'Asia/Seoul')::date ORDER BY min(COALESCE(p.paid_at, p.created_at)) DESC LIMIT 10`;
+            let pre;
+            try { pre = (await pool.query(preSql(true), [d, c.history_days])).rows; }
+            catch (e1) { if (!(e1 && e1.code === '42P01' && /order_memo_preorders/.test(String(e1.message)))) throw e1; pre = (await pool.query(preSql(false), [d, c.history_days])).rows; }
+            const nm = a => (Array.isArray(a) ? a : []).map(x => String(x || '').trim().slice(0, 40)).filter(Boolean);
+            for (const p of pre) {
+                const rn = nm(p.recv_names), bn = nm(p.buyer_names), on = nm(p.order_nos).slice(0, 5);
+                items.push({ pre: true, ship_date: null, recipient_name: rn.length ? rn.join(' · ').slice(0, 60) : (p.recipient_initial || null), option_text: (p.options || []).join(' + ') || null, qty: p.qty || null, boxes: null, trackings: [],
+                    status_label: null, status_text: null, boxes_detail: [], delivered: false, event_time: null, partner: null, role: p.is_r && p.is_b ? 'both' : (p.is_r ? 'recipient' : 'buyer'), channel: p.channel || null, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null,
+                    recipient_initial: p.recipient_initial || null, buyer_name: bn.length ? bn.join(' · ').slice(0, 60) : null, order_no: on[0] || null, order_nos: on,
+                    ship_plan: await prePlanOf({ pre: true, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null, paid_known: !!p.paid_known, option_text: (p.options || []).join(' + ') }) });
+            }
         } catch (e) { if (!(e && e.code === '42P01')) log.error('[문자] 구매이력(발송 전) 읽기 실패(무시):', e.message); }
         const g = (await pool.query(`SELECT s.ship_date::text AS ship_date, btrim(min(s.recipient)) AS recipient_name, bool_or(s.phone_digits = $1) AS is_r, bool_or(s.buyer_digits = $1) AS is_b,
                 array_agg(s.tracking ORDER BY s.tracking) AS trackings, array_remove(array_agg(DISTINCT NULLIF(btrim(s.partner), '')), NULL) AS partners,

@@ -1822,20 +1822,26 @@
         const item = esc((o.option_text || '') + qtyTail), itemV = T ? esc(smsShortOpt(o.option_text) + qtyTail) : item;
         const rName = String(o.recipient_name || '').trim(), rInit = String(o.recipient_initial || '').trim();
         const who = esc(rName ? (rName.length === 1 ? rName + '**' : rName) : (rInit ? rInit + '**' : ''));
+        // #1155(대표 11/14) 발송 전 줄 = 구매자 이름(받는 분과 같으면 뺌) + 주문번호(눌러 복사 · 여럿이면 「외 n」) · 칸이 없으면(옛 서버) 종전 그대로
+        const bName = o.pre ? String(o.buyer_name || '').trim() : '', buyer = bName && bName !== rName ? esc(bName) : '';
+        const onoOf = x => String(x == null ? '' : x).replace(/[^0-9A-Za-z-]/g, '').slice(0, 40);
+        const ono = o.pre ? onoOf(o.order_no) : '', onoMore = ono && Array.isArray(o.order_nos) ? new Set(o.order_nos.map(onoOf).filter(x => x && x !== ono)).size : 0;
+        const onoHtml = ono ? `<span class="sms-trk1"><button type="button" class="sms-trk sms-ono" data-trk="${ono}" data-ono="1" title="눌러서 복사" aria-label="주문번호 ${ono} 복사">${ono}</button>${onoMore ? ` <small>외 ${nfmt(onoMore)}</small>` : ''}</span>` : '';
         if (o.pre && T) {   // #1097 터치 = 「발송 예정 11/11 · 결제 11/10 · 받는 분 홍**」 한 줄 + 품목 · 「안내 아직 발송 전이에요」 줄 뺌
             const pd = smsKd(o.paid_at), paid = pd ? esc((pd.getUTCMonth() + 1) + '/' + pd.getUTCDate() + (o.paid_known === false ? '쯤' : '')) : '';
             let k = '', dt = '', main = '';
             if (o.ship_plan) { k = 'plan'; dt = '발송 예정'; main = esc(String(o.ship_plan).slice(0, 20)) + (paid ? ` <small>결제 ${paid}</small>` : ''); }
             else if (paid) { k = 'paid'; dt = '결제'; main = paid; }
             if (who) { if (main) main += ` <small>받는 분 ${who}</small>`; else { k = 'who'; dt = '받는 분'; main = who; } }
-            return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">` + row(k, dt, main, k !== 'who') + row('item', '품목', itemV, false, item) + '</dl></div>'];
+            if (buyer) { if (main) main += ` <small class="sms-buy-by">구매자 ${buyer}</small>`; else { k = 'buyer'; dt = '구매자'; main = buyer; } }
+            return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">` + row(k, dt, main, k !== 'who' && k !== 'buyer') + row('ono', '주문번호', onoHtml) + row('item', '품목', itemV, false, item) + '</dl></div>'];
         }
         if (o.pre) {
             const pd = smsKd(o.paid_at);
             return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">`
                 + row('plan', '발송 예정', o.ship_plan ? esc(String(o.ship_plan).slice(0, 20)) : '', true)   // #654 서버가 달력으로 계산해 준 글자(없으면 줄 없음 — 결제 시각 모름·예약 상품·예정일 지남)
                 + row('paid', '결제', pd ? esc((pd.getUTCMonth() + 1) + '/' + pd.getUTCDate() + (o.paid_known === false ? '쯤' : '')) : '', !o.ship_plan)
-                + row('who', '받는 분', who) + row('item', '품목', item, false, item) + row('note', '안내', o.ship_plan ? '아직 발송 전이에요(송장은 발송 뒤에 생겨요)' : '아직 발송 전이에요(송장 없음)') + '</dl></div>'];
+                + row('who', '받는 분', who) + row('buyer', '구매자', buyer) + row('ono', '주문번호', onoHtml) + row('item', '품목', item, false, item) + row('note', '안내', o.ship_plan ? '아직 발송 전이에요(송장은 발송 뒤에 생겨요)' : '아직 발송 전이에요(송장 없음)') + '</dl></div>'];
         }
         if (!(o.ship_date || o.option_text || o.tracking_tail || o.status_label || (Array.isArray(o.trackings) && o.trackings.length))) return [];
         const trks = [...new Set((Array.isArray(o.trackings) ? o.trackings : []).map(x => String(x == null ? '' : x).replace(/[^0-9]/g, '')).filter(x => /^[0-9]{10,12}$/.test(x)))];
@@ -2292,7 +2298,7 @@
             if (e.target.closest('#sms-done')) { smsDone(); return; }
             if (e.target.closest('.sms-empty-go')) { smsScope('all'); return; }
             if (e.target.closest('.sms-more')) { smsMore(); return; }   // #730
-            { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
+            { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, tk.dataset.ono ? '주문번호를 복사했어요' : '송장번호를 복사했어요', tk); return; } }   // #644 · #1155 주문번호 단추도 같은 길
             if (e.target.closest('.sms-hold')) { smsHold(); return; }   // #651
             if (e.target.closest('#sms-buy-next')) { const had = document.querySelectorAll('#sms-buy-rest .sms-buy-i').length; SMS.buyShow = (Number(SMS.buyShow) || 5) + 5; smsBuyRender(); const nx = document.getElementById('sms-buy-next') || document.getElementById('sms-buy-more'); if (nx) nx.focus({ preventScroll: true }); const it = document.querySelectorAll('#sms-buy-rest .sms-buy-i')[had]; if (it && it.scrollIntoView) it.scrollIntoView({ block: 'nearest' }); return; }
             {   // #659(대표 10/12): 구매이력 판 아무 곳이나(또는 「+n건 더보기」) 누르면 펼침·접힘 — 송장 복사·[조회]·[5건 더보기] 같은 안쪽 단추와 글자를 끌어 고르는 중에는 그대로. 펼침은 대화별로 이 창을 여는 동안 기억
