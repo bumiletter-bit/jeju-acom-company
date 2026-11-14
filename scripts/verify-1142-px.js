@@ -32,6 +32,7 @@ function mut(L) {
     if (e140 && S.mix) e140.rows.forEach(r => { if (r.id === 204) r.cells[4] = CAT[2]; });   // #1144 품목 2종 섞임
     if (e140 && S.out) e140.rows.forEach(r => { if (r.id === 204) { r.out_b = '010-2222-5315'; r.out_k = '010-2222-5316'; } if (r.id === 201) { r.out_b = PXL; r.out_k = PXL; } });   // #1146 양식 B·K(204 = 처음 값 다름 · 201 = 같음)
     if (e140 && S.outBK) e140.rows.forEach(r => { if (r.id === 204) { r.out_b = S.outBK[0]; r.out_k = S.outBK[1] === 'ROWK' ? r.cells[10] : S.outBK[1]; } });   // #1150 #1149 꼴(같은 칸 null)
+    if (e140 && S.outKSet) e140.rows.forEach(r => { if (r.id === 204) { r.out_k_set = S.outKSet; r.out_k = S.outKSet; r.out_b = null; } });   // #1153 사람이 넣은 택배 양식 구매자 연락처(서버 out_k = 그 값)
     if (e140 && S.many) for (let i = 0; i < 8; i++) e140.rows.push(extra(210 + i, '여러줄손님' + i, 1));   // 대표 사진 꼴 = ② 10줄 넘음
     if (S.splitBadge) L.entries.forEach(e => e.rows.forEach(r => { if (r.id === 190) r.badge = { kind: 'line', state: 'sent_split', m: null, n: 0, later: 3, later_date: '2026-11-20', service: 0, pre: false, item_diff: false, t: '', why: '' }; }));
     const all = L.entries.flatMap(e => e.rows);
@@ -46,7 +47,7 @@ function mut(L) {
     const PORT = Number(process.env.PORT1142 || 3462);
     const srv = await serve(PORT), base = `http://127.0.0.1:${PORT}/`;
     const browser = await chromium.launch();
-    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, out: false, outBK: null, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
+    const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], log: [], putFail: false, mut, noExtra: false, splitBadge: false, longName: false, many: false, bare: false, mix: false, out: false, outBK: null, outKSet: null, listDelay: 0, badges: {} }); S.lookup = { [dg(PXL)]: [{ as: 'buyer', plat: '네이버', pno: '2026111400000011', order_no: '2026111400000001', option: '타이벡감귤 5kg', qty: 3, recv_name: '구매자손님', addr: '서울 송파구 올림픽로 1' }] }; };
     const openPanel = async p => {
         S.n = 4; S.ent = 1; await p.goto(base + '?v=new'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true }));
         await p.waitForSelector('#om-list .om-ml'); await p.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-px, .om-badge').first().click();
@@ -187,26 +188,85 @@ function mut(L) {
                 await pz.click(`#om-card [data-cact="pxrowopen"][data-v="${v}"]`); await pz.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await pz.evaluate(() => document.querySelectorAll('#om-card details.om-more').forEach(d => d.open = true)); await pz.waitForTimeout(150);
                 const a0 = await pz.evaluate(ALIGN); if (a0.row.length || a0.cover.length || a0.wrap.length || a0.over || a0.sw > w) bad.push([v, '처음', a0]);
                 // #1152 묶음 구분 = 받는 분(이름·번호·주소) · 주문한 분(구매자 연락처) · 보내는 분(보내는이 변경) 세 묶음 · 머리 보임 · 받는 분 칸 한 단계 크게 · 바탕 다름 · 칸 차례(탭) 종전 그대로
-                const G = await pz.evaluate(() => { const C = document.getElementById('om-card'), R = e => e.getBoundingClientRect(), ids = s => [...C.querySelectorAll(s + ' [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')), cs = e => e && getComputedStyle(e);
+                const G = await pz.evaluate(() => { const C = document.getElementById('om-card'), R = e => e.getBoundingClientRect(), ids = s => [...C.querySelectorAll(s + ' [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date|outk)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')), cs = e => e && getComputedStyle(e);
                     const rh = C.querySelector('.om-grp-recv > .om-grp-h'), bh = C.querySelector('.om-grp-buyer > .om-grp-h'), ri = C.querySelector('#om-f-0-c3'), bi = C.querySelector('#om-f-0-c10');
                     return { recv: ids('.om-grp-recv'), buyer: ids('.om-grp-buyer'), more: ids('details.om-more'), rh: rh && R(rh).height > 0 ? rh.textContent.trim() : '', bh: bh && R(bh).height > 0 ? bh.textContent.trim() : '',
                         rH: Math.round(R(ri).height), bH: Math.round(R(bi).height), rF: parseFloat(cs(ri).fontSize), bF: parseFloat(cs(bi).fontSize), rBg: cs(C.querySelector('.om-grp-recv')).backgroundColor, bBg: cs(C.querySelector('.om-grp-buyer')).backgroundColor, cBg: cs(C.querySelector('.om-card-b') || C).backgroundColor,
-                        tab: [...C.querySelectorAll('.om-rowcard [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')) }; });
+                        tab: [...C.querySelectorAll('.om-rowcard [id^="om-f-0-"]')].filter(e => /^om-f-0-(c\d+|date|outk)$/.test(e.id)).map(e => e.id.replace('om-f-0-', '')),
+                        k10ro: !!bi && bi.readOnly, same: !!C.querySelector('.om-grp-buyer .om-same'), lockN: (C.querySelector('.om-grp-buyer .om-lock-n:not(.om-outk-h)') || {}).textContent || '', k10L: (C.querySelector('label[for="om-f-0-c10"]') || {}).textContent || '',
+                        ok_: (() => { const o = C.querySelector('#om-f-0-outk'); if (!o) return null; const a = R(bi), b = R(o); return { ph: o.placeholder, sameTop: Math.abs(a.top - b.top) <= 1, below: b.top >= a.bottom, w: Math.round(b.width) }; })() }; });
                 const touch = w <= 720;
-                ok(G.recv.join() === 'c3,c6,c8' && G.buyer.join() === 'c10' && G.more.join() === 'c0,c1,c12' && /^받는 분 정보/.test(G.rh) && G.bh === '주문한 분 정보' && G.tab.join() === 'c4,c5,c3,c6,c8,c10,c9,date,c0,c1,c12'
+                const L4 = v === '204';   // #1153 204 = 입력삭제에 묶인 주소 줄(잠금 + 택배 양식 구매자 연락처) · 192 = 현금 줄(종전 그대로)
+                ok(L4 ? G.k10ro && !G.same && /묶여 있는 동안은 못 바꿔요/.test(G.lockN) && /^구매자 번호/.test(G.k10L.trim()) && G.ok_ && /비우면 입력삭제 번호로 나가요/.test(G.ok_.ph) && (touch ? G.ok_.below : G.ok_.sameTop)
+                       : !G.k10ro && G.same && !G.ok_ && G.k10L.trim() === '구매자 연락처',
+                    nm + (L4 ? ' #1153 묶인 줄 = 구매자 번호 읽기 전용(자물쇠 라벨 · [수취인과 동일] 없음 · 안내 한 줄) + 「택배 양식 구매자 연락처」 ' + (touch ? '아래 쌓임' : '옆 나란히') : ' #1153 현금 줄 = 잠금·새 칸 없음(종전)'), G);
+                ok(G.recv.join() === 'c3,c6,c8' && G.buyer.join() === (L4 ? 'c10,outk' : 'c10') && G.more.join() === 'c0,c1,c12' && /^받는 분 정보/.test(G.rh) && G.bh === '주문한 분 정보' && G.tab.join() === (L4 ? 'c4,c5,c3,c6,c8,c10,outk,c9,date,c0,c1,c12' : 'c4,c5,c3,c6,c8,c10,c9,date,c0,c1,c12')
                     && G.rH >= (touch ? 50 : 48) && G.rF >= (touch ? 18 : 17) && G.rF > G.bF && G.rH > G.bH && G.rBg !== G.bBg && G.rBg !== 'rgba(0, 0, 0, 0)',
                     nm + ' 줄 카드 ' + v + ' 묶음 = 받는 분(c3·c6·c8 · 머리 · 칸 ' + (touch ? '50/18px' : '48/17px') + '↑) · 주문한 분(c10) · 보내는 분(c0·c1·c12) · 바탕 다름 · 탭 순서 종전 그대로', G);
-                const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox])', a => a.map(e => e.id));
+                const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox]):not([readonly])', a => a.map(e => e.id));
                 for (const id of ids) {
                     const v0 = await pz.inputValue('#' + id); await pz.fill('#' + id, id.endsWith('date') ? '11/30' : /-c(1|6|10)$/.test(id) ? '010-1234-56789012' : (v0 || '') + '고침'); await pz.locator('#' + id).blur(); await pz.waitForTimeout(80);
                     const a = await pz.evaluate(ALIGN); if (a.row.length || a.cover.length || a.wrap.length || a.over || a.sw > w) bad.push([v, id, a]);
                     const u = pz.locator(`#om-card [data-f="${id}"]`); if (await u.isVisible()) { await u.click(); await pz.waitForTimeout(60); }
                 }
-                if (v === '204') ok(ids.includes('om-f-0-c1') && ids.includes('om-f-0-c10') && ids.includes('om-f-0-c0'), nm + ' 입력삭제 주소 줄 카드 = 보내는 분 이름·번호·구매자 연락처 칸 있음', ids);
+                if (v === '204') ok(ids.includes('om-f-0-c1') && ids.includes('om-f-0-outk') && !ids.includes('om-f-0-c10') && ids.includes('om-f-0-c0'), nm + ' 입력삭제 주소 줄 카드 = 보내는 분 이름·번호·택배 양식 구매자 연락처 칸 있음 · 구매자 번호(c10)는 읽기 전용', ids);
                 await pz.click('#om-card [data-cact="cancel"]'); await pz.waitForTimeout(150); if (await pz.isVisible('#om-card [data-cact="discard"]')) await pz.click('#om-card [data-cact="discard"]'); await pz.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await pz.waitForTimeout(150);
             }
             ok(bad.length === 0, nm + ' 줄 카드 2장(입력삭제 주소 줄 204 · 현금 줄 192) × 칸 하나씩 고치기 = 같은 줄 이름·입력 칸 선 차 ≤1px · 「처음 값」이 입력 칸 안 덮음 · 이름 한 줄 · 넘침 0', bad.slice(0, 4));
             await cz.close();
+        }
+        // #1153 택배 양식 구매자 연락처 = 넣기 · 지우기 · 안 고침 PUT 본문 · 치는 중 그대로 · 떠날 때 하이픈 · 처음 값 · 400 문구 · k_kept · 양식 안내 · 풀린 줄
+        console.log('①-f #1153 묶인 줄 구매자 번호 잠금 · 택배 양식 구매자 연락처');
+        {
+            const put = () => S.puts[S.puts.length - 1] || {};
+            const open204 = async (pp) => { await openPanel(pp); await pp.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await pp.waitForSelector('#om-card:not([hidden]) #om-f-0-outk'); await pp.waitForTimeout(120); };
+            reset(); const cy = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const py = await cy.newPage(); py.on('pageerror', e => pe.push('outk ' + String(e)));
+            await open204(py);
+            await py.click('#om-f-0-outk'); await py.keyboard.type('01011112222'); const typing = await py.inputValue('#om-f-0-outk');
+            const undoVis = await py.isVisible('#om-card [data-f="om-f-0-outk"]'); await py.click('#om-f-0-c3'); const left = await py.inputValue('#om-f-0-outk');
+            const ro = await py.evaluate(() => { const i = document.getElementById('om-f-0-c10'); i.focus(); return { ro: i.readOnly, v: i.value }; }); await py.keyboard.type('999'); const k10 = await py.inputValue('#om-f-0-c10');
+            await py.click('#om-card-save'); await until(() => S.puts.length); await py.waitForTimeout(400);
+            ok(typing === '01011112222' && undoVis && left === '010-1111-2222' && ro.ro && k10 === ro.v && put().out_k === '010-1111-2222' && put()._id === 204 && dg(put().cells[10]) === dg(ro.v), '넣기 = 치는 중 그대로 · 「처음 값」 보임 · 떠날 때 010-1111-2222 · 구매자 번호 쳐도 안 바뀜 · PUT out_k 실림(cells K 그대로)', { typing, undoVis, left, ro, k10, put: { out_k: put().out_k, k: put().cells && put().cells[10] } });
+            await cy.close();
+            reset(); S.outKSet = '010-7777-8888'; const cy2 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const py2 = await cy2.newPage(); py2.on('pageerror', e => pe.push('outk2 ' + String(e)));
+            await openPanel(py2); const panelT = await py2.evaluate(() => (document.querySelector('#om-card .om-px-paired [data-cact="pxrowopen"][data-v="204"]').closest('li').querySelector('.om-out-t') || {}).textContent || '');
+            await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk');
+            const v0 = await py2.inputValue('#om-f-0-outk'), cardT = await py2.evaluate(() => (document.querySelector('#om-card .om-out') || {}).textContent || '');
+            ok(v0 === '010-7777-8888' && panelT === '택배 양식에는 구매자 연락처 010-7777-8888 로 나가요' && cardT === panelT, '저장된 값 = 칸에 010-7777-8888 · 판 ②·줄 카드 안내 = 「택배 양식에는 구매자 연락처 010-7777-8888 로 나가요」', { v0, panelT, cardT });
+            await py2.fill('#om-f-0-c3', '이름만고침'); await py2.click('#om-card-save'); await until(() => S.puts.length); await py2.waitForTimeout(1000);
+            ok(!('out_k' in put()) && put().cells[3] === '이름만고침', '안 고침 = PUT 에 out_k 칸 없음(서버 그대로)', Object.keys(put()));
+            await py2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk');
+            S.puts = []; const vRe = await py2.inputValue('#om-f-0-outk'); await py2.fill('#om-f-0-outk', ''); await py2.click('#om-f-0-c3'); const dirty = await py2.evaluate(() => !document.querySelector('#om-card [data-cact="reset"]').hidden);
+            await py2.click('#om-card-save'); await until(() => S.puts.length); await py2.waitForTimeout(1000);
+            ok(dirty && put().out_k === null && 'out_k' in put(), '지우기 = 고친 것으로 셈 · PUT out_k null', { vRe, dirty, put: put().out_k, n: S.puts.length });
+            await py2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk');
+            await py2.fill('#om-f-0-outk', '010-1234-0000'); await py2.click('#om-f-0-c3'); await py2.click('#om-card [data-f="om-f-0-outk"]'); await py2.waitForTimeout(100);
+            const back = await py2.inputValue('#om-f-0-outk'), clean = await py2.evaluate(() => document.querySelector('#om-card [data-cact="reset"]').hidden);
+            await py2.click('#om-card [data-cact="cancel"]'); await py2.waitForTimeout(200); const asked = await py2.isVisible('#om-card [data-cact="discard"]');
+            ok(back === '010-7777-8888' && clean && !asked, '「처음 값」 = 010-7777-8888 로 · 고친 것 0 · 닫을 때 안 물음', { back, clean, asked });
+            await py2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk');
+            await py2.fill('#om-f-0-outk', '010-5555-6666'); await py2.click('#om-card [data-cact="cancel"]'); await py2.waitForTimeout(200); const asked2 = await py2.isVisible('#om-card [data-cact="discard"]'); if (asked2) await py2.click('#om-card [data-cact="discard"]');
+            ok(asked2, '새 칸만 고치고 닫기 = 「저장 안 하고 닫을까요?」', asked2);
+            // 400 · k_kept = 가짜 응답(route)
+            const E400 = '택배 양식 구매자 연락처는 전화번호(010-0000-0000)로 넣어 주세요';
+            await py2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await py2.route('**/api/order-memo/rows/204', r => r.request().method() === 'PUT' ? r.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, error: E400 }) }) : r.continue());
+            await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk');
+            await py2.fill('#om-f-0-outk', '집전화'); await py2.click('#om-card-save'); await py2.waitForTimeout(500);
+            const e4 = await py2.evaluate(() => ({ w: (document.getElementById('om-f-0-outk-w') || {}).textContent, blank: document.querySelector('[data-fwrap="om-f-0-outk"]').classList.contains('blank'), open: !document.getElementById('om-card').hidden && !!document.getElementById('om-f-0-outk') }));
+            ok(e4.w === E400 && e4.blank && e4.open, '서버 400 = 그 칸 아래 문구 그대로 · 빨강 · 카드 그대로', e4);
+            await py2.unroute('**/api/order-memo/rows/204'); await py2.click('#om-card [data-cact="cancel"]'); await py2.waitForTimeout(200); if (await py2.isVisible('#om-card [data-cact="discard"]')) await py2.click('#om-card [data-cact="discard"]');
+            await py2.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await py2.route('**/api/order-memo/rows/204', async r => { if (r.request().method() !== 'PUT') return r.continue(); const x = await r.fetch(); const j = await x.json(); j.k_kept = true; await r.fulfill({ response: x, json: j }); });
+            await py2.click('#om-card [data-cact="pxrowopen"][data-v="204"]'); await py2.waitForSelector('#om-card:not([hidden]) #om-f-0-outk'); await py2.fill('#om-f-0-c3', '열쇠시험'); await py2.click('#om-card-save'); await py2.waitForTimeout(700);
+            const kn = await py2.evaluate(() => (document.getElementById('om-in-note') || {}).textContent || '');
+            ok(/구매자 번호는 입력삭제 매칭 열쇠라 바꾸지 않았어요/.test(kn), 'k_kept 응답 = 「구매자 번호는 입력삭제 매칭 열쇠라 바꾸지 않았어요」', kn);
+            await cy2.close();
+            // 풀린 줄(메모 줄 190 지움 = 204 짝 없음) · 현금 줄 = 잠금 없음 · 새 칸 없음
+            reset(); S.deleted = new Set([190]); const cy3 = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const py3 = await cy3.newPage(); py3.on('pageerror', e => pe.push('lost ' + String(e)));
+            S.n = 4; S.ent = 1; await py3.goto(base + '?v=new'); await py3.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await py3.waitForSelector('#om-ctw tbody tr');
+            await py3.locator('#om-ctw tbody tr', { hasText: '둘째주소손님' }).locator('.om-ct-open').click(); await py3.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await py3.waitForTimeout(150);
+            const lo = await py3.evaluate(() => ({ outk: !!document.getElementById('om-f-0-outk'), ro: document.getElementById('om-f-0-c10').readOnly, same: !!document.querySelector('#om-card .om-same') }));
+            ok(!lo.outk && !lo.ro && lo.same, '풀린 줄 = 구매자 번호 고칠 수 있음 · 새 칸 없음 · [수취인과 동일] 그대로(종전)', lo);
+            await cy3.close();
         }
         // ── 나뉜 입력삭제 · ③ 현금 줄 0 ────────────────
         console.log('② 나뉜 입력삭제(sent_split) · ③ 현금 줄 0');

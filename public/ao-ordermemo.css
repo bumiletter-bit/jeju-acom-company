@@ -694,6 +694,16 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
     .om-card .om-grid.cash.om-g-etc { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
     .om-card .om-grid.cash.om-g-etc > .fk-9 { grid-column: auto; }
 }
+/* #1153(대표 11/14) 입력삭제에 묶인 주소 줄 = 구매자 번호 잠금(읽기 전용 · 옅은 바탕 · 자물쇠) + 옆 「택배 양식 구매자 연락처」 · PC 두 칸 나란히 · 폰 쌓임 · 색 = 토큰(야간 저절로) */
+.om-card .om-f input.om-locked { background: var(--d-soft); color: var(--d-sub); border-style: dashed; cursor: not-allowed; }
+.om-card .om-f input.om-locked:focus { border-color: var(--d-line); box-shadow: none; }
+.om-card .om-f-lock .om-f-l label { display: inline-flex; align-items: center; gap: 4px; }
+.om-card .om-lock-i { flex: none; color: var(--d-sub); }
+.om-card .om-lock-n { margin: 0; color: var(--d-dim); font-size: 12px; font-weight: 600; line-height: 1.4; }
+.om-card .om-outk-h { color: var(--d-dim); }
+@media (max-width: 720px) {   /* 워커3 지적 = 폰 품목 칸·구매자 칸 한 줄 전체 · 묶인 줄 두 칸은 쌓임 */
+    .om-card .om-grid.cash.om-g-what > .fk-4, .om-card .om-grid.cash.om-grp-buyer-g > .om-f { grid-column: 1 / -1; }
+}
 /* #934 추가 매칭(번호 다른 현금 줄 고르기) · ⑤ 입력삭제 주문에 붙이기 — 색은 .om-pair 토큰 그대로(새 색 0 · 야간 규칙 상속) */
 .om-pairx-q { margin: 0; }
 .om-pairx-b { display: grid; gap: 4px; min-width: 0; }

@@ -589,7 +589,7 @@ const jusoQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 200
             {   // 워커2 점검 ① = 서버 PUT 의 next 식 + checkRow 를 order-memo.js 그대로 떼어 실행 → 실제 저장될 A칸·indiv
                 const OMS = require(path.join(ROOT, 'order-memo.js')), src = fs.readFileSync(path.join(ROOT, 'order-memo.js'), 'utf8').replace(/\r\n/g, '\n');
                 const m = src.match(/\? (\{ kind: 'cash', cells: [^\n]*?\})   \/\/ #900 서비스 켬/); if (!m) throw new Error('PUT next 식을 못 찾음');
-                const nextOf = (cur, b, svc) => new Function('cur', 'b', 'svc', 'toCashCells', 'toIndivCells', 'toCashDate', 'return ' + m[1])(cur, b, svc, OMS.toCashCells, OMS.toIndivCells, OMS.toCashDate), ctx = { today: '2026-11-01', catalog: new Set(CAT), origin: '제주시 연삼로 1066-31' };
+                const nextOf = (cur, b, svc) => new Function('cur', 'b', 'svc', 'toCashCells', 'toIndivCells', 'toCashDate', 'bCells', 'return ' + m[1])(cur, b, svc, OMS.toCashCells, OMS.toIndivCells, OMS.toCashDate, Array.isArray(b.cells) ? b.cells : null), ctx   /* #1153 서버 next 식이 bCells(묶인 줄 K 잠금 뒤 칸)를 씀 — 이 시험 꼴(to_cash·to_indiv·K 같음)은 잠금 밖이라 보낸 칸 그대로 */ = { today: '2026-11-01', catalog: new Set(CAT), origin: '제주시 연삼로 1066-31' };
                 const cur = { kind: 'cash', service: false, ship_date: null, cells: ['이형주 드림', PXO, '제주시 연삼로 1066-31', '김보은', CAT[1], '1', '010-4787-4217', '', '충남 보령시 동대동 8', '', PXK, '', ''] };
                 const sent = cur.cells.slice(); sent[0] = '이형주 드림!';
                 const a = OMS.checkRow(nextOf(cur, { cells: sent, to_cash: true }, false), ctx), b = OMS.checkRow(nextOf(cur, { cells: sent }, false), ctx);

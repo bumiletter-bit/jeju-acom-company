@@ -365,5 +365,84 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         note('옛 화면(final-order.js 옛 판) + 새 서버 = cash_out 칸을 읽지 않아 종전 그대로(코드 읽기 · 옛 판에 cash_out 참조 0)');
         ok(!/cash_out/.test(require('child_process').execSync('git show 30c5bcc:public/final-order.js', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 << 20 })), '옛 final-order.js(30c5bcc) 에 cash_out 참조 0');
     }
+    console.log('Ⅸ-b 워커3 교차 점검 · 낡은 out_k = [현금으로 변경] 뒤 다른 묶음에 다시 묶여도 남는 꼴 · 같은 PUT 에 to_cash + out_k');
+    { const E = await mk([{ pid: PA, qty: 2 }, { pid: PX, qty: 1 }]); try {
+        const OK7 = '010-2600-7777', OK7D = dg(OK7), OK8 = '010-2600-8888';
+        const S0 = await setupA(E, 2, null); const ids = S0.cash.map(r => r.id); const okv = async id => (await E.db.query(`SELECT out_k FROM order_memo_rows WHERE id = $1`, [id])).rows[0].out_k;
+        const p1 = await E.put(ids[0], { out_k: OK7 }); ok(p1.s === 200 && p1.j.row.out_k_set === OK7, 'K2 묶음 줄에 out_k 7777', p1.j.row && p1.j.row.out_k_set);
+        const r0 = (await E.rows()).find(r => r.id === ids[0]); const tc = await E.put(ids[0], { cells: r0.cells, to_cash: true });
+        const af = (await E.rows()).find(r => r.id === ids[0]);
+        ok(tc.s === 200 && /!/.test(af.cells[0]) && dg(af.cells[10]) === OK7D && (await okv(ids[0])) === OK7 + '@' + K2D && tc.j.row.out_k_set === null, '(손질) [현금으로 변경] = 현금 줄 K = 7777 · out_k 는 「7777@열쇠」로 꺼 둠(화면 out_k_set null)', [af.cells[0], af.cells[10], await okv(ids[0])]);
+        await E.save([lineRow(B5, null)]); const pr = await E.pair(B5, [ids[0]], true); ok(pr.s === 200 && pr.j.n === 1, '다른 입력삭제(센터장 번호 줄) 묶음에 /pair pick 1', pr.j);
+        const re = (await E.rows()).find(r => r.id === ids[0]), li = (await E.list()).find(r => r.id === ids[0]);
+        ok(!/!/.test(re.cells[0]) && dg(re.cells[10]) === B5D && li.out_k_set === null && (await okv(ids[0])) === null && dg(li.out_k) !== OK7D, '(손질) 다른 묶음에 다시 묶이면 = 열쇠 K 새 번호 · 낡은 out_k 지움(양식 K 7777 아님)', [re.cells[10], li.out_k_set, li.out_k, await okv(ids[0])]);
+        const d = await day(E, D1, [nv(PX, B5, 1), nv(PA, K2, 1)]); const f = d.form.find(c => dg(c[10]) === OK7D);
+        ok(!f, '(손질) 센터장 주문 양식에 K 7777 줄 없음', d.form.map(c => [c[3], c[10]]));
+        // 같은 PUT 에 to_cash + out_k(새 값) = 새 값으로 구움
+        const r1 = (await E.rows()).find(r => r.id === ids[1]); await E.put(ids[1], { out_k: OK7 });
+        const tc2 = await E.put(ids[1], { cells: r1.cells, to_cash: true, out_k: OK8 }); const af2 = (await E.rows()).find(r => r.id === ids[1]);
+        ok(tc2.s === 200 && dg(af2.cells[10]) === dg(OK8) && (await okv(ids[1])) === OK8 + '@' + K2D, '(손질) 같은 PUT 에 to_cash + 새 out_k = 현금 줄 K 새 값(8888) · 열엔 「8888@열쇠」', [af2.cells[10], await okv(ids[1])]);
+        // 같은 묶음 되돌리기 = override 되살림
+        const bk = await E.pair(K2, [ids[1]], true); const lb = (await E.list()).find(r => r.id === ids[1]);
+        ok(bk.j.n === 1 && dg(lb.cells[10]) === K2D && lb.out_k_set === OK8 && lb.out_k === OK8 && (await okv(ids[1])) === OK8, '(손질) 같은 입력삭제(K2)에 다시 붙임([현금으로 변경] 되돌리기 꼴) = override 8888 되살림 · 열쇠 K2', [lb.cells[10], lb.out_k_set, await okv(ids[1])]);
+        const pu = await E.call('POST', '/api/order-memo/pair', { undo: true, rows: bk.j.undo }); ok(pu.j.n === 1 && (await okv(ids[1])) === OK8 + '@' + K2D, '(손질) 짝 되돌리기(다시 현금) = 다시 「8888@열쇠」로 꺼 둠', [pu.j, await okv(ids[1])]);
+        const r2 = (await E.rows()).find(r => r.id === ids[1]); const bc = r2.cells.slice(); bc[10] = K2;
+        const ti = await E.put(ids[1], { cells: bc, to_indiv: true }); ok(ti.s === 200 && ti.j.row.indiv && ti.j.row.out_k_set === OK8 && (await okv(ids[1])) === OK8, '(손질) to_indiv 되돌리기(K = 같은 열쇠) = override 되살림', [ti.j.row.out_k_set, await okv(ids[1])]);
+        const tc3 = await E.put(ids[1], { cells: ti.j.row.cells, to_cash: true }); const r3 = (await E.rows()).find(r => r.id === ids[1]); const oc = r3.cells.slice(); oc[10] = '010-2600-4444';
+        const ti2 = await E.put(ids[1], { cells: oc, to_indiv: true }); ok(tc3.s === 200 && ti2.s === 200 && ti2.j.row.out_k_set === null && (await okv(ids[1])) === null, '(손질) to_indiv 를 다른 번호로 = override 지움', [ti2.j.row && ti2.j.row.out_k_set, await okv(ids[1])]);
+    } finally { await E.close(); } }
+
+    console.log('Ⅸ #1153 택배 양식 구매자 연락처(out_k) · 묶인 줄 K 잠금');
+    { const E = await mk([{ pid: PA, qty: 3 }]); try {
+        const OK7 = '010-2600-7777', OK7D = dg(OK7);
+        const S0 = await setupA(E, 3, null); ok(S0.pair.n === 3, '/pair = 3줄 묶임');
+        const ids = S0.cash.map(r => r.id), outk = async id => (await E.db.query(`SELECT out_k FROM order_memo_rows WHERE id = $1`, [id])).rows[0].out_k;
+        const fsA = JSON.stringify(await E.forShip(D1));
+        const li0 = (await E.list()).filter(r => r.kind === 'cash'); ok(li0.every(r => r.out_k_set === null && r.out_k === K2 && r.out_b === B5), '안 넣음 = out_k_set null · out_k 입력삭제 번호(종전)', li0.map(r => [r.out_k_set, r.out_k]));
+        // 넣기
+        const p1 = await E.put(ids[0], { out_k: '01026007777' }); ok(p1.s === 200 && p1.j.row.out_k_set === OK7 && p1.j.row.out_k === OK7 && p1.j.row.out_b === B5 && dg(p1.j.row.cells[10]) === K2D, 'PUT out_k = out_k_set 「010-2600-7777」 · 나갈 K = 그 번호 · B 센터장(#1149) · 열쇠 K 그대로', p1.j.row && [p1.j.row.out_k_set, p1.j.row.out_k, p1.j.row.out_b, p1.j.row.cells[10]]);
+        const bad1 = await E.put(ids[1], { out_k: '12-34' }); ok(bad1.s === 400 && /전화번호/.test(bad1.j.error) && (await outk(ids[1])) === null, '전화번호 꼴 아님 = 400 「…전화번호(010-0000-0000)로…」 · 저장 0', bad1.j);
+        const same = await E.put(ids[1], { out_k: K2 }); ok(same.s === 200 && (await outk(ids[1])) === null && same.j.row.out_k_set === null, '열쇠 K 와 같은 번호 = 안 넣은 것(null)', same.j.row && same.j.row.out_k_set);
+        // 한 바퀴
+        const orders = [nv(PA, K2, 3)];
+        const d = await day(E, D1, orders);
+        ok(!d.chk.boxDiff.length && !d.chk.missing.length && !d.chk.strangers.length && !d.cards.length && d.st[PA] === 'indiv', '🔴 override 줄 = 짝·박스 그대로(카드 0 · 열쇠 K 로 짝)', d.chk);
+        const f7 = d.form.filter(c => dg(c[10]) === OK7D), fK = d.form.filter(c => dg(c[10]) === K2D);
+        ok(d.form.length === 3 && f7.length === 1 && fK.length === 2 && d.form.every(c => dg(c[1]) === B5D), '🔴 양식 = 그 줄만 K 「…7777」 · 나머지 K 입력삭제 번호 · B 전부 센터장(#1149 그대로)', d.form.map(c => [c[1], c[10]]));
+        ok(d.qty[0][0].qty === 3, '수량표 3박스 그대로', d.qty);
+        await E.used(D1, d.fs1); const d2 = await day(E, D1, orders);
+        ok(d2.memoAddr.every(x => dg(x.k) === K2D && dg(x.ob) === B5D) && d2.sum.a.length === 1 && d2.sum.a[0][2] === 1 && d2.sum.um === 0 && d2.sum.td.length === 0, '🔴 자동 송장 = 그대로 주문에 1장(memoAddr k = DB 열쇠 · 운송장의 구매자 연락처는 안 읽음)', d2.sum);
+        const pc = core.parseCash([core.HEADERS.slice(), ...d2.form]), chk2 = core.cashCheck({ orders: [{ key: PA, digits: K2D, qty: 3, individual: true, excluded: false, buyer: '가', opt: TY }], cash: pc.rows });
+        ok(chk2.boxDiff.length + chk2.missing.length + chk2.strangers.length > 0, '🔵(알고 있을 것) 만든 양식을 현금파일로 다시 올리면 override 줄은 K ≠ 열쇠 → 카드가 다시 생김', { boxDiff: chk2.boxDiff.length, missing: chk2.missing.length, strangers: chk2.strangers.length });
+        // K 잠금
+        const cur = (await E.list()).find(r => r.id === ids[1]); const c2 = cur.cells.slice(); c2[10] = '010-2600-8888'; c2[3] = '받는2고침';
+        const lk = await E.put(ids[1], { cells: c2 }); ok(lk.s === 200 && lk.j.k_kept === true && dg(lk.j.row.cells[10]) === K2D && lk.j.row.cells[3] === '받는2고침' && lk.j.row.indiv, '🔴 묶인 줄 K 고침 = 무시하고 열쇠 그대로(k_kept) · 다른 칸은 고쳐짐 · 그대로 주소 줄', lk.j.row && [lk.j.k_kept, lk.j.row.cells[10], lk.j.row.cells[3]]);
+        const nk = await E.put(ids[1], { cells: lk.j.row.cells }); ok(nk.s === 200 && !('k_kept' in nk.j), 'K 안 바꾼 저장 = k_kept 칸 없음(종전 응답 꼴)', Object.keys(nk.j));
+        // 서비스 켬/끔 · 번호 줄 고침(rekey) · [현금으로 변경]
+        const sv = await E.call('POST', '/api/order-memo/service', { ids: [ids[0]], on: true }); ok(sv.j.n === 1 && (await outk(ids[0])) === OK7 && sv.j.rows[0].out_k === null, '서비스 켬 = out_k 보존 · 서비스 줄은 양식 바꿔 끼우기 없음', [await outk(ids[0]), sv.j.rows[0].out_k]);
+        const sv2 = await E.call('POST', '/api/order-memo/service', { ids: [ids[0]], on: false }); ok(sv2.j.n === 1 && sv2.j.rows[0].out_k === OK7, '서비스 끔 = 다시 K 「…7777」로 나감', sv2.j.rows[0].out_k);
+        const NK = '010-2600-6666'; const rk = await E.put(S0.line.id, { key: NK, line: ['', NK, '입력o삭제x', '네이버'].join('\t') });
+        const after = (await E.list()).filter(r => r.kind === 'cash'), r0 = after.find(r => r.id === ids[0]);
+        ok(rk.j.rekeyed === 3 && after.every(r => dg(r.cells[10]) === dg(NK)) && r0.out_k_set === OK7 && r0.out_k === OK7 && after.filter(r => r.id !== ids[0]).every(r => r.out_k === NK), '번호 줄 고침(rekey 3) = 열쇠 K 새 번호 · override 그대로(그 줄 K …7777 · 나머지 새 번호)', after.map(r => [r.cells[10], r.out_k]));
+        const tc = await E.put(ids[0], { cells: r0.cells, to_cash: true }); ok(tc.s === 200 && /!$/.test(tc.j.row.cells[0]) && dg(tc.j.row.cells[10]) === OK7D && !tc.j.row.indiv, '🔴 [현금으로 변경] = 현금 줄 K = override(안내 받을 분) · 「!」', tc.j.row && [tc.j.row.cells[0], tc.j.row.cells[10]]);
+        const ck = await E.put(ids[0], { out_k: OK7 }); ok(ck.s === 400 && /입력삭제 주소 줄에만/.test(ck.j.error), '현금 줄에 out_k = 400 「…입력삭제 주소 줄에만…」', ck.j);
+        const clr = await E.put(ids[2], { out_k: null }); ok(clr.s === 200 && (await outk(ids[2])) === null, 'out_k null = 지움', clr.s);
+        // pair_orig 없는 옛 줄 + override
+        await E.db.query(`UPDATE order_memo_rows SET pair_orig = NULL WHERE id = $1`, [ids[2]]);
+        const po = await E.put(ids[2], { out_k: OK7 }); ok(po.s === 200 && po.j.row.out_k === OK7 && dg(po.j.row.out_b) === dg(po.j.row.cells[1]) && po.j.row.out_k_set === OK7, 'pair_orig 없는 옛 줄도 override = 양식 K …7777 · B 줄 값 그대로', po.j.row && [po.j.row.out_b, po.j.row.out_k]);
+        const po0 = await E.put(ids[2], { out_k: '' }); ok(po0.s === 200 && po0.j.row.out_k === null && po0.j.row.out_b === null, '  지우면 = 종전(null · pair_orig 없는 줄은 바꿔 끼우기 없음)', po0.j.row && [po0.j.row.out_b, po0.j.row.out_k]);
+        // 입력삭제 줄 지움(풀림) = K 잠금 없음
+        await E.del(S0.line.id); const lost = (await E.list()).find(r => r.id === ids[1]); const c3 = lost.cells.slice(); c3[10] = '010-2600-5555';
+        const lp = await E.put(ids[1], { cells: c3 }); ok(lp.s === 200 && !lp.j.k_kept && dg(lp.j.row.cells[10]) === '01026005555', '풀린 주소 줄(입력삭제 줄 없음) = K 고칠 수 있음(종전)', lp.j.row && lp.j.row.cells[10]);
+        void fsA;
+    } finally { await E.close(); } }
+    { const E = await mk([{ pid: PA, qty: 3 }]); try {   // override 안 넣은 줄 = for-ship·목록 바이트(넣었다 지운 뒤 같음)
+        const S0 = await setupA(E, 3, null), id = S0.cash[0].id;
+        const a = JSON.stringify(await E.forShip(D1)), l0 = JSON.stringify((await E.list()).filter(r => r.kind === 'cash').map(r => Object.assign({}, r, { updated_at: 0 })));
+        await E.put(id, { out_k: '010-2600-7777' }); const mid = JSON.stringify(await E.forShip(D1)); await E.put(id, { out_k: null });
+        const b = JSON.stringify(await E.forShip(D1)), l1 = JSON.stringify((await E.list()).filter(r => r.kind === 'cash').map(r => Object.assign({}, r, { updated_at: 0, updated_by: (S0.cash.find(x => x.id === r.id) ? r.updated_by : r.updated_by) })));
+        ok(a === b && mid !== a, 'for-ship 응답 = 넣기 전과 지운 뒤 바이트 같음(넣었을 때만 다름)', [a.length, mid.length, b.length]);
+        ok(l0.replace(/"updated_by":"[^"]*"/g, '') === l1.replace(/"updated_by":"[^"]*"/g, ''), '목록 줄(시각 칸 뺌) = 넣기 전과 지운 뒤 같음');
+    } finally { await E.close(); } }
     console.log(`\n합계 ✅ ${pass} · ❌ ${fail}`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('💥', e); process.exit(1); });

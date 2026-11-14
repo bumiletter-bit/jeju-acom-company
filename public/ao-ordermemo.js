@@ -57,6 +57,8 @@
         { i: 1, label: '보내는 분 연락처', more: true, kind: 'tel', ph: '비우면 구매자 번호' },   // #927 대신 주문 = 부탁한 분 번호(택배사 양식 B) · 비우면 서버가 K 로(checkCash #858)
         { i: 12, label: '보내는 분 주소', more: true },
     ];
+    // #1153(대표 11/14) 입력삭제에 묶인 주소 줄 = 구매자 번호(K = 매칭 열쇠) 잠금 + 「택배 양식 구매자 연락처」(out_k_set · 비우면 입력삭제 번호로 나감) — 묶인 줄 고치기 카드에서만 보임
+    const OUTK_F = { k: 'outk', label: '택배 양식 구매자 연락처', kind: 'outk', ph: '비우면 입력삭제 번호로 나가요' };
     const LINE_FIELDS = [
         { k: 'key', label: '번호', hint: '구매자 번호 · 주문번호', need: true, why: '번호가 없어요', kind: 'tel' },
         { k: 'note', label: '할 일', need: true, why: '무엇을 할지 못 읽었어요', ph: '예) S사이즈로 · 입력o삭제x · 보내는이 홍길동' },
@@ -112,7 +114,7 @@
             sure: r.sure === true, check_why: Array.isArray(r.check_why) ? r.check_why.map(String) : (r.check_why ? [String(r.check_why)] : []), src: r.src || '',
             stale: r.stale === true, indiv: r.indiv === true, state: r.state || 'open', used_on: r.used_on ? String(r.used_on).slice(0, 10) : null, cleared_at: r.cleared_at || '', entry: entry || {},
             addr_ok: r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : ('addr_ok' in r ? null : undefined) };   // #880-b 주소 「이대로 둘게요」 서버 기록 · undefined = 옛 서버(화면 기억 AKEPT 로)
-        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; o.exp_site = r.exp_site === true; o.pair_orig = r.pair_orig && typeof r.pair_orig === 'object' ? r.pair_orig : null; o.out_b = r.out_b ? String(r.out_b) : null; o.out_k = r.out_k ? String(r.out_k) : null; }   /* #1146 택배 양식에 나갈 B·K(서버 · 없으면 줄 값) */   // #949 붙기 전 번호 · #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
+        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; o.exp_site = r.exp_site === true; o.pair_orig = r.pair_orig && typeof r.pair_orig === 'object' ? r.pair_orig : null; o.out_b = r.out_b ? String(r.out_b) : null; o.out_k = r.out_k ? String(r.out_k) : null; o.out_k_set = r.out_k_set ? String(r.out_k_set) : null; }   /* #1146 택배 양식에 나갈 B·K(서버 · 없으면 줄 값) */   // #949 붙기 전 번호 · #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
         else { o.badge = r.badge && typeof r.badge === 'object' ? r.badge : null; o.boxes = Array.isArray(r.boxes) && r.boxes.length ? r.boxes : null; o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
         return o;
     }
@@ -159,7 +161,8 @@
     const ICON_CLIP = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg>';
     const ICON_X = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
     const ICON_UNDO = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h11a5 5 0 0 1 0 10h-3"/><path d="M8 5L4 9l4 4"/></svg>';
-    const ICON_DOWN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+    const ICON_LOCK = '<svg class="om-lock-i" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';   /* #1153 묶인 구매자 번호 */
+    const ICON_DOWN ='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
     function mount() {
         if (OM.el && OM.el.isConnected) return OM.el;
         const root = document.body;   // body 바로 아래 — 최종발주 겹(z 960) 위에서도 열리게 · 색 토큰은 ao-ordermemo.css 가 한 벌 둔다
@@ -1197,9 +1200,10 @@
         if (OM.opt) optRender();
     }
     const fid = (ri, f) => `om-f-${ri}-${f.kind === 'shipdate' ? 'date' : f.i != null ? 'c' + f.i : f.k}`;
-    const getV = (r, f) => f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? (r.kind === 'cash' && r.indiv ? senderDrim(r.cells[0]) : senderShow(r.cells[0])) : valOf(r, f);   /* #1143(대표 11/14) 입력삭제 주소 줄 = 이름만 저장돼 있어도 「○○ 드림」으로 보임(「!」 없음 · 서버도 같은 판정) */
+    const getV = (r, f) => f.kind === 'outk' ? String(r.out_k_set || '') : f.kind === 'shipdate' ? (r.ship_date ? md(r.ship_date) : '') : f.kind === 'sender' ? (r.kind === 'cash' && r.indiv ? senderDrim(r.cells[0]) : senderShow(r.cells[0])) : valOf(r, f);   /* #1143(대표 11/14) 입력삭제 주소 줄 = 이름만 저장돼 있어도 「○○ 드림」으로 보임(「!」 없음 · 서버도 같은 판정) */
     function setV(r, f, v) {
         if (f.kind === 'shipdate') { const iso = toIso(v); r.ship_date = iso === undefined ? r.ship_date : iso; r._dateBad = iso === undefined; }
+        else if (f.kind === 'outk') r.out_k_set = String(v || '').trim() || null;   /* #1153 빈칸 = null(서버 = 입력삭제 번호로) */
         else if (f.kind === 'sender') r.cells[0] = senderShow(v);   // #863 이름만 보냄(「!」 = 서버가 맨 뒤에)
         else if (r.kind === 'cash') r.cells[f.i] = v; else r[f.k] = v;
         if (r.kind === 'line') r.line = [r.ship_date ? md(r.ship_date) : '', r.key, r.note, r.plat].join('\t');
@@ -1233,7 +1237,7 @@
     }
     const fieldsOf = r => (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).concat([{ kind: 'shipdate', label: '발송일', hint: '비우면 다음 발주', ph: '예) 10/30' }]);
     function fieldHtml(ri, r, f) {
-        const v = getV(r, f), o = getV(origOf(ri) || r, f), id = fid(ri, f);
+        const v = getV(r, f), o = getV(origOf(ri) || r, f), id = fid(ri, f), lockK = r.kind === 'cash' && f.i === 10 && kLocked(ri, r);
         const blank = !r._new && f.need && !String(v).trim();
         const why = blank ? fieldWhy(r, f) : (f.kind === 'shipdate' && r._dateBad ? '날짜를 못 읽었어요 · 예) 10/30' : '');
         const changed = String(v) !== String(o);
@@ -1249,21 +1253,28 @@
         } else if (f.kind === 'platform') {
             input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(OM.card && OM.card.mode === 'edit' ? [] : [CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${lkHtml(r, ri)}</p><div class="om-orders" id="om-ord-${ri}">${ordHtml(r, ri)}</div><div class="om-boxp" id="om-box-${ri}">${r.kind === 'line' ? boxPanelHtml(r, ri) : ''}</div><div class="om-boxp" id="om-xbox-${ri}">${r.kind === 'line' ? xboxPanelHtml(r, ri) : ''}</div>`;
         } else {
-            const at = f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
-            input = `<input id="${id}" ${f.kind === 'tel' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
-            if (r.kind === 'cash' && f.i === 10) input = `<div class="om-telrow">${input}${sameBtn(r, ri)}</div>`;   // #862 구매자 연락처 = 받는 분 연락처 그대로 넣기
+            const at = f.kind === 'outk' ? 'data-fo="1"' : f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
+            if (lockK) input = `<div class="om-telrow"><input id="${id}" class="om-locked" inputmode="tel" data-ri="${ri}" ${at} value="${esc(v)}" readonly aria-readonly="true" aria-describedby="${id}-lk"></div><p class="om-lock-n" id="${id}-lk">묶여 있는 동안은 못 바꿔요 · 풀려면 [현금으로 변경하기]</p>`;   /* #1153 매칭 열쇠 = 잠금 · [수취인과 동일] 없음 */
+            else {
+                input = `<input id="${id}" ${f.kind === 'tel' || f.kind === 'outk' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
+                if (r.kind === 'cash' && f.i === 10) input = `<div class="om-telrow">${input}${sameBtn(r, ri)}</div>`;   // #862 구매자 연락처 = 받는 분 연락처 그대로 넣기
+                if (f.kind === 'outk') input += `<p class="om-lock-n om-outk-h">안내 받을 번호가 다르면 여기에 넣어요</p>`;
+            }
         }
         const wide = f.kind === 'area' || f.kind === 'option' || f.kind === 'platform' || (r.kind === 'line' && f.k === 'note');
-        return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}${r.kind === 'cash' ? ' fk-' + (f.kind === 'shipdate' ? 'ship' : f.i) : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}</label>${undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
+        return `<div class="om-f${blank ? ' blank' : ''}${wide ? ' wide' : ''}${f.kind === 'qty' ? ' qty' : ''}${r.kind === 'cash' ? ' fk-' + (f.kind === 'shipdate' ? 'ship' : f.i != null ? f.i : f.k) : ''}${lockK ? ' om-f-lock' : ''}" data-fwrap="${esc(id)}"><div class="om-f-l"><label for="${id}">${lockK ? `${ICON_LOCK}구매자 번호 <small>입력삭제 매칭(고정)</small>` : `${esc(f.label)}${f.hint ? ` <small>${esc(f.hint)}</small>` : ''}`}</label>${lockK ? '' : undo}</div>${input}<p class="om-f-w" id="${id}-w">${esc(why)}</p></div>`;
     }
     // #1152(대표 11/14 「수취인 입력란 크게 · 구매자번호·보내는이 변경과 구분」) 현금 줄 칸 = 묶음 넷(품목·수량 → 받는 분 → 주문한 분 → 배송메세지·발송일) + 아래 「보내는이 변경」 묶음
     //   칸 차례(탭 순서)·id·저장·판정 = 종전 그대로(묶음 틀만 씌움) · 받는 분 묶음만 옅은 인디고 바탕 + 칸 한 단계 크게
+    // #1153 잠금 기준 = 고치기 카드 · 저장된 줄이 입력삭제에 묶임(indiv · 서비스 아님 · 풀림 아님 = lostOf) — 서버 잠금과 같은 판정 · 풀린 줄·현금 줄·새 줄은 종전
+    function kLocked(ri, r) { const c = OM.card, o = origOf(ri) || r; return !!(c && c.mode === 'edit' && o && o.kind === 'cash' && o.indiv && !o.service && o.id != null && !lostOf(o, indivLineKeys())); }
     function cashGroupsHtml(ri, r) {
         const F = fieldsOf(r).filter(f => !f.more), by = k => F.find(f => (k === 'ship' ? f.kind === 'shipdate' : f.i === k)), h = ks => ks.map(by).filter(Boolean).map(f => fieldHtml(ri, r, f)).join('');
         const grp = (cls, id, t, s, ks) => `<div class="om-grp ${cls}" role="group" aria-labelledby="${id}"><p class="om-grp-h" id="${id}">${t}${s ? ` <small>${s}</small>` : ''}</p><div class="om-grid cash ${cls}-g">${h(ks)}</div></div>`;
         return `<div class="om-grid cash om-g-what">${h([4, 5])}</div>`
             + grp('om-grp-recv', `om-gh-r-${ri}`, '받는 분 정보', '택배가 가는 곳', [3, 6, 8])
-            + grp('om-grp-buyer', `om-gh-b-${ri}`, '주문한 분 정보', '', [10])
+            + (kLocked(ri, r) ? `<div class="om-grp om-grp-buyer" role="group" aria-labelledby="om-gh-b-${ri}"><p class="om-grp-h" id="om-gh-b-${ri}">주문한 분 정보</p><div class="om-grid cash om-grp-buyer-g om-g-lock">${h([10])}${fieldHtml(ri, r, OUTK_F)}</div></div>`   /* #1153 묶인 줄 = 구매자 번호 잠금 + 택배 양식 구매자 연락처 */
+                : grp('om-grp-buyer', `om-gh-b-${ri}`, '주문한 분 정보', '', [10]))
             + `<div class="om-grid cash om-g-etc">${F.filter(f => ![4, 5, 3, 6, 8, 10].includes(f.i) || f.kind === 'shipdate').map(f => fieldHtml(ri, r, f)).join('')}</div>`;   /* 남은 칸(배송메세지·발송일 · 새 칸이 생겨도 여기로) */
     }
     const sameBtn = (r, ri) => `<button type="button" class="om-btn om-same" data-cact="same" data-ri="${ri}"${String(r.cells[6] || '').trim() ? '' : ' disabled'} title="받는 분 연락처를 그대로 넣어요">수취인과 동일</button>`;
@@ -1379,7 +1390,7 @@
             const fo = CASH_FIELDS.find(x => x.i === 4); setV(r, fo, withOptTail(r.cells[4], d && Number(d) > 0 ? Number(d) + '과로!' : '')); touched(ri, fo);
             return;
         }
-        const f = t.dataset.fd ? fieldsOf(r).find(x => x.kind === 'shipdate') : t.dataset.fs ? CASH_FIELDS.find(x => x.kind === 'sender') : t.dataset.fi != null ? CASH_FIELDS.find(x => x.i === Number(t.dataset.fi)) : LINE_FIELDS.find(x => x.k === t.dataset.fk);
+        const f = t.dataset.fo ? OUTK_F : t.dataset.fd ? fieldsOf(r).find(x => x.kind === 'shipdate') : t.dataset.fs ? CASH_FIELDS.find(x => x.kind === 'sender') : t.dataset.fi != null ? CASH_FIELDS.find(x => x.i === Number(t.dataset.fi)) : LINE_FIELDS.find(x => x.k === t.dataset.fk);
         if (!f) return;
         if (f.kind === 'tel' && !e.isComposing && !(f.k === 'key' && digits(t.value).startsWith('02'))) telLive(t);   // #862 메모 줄 번호의 02 = 숫자 그대로(위 lineTel)   // #850-c 치는 대로 하이픈 · 커서 = 그 앞 숫자 개수 기준(가운데를 고쳐도 끝으로 안 튐)
         setV(r, f, t.value); touched(ri, f);
@@ -1391,6 +1402,7 @@
         if (t && t.dataset && t.dataset.cact === 'orddate' && OM.card) { ordDateCommit(t); return; }
         if (t && t.dataset && t.dataset.cact === 'cedate' && OM.card) { ceDateCommit(t); return; }   // #1027   // #938 주문별 발송일 = 칸을 떠날 때
         if (t && t.id === 'om-ind-key') { indCommit(t); return; }   // #895
+        if (t && t.dataset && t.dataset.fo && OM.card) { const ri = Number(t.dataset.ri), r = OM.card.rows[ri]; if (!r) return; const v = telShow(t.value.trim()); if (v !== t.value) { t.value = v; setV(r, OUTK_F, v); touched(ri, OUTK_F); } return; }   /* #1153 택배 양식 구매자 연락처 = 떠날 때만 하이픈 정리(치는 중엔 그대로) */
         if (!t || !t.dataset || !t.dataset.fs || !OM.card) return;
         const ri = Number(t.dataset.ri), r = OM.card.rows[ri]; if (!r) return;
         const v = senderDrim(t.value); if (v === t.value) return;
@@ -2300,7 +2312,7 @@
             setV(r, f, v); r._k10typed = true; const el = $(fid(ri, f)); if (el) el.value = getV(r, f); touched(ri, f); return;
         }
         if (a === 'undo1') {
-            const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more)).find(x => fid(ri, x) === b.dataset.f); if (!f || !origOf(ri)) return;
+            const f = fieldsOf(r).concat(CASH_FIELDS.filter(x => x.more), r.kind === 'cash' ? [OUTK_F] : []).find(x => fid(ri, x) === b.dataset.f); if (!f || !origOf(ri)) return;
             setV(r, f, getV(c.orig[ri], f)); if (f.kind === 'shipdate') { r.ship_date = c.orig[ri].ship_date; r._dateBad = false; }
             const el = $(fid(ri, f));
             if (f.kind === 'option') { renderCard(); }
@@ -2443,7 +2455,8 @@
             const ex = rows[0].kind === 'line' ? expandOrders([rows[0]]) : [rows[0]];
             if (ex[0] !== rows[0]) Object.assign(rows[0], { key: ex[0].key, ship_date: ex[0].ship_date, plat: ex[0].plat, line: ex[0].line, checked: ex[0].checked, _lk: ex[0]._lk });
             const tc = c.toCash && rows[0].kind === 'cash' && rows[0].indiv && !(c.orig[0] || rows[0]).service ? (() => { const r0 = rows[0], K0 = indivLineKeys(), d0 = [((c.orig[0] || r0).cells || [])[10], ((c.orig[0] || r0).cells || [])[1]].map(digits).find(d => d && K0.has(d)); return { tv: toCashView(r0), back: r0.cells.slice(), wasLost: !d0, lineKey: d0 ? telShow(d0) : null, r0 }; })() : null;   // #1125 ⑤ 대기한 현금으로 변경
-            res = tc ? await API.update(rows[0].id, Object.assign(putBody(Object.assign({}, rows[0], { cells: tc.tv.cells, ship_date: tc.tv.ship_date, _svcTouched: false })), { to_cash: true })) : await API.update(rows[0].id, putBody(rows[0]));
+            res = tc ? await API.update(rows[0].id, Object.assign(putBody(Object.assign({}, rows[0], { cells: tc.tv.cells, ship_date: tc.tv.ship_date, _svcTouched: false })), { to_cash: true })) : await API.update(rows[0].id, Object.assign(putBody(rows[0]), outkBody(c.orig[0], rows[0])));
+            if (!res.ok && rows[0].kind === 'cash' && /택배 양식 구매자 연락처/.test(errText(res, ''))) { const w = $('om-f-0-outk-w'), wr = $('om-card').querySelector('[data-fwrap="om-f-0-outk"]'); if (w) w.textContent = errText(res, ''); if (wr) wr.classList.add('blank'); }   // #1153 서버 400 문구 = 그 칸 아래 그대로
             if (tc && res.ok) { const r = tc.r0; undoShow(`${nameOf(r) || '이 줄'} = ${toCashNote(tc.tv.guess)}`, async () => { const y = tc.wasLost ? await API.update(r.id, Object.assign(putBody(Object.assign({}, r, { cells: tc.back })), { to_indiv: true })) : await API.pair({ key: tc.lineKey, ids: [Number(r.id)], pick: true }); toast(y.ok && (tc.wasLost || (y.body && y.body.n)) ? (tc.wasLost ? '주소 줄(풀림)로 되돌렸어요' : `입력삭제 ${tc.lineKey} 주소 줄로 다시 붙였어요`) : errText(y, '되돌리지 못했어요')); load(); }); }
             if (res.ok && xExtra.length) { const r3 = await API.save({ raw: c.raw || '', tags: c.tags || [], source: 'manual', rows: xExtra.map(outRow) }); toast(r3.ok ? `다른 품목 주문 줄 ${xExtra.length}개도 저장했어요` : errText(r3, '다른 품목 주문 줄을 못 저장했어요') + ' · 이 줄만 바뀌었어요'); }
             if (res.ok && ex.length > 1) { const r2 = await API.save({ raw: c.raw || '', tags: c.tags || [], source: 'manual', rows: ex.slice(1).map(outRow) }); if (!r2.ok) toast(errText(r2, '나머지 주문 줄을 못 저장했어요') + ' · 이 줄만 바뀌었어요'); else toast(`주문번호 줄 ${ex.length}개로 나눴어요`); }
@@ -2471,7 +2484,7 @@
         if (c.mode !== 'edit' && !c.cash && (!c.from || c.from.filled)) { const raw = $('om-raw'); OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); }
         const goNext = aseqGo(c);   // #880-b 닫기 전에 표시(닫힘 = 멈춤으로 안 보게)
         cardClose(true);
-        inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
+        inNote(c.mode === 'edit' ? '고쳤어요' + (nCheck ? ' · 아직 「확인」으로 남았어요' : '') + (res.body && res.body.k_kept ? ' · 구매자 번호는 입력삭제 매칭 열쇠라 바꾸지 않았어요' : '') : (nCheck ? `${n}줄 저장했어요 · ${nCheck}줄은 「확인」으로 남았어요` : `${n}줄 저장했어요 · 다음 최종발주에 들어가요`), nCheck ? 'warn' : 'ok');
         OM.tab = 'open'; syncTabs(); const ld = load();
         if (c.rows.some(r => r.kind === 'line')) setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(x => x.kind === 'line' && x.badge && x.badge.state === 'unknown')) load(); }, 6000);   // #936 즉시 조회가 끝난 숫자로 배지 한 번 더
         if (goNext) ld.then(() => aseqNext());   // #880-b 이어서 확인 = 저장 뒤 다음 줄 카드
@@ -2776,6 +2789,8 @@
         next(); next();
     }
     // 서버 한 번 저장 = 60줄까지 → 넘으면 60줄씩 차례로 · 중간에 실패 = part(앞에서 저장된 줄 수·저장 결과)
+    // #1153 「택배 양식 구매자 연락처」 = 고쳤을 때만 PUT 에 out_k(지움 = null) · 안 고쳤으면 칸 자체를 안 보냄(서버 = 그대로)
+    const outkBody = (o, r) => { if (!o || !r || r.kind !== 'cash') return {}; const a = String(o.out_k_set || '').trim(), b = String(r.out_k_set || '').trim(); return a === b || (digits(a) && digits(a) === digits(b) && !/[^0-9\s-]/.test(b)) ? {} : { out_k: b ? telShow(b) : null }; };   /* 번호 아닌 글은 그대로 보내 서버 400 문구로 */
     async function saveRows(c, rows) {
         const body = part => ({ raw: c.raw || (c.fileName ? '택배 양식 파일 ' + c.fileName : ''), tags: c.tags || [], source: c.source || 'manual', rows: part.map(outRow) });
         if (rows.length <= SAVE_CHUNK) return API.save(body(rows));
