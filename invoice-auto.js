@@ -88,7 +88,9 @@ function memoBuyerMap(memoAddr) {
     const m = new Map(); for (const r of (Array.isArray(memoAddr) ? memoAddr : [])) { const key = normName(r.name) + '|' + dg(r.tel); if (key.startsWith('|') || key.endsWith('|')) continue; const v = m.get(key) || { ks: new Set(), block: false, obs: new Set() }; if (r.block) v.block = true; else { if (validTel(dg(r.k))) v.ks.add(dg(r.k)); if (validTel(dg(r.ob))) v.obs.add(dg(r.ob)); } m.set(key, v); }   /* #1146 obs = 그 받는 분 주소 줄의 양식 B(처음 보내는 분 번호) */
     return m;
 }
-function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, holdKeys, memoAddr }) {
+// #1147(대표 11/14) memoGuard = 그날 짝 지은 주소 줄(pair_orig 있음 · 최종발주 「오늘 씀」 전 줄 포함 · 표식 없어도 읽음) — 묶기엔 안 쓰고 「이 운송장은 보내는 분 번호 주인 것이 아님」 막이에만
+//   ordersPartial = 채널 하나라도 조회 실패(주문 목록이 덜 옴) → 주문 목록이 온전해야 안전한 갈래(#965 「보내는 분 번호가 그날 구매자 아님」 묶기 · #1145 「그 구매자 주문 하나뿐」)는 끔
+function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, holdKeys, memoAddr, memoGuard, ordersPartial }) {
     const HOLD = new Set(Array.isArray(holdKeys) ? holdKeys.map(String) : []), orders = HOLD.size ? ordersAll.filter(o => !HOLD.has(o.channel + ':' + o.order_key)) : ordersAll;
     const IND = indivKeys instanceof Set ? indivKeys : new Set(Array.isArray(indivKeys) ? indivKeys.map(String) : []);
     for (const o of orders) if (o.canon === undefined) o.canon = canonOf(o.option, pricingNames);
@@ -146,17 +148,21 @@ function matchShipments({ ships, orders: ordersAll, pricingNames, indivKeys, hol
     const memoHit = (o, s) => {
         const v = memoItems.get(normName(s.name) + '|' + dg(s.tel)); if (!v || v.block || v.ks.size !== 1 || !v.ks.has(o.kBuyer)) return false;
         const sp = normProd(s.product); if (!sp || !(v.prods.has(sp) || (s.canonReal && v.canons.has(s.canon)))) return false;
-        return !ordersAll.some(x => x !== o && x.kBuyer === o.kBuyer);   /* 워커2 점검: 그날 그 구매자 주문이 이 주문 하나뿐일 때만(여럿 = 도는 순서에 따라 다른 품목 주문에 붙음 → 종전 prodHit 만) */
+        return !ordersPartial && !ordersAll.some(x => x !== o && x.kBuyer === o.kBuyer);   /* #1147 채널 조회 실패 = 그 구매자 다른 주문이 빠졌을 수 있어 안 넓힘 · 워커2 점검: 그날 그 구매자 주문이 이 주문 하나뿐일 때만(여럿 = 도는 순서에 따라 다른 품목 주문에 붙음 → 종전 prodHit 만) */
     };
     const itemOk = (o, s) => prodHit(o, s) || memoHit(o, s);
     // #965 남은 운송장의 구매자(메모함 주소 줄 K) — 입력삭제 주문 구매자일 때만
     if (IND.size && Array.isArray(memoAddr) && memoAddr.length) {
         const mm = memoBuyerMap(memoAddr), indB = new Set(orders.filter(o => IND.has(o.channel + ':' + o.order_key)).map(o => o.kBuyer).filter(validTel)), allB = new Set(ordersAll.map(o => o.kBuyer).filter(validTel));   // allB = 보류 포함 그날 주문 전체 구매자
-        for (const s of leftover) { const v = mm.get(normName(s.name) + '|' + dg(s.tel)); if (!v) continue; if (v.block || v.ks.size > 1) { if (indB.has(s.senderTel) === false) s._kbWhy = v.block ? '같은 받는 분 현금·서비스 줄이 메모함에 있어 구매자로 안 묶었어요' : '같은 받는 분 줄이 메모함에 구매자 여럿이라 안 묶었어요'; continue; } const k = [...v.ks][0]; if (k && indB.has(k)) { if (s.senderTel === k || !allB.has(s.senderTel) || (v.obs && v.obs.has(s.senderTel))) s._kb = k; else s._kbWhy = '보내는 분 번호가 그날 다른 주문의 구매자라 메모함 구매자로 안 묶었어요'; } }   // 🔴 다른 사람 주문의 운송장을 뺏지 않음(워커3 재현 · 안 묶인 줄은 extra·unmatched·카드로 드러남)
+        for (const s of leftover) { const v = mm.get(normName(s.name) + '|' + dg(s.tel)); if (!v) continue; if (v.block || v.ks.size > 1) { if (indB.has(s.senderTel) === false) s._kbWhy = v.block ? '같은 받는 분 현금·서비스 줄이 메모함에 있어 구매자로 안 묶었어요' : '같은 받는 분 줄이 메모함에 구매자 여럿이라 안 묶었어요'; continue; } const k = [...v.ks][0]; if (k && indB.has(k)) { if (s.senderTel === k || (!ordersPartial && !allB.has(s.senderTel)) || (v.obs && v.obs.has(s.senderTel))) s._kb = k; else s._kbWhy = '보내는 분 번호가 그날 다른 주문의 구매자라 메모함 구매자로 안 묶었어요'; } }   // 🔴 다른 사람 주문의 운송장을 뺏지 않음(워커3 재현 · 안 묶인 줄은 extra·unmatched·카드로 드러남)
     }
-    const buyerOfShip = s => s._kb || s.senderTel;
+    // #1147 처음 B(양식 보내는 분 번호)로 나간 짝 주소 줄 운송장 = 그 번호 주인의 주문엔 안 붙임(memoAddr 를 못 읽은 날 · 구매자 K 주문이 안 왔거나 묶기 못 한 날 · 오매칭 > 미매칭)
+    //   받는 분(이름+번호)이 같은 주소 줄의 양식 B = 이 운송장 보내는 분 번호이고, 그 받는 분 줄의 구매자(K)에 이 번호가 없을 때만 · 보통 주문(보내는 분 = 구매자 본인) 무관
+    const gm = memoBuyerMap([].concat(Array.isArray(memoAddr) ? memoAddr : [], Array.isArray(memoGuard) ? memoGuard : []));
+    if (gm.size) for (const s of leftover) { const v = gm.get(normName(s.name) + '|' + dg(s.tel)); if (v && v.ks.size && v.obs.has(s.senderTel) && !v.ks.has(s.senderTel)) { s._notB = true; if (!s._kb && !s._kbWhy) s._kbWhy = '메모함에서 다른 구매자 주문에 짝지은 주소 줄(처음 넣은 보내는 분 번호)이라 그 번호 주인 주문에 안 붙였어요'; } }
+    const buyerOfShip = s => s._kb || (s._notB ? '' : s.senderTel);
     for (const [buyer, osAll] of tlByBuyer) {
-        const cand = leftover.filter(s => s.senderTel === buyer && (!s._kb || s._kb === buyer) && !used.has(s.tracking)), candI = leftover.filter(s => buyerOfShip(s) === buyer && !used.has(s.tracking)); if (!cand.length && !candI.length) continue;   // cand = 종전(구매자 번호로 나간 줄) · candI = + 메모함 K 로 찾은 줄(입력삭제 주문에만)
+        const cand = leftover.filter(s => s.senderTel === buyer && !s._notB && (!s._kb || s._kb === buyer) && !used.has(s.tracking)), candI = leftover.filter(s => buyerOfShip(s) === buyer && !used.has(s.tracking)); if (!cand.length && !candI.length) continue;   // cand = 종전(구매자 번호로 나간 줄) · candI = + 메모함 K 로 찾은 줄(입력삭제 주문에만)
         // #900 1-F·1-G(대표 10/27) 그날 최종발주가 넘긴 입력삭제 주문(IND)만 = 주문마다 1장 · 주문 주소와 같은 줄 먼저(indiv_store_addr) · 나머지는 남은 줄에서 서로 다른 1장(indiv_any) · 할 일 안 냄
         //   자사몰 입력삭제(개인결제창 꼴) = 품목 안 봄(그 번호 자사몰 1건이면 품목 무시 · 2건 이상이면 품목 맞는 줄 먼저 → 없으면 아무 줄) · 네이버·쿠팡 = 품목 맞는 줄만
         //   IND 없는 날(옛 화면·빈 localStorage)·IND 밖 주문 = 아래 종전 길 그대로(뒤 날짜 주문과 섞일 수 있어 할 일)
@@ -338,11 +344,17 @@ module.exports = function mountInvoiceAuto(app, d) {
                 }
             } catch (e) { log.error('[#939 최종발주 표식] 읽기 실패(브라우저 값으로):', e && e.message); }
             // #965 그날 메모함 주소 줄(읽기 · 입력삭제 표식 있을 때만 · 비운 줄 포함 = used_on·ship_date 기준 · 실패하면 종전 길)
-            let memoAddr = [];
-            if (indivKeys.length && Object.values(fetchInfo).every(x => x.ok)) { try { const mr = await pool.query(`SELECT kind, cells, service, pair_orig FROM order_memo_rows WHERE kind = 'cash' AND (ship_date = $1::date OR (ship_date IS NULL AND used_on = $1::date)) AND (state = 'open' OR used_on = $1::date)`, [shipDate]);   // 채널 하나라도 조회 실패 = 주문이 빠진 채 묶지 않음 · 그날 안 쓰고 지운 줄 안 읽음
-                const outBK = (() => { try { return require('./order-memo.js').outBK; } catch (e) { return null; } })();   // #1146 양식에 찍힌 보내는 분 번호(처음 B) = 메모함과 같은 판정
-                memoAddr = (mr.rows || []).filter(r => Array.isArray(r.cells)).map(r => ({ name: r.cells[3], tel: r.cells[6], k: r.cells[10], opt: r.cells[4], ob: (() => { try { const x = outBK ? outBK(r) : null; return x ? x.b : ''; } catch (e) { return ''; } })(), block: !!r.service || /[!！]/.test(String(r.cells[0] || '')) })); }   /* #1145 opt = 주소 줄 품목(품목을 바꾼 입력삭제 짝) · #1146 ob = 그 줄 양식 B */ catch (e) { log.error('[#965 메모함 주소 줄] 읽기 실패(종전 길로):', e && e.message); } }
-            const m = matchShipments({ ships, orders, pricingNames, indivKeys, holdKeys, memoAddr });
+            //   #1147 채널 조회 실패여도 읽음(메모함 표는 채널과 따로) · 대신 ordersPartial 로 주문 목록이 온전해야 안전한 갈래만 끔
+            let memoAddr = [], memoGuard = [];
+            const ordersPartial = !Object.values(fetchInfo).every(x => x.ok);
+            const outBK = (() => { try { return require('./order-memo.js').outBK; } catch (e) { return null; } })();   // #1146 양식에 찍힌 보내는 분 번호(처음 B) = 메모함과 같은 판정
+            const memoOut = rows => (rows || []).filter(r => Array.isArray(r.cells)).map(r => ({ name: r.cells[3], tel: r.cells[6], k: r.cells[10], opt: r.cells[4], ob: (() => { try { const x = outBK ? outBK(r) : null; return x ? x.b : ''; } catch (e) { return ''; } })(), block: !!r.service || /[!！]/.test(String(r.cells[0] || '')) }));   /* #1145 opt = 주소 줄 품목(품목을 바꾼 입력삭제 짝) · #1146 ob = 그 줄 양식 B */
+            if (indivKeys.length) { try { const mr = await pool.query(`SELECT kind, cells, service, pair_orig FROM order_memo_rows WHERE kind = 'cash' AND (ship_date = $1::date OR (ship_date IS NULL AND used_on = $1::date)) AND (state = 'open' OR used_on = $1::date)`, [shipDate]);   // 그날 안 쓰고 지운 줄 안 읽음
+                memoAddr = memoOut(mr.rows); } catch (e) { log.error('[#965 메모함 주소 줄] 읽기 실패(종전 길로):', e && e.message); } }
+            // #1147 막이용(묶기엔 안 씀) = 그날 짝 지은 주소 줄 + 최종발주 「오늘 씀」 전 열린 줄 · 표식 없어도 · 실패하면 막이 없이 종전
+            try { const gr = await pool.query(`SELECT kind, cells, service, pair_orig FROM order_memo_rows WHERE kind = 'cash' AND pair_orig IS NOT NULL AND (ship_date = $1::date OR (ship_date IS NULL AND (used_on = $1::date OR (used_on IS NULL AND state = 'open'))))`, [shipDate]);
+                memoGuard = memoOut(gr.rows); } catch (e) { log.error('[#1147 메모함 짝 줄 막이] 읽기 실패(막이 없이):', e && e.message); }
+            const m = matchShipments({ ships, orders, pricingNames, indivKeys, holdKeys, memoAddr, memoGuard, ordersPartial });
             const card = buildCard(m, orders);
             // 송장 색인(delivery_shipments) — 종전 LOIS 업로드와 같은 upsert(파일마다 · 같은 운송장은 합침) · 실패해도 짝 결과는 돌려줌
             let indexUp = 0, indexErr = null;

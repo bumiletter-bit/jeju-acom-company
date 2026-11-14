@@ -83,11 +83,11 @@ async function day(E, date, orders, opt) {
     // 자동 송장(서버 /match 와 같은 입력) · memoAddr = 서버 SQL 그대로(used_on 은 최종발주가 omPost 로 찍음 = 여기선 /used 호출 뒤 읽음)
     const os = ia.normOrders('naver', orders.filter(o => !o._ch)).concat(ia.normOrders('cafe24', orders.filter(o => o._ch === 'cafe24')), ia.normOrders('coupang', orders.filter(o => o._ch === 'coupang')));
     const ind = merged.filter(e => e.individual && !e.excluded).map(e => e.ch + ':' + e.pid), hold = merged.filter(e => e.excluded).map(e => e.ch + ':' + e.pid);
-    const memoAddr = o0.memoAddr !== undefined ? o0.memoAddr : await E.memoAddr(date);
-    const m = ia.matchShipments({ ships: ia.normShips(ships, '효돈'), orders: os, pricingNames: CAT, indivKeys: o0.noInd ? [] : ind, holdKeys: hold, memoAddr }), card = ia.buildCard(m, os);
+    const memoAddr = o0.memoAddr !== undefined ? o0.memoAddr : await E.memoAddr(date), memoGuard = o0.memoGuard !== undefined ? o0.memoGuard : await E.memoGuard(date);
+    const m = ia.matchShipments({ ships: ia.normShips(ships, '효돈'), orders: os, pricingNames: CAT, indivKeys: o0.noInd ? [] : ind, holdKeys: hold, memoAddr, memoGuard, ordersPartial: !!o0.partial }), card = ia.buildCard(m, os);
     const stt = {}; merged.forEach(e => { stt[e.pid] = e.individual ? (e.excluded ? 'indiv+excl' : 'indiv') : e.excluded ? 'excl' : 'go'; });
     const sum = { a: m.assign.map(a => [a.o.order_key, a.rule, a.ships.length]).sort(), ex: m.extra.length, um: m.unmatched.length, td: m.todos.map(t => [t.o.order_key, t.rule, t.options.length]), cash: m.cash.length, why: m.unmatched.slice(0, 2).map(ia.unmatchedWhy) };
-    return { fs1, st: stt, chk, cards, info, omc, form, qty: out.partners.map(p => p.qty), ships, sum, card, memoAddr };
+    return { fs1, st: stt, chk, cards, info, omc, form, qty: out.partners.map(p => p.qty), ships, sum, card, memoAddr, memoGuard, os, ind: o0.noInd ? [] : ind };
 }
 const arr = v => '{' + v.map(x => x == null ? 'NULL' : '"' + String(x).replace(/["\\]/g, '\\$&') + '"').join(',') + '}';
 function mkPool(db) { const conv = v => Array.isArray(v) ? arr(v) : (v && typeof v === 'object' && !(v instanceof Date)) ? JSON.stringify(v) : v; const q = async (sql, p = []) => { const r = await db.query(sql, p.map(conv)); return { rows: r.rows, rowCount: r.affectedRows != null ? r.affectedRows : r.rows.length }; }; return { query: q, connect: async () => ({ query: q, release() {} }) }; }
@@ -107,7 +107,7 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         for (const q of require(path.join(ROOT, 'sms', 'preorders.js')).DDL) await db.query(q);
         const app = express(); app.use(express.json()); const auth = (req, res, next) => { req.user = { id: 991146, name: '검증', position: '', role: 'staff' }; next(); };
         const api = OM.mount(app, { pool: mkPool(db), authMiddleware: auth, writeAudit: async () => {}, adminActor: req => ({ id: req.user.id }), handleErr: (res, e) => res.status(e.status || 500).json({ error: e.message }), cfgGet: async k => (k === 'order_memo' ? { ai: { enabled: false } } : null), deskAlive: async () => false, kstToday: () => D0, noTimers: true, anthropic: null, shipCal: async () => ({ realToday: D0, shipDays: [D1, D3, D4], suggested: D1 }) });
-        const p = port++; const srv = await new Promise(r => { const s = http.createServer(app).listen(p, '127.0.0.1', () => r(s)); });
+        const p = port; const srv = await new Promise(r => { const s = http.createServer(app).listen(p, '127.0.0.1', () => r(s)); });
         await api.ensure(); await api.preEnsure();
         const call = async (method, url, body) => { const r = await fetch('http://127.0.0.1:' + p + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json() }; };
         const setPre = async list => { await db.query('DELETE FROM order_memo_preorders'); for (const o of list) await db.query(`INSERT INTO order_memo_preorders (channel, order_key, product_order_no, buyer_name, buyer_digits, recv_name, recv_digits, addr, option_text, qty, paid_at) VALUES ($1,$2,$2,'가구매',$3,'가구매',$3,$4,$5,$6,NOW())`, [o.ch || 'naver', o.pid, dg(o.buyer || K2), HOME2, o.ch === 'cafe24' ? o.opt : '아꼼이네 상품선택: 1. (제철)' + (o.opt || TY), o.qty]); };
@@ -124,6 +124,9 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
             // 서버 invoice-auto.js /match 의 memoAddr 읽기(SQL·꼴 그대로 · 바뀌면 여기도 고칠 것)
             memoAddr: async d => { const mr = await db.query(`SELECT kind, cells, service, pair_orig FROM order_memo_rows WHERE kind = 'cash' AND (ship_date = $1::date OR (ship_date IS NULL AND used_on = $1::date)) AND (state = 'open' OR used_on = $1::date)`, [d]);
                 return (mr.rows || []).filter(r => Array.isArray(r.cells)).map(r => ({ name: r.cells[3], tel: r.cells[6], k: r.cells[10], opt: r.cells[4], ob: (() => { try { const x = OM.outBK(r); return x ? x.b : ''; } catch (e) { return ''; } })(), block: !!r.service || /[!！]/.test(String(r.cells[0] || '')) })); },
+            // #1147 막이용 memoGuard(서버 SQL 그대로 · 표식·채널 무관)
+            memoGuard: async d => { const gr = await db.query(`SELECT kind, cells, service, pair_orig FROM order_memo_rows WHERE kind = 'cash' AND pair_orig IS NOT NULL AND (ship_date = $1::date OR (ship_date IS NULL AND (used_on = $1::date OR (used_on IS NULL AND state = 'open'))))`, [d]);
+                return (gr.rows || []).filter(r => Array.isArray(r.cells)).map(r => ({ name: r.cells[3], tel: r.cells[6], k: r.cells[10], opt: r.cells[4], ob: (() => { try { const x = OM.outBK(r); return x ? x.b : ''; } catch (e) { return ''; } })(), block: !!r.service || /[!！]/.test(String(r.cells[0] || '')) })); },
             close: () => new Promise(r => srv.close(r)) };
         return E;
     };
@@ -159,10 +162,14 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         ok(d2.card.rows.length === 1 && d2.card.orders_without_tracking === 0, '카드 = 주문 1줄 · 운송장 없는 주문 0', [d2.card.rows.length, d2.card.orders_without_tracking]);
         // 종전(#1146 전 = 양식 B=K=입력삭제 번호) 운송장이면 memoAddr 없어도 붙었음 → 지금은 memoAddr 에 기댐
         const old = ia.matchShipments({ ships: ia.normShips(d2.ships.map(s => Object.assign({}, s, { stel: K2 })), '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: ['naver:' + PA], holdKeys: [], memoAddr: [] });
-        const now0 = ia.matchShipments({ ships: ia.normShips(d2.ships, '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: ['naver:' + PA], holdKeys: [], memoAddr: [] });
-        ok(old.assign.length === 1 && now0.assign.length === 0 && now0.todos.length === 1 && now0.todos[0].rule === 'todo_indiv_none' && now0.unmatched.length === 25, '🟠 memoAddr 를 못 읽는 날(채널 조회 실패·used_on 없음) = 종전엔 붙던 운송장이 「입력삭제 주문인데 운송장 못 찾음」 할 일 + 25 unmatched(등록은 안 막힘 · 사람이 고름)', { old: old.assign.length, now: [now0.assign.length, now0.todos.map(t => t.rule), now0.unmatched.length] });
-        const noInd = ia.matchShipments({ ships: ia.normShips(d2.ships, '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: [], holdKeys: [], memoAddr: d2.memoAddr });
-        ok(noInd.assign.length === 0 && noInd.unmatched.length === 25, '🟠 표식(IND) 없는 날(옛 화면·표식 저장 실패) = 종전엔 구매자 번호로 붙던 것이 지금은 안 붙음(unmatched 25 · 할 일 없음 = 「운송장 없는 주문」 숫자만)', [noInd.assign.length, noInd.unmatched.length, noInd.todos.length]);
+        ok(d2.memoGuard.length === 25 && d2.memoGuard.every(x => dg(x.ob) === B5D && dg(x.k) === K2D), '#1147 memoGuard 25(그날 짝 줄 · ob 센터장)', d2.memoGuard.length);
+        const now0 = ia.matchShipments({ ships: ia.normShips(d2.ships, '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: ['naver:' + PA], holdKeys: [], memoAddr: [], memoGuard: d2.memoGuard });
+        ok(old.assign.length === 1 && now0.assign.length === 0 && now0.todos.length === 1 && now0.todos[0].rule === 'todo_indiv_none' && now0.unmatched.length === 25 && /처음 넣은 보내는 분 번호/.test(ia.unmatchedWhy(now0.unmatched[0])), '🟠(#1147 뒤도 남는 틈 · 안전 쪽) memoAddr 못 읽음(표식·used_on 없음) = 입력삭제 주문 「운송장 못 찾음」 할 일 + 25 unmatched(막이 이유 글 · 등록 안 막힘)', { old: old.assign.length, now: [now0.assign.length, now0.todos.map(t => t.rule), now0.unmatched.length], why: ia.unmatchedWhy(now0.unmatched[0]) });
+        const noInd = ia.matchShipments({ ships: ia.normShips(d2.ships, '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: [], holdKeys: [], memoAddr: d2.memoAddr, memoGuard: d2.memoGuard });
+        ok(noInd.assign.length === 0 && noInd.unmatched.length === 25, '🟠 표식(IND) 없는 날 = 안 붙음(unmatched 25 · 「운송장 없는 주문」 숫자만 · 종전과 같은 미매칭)', [noInd.assign.length, noInd.unmatched.length, noInd.todos.length]);
+        const pF = await day(E, D1, orders, { partial: true }); ok(pF.sum.a.length === 1 && pF.sum.a[0][2] === 1 && pF.sum.ex === 24 && pF.sum.um === 0 && pF.sum.td.length === 0, '#1147 채널 실패 + memoAddr 읽힘 = 그대로 1장 붙음(obs 일치 묶기 유지) · 24 extra', pF.sum);
+        const pN = await day(E, D1, orders, { partial: true, memoAddr: [] }); ok(pN.sum.a.length === 0 && pN.sum.td.length === 1 && pN.sum.um === 25, '#1147 채널 실패 + memoAddr 없음(막이만) = 할 일 1 + 25 unmatched(안전)', pN.sum);
+        const pZ = await day(E, D1, orders, { partial: true, memoAddr: [], memoGuard: [] }); ok(pZ.sum.a.length === 0 && pZ.sum.td.length === 1 && pZ.sum.um === 25, '메모함 표 자체 못 읽음 = 같은 미매칭(남는 틈 · 오매칭 아님)', pZ.sum);
         // 중간발주 qtyBuild = 최종발주 수량표와 같은 25
         const q = qtyRun({ src: { nv: { ok: true, rows: [{ 구매자연락처: K2, 옵션정보: '아꼼이네 상품선택: 1. (제철)' + TY, 배송메세지: '', 수량: '25', 수취인명: '가구매', _pid: PA }] }, cp: { ok: true, rows: [] }, cf: { ok: true, rows: [] } }, om: { ok: true, date: D1, lines: d2.fs1.lines, cash_aoa: d2.fs1.cash_aoa } });
         ok(q.ok && (q.base.items || []).filter(x => x.name === TY).reduce((s, x) => s + x.qty, 0) === 25 && !(q.base.urows || []).length, '중간발주 qtyBuild = 25(주소 줄 박스 · 수량표와 같음 · 미매칭 0)', q.base);
@@ -184,6 +191,11 @@ const bangRow = (n, A, B, K, opt, q, date) => ({ kind: 'cash', src: 'edit', ship
         // (b) 자기 주문 운송장 아직 없음 → 묶음 운송장을 뺏지 않음
         const d0 = await day(E, D1, orders); const m2 = ia.matchShipments({ ships: ia.normShips(d0.ships.filter(s => s.nm !== '센터장본인'), '효돈'), orders: ia.normOrders('naver', orders), pricingNames: CAT, indivKeys: ['naver:' + PA], holdKeys: [], memoAddr: d0.memoAddr });
         ok(m2.assign.length === 1 && m2.assign[0].o.order_key === PA && !m2.assign.some(a => a.o.order_key === PX) && m2.extra.length === 24 && m2.unmatched.length === 0, '(b) 본인 운송장 없음 = 본인 주문은 「운송장 없음」 · 묶음 운송장 안 뺏음', { a: m2.assign.map(a => [a.o.order_key, a.rule]), ex: m2.extra.length, um: m2.unmatched.length, td: m2.todos.map(t => t.rule) });
+        for (const [lb, o] of [['memoAddr 없음(막이만)', {}], ['채널 실패 + memoAddr 없음', { partial: true }], ['표식 없음 + memoAddr 없음', { noInd: true }]]) {
+            const dd = await day(E, D1, orders, o); const mm = ia.matchShipments({ ships: ia.normShips(dd.ships.filter(s => s.nm !== '센터장본인'), '효돈'), orders: dd.os, pricingNames: CAT, indivKeys: dd.ind, holdKeys: [], memoAddr: [], memoGuard: dd.memoGuard, ordersPartial: !!o.partial });
+            ok(!mm.assign.some(a => a.o.order_key === PX) && mm.unmatched.length === 25, '#1147 핵심 · (b) ' + lb + ' = 본인 주문에 묶음 운송장 안 붙음(unmatched 25)', { a: mm.assign.map(a => [a.o.order_key, a.rule]), um: mm.unmatched.length, td: mm.todos.map(t => t.rule) }); }
+        { const dd = await day(E, D1, orders); const mm = ia.matchShipments({ ships: ia.normShips(dd.ships, '효돈'), orders: dd.os, pricingNames: CAT, indivKeys: dd.ind, holdKeys: [], memoAddr: [], memoGuard: dd.memoGuard });
+          ok(mm.assign.length === 1 && mm.assign[0].o.order_key === PX && mm.assign[0].rule === 'auto', '(a) memoAddr 없음 · 본인 운송장 있음 = 본인 주문 자기 운송장 auto 그대로(막이가 보통 주문을 안 뗌)', mm.assign.map(a => [a.o.order_key, a.rule])); }
         // (c) 센터장 번호 자기 입력삭제 묶음도 있음(B=K=센터장 · 같은 저장 묶음 markIndiv 길) + 받는 분 한 명(받는3) 겹침
         await E.setPre([{ pid: PA, qty: 25 }, { pid: PX, buyer: B5, qty: 5 }]);
         const own = await E.save([lineRow(B5, null), ...[3, 101, 102, 103, 104].map(n => Object.assign(bangRow(n, SENDER, B5, B5), { cells: bangRow(n, SENDER, B5, B5).cells }))]);
