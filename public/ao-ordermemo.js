@@ -1172,6 +1172,7 @@
     // fromHist = 뒤로가기로 이미 기록이 빠진 경우 · force = 묻지 않고 닫기
     function cardClose(force, fromHist) {
         const c = OM.card; if (!c) return;
+        if (CAL.inp) calClose(false);   // #1169 달력이 뜬 채 카드 뒤로가기 = 달력부터 닫고 종전대로(묻기 포함)
         if (!force && (c.dirty || c.fileN) && !c.confirm) {   // #895 파일로 넣은 줄 = 고친 것으로 셈(닫을 때 묻기)
             c.confirm = true; renderConfirm();
             if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
@@ -2605,11 +2606,12 @@
         CAL.inp = inp; CAL.pend = inp.dataset.iso || ''; CAL.t0 = performance.now(); CAL.moved = false; CAL.y = +base.slice(0, 4); CAL.m = +base.slice(5, 7) - 1;
         calLog('달력 열림 · ' + inp.dataset.omcal); calHolLoad(); calRender(); el.hidden = false; if (OM.el) OM.el.classList.toggle('cal-open', phoneW()); calPlace();
         inp.setAttribute('aria-expanded', 'true');
-        hbPush('omcal', () => calClose(false, true));
+        /* #1169 달력은 뒤로가기 기록을 쓰지 않음(대표 폰 「[확인] 누르니 카드까지 닫힘」 · 닫을 때 history.back 이 카드 칸까지 건드릴 길을 없앰) · 달력이 뜬 채 뒤로가기 = 카드 뒤로가기(카드와 함께 닫힘 · 고친 것 있으면 종전 「저장 안 하고 닫을까요?」) */
         const f = el.querySelector('.akm-cal-day.sel:not([disabled])') || el.querySelector('.akm-cal-day.today:not([disabled])') || el.querySelector('.akm-cal-day:not([disabled]):not(.out)');
         if (f) { f.tabIndex = 0; f.focus({ preventScroll: true }); }
     }
     function calSel(iso) {   /* #1165 날·[오늘]·[내일]·[비우기] = 고른 값만 바꿈(칸은 [확인] 때) */
+        calLog('날 고름 · ' + (iso ? mdw(iso) : '비움') + ' · ' + Math.round(performance.now() - CAL.t0) + 'ms');   // #1169 기록
         CAL.pend = iso || ''; if (iso) { const y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (y !== CAL.y || m !== CAL.m) { CAL.y = y; CAL.m = m; } }
         calRender(); const b = iso && CAL.el.querySelector(`.akm-cal-day[data-d="${iso}"]`); if (b && document.activeElement && document.activeElement.dataset && document.activeElement.dataset.d) { CAL.el.querySelectorAll('.akm-cal-day').forEach(x => { x.tabIndex = -1; }); b.tabIndex = 0; b.focus({ preventScroll: true }); }
     }
@@ -2617,7 +2619,6 @@
         const inp = CAL.inp; if (!inp) return;
         calLog('달력 닫힘' + (fromHist ? ' · 뒤로가기' : '') + ' ← ' + String((new Error().stack || '').split('\n')[2] || '').trim().replace(/^at /, '').split(' ')[0]);
         CAL.inp = null; if (CAL.el) CAL.el.hidden = true; if (OM.el) OM.el.classList.remove('cal-open'); inp.removeAttribute('aria-expanded');
-        if (!fromHist) hbDrop('omcal');
         if (hist !== false && inp.isConnected) inp.focus({ preventScroll: true });
     }
     function calKey(e) {
@@ -2657,7 +2658,7 @@
     const CAL_EMPTY = { fd: '다음 발주', ord: '줄 발송일', ce: '그대로' };
     function calOutside(e) {   /* #1165 바깥 누름 = 달력만 닫고 그 누름은 삼킴(아래 「처음으로」·카드 뒤 흐림 등이 같이 눌리던 것) · 연 뒤 0.35초 = 연 손가락의 뒤따르는 누름 무시 */
         if (!CAL.inp || !CAL.el) return; const t = e.target; if (CAL.el.contains(t) || t === CAL.inp) return;
-        e.preventDefault(); e.stopPropagation(); if (e.type !== 'click' || performance.now() - CAL.t0 < 350) return; calClose(false);
+        e.preventDefault(); e.stopPropagation(); if (e.type !== 'click' || performance.now() - CAL.t0 < 350) return; calLog('바깥 누름 → 닫힘 · ' + (t.id || String(t.className || t.tagName || '').slice(0, 24)) + (t.isConnected ? '' : ' (떨어진 칸)') + ' · ' + Math.round(performance.now() - CAL.t0) + 'ms'); calClose(false);   /* #1169 기록 = 무엇을 눌러 닫혔는지 */
     }
     ['pointerdown', 'mousedown', 'click'].forEach(t => document.addEventListener(t, calOutside, true));
     window.addEventListener('resize', () => { if (CAL.inp) calPlace(); });
@@ -2672,7 +2673,7 @@
     const calOn = () => { try { return localStorage.getItem(CALB_KEY) !== '1'; } catch (e) { return true; } };
     const calSet = on => { try { if (on) localStorage.removeItem(CALB_KEY); else localStorage.setItem(CALB_KEY, '1'); } catch (e) { /* 저장 못 함 = 그대로 */ } };
     const CALN_KEY = 'om_cal_native';
-    const calNative = () => { try { const v = localStorage.getItem(CALN_KEY); if (v === '1') return true; if (v === '0') return false; return window.matchMedia('(pointer: coarse)').matches || phoneW(); } catch (e) { return false; } };   /* #1169(대표 폰 v5.9.814 그린 달력 「날 누르면 바로 튕김」) 폰(터치) 기본 = v5.9.813 OS 날짜 창 · PC = 그린 달력 · ?omcal=1 = 이 기기 그린 달력(om_cal_native '0') · ?omcal=2 = OS 날짜 창('1') */
+    const calNative = () => { try { return localStorage.getItem(CALN_KEY) === '1'; } catch (e) { return false; } };   /* #1169-b(대표 「돌릴 필요 없이 바로 수정」) 기본 = 폰도 그린 달력 다시 · OS 날짜 창 = ?omcal=2 기기만 */   /* #1169(대표 폰 v5.9.814 그린 달력 「날 누르면 바로 튕김」) 폰(터치) 기본 = v5.9.813 OS 날짜 창 · PC = 그린 달력 · ?omcal=1 = 이 기기 그린 달력(om_cal_native '0') · ?omcal=2 = OS 날짜 창('1') */
     (function () { try { const q = new URLSearchParams(location.search).get('omcal'); if (q === '1' || q === '0' || q === '2') { calSet(q !== '0'); if (q === '2') localStorage.setItem(CALN_KEY, '1'); else if (q === '1') localStorage.setItem(CALN_KEY, '0'); } } catch (e) { /* 주소 못 읽음 */ } })();
     const CLOG = [];
     function calLog(t) { const d = new Date(Date.now() + 9 * 3600e3); CLOG.push(`${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')} ${t}`); if (CLOG.length > 40) CLOG.shift(); }

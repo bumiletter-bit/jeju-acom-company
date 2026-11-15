@@ -27,7 +27,7 @@ let NAT = false;   /* #1167 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal
     async function newPage(w, h, touch, opt) {
         opt = opt || {};
         const cx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: touch, isMobile: touch, deviceScaleFactor: 2 }); await cx.addInitScript(ACT);
-        if (opt.native) await cx.addInitScript(() => { try { localStorage.setItem('om_cal_native', '1'); } catch (e) { } });
+        if (opt.native === true) await cx.addInitScript(() => { try { localStorage.setItem('om_cal_native', '1'); } catch (e) { } });   /* #1169-b 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal=2(om_cal_native '1') */
         await cx.route('**/api/agent-office/shipping-holidays', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [{ id: 1, holiday_date: HOL, reason: '시험 휴무', no_ship: true, no_arrive: false }] }) }));
         const p = await cx.newPage(); p.on('pageerror', e => pe.push(w + 'x' + h + ' ' + String(e)));
         await p.addInitScript(() => { window.__toasts = []; const t = () => { const o = window.showToast; window.showToast = function (m) { window.__toasts.push(String(m)); if (o) try { o.apply(this, arguments); } catch (e) { } }; }; document.addEventListener('DOMContentLoaded', t); });
@@ -96,7 +96,7 @@ let NAT = false;   /* #1167 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal
     // ── #1167 폰 기본 = 그린 달력(인디고 · [취소][확인]) ──
     const tapAt = async (p, sel) => { const b = await p.locator(sel).first().boundingBox(); if (!b) throw new Error('누를 곳 없음 ' + sel); await p.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); };
     async function phoneCalCase(w, h, key, opt) {
-        opt = opt || {}; NAT = false; reset(); const { cx, p } = await newPage(w, h, true, opt); const tag = `폰 그린 달력 ${w}x${h}${opt.fo ? ' 최종발주 위' : ''}${opt.dark ? ' 야간' : ''} · ${key}`;
+        opt = Object.assign({}, opt || {}, { native: false }); NAT = false; reset(); const { cx, p } = await newPage(w, h, true, opt); const tag = `폰 그린 달력(기본) ${w}x${h}${opt.fo ? ' 최종발주 위' : ''}${opt.dark ? ' 야간' : ''} · ${key}`;
         try {
             if (opt.dark) { await p.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await p.addStyleTag({ path: path.join(__dirname, '..', 'public', 'ao-dark.css') }); }
             const { k, sel } = await OPEN[key](p, true);
@@ -140,7 +140,7 @@ let NAT = false;   /* #1167 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal
     try {
         for (const [w, h] of [[384, 854], [384, 430], [720, 900]]) for (const key of Object.keys(OPEN)) await phoneCalCase(w, h, key);
         await phoneCalCase(384, 854, '줄카드(현금표)', { fo: true }); await phoneCalCase(384, 854, '#1027 고객정보수정(0502 받는 분)', { fo: true }); await phoneCalCase(384, 854, '줄카드(현금표)', { dark: true });
-        for (const key of Object.keys(OPEN)) await phoneCase(384, 854, key);   /* OS 날짜 창 길(?omcal=2 · 되돌아갈 길) */
+        for (const [w, h] of [[384, 854], [384, 430]]) for (const key of Object.keys(OPEN)) await phoneCase(w, h, key);   /* #1169 폰 기본 = OS 날짜 창(v5.9.813 길) */
         for (const key of Object.keys(OPEN)) await pcCase(key);
         // [직접 입력] = 이 기기 글자 칸(v5.9.812 꼴 · 기억) · [달력으로] = 되돌림
         { reset(); const { cx, p } = await newPage(384, 854, true); await OPEN['줄카드(현금표)'](p, true);
@@ -148,8 +148,8 @@ let NAT = false;   /* #1167 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal
           const st = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { type: i.type, ro: i.readOnly, ls: localStorage.getItem('om_cal_off'), btn: (document.querySelector('#om-card .om-calb-card [data-calb]') || {}).textContent || '', ph: i.placeholder }; });
           await p.locator('#om-f-0-date').fill('11/30'); await p.waitForTimeout(80); const tv = await p.evaluate(() => document.getElementById('om-f-0-date').value);
           await press(p, '#om-card .om-calb-card [data-calb="on"]', true); await p.waitForTimeout(200);
-          const st2 = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { type: i.type, ro: i.readOnly, ls: localStorage.getItem('om_cal_off'), show: i.value }; });
-          ok(st.type === 'text' && !st.ro && st.ls === '1' && st.btn === '달력으로' && /예\) 10\/30/.test(st.ph) && tv === '11/30' && st2.type === 'text' && st2.ro && st2.ls === null && /^11\/30\(.\)$/.test(st2.show || ''), '[직접 입력] = 글자 칸(「예) 10/30」 · 11/30 침 · 이 기기 기억 om_cal_off) · [달력으로] = 그린 달력 칸(친 값 「11/30(요일)」 그대로)', { st, tv, st2 }); await cx.close(); }
+          const st2 = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); const w = i.closest('.om-sdw'); return { type: i.type, ro: i.readOnly, ls: localStorage.getItem('om_cal_off'), show: w ? w.querySelector('.om-sdv').value : i.value }; });
+          ok(st.type === 'text' && !st.ro && st.ls === '1' && st.btn === '달력으로' && /예\) 10\/30/.test(st.ph) && tv === '11/30' && st2.type === 'text' && st2.ro && st2.ls === null && /^11\/30\(.\)$/.test(st2.show || ''), '[직접 입력] = 글자 칸(「예) 10/30」 · 11/30 침 · 이 기기 기억 om_cal_off) · [달력으로] = 폰 기본 그린 달력 칸(친 값 「11/30(요일)」 그대로)', { st, tv, st2 }); await cx.close(); }
         { reset(); const { cx, p } = await newPage(384, 854, true); await p.goto(base + '?v=new&omcal=0'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await p.waitForSelector('#om-list .om-ml'); await OPEN['줄카드(현금표)'](p, true);
           const st = await p.evaluate(() => ({ type: document.getElementById('om-f-0-date').type, ls: localStorage.getItem('om_cal_off') })); await p.evaluate(() => localStorage.removeItem('om_cal_off'));
           ok(st.type === 'text' && st.ls === '1', '주소 ?omcal=0 = 이 기기 직접 입력(안내용 · ?omcal=1 = 달력)', st); await cx.close(); }
