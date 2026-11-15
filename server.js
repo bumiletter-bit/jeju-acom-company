@@ -8577,7 +8577,7 @@ async function collectClaim() {
     await pool.query(`DELETE FROM naver_claim_alerted WHERE alerted_at < NOW() - INTERVAL '180 days'`);
     if (fresh.length > 0 && await alertEnabled('claim')) {
         // #1091(대표 11/10) 낮·밤 둘 다 상세 조회 1회 → 건마다 덩이 · 낮 = 바로 · 야간 = alert_night_claim_blocks 에 보관 → 야간 끝(briefing_time) 한 번에(브리핑 꺼져도) · 조회 실패 = 종전 건수 한 줄(낮)·건수 누적(야간)
-        const quiet = await alertQuietNow();
+        const quiet = await alertQuietFor('claim');   // #1171(대표 11/16 「반품 교환만 밤에도」) night_pass 에 claim 있으면 밤에도 낮과 같은 길(바로) · 없으면 종전 alertQuietNow 그대로
         {
             // #775-A 체험(배송 없는) 상품의 반품 = 방문 날짜 변경·취소 문의일 가능성 → 알림 끝에 「(체험 n건)」 표시만(알림은 그대로) · 상품 번호는 변경 목록에 없어 상세조회 1회 · 실패하면 표시 없이
             let expTag = '', reqTag = '', sendN = fresh.length, blocks = null;
