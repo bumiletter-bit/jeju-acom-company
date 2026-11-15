@@ -20,6 +20,13 @@ function dblog(msg) {
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2, keepAlive: true, idleTimeoutMillis: 20000, connectionTimeoutMillis: 15000 });
 // 🔴 이 한 줄이 핵심 — 쉬는 연결이 끊기면 pg 가 'error' 를 내고, 듣는 곳이 없으면 Node 는 프로세스를 그대로 끝낸다.
 pool.on('error', e => dblog('연결 끊김(쉬는 연결) → 다음 쿼리에서 재연결: ' + (e && e.code ? e.code + ' ' : '') + String(e && e.message || e).slice(0, 120)));
+// 🔴 #1164(11/15 14:46 나스 창구 「치명 오류 → 종료 1: Error: read ETIMEDOUT」): pg-pool 은 연결을 빌려 주는 동안 위 쉬는 연결 감시를 뗀다(pg-pool _acquireClient removeListener) →
+//   쿼리 중 소켓이 끊기면 pg Client 가 그 쿼리를 거부하고 'error' 도 내는데 듣는 곳이 없어 uncaughtException → 프로세스 통째로 종료(쿼리 거부는 아래 래퍼가 잘 받음).
+//   → 연결이 생길 때 늘 듣는 곳을 하나 단다(빌려 쓰는 중이면 한 줄 · 쉬는 중이면 위 pool 'error' 가 적으므로 조용히) · 끊긴 연결은 반납 때 버린다(release(err)).
+pool.on('acquire', c => { c.__deskBusy = true; });
+pool.on('release', (err, c) => { if (c) c.__deskBusy = false; });
+pool.on('connect', c => c.on('error', e => { if (c.__deskBusy) dblog('연결 끊김(쿼리 중) → 그 쿼리만 실패 · 다음 쿼리에서 재연결: ' + (e && e.code ? e.code + ' ' : '') + String(e && e.message || e).slice(0, 120)); }));
+const dbState = { lostAt: 0, lostWhat: '' };   // #1164 보낸 뒤 끊김(DB 가 끝냈는지 모름)이 난 때 — launcher 가 몇 분 뒤 기동 복구와 같은 판정을 한 번 더 돈다
 
 const TRANSIENT_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'ECONNABORTED',
     '57P01', '57P02', '57P03', '08000', '08001', '08003', '08006', '08P01', '53300']);   // 57P0x = 서버가 연결을 끊음 · 08xxx = 연결 예외 · 53300 = 연결 수 초과
@@ -51,12 +58,17 @@ pool.query = async function (text, params, cb) {
     if (typeof params === 'function' || typeof cb === 'function') return rawQuery(text, params, cb);
     const what = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().slice(0, 40) : (text && text.text ? String(text.text).replace(/\s+/g, ' ').trim().slice(0, 40) : '');
     const client = await withRetry(() => pool.connect(), '연결 · ' + what);   // 여기까지는 아무것도 안 보냈다 → 재시도 안전
+    let bad = null;
     try { return await client.query(text, params); }
     catch (e) {
-        if (isTransient(e)) dblog(`쿼리 보낸 뒤 끊김(재시도 안 함 · DB 가 끝냈는지 모름): ${e.code || ''} ${String(e.message || '').slice(0, 80)} · ${what}`);
+        if (isTransient(e)) {
+            bad = e;
+            dblog(`쿼리 보낸 뒤 끊김(재시도 안 함 · DB 가 끝냈는지 모름): ${e.code || ''} ${String(e.message || '').slice(0, 80)} · ${what}`);
+            if (!/^(SELECT|WITH)\b/i.test(what)) { dbState.lostAt = Date.now(); dbState.lostWhat = what; }   // #1164 쓰기만 표시(읽기는 다음 틱에 다시 읽으면 끝)
+        }
         throw e;
     }
-    finally { try { client.release(); } catch (_) { /* 이미 반납됨 */ } }
+    finally { try { client.release(bad || undefined); } catch (_) { /* 이미 반납됨 */ } }   // #1164 끊긴 연결은 풀에 안 돌려놓고 버림
 };
 
 async function heartbeat(state, orderId) {
@@ -77,4 +89,4 @@ async function audit(action, targetId, after) {
             [action, targetId, JSON.stringify({ after })]);
     } catch (e) { console.error('audit 기록 실패(무시):', e.message); }
 }
-module.exports = { pool, ROOT, heartbeat, step, appendStep, audit, isTransient, withRetry, dblog };
+module.exports = { pool, ROOT, heartbeat, step, appendStep, audit, isTransient, withRetry, dblog, dbState };

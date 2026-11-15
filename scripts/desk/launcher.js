@@ -997,7 +997,7 @@ async function tick(mode) {
     if (direct) st.directBusy = true;
     // #798 대표 요금제가 만료된 것을 본 뒤 30분은 대표 지시도 콘솔 키로(헛시도 없이) · --sub 시험은 그대로 대표 요금제
     const useKey = st.sub ? null : (mine && !subAuthDown()) ? null : key;
-    const p = handle(o, useKey).catch(e => log(`#${o.id} 처리 실패: ${e.message}`)).finally(() => { if (direct) st.directBusy = false; });
+    const p = handle(o, useKey).catch(e => { log(`#${o.id} 처리 실패: ${e.message}`); if (st.running.has(o.id)) { st.running.delete(o.id); st.needRecoverAt = Date.now(); log(`#${o.id} 자리 비움(처리 끝 기록 중 DB 오류 · 자식은 이미 끝남) → ${RECOVER_MIN}분 뒤 기동 복구와 같은 판정 #1164`); } }).finally(() => { if (direct) st.directBusy = false; });
     if (mode && !st.multi) await p;   // 시험(--once 1건)은 끝까지 기다린다 · --ids 여러 건과 상주 모드는 바로 다음 자리를 본다
     return true;
 }
@@ -1013,7 +1013,8 @@ function portOwnerPid(port) {
 }
 const RECOVER_MIN = 3;
 async function recoverOrphans(deps) {
-    const d = Object.assign({ pool, log, audit: require('./_db').audit, minutes: RECOVER_MIN, now: Date.now, dead: [] }, deps || {});
+    const d = Object.assign({ pool, log, audit: require('./_db').audit, minutes: RECOVER_MIN, now: Date.now, dead: [], skip: [] }, deps || {});
+    const skip = new Set((Array.isArray(d.skip) ? d.skip : []).map(Number));   // #1164 돌던 중 복구(주기 안) = 이 프로세스가 지금 돌리는 지시는 손대지 않음(기동 때는 빈 목록 = 종전 그대로)
     // #829 보완: 앞 창구가 자식을 끈 채 죽은 지시(pid 파일에 있던 것)는 결과를 올릴 길이 없다 → heartbeat·3분 조건 없이 「대기」로(교차 점검 2 — 종전엔 자식이 살아 respond 까지 갔음)
     const dead = [...new Set((Array.isArray(d.dead) ? d.dead : []).map(Number).filter(x => x > 0))];
     const doneDead = [];
@@ -1034,6 +1035,7 @@ async function recoverOrphans(deps) {
     const done = [...doneDead];
     for (const r of rows) {
         if (dead.includes(Number(r.id))) continue;   // 위에서 이미 처리
+        if (skip.has(Number(r.id))) continue;   // #1164
         const hbHas = hb && (Number(hb.order_id) === Number(r.id) || (Array.isArray(hb.order_ids) && hb.order_ids.map(Number).includes(Number(r.id))));   // #829 order_ids(전부) 또는 종전 order_id
         if (hbFresh && hbHas) { d.log(`기동 복구: #${r.id} 는 살아 있는 창구가 처리 중(heartbeat) — 그대로 둠`); continue; }
         const u = await d.pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = $1 AND status = '처리중' RETURNING id`, [r.id]);
@@ -1043,6 +1045,25 @@ async function recoverOrphans(deps) {
         try { await d.audit('desk_recover', r.id, { status: '대기', why: '기동 복구 #701' }); } catch (e) { /* 기록 실패는 무시 */ }
     }
     return done;
+}
+
+// #1164(11/15 · 대표 「고쳐줘」): DB 응답이 한 번 늦었다고 통째로 꺼지지 않는다 — 주기 오류는 적고 다시(연속 실패면 간격을 늘림 · 최대 30초 = 화면 「자리 비움」 2분 안)
+//   연속 LOOP_FAIL_MAX 번(약 10분) 넘게 못 닿고 돌던 창구도 없으면 그때 종료 1 → 감시자(launcher-guard)가 다시 켬(최후 안전망 그대로) · 돌던 창구가 있으면 죽이지 않고 계속 기다림
+//   쓰기를 보낸 뒤 끊김(_db dbState.lostAt)·처리 끝 기록 실패(st.needRecoverAt) = 다시 보내지 않음(종전 원칙) · RECOVER_MIN 분 뒤 주기가 다시 성공하면 기동 복구와 같은 판정을 한 번(지금 돌리는 지시는 skip)
+const LOOP_FAIL_MAX = Math.max(1, parseInt(process.env.DESK_LOOP_FAIL_MAX, 10) || 25);
+const LOOP_BACKOFF_MAX_MS = Math.max(1, parseInt(process.env.DESK_LOOP_BACKOFF_MAX_MS, 10) || 30000);
+const RECOVER_LATE_MS = Math.max(0, parseInt(process.env.DESK_RECOVER_LATE_MS, 10) || (RECOVER_MIN * 60000 + 30000));
+function loopFail(e) { st.failN = (st.failN || 0) + 1; log('주기 오류(재시도 · 연속 ' + st.failN + '번): ' + e.message); }
+async function lateRecover(deps) {
+    const dbs = require('./_db').dbState || {};
+    const since = Math.max(dbs.lostAt || 0, st.needRecoverAt || 0);
+    if (!since || Date.now() - since < RECOVER_LATE_MS) return null;
+    const mark = since;
+    const ids = await recoverOrphans(Object.assign({ skip: [...st.running.keys()] }, deps || {}));
+    log('주기 안 복구(보낸 뒤 끊김 ' + Math.round((Date.now() - mark) / 1000) + '초 뒤): ' + (ids.length ? '대기로 ' + ids.join(',') : '되돌릴 「처리중」 없음') + ' #1164');
+    if ((dbs.lostAt || 0) <= mark) dbs.lostAt = 0;
+    if ((st.needRecoverAt || 0) <= mark) st.needRecoverAt = 0;
+    return ids;
 }
 
 async function main() {
@@ -1088,9 +1109,13 @@ async function main() {
     try { const ids = await recoverOrphans({ dead: deadIds }); if (!ids.length) log('기동 복구: 되돌릴 「처리중」 없음'); } catch (e) { log('기동 복구 실패(무시 · 다음 기동 때 다시): ' + e.message); }   // #701 보완
     log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498 · 동시 ' + PARALLEL + '개 #503' + (process.env.DESK_GUARDED ? ' · 감시자 아래(pid ' + process.pid + ') #701' : ' · 감시자 없음(pid ' + process.pid + ')'));
     for (;;) {
-        try { await tick(null); } catch (e) { log('주기 오류(재시도): ' + e.message); }
-        await new Promise(r => setTimeout(r, st.fast.poll ? POLL_MS : TICK_MS));
+        let ok = true;
+        try { await tick(null); } catch (e) { ok = false; loopFail(e); }
+        if (ok) { if (st.failN) log('주기 회복 — DB 다시 닿음(연속 실패 ' + st.failN + '번 뒤) #1164'); st.failN = 0; try { await lateRecover(); } catch (e) { log('주기 안 복구 실패(다음 주기에 다시): ' + e.message); } }
+        if (st.failN >= LOOP_FAIL_MAX && !st.running.size && ![...warm.values()].some(w => w.busy)) { log('DB 연속 ' + st.failN + '번 실패 · 돌던 창구 없음 → 종료 1(감시자가 다시 켬) #1164'); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(1); }
+        const base = st.fast.poll ? POLL_MS : TICK_MS;
+        await new Promise(r => setTimeout(r, st.failN ? Math.min(LOOP_BACKOFF_MAX_MS, base * Math.pow(2, Math.min(st.failN - 1, 4))) : base));
     }
 }
 if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
-module.exports = { recoverOrphans, _t975: { hfClassify, hfNote, HF_FLAG, HF_TODO_TEXT, HF_ORDER_RE }, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t916: { procInfoProc, spawnG, shipMaybe, rankMaybe, shs, krs }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
+module.exports = { recoverOrphans, _t1164: { loopFail, lateRecover, st, LOOP_FAIL_MAX }, _t975: { hfClassify, hfNote, HF_FLAG, HF_TODO_TEXT, HF_ORDER_RE }, _t829: { killAllKids, kidsSave, killOrphanKids, procInfo, heartbeat, portOwnerPid, KIDS_FILE, runDesk, findClaude }, _t799: { killTree, endWatcher, kids, nextOrder }, _t916: { procInfoProc, spawnG, shipMaybe, rankMaybe, shs, krs }, _t813: { loginExpiredNote, loginRecovered, dupDecide, dupParent, dupGo, st, LOGIN_FLAG, LOGIN_TODO_TEXT } };   // #701 시험용(직접 실행일 때만 main 이 돈다)
