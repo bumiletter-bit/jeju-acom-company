@@ -209,8 +209,27 @@
             <label>유아<input type="number" min="0" max="200" id="xp-a-inf" value="0"></label>
             <label>금액(원)<input type="number" min="0" step="1000" id="xp-a-amount" value="${PRICE.exp}"></label>
             <label class="w">메모<input type="text" id="xp-a-memo" maxlength="500" placeholder="예: 현금 결제"></label>
-            <div class="xp-edit-acts"><button type="button" class="xp-btn pri" data-act="add-save">추가</button><button type="button" class="xp-btn" data-act="add-cancel">닫기</button><small class="xp-hint">번호를 넣으면 추가하는 그 자리에서 접수 알림톡이 나가요 · 방문 전날 안내도 같이</small></div></div>`;
+            <div class="xp-edit-acts"><button type="button" class="xp-btn pri" data-act="add-save">예약 저장</button><button type="button" class="xp-btn" data-act="add-cancel">닫기</button><small class="xp-hint">번호를 넣으면 추가하는 그 자리에서 접수 알림톡이 나가요 · 방문 전날 안내도 같이</small></div></div>`;
     }
+    // #1162(대표 11/15 「저장하니깐 초기화」) 추가 칸 입력 보존 — 판을 다시 그려도(1분 새로고침·공지·현장 판매 저장) · [닫기]·Esc 로 접었다 다시 열어도 적던 값 그대로
+    //   X.addDraft = { day, v: {칸 id: 값}, touched, focus } · 저장 성공 때만 지움
+    const ADD_IDS = ['xp-a-name', 'xp-a-phone', 'xp-a-date', 'xp-a-time', 'xp-a-exp', 'xp-a-entry', 'xp-a-inf', 'xp-a-amount', 'xp-a-memo'];
+    function addSnap() {
+        if (!$('xp-add')) return null;
+        const v = {}; for (const k of ADD_IDS) { const el = $(k); if (el) v[k] = el.value; }
+        const a = $('xp-a-amount'), ae = document.activeElement;
+        return { day: X.adding, v, touched: !!(a && a.dataset.touched), focus: ae && ADD_IDS.includes(ae.id) ? ae.id : '' };
+    }
+    function addHasInput(s) { return !!(s && (String(s.v['xp-a-name'] || '').trim() || String(s.v['xp-a-phone'] || '').trim() || String(s.v['xp-a-time'] || '').trim() || String(s.v['xp-a-memo'] || '').trim())); }
+    function addRestore(s) {
+        if (!s || s.day !== X.adding || !$('xp-add')) return;
+        for (const k of ADD_IDS) { const el = $(k); if (el && s.v[k] != null) el.value = s.v[k]; }
+        const a = $('xp-a-amount'); if (a && s.touched) a.dataset.touched = '1';
+        const t = $('xp-a-time'); if (t) markTp(t);
+        const f = s.focus && $(s.focus); if (f) { f.focus({ preventScroll: true }); try { const n = f.value.length; f.setSelectionRange(n, n); } catch (_) { } }
+    }
+    function addPark() { if (!X.adding) return; const s = addSnap(); if (addHasInput(s)) X.addDraft = s; else if (s) X.addDraft = null; X.adding = null; }   /* 다른 판으로 갈 때 = 적던 값만 맡겨 둠(같은 날 다시 열면 그대로) */
+    function addClose() { addPark(); renderPanel(); }
     // 보이는 예약(취소 포함 체크 때만 취소·반품) · 날짜 확인 필요 · 날짜별 묶음(시간순)
     function sets() {
         const items = (X.data && X.data.items) || [];
@@ -278,19 +297,21 @@
         const title = X.day === 'need' ? '날짜 확인 필요' : X.day === 'offnodate' ? '날짜 없는 취소·반품' : X.day === 'nophone' ? '번호 미입력(플레이스·수기)' : dLabel(X.day);
         const sub = X.day === 'nophone' ? `${list.length}건 · 플레이스는 스마트플레이스 예약자관리에서 같은 예약번호 줄의 이름·전화번호를, 수기는 받아 둔 번호를 넣어 주세요(저장 = 그 자리에서 접수 알림톡)` : X.day === 'offnodate' ? `${list.length}건 · 방문 날짜를 못 읽은 취소·반품이에요(손님 응대 없음 · 기록용)` : X.day === 'need' ?`${list.length}건 · 손님께 확인한 뒤 [수정]에서 날짜·시간을 넣어 주세요(넣으면 문자 대상)` : `${live.length}팀 · 체험 ${tot('exp_count')} · 입장 ${tot('entry_count')}${tot('infant_count') ? ' · 유아 ' + tot('infant_count') : ''}`;
         p.hidden = false;
+        const addKeep = X.adding ? (addSnap() || (X.addDraft && X.addDraft.day === X.adding ? X.addDraft : null)) : null;   // #1162 다시 그리기 전 추가 칸 값(없으면 접기 전 값)
         const isDay = /^\d{4}-\d{2}-\d{2}$/.test(X.day || '');   // #808 날짜 판에만 [+ 예약 추가]
         p.innerHTML = `<div class="xp-panel-h"><div><h3>${esc(title)}</h3><small>${esc(sub)}</small></div>${isDay ? `<button type="button" class="xp-btn pri xp-addbtn" data-act="add" aria-expanded="${X.adding === X.day}">+ 예약 추가</button>${!saleOf(X.day) && X.saleEdit !== X.day ? '<button type="button" class="xp-btn xp-salebtn" data-act="sale-edit" aria-expanded="false">+ 현장 판매</button>' : ''}` : ''}<button type="button" class="xp-x" data-act="close-panel" aria-label="명단 닫기">×</button></div>
             <div class="xp-panel-b">${isDay ? noteHtml(X.day) + saleHtml(X.day) : ''}${isDay && X.adding === X.day ? addHtml(X.day) : ''}${list.length ? `<ul>${listHtml(list, MULTI.includes(X.day))}</ul>` : `<div class="xp-empty">${X.day === 'nophone' ? '번호를 넣을 플레이스 예약이 없어요.' : '이 날은 예약이 없어요.'}</div>`}</div>`;
         noteFit($('xp-note'));   // #940 글 길이만큼
         if (X.memoOpen) noteFit($('xp-m-' + X.memoOpen));   // #1037
+        if (addKeep && X.adding === X.day) addRestore(addKeep);   // #1162
         X.saleDirty = false;   // #822 판을 새로 그리면 적던 값은 없어진 것
         if (X.edit) { const f = $('xp-e-date'); if (f && !p.contains(document.activeElement)) f.focus({ preventScroll: true }); }
     }
     // 폰 뒤로가기 = 명단 판만 닫힘(#678 「하나씩」) — 판을 열 때 기록 한 칸(xpDay) · 판을 다른 길(×·Esc·달 넘김)로 닫으면 그 칸을 걷고 그때 오는 popstate 한 번은 무시
     function pushDayHist() { if (X.dayPushed || !X.pushed) return; try { history.pushState(Object.assign({}, history.state || {}, { xpDay: 1 }), ''); X.dayPushed = true; } catch (e) { X.dayPushed = false; } }
     function dropDayHist() { if (!X.dayPushed) return; X.dayPushed = false; X.ignorePop = true; try { history.back(); } catch (e) { X.ignorePop = false; } }
-    function openDay(day) { if (day !== X.day) noteWarn(); X.day = day; X.edit = 0; X.memoOpen = 0; X.delAsk = 0; X.adding = null; X.saleEdit = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
-    function closeDay(fromPop) { noteWarn(); const was = X.day; X.day = null; X.edit = 0; X.memoOpen = 0; X.adding = null; X.saleEdit = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
+    function openDay(day) { if (day !== X.day) noteWarn(); X.day = day; X.edit = 0; X.memoOpen = 0; X.delAsk = 0; addPark(); X.saleEdit = null; pushDayHist(); renderPanel(); const c = X.layer && X.layer.querySelector('[data-act="close-panel"]'); if (c) c.focus({ preventScroll: true }); }
+    function closeDay(fromPop) { noteWarn(); const was = X.day; addPark(); X.day = null; X.edit = 0; X.memoOpen = 0; X.saleEdit = null; if (!fromPop) dropDayHist(); renderPanel(); const cell = was && X.layer && X.layer.querySelector(`[data-day="${was}"]`); if (cell) cell.focus({ preventScroll: true }); }
     // #808 번호 = 치는 대로 하이픈(숫자만 남겨 3-4-4 · 10자리 3-3-4) · 커서는 끝 · 수기 금액 = 인원으로 셈(금액을 손으로 고치면 그 뒤론 안 셈)
     // #1066 ① 손님 찾기 = 전체 기간(서버 …/search · 이름 일부·번호 끝4·예약번호 · 최근 50) · 0.3초 뒤 · 누르면 그 날 판의 그 줄로(취소·삭제 줄이면 「취소 포함」 켬)
     function findSoon() { clearTimeout(X.qTimer); X.qTimer = setTimeout(findNow, 300); }
@@ -314,7 +335,7 @@
         const needRow = !b.date_ok && ['confirmed', 'unknown'].includes(b.status);
         const day = needRow ? 'need' : !b.visit_date ? (OFF.includes(b.status) ? 'offnodate' : 'need') : b.visit_date;
         if (/^\d{4}-/.test(day) && ymOf(day) !== X.ym) { X.ym = ymOf(day); X.auto = false; X.jumpFrom = null; }
-        X.day = day; X.edit = 0; X.memoOpen = 0; X.adding = null; X.saleEdit = null; X.delAsk = 0; X.hit = id; pushDayHist();
+        addPark(); X.day = day; X.edit = 0; X.memoOpen = 0; X.saleEdit = null; X.delAsk = 0; X.hit = id; pushDayHist();
         for (let i = 0; i < 40 && X.busy; i++) await new Promise(r => setTimeout(r, 100));
         await load(true);
         const row = X.layer && X.layer.querySelector(`#xp-panel .xp-row[data-id="${id}"]`);
@@ -359,9 +380,9 @@
         { const g = e.target.closest('[data-goto]'); if (g) return findGo(+g.dataset.goto); }   // #1066
         if (!e.target.closest('#xp-find') && $('xp-qres') && !$('xp-qres').hidden) findClose();
         const nav = e.target.closest('[data-nav]');
-        if (nav) { noteWarn(); const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        if (nav) { noteWarn(); const n = +nav.dataset.nav; X.ym = n ? shiftYm(X.ym, n) : ymOf(today()); X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; addPark(); X.day = null; dropDayHist(); renderPanel(); return load(); }
         const goym = e.target.closest('[data-goym]');   // #786 빈 달의 「n월 n팀 ›」
-        if (goym) { noteWarn(); X.ym = goym.dataset.goym; X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; X.day = null; dropDayHist(); renderPanel(); return load(); }
+        if (goym) { noteWarn(); X.ym = goym.dataset.goym; X.auto = false; X.jumpFrom = null; X.edit = 0; X.memoOpen = 0; addPark(); X.day = null; dropDayHist(); renderPanel(); return load(); }
         const cell = e.target.closest('[data-day]'); if (cell && !e.target.closest('#xp-panel')) return openDay(cell.dataset.day);
         if (e.target.closest('#xp-xlsx')) return xlsx();
         if (e.target.closest('#xp-set-btn')) return toggleSet();
@@ -397,9 +418,13 @@
             X.saleDirty = false; X.saleEdit = null; toast(r.body.item ? `현장 판매 ${won(r.body.item.amount)}원 저장했어요` : '현장 판매 줄을 지웠어요');
             render(); return;
         }
-        if (act === 'add') { X.adding = X.adding === X.day ? null : X.day; X.edit = 0; renderPanel(); const n = $('xp-a-name'); if (n) n.focus({ preventScroll: false }); return; }
-        if (act === 'add-cancel') { X.adding = null; return renderPanel(); }
+        if (act === 'add') {   // #1162 열려 있으면 접지 않음(적던 값 날아가던 길) · 이름 칸으로
+            if (X.adding !== X.day) { X.adding = X.day; X.edit = 0; renderPanel(); }
+            const n = $('xp-a-name'); if (n) { n.focus({ preventScroll: true }); try { n.scrollIntoView({ block: 'center' }); } catch (_) { } } return;
+        }
+        if (act === 'add-cancel') { addClose(); return; }
         if (act === 'add-save') {
+            if (X.addBusy) return;   // #1162 저장 중 연타
             const v = id2 => String(($(id2) || {}).value || '').trim();
             const body = { name: v('xp-a-name'), phone: v('xp-a-phone').replace(/[^0-9]/g, ''), visit_date: v('xp-a-date'), visit_time: v('xp-a-time'), exp_count: Number(v('xp-a-exp')) || 0, entry_count: Number(v('xp-a-entry')) || 0, infant_count: Number(v('xp-a-inf')) || 0, amount: v('xp-a-amount') === '' ? null : Number(v('xp-a-amount')), memo: v('xp-a-memo') };
             if (!body.name) { toast('손님 이름을 넣어 주세요'); $('xp-a-name').focus(); return; }
@@ -408,14 +433,19 @@
             if (!body.visit_date) { toast('방문일을 골라 주세요'); return; }
             if (!body.visit_time) { toast('시간을 골라 주세요(모르면 「미정」)'); $('xp-a-time').focus(); return; }
             if (body.exp_count + body.entry_count + body.infant_count < 1) { toast('인원을 1명 이상 넣어 주세요'); return; }
-            btn.disabled = true; const r = await call('/api/agent-office/experience', 'POST', body);
-            if (!r.ok) { toast(r.body.error || '추가하지 못했어요'); btn.disabled = false; return; }
-            X.adding = null; toast(r.body.sent ? sentMsg(r.body.sent).replace(/^저장/, '추가') : '추가했어요 · 번호가 없어 접수 안내는 안 보냈어요');
+            X.addBusy = true; btn.disabled = true; let r;
+            try { r = await call('/api/agent-office/experience', 'POST', body); }
+            catch (e) { r = { ok: false, status: 0, body: { error: '연결이 끊겼어요 · 적은 값은 그대로예요 — 다시 [예약 저장]' } }; }
+            finally { X.addBusy = false; }
+            const sb = X.layer && X.layer.querySelector('#xp-add [data-act="add-save"]');   // 저장 중 판이 다시 그려졌을 수 있음
+            if (!r.ok) { toast((r.body.error || '저장하지 못했어요') + (r.status >= 500 ? ' · 적은 값은 그대로예요' : '')); btn.disabled = false; if (sb) sb.disabled = false; return; }
+            X.adding = null; X.addDraft = null; toast(r.body.sent ? sentMsg(r.body.sent).replace(/^저장/, '추가') : '추가했어요 · 번호가 없어 접수 안내는 안 보냈어요');
             if (body.visit_date !== X.day) { X.day = body.visit_date; if (ymOf(body.visit_date) !== X.ym) { X.ym = ymOf(body.visit_date); X.jumpFrom = null; } }
+            if (r.body.item && X.data) { X.data.items = (X.data.items || []).filter(x => x.id !== r.body.item.id).concat([r.body.item]); render(); } else renderPanel();   // #1162 새로고침이 겹쳐 건너뛰어도 칸은 닫히고 줄은 보이게
             return load(true);
         }
         const li = btn.closest('[data-id]'); const id = li ? +li.dataset.id : 0; const b = (X.data.items || []).find(x => x.id === id);
-        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; X.memoOpen = 0; X.adding = null; X.delAsk = 0; return renderPanel(); }
+        if (act === 'edit') { X.edit = X.edit === id ? 0 : id; X.memoOpen = 0; addPark(); X.delAsk = 0; return renderPanel(); }
         if (act === 'xdel') { X.delAsk = X.delAsk === id ? 0 : id; X.edit = 0; X.memoOpen = 0; renderPanel(); const y = X.layer && X.layer.querySelector(`#xp-panel .xp-row[data-id="${id}"] [data-act="xdel-yes"]`); if (y) y.focus({ preventScroll: false }); return; }   // #1066
         if (act === 'xdel-no') { X.delAsk = 0; renderPanel(); const d = X.layer && X.layer.querySelector(`#xp-panel .xp-row[data-id="${id}"] [data-act="xdel"]`); if (d) d.focus({ preventScroll: true }); return; }
         if (act === 'xdel-yes' || act === 'xrestore') {
@@ -536,15 +566,15 @@
         const cal = document.querySelector('.akm-cal'); if (cal && cal.style.display !== 'none') { if (typeof AkmCal !== 'undefined' && AkmCal.close) AkmCal.close(); else cal.style.display = 'none'; return; }   // #808 달력부터
         if ($('xp-qres') && !$('xp-qres').hidden) { findClose(); const q = $('xp-q'); if (q) q.focus({ preventScroll: true }); return; }   // #1066 찾기 결과 먼저
         if (X.delAsk) { X.delAsk = 0; renderPanel(); return; }
-        if (X.saleEdit) { X.saleEdit = null; X.saleDirty = false; renderPanel(); } else if (X.adding) { X.adding = null; renderPanel(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.memoOpen) { X.memoOpen = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
+        if (X.saleEdit) { X.saleEdit = null; X.saleDirty = false; renderPanel(); } else if (X.adding) { addClose(); } else if (X.edit) { X.edit = 0; renderPanel(); } else if (X.memoOpen) { X.memoOpen = 0; renderPanel(); } else if (X.day) closeDay(); else if (!$('xp-set').hidden) { $('xp-set').hidden = true; } else close();
     }
     function open() {
         if (X.layer) { load(); return; }
         X.layer = shell(); document.body.classList.add('xp-open'); document.addEventListener('keydown', onKey, true);
         // 뒤로가기 칸 = 지금 기록(ao-desk 의 aoDesk 깊이 값 포함) 위에 한 칸 — 깊이 값을 이어 붙여야 ao-desk 가 제 칸을 잘못 닫지 않는다
         try { history.pushState(Object.assign({}, history.state || {}, { xpExp: 1 }), ''); X.pushed = true; window.addEventListener('popstate', onPop); } catch (e) { X.pushed = false; }
-        X.ym = ymOf(today()); X.day = null; X.edit = 0; X.memoOpen = 0; X.auto = true; X.jumpFrom = null; load();
-        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.memoOpen && !X.delAsk && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도
+        X.ym = ymOf(today()); X.day = null; X.edit = 0; X.memoOpen = 0; X.adding = null; X.addDraft = null; X.auto = true; X.jumpFrom = null; load();
+        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.adding && !X.memoOpen && !X.delAsk && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도
         setTimeout(() => { const c = $('xp-close'); if (c) c.focus({ preventScroll: true }); }, 0);
     }
     function close(fromPop) {
