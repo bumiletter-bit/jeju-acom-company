@@ -13,6 +13,7 @@ const PXK = '010-3292-0535', RECV = '0502-1234-5678', dg = s => String(s || '').
 const kIso = n => new Date(Date.now() + 9 * 3600e3 + n * 864e5).toISOString().slice(0, 10);
 const mdw = d => { const t = new Date(d + 'T00:00:00Z'); return (t.getUTCMonth() + 1) + '/' + t.getUTCDate() + '(' + '일월화수목금토'[t.getUTCDay()] + ')'; };
 const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
+let NAT = false;   /* #1167 폰 기본 = 그린 달력 · OS 날짜 창 = ?omcal=2(om_cal_native) */
 
 (async () => {
     const PORT = Number(process.env.PORT1166 || 3462);
@@ -26,6 +27,7 @@ const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
     async function newPage(w, h, touch, opt) {
         opt = opt || {};
         const cx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: touch, isMobile: touch, deviceScaleFactor: 2 }); await cx.addInitScript(ACT);
+        if (opt.native) await cx.addInitScript(() => { try { localStorage.setItem('om_cal_native', '1'); } catch (e) { } });
         await cx.route('**/api/agent-office/shipping-holidays', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [{ id: 1, holiday_date: HOL, reason: '시험 휴무', no_ship: true, no_arrive: false }] }) }));
         const p = await cx.newPage(); p.on('pageerror', e => pe.push(w + 'x' + h + ' ' + String(e)));
         await p.addInitScript(() => { window.__toasts = []; const t = () => { const o = window.showToast; window.showToast = function (m) { window.__toasts.push(String(m)); if (o) try { o.apply(this, arguments); } catch (e) { } }; }; document.addEventListener('DOMContentLoaded', t); });
@@ -37,14 +39,14 @@ const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
     const press = async (p, sel, touch) => { const l = p.locator(sel).first(); await l.scrollIntoViewIfNeeded().catch(() => { }); if (!touch) return l.click(); const b = await l.boundingBox(); if (!b) throw new Error('누를 곳 없음 ' + sel); await p.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); };
     const OPEN = {
         '줄카드(현금표)': async (p, t) => { if (await p.locator('#om-prev-open').isVisible()) { await press(p, '#om-prev-open', t); await p.waitForTimeout(600); } await press(p, '#om-ctw .om-ct-open', t); await p.waitForSelector('#om-card:not([hidden]) #om-f-0-date'); await p.waitForTimeout(500); return { k: 'fd', sel: '#om-f-0-date' }; },
-        '#938 주문별': async (p, t) => { S.preview = { ok: true, rows: [{ kind: 'line', key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t'), sure: true, check_why: [] }] }; await p.evaluate(x => window.AkmOrderMemo.fromText(x), PXK + ' 입력o삭제x 네이버'); await p.waitForSelector('#om-card:not([hidden]) #om-ord-0 .om-ordl', { timeout: 10000 }); await p.waitForTimeout(500); return { k: 'ord', sel: `#om-ord-0 input[data-${t ? 'omnat' : 'omcal'}="ord"][data-o="2026111446930532"]` }; },
-        '#1027 고객정보수정(0502 받는 분)': async (p, t) => { await press(p, '.om-tag[data-tag="cedit"]', t); await p.waitForSelector('#om-tp-tel'); await press(p, '#om-tp-tel', t); if (t) await p.setViewportSize({ width: p.viewportSize().width, height: 430 }); await p.keyboard.type(dg(RECV), { delay: 15 }); await press(p, '#om-tp-go', t); if (t) await p.setViewportSize({ width: p.viewportSize().width, height: 854 }); await p.waitForSelector('#om-card:not([hidden]) [data-cact="cefix"]', { timeout: 10000 }); await press(p, '#om-card [data-cact="cefix"]', t); await p.waitForSelector(`#om-card input[data-${t ? 'omnat' : 'omcal'}="ce"]`); await p.waitForTimeout(150); return { k: 'ce', sel: `#om-card input[data-${t ? 'omnat' : 'omcal'}="ce"]` }; },
+        '#938 주문별': async (p, t) => { S.preview = { ok: true, rows: [{ kind: 'line', key: PXK, note: '입력o삭제x', plat: '네이버', line: ['', PXK, '입력o삭제x', '네이버'].join('\t'), sure: true, check_why: [] }] }; await p.evaluate(x => window.AkmOrderMemo.fromText(x), PXK + ' 입력o삭제x 네이버'); await p.waitForSelector('#om-card:not([hidden]) #om-ord-0 .om-ordl', { timeout: 10000 }); await p.waitForTimeout(500); return { k: 'ord', sel: `#om-ord-0 input[data-${NAT ? 'omnat' : 'omcal'}="ord"][data-o="2026111446930532"]` }; },
+        '#1027 고객정보수정(0502 받는 분)': async (p, t) => { await press(p, '.om-tag[data-tag="cedit"]', t); await p.waitForSelector('#om-tp-tel'); await press(p, '#om-tp-tel', t); if (t) await p.setViewportSize({ width: p.viewportSize().width, height: 430 }); await p.keyboard.type(dg(RECV), { delay: 15 }); await press(p, '#om-tp-go', t); if (t) await p.setViewportSize({ width: p.viewportSize().width, height: 854 }); await p.waitForSelector('#om-card:not([hidden]) [data-cact="cefix"]', { timeout: 10000 }); await press(p, '#om-card [data-cact="cefix"]', t); await p.waitForSelector(`#om-card input[data-${NAT ? 'omnat' : 'omcal'}="ce"]`); await p.waitForTimeout(150); return { k: 'ce', sel: `#om-card input[data-${NAT ? 'omnat' : 'omcal'}="ce"]` }; },
     };
     const shown = (p, sel) => p.evaluate(s => { const i = document.querySelector(s); if (!i) return null; const w = i.closest('.om-sdw'); return { v: i.value, show: w ? w.querySelector('.om-sdv').value : i.value, x: w ? !w.querySelector('.om-sdx').hidden : null }; }, sel);
     const logTxt = p => p.evaluate(async () => { const b = document.querySelector('#om-calb [data-calb="log"]'); if (!b) return ''; b.click(); await new Promise(r => setTimeout(r, 50)); const t = (document.querySelector('#om-callog pre') || {}).textContent || ''; const x = document.querySelector('#om-callog [data-cl="x"]'); if (x) x.click(); return t; });
     // ── 폰 = OS 날짜 칸 ──
     async function phoneCase(w, h, key, opt) {
-        opt = opt || {}; reset(); const { cx, p } = await newPage(w, h, true, opt); const tag = `폰 ${w}x${h}${opt.fo ? ' 최종발주 위' : ''}${opt.viaUrl ? ' (?omcal=1)' : ''} · ${key}`;
+        opt = Object.assign({ native: true }, opt || {}); NAT = true; reset(); const { cx, p } = await newPage(w, h, true, opt); const tag = `폰 OS 날짜(?omcal=2) ${w}x${h}${opt.fo ? ' 최종발주 위' : ''}${opt.viaUrl ? ' (?omcal=1)' : ''} · ${key}`;
         try {
             const { k, sel } = await OPEN[key](p, true);
             const m0 = await p.evaluate(s => { const i = document.querySelector(s); window.__nat = i; return { type: i && i.type, min: i && i.min, chip: ((document.querySelector('#om-card .om-calb-card [data-calb="off"]') || {}).textContent || '') === '직접 입력', sdv: !!(i && i.closest('.om-sdw') && i.closest('.om-sdw').querySelector('.om-sdv')) }; }, sel);
@@ -90,9 +92,38 @@ const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
         } catch (e) { ok(false, tag + ' 실행 오류 ' + (e && e.message || e)); }
         finally { await cx.close(); }
     }
+
+    // ── #1167 폰 기본 = 그린 달력(인디고 · [취소][확인]) ──
+    const tapAt = async (p, sel) => { const b = await p.locator(sel).first().boundingBox(); if (!b) throw new Error('누를 곳 없음 ' + sel); await p.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); };
+    async function phoneCalCase(w, h, key, opt) {
+        opt = opt || {}; NAT = false; reset(); const { cx, p } = await newPage(w, h, true, opt); const tag = `폰 그린 달력 ${w}x${h}${opt.fo ? ' 최종발주 위' : ''}${opt.dark ? ' 야간' : ''} · ${key}`;
+        try {
+            if (opt.dark) { await p.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark')); await p.addStyleTag({ path: path.join(__dirname, '..', 'public', 'ao-dark.css') }); }
+            const { k, sel } = await OPEN[key](p, true);
+            await p.evaluate(s => { window.__inp = document.querySelector(s); }, sel);
+            await press(p, sel, true); await p.waitForTimeout(500); const o5 = await p.evaluate(() => !document.getElementById('om-cal').hidden); await p.waitForTimeout(1500);
+            const st = await p.evaluate(([s, hol]) => { const el = document.getElementById('om-cal'), ok_ = el.querySelector('[data-cal="ok"]'), r = ok_.getBoundingClientRect(), hb = el.querySelector(`.akm-cal-day[data-d="${hol}"]`); return { on: !el.hidden, same: window.__inp === document.querySelector(s) && window.__inp.isConnected, hol: !hb || hb.disabled, okVis: r.top >= 0 && r.bottom <= innerHeight + 0.5 && r.height >= 44, sw: document.documentElement.scrollWidth, bg: getComputedStyle(el).backgroundColor }; }, [sel, HOL]);
+            ok(o5 && st.on && st.same && st.hol && st.okVis && st.sw <= w && (!opt.dark || st.bg !== 'rgb(255, 255, 255)'), tag + ' tap → 달력 0.5초·2초 뒤에도 떠 있음 · 칸 노드 그대로(다시 그리기 보류) · 휴무일 못 고름(카드 열 때 미리 읽음) · [확인] 화면 안 44↑ · 넘침 0' + (opt.dark ? ' · 야간 바탕' : ''), st);
+            if (process.env.SHOT1166 && k === 'fd' && !opt.fo) await p.screenshot({ path: path.join(process.env.SHOT1166, `cal-${w}x${h}${opt.dark ? 'D' : ''}.png`) }).catch(() => { });
+            for (let i = 0; i < 3 && !(await p.locator(`#om-cal .akm-cal-day[data-d="${D1}"]:not(.out)`).count()); i++) await tapAt(p, '#om-cal [data-nav="1"]');
+            await tapAt(p, `#om-cal .akm-cal-day[data-d="${D1}"]:not(.out)`); await p.waitForTimeout(100);
+            const mid = await p.evaluate(s => ({ on: !document.getElementById('om-cal').hidden, v: document.querySelector(s).value, pick: (document.querySelector('#om-cal .om-cal-pick') || {}).textContent || '' }), sel);
+            await tapAt(p, '#om-cal [data-cal="ok"]'); await p.waitForTimeout(150);
+            const v = await p.evaluate(s => { const i = document.querySelector(s), f = i.closest('.om-f'); return { v: i.value, on: !document.getElementById('om-cal').hidden, red: !!(f && f.classList.contains('blank')), fit: i.scrollWidth <= i.clientWidth }; }, sel);
+            ok(mid.on && mid.pick.includes(mdw(D1)) && mid.v !== mdw(D1) && v.v === mdw(D1) && !v.on && !v.red && v.fit, tag + ' 날 tap = 고른 날만 → [확인] = 칸 「' + mdw(D1) + '」(안 잘림 · 빨강 아님) · 달력 닫힘', { mid, v });
+            if (w <= 480) await p.evaluate(async () => { const b = document.querySelector('#om-card .om-calb-card [data-calb="off"]'); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' })); await new Promise(r => setTimeout(r, 800)); b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' })); });
+            else await press(p, '#om-card .om-calb-card [data-calb="log"]', true);
+            await p.waitForSelector('#om-callog pre'); const lg = await p.textContent('#om-callog pre'); await press(p, '#om-callog [data-cl="x"]', true);
+            ok(/달력 열림/.test(lg) && /달력 닫힘/.test(lg) && !/날짜 고르는 중!/.test(lg) && !/01[016-9]-?\d{3,4}-?\d{4}|0502/.test(lg), tag + ' 기록 = 달력 열림·닫힘 · 고르는 중 다시 그리기 0 · 번호 0', lg.split('\n').slice(-5));
+            if (k === 'fd') { S.puts = []; await until(() => p.evaluate(() => !/확인 중/.test(document.getElementById('om-card-save').textContent))); await press(p, '#om-card-save', true); await until(() => S.puts.length, 8000); const r = S.puts[S.puts.length - 1] || {}; ok(r.ship_date === D1, tag + ' 저장 = PUT ship_date ' + D1, { sd: r.ship_date }); }
+            if (k === 'ord') { S.saves = []; await press(p, '#om-card-save', true); await until(() => S.saves.length, 8000); const rows = (S.saves[0] && S.saves[0].rows) || []; ok(rows.length === 2 && rows.some(x => x.key === '2026111446930532' && x.ship_date === D1), tag + ' 저장 = 주문번호 줄 2(B ' + D1 + ')', rows.map(x => [x.key, x.ship_date])); }
+            if (k === 'ce') { S.saves = []; await press(p, '#om-card-save', true); await until(() => S.saves.length, 8000); const rows = (S.saves[0] && S.saves[0].rows) || []; await p.waitForTimeout(200); const tel = await p.evaluate(() => { const t = document.getElementById('om-tp-tel'); return t ? t.value : null; }); ok(rows.some(x => x.ship_date === D1 && x.note === mdw(D1).replace(/\(.\)$/, '') + ' 발송') && !tel, tag + ' 저장 = 날짜 줄(「M/D 발송」) · #1168 꼬리표 번호 칸 비움', { rows: rows.map(x => [x.key, x.ship_date, x.note]), tel }); }
+        } catch (e) { ok(false, tag + ' 실행 오류 ' + (e && e.message || e)); }
+        finally { await cx.close(); }
+    }
     // ── PC = 직접 그린 달력([확인]) ──
     async function pcCase(key) {
-        reset(); const { cx, p } = await newPage(1280, 900, false); const tag = 'PC 1280 · ' + key;
+        NAT = false; reset(); const { cx, p } = await newPage(1280, 900, false); const tag = 'PC 1280 · ' + key;
         try {
             const { k, sel } = await OPEN[key](p, false);
             await p.evaluate(s => { window.__inp = document.querySelector(s); }, sel);
@@ -107,8 +138,9 @@ const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
         finally { await cx.close(); }
     }
     try {
-        for (const [w, h] of [[384, 854], [384, 430], [720, 900]]) for (const key of Object.keys(OPEN)) await phoneCase(w, h, key);
-        await phoneCase(384, 854, '줄카드(현금표)', { fo: true });
+        for (const [w, h] of [[384, 854], [384, 430], [720, 900]]) for (const key of Object.keys(OPEN)) await phoneCalCase(w, h, key);
+        await phoneCalCase(384, 854, '줄카드(현금표)', { fo: true }); await phoneCalCase(384, 854, '#1027 고객정보수정(0502 받는 분)', { fo: true }); await phoneCalCase(384, 854, '줄카드(현금표)', { dark: true });
+        for (const key of Object.keys(OPEN)) await phoneCase(384, 854, key);   /* OS 날짜 창 길(?omcal=2 · 되돌아갈 길) */
         for (const key of Object.keys(OPEN)) await pcCase(key);
         // [직접 입력] = 이 기기 글자 칸(v5.9.812 꼴 · 기억) · [달력으로] = 되돌림
         { reset(); const { cx, p } = await newPage(384, 854, true); await OPEN['줄카드(현금표)'](p, true);
@@ -116,8 +148,8 @@ const D1 = kIso(2), HOL = kIso(4), PAST = kIso(-2);
           const st = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { type: i.type, ro: i.readOnly, ls: localStorage.getItem('om_cal_off'), btn: (document.querySelector('#om-card .om-calb-card [data-calb]') || {}).textContent || '', ph: i.placeholder }; });
           await p.locator('#om-f-0-date').fill('11/30'); await p.waitForTimeout(80); const tv = await p.evaluate(() => document.getElementById('om-f-0-date').value);
           await press(p, '#om-card .om-calb-card [data-calb="on"]', true); await p.waitForTimeout(200);
-          const st2 = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { type: i.type, ls: localStorage.getItem('om_cal_off'), v: i.value, show: i.closest('.om-sdw') ? i.closest('.om-sdw').querySelector('.om-sdv').value : null }; });
-          ok(st.type === 'text' && !st.ro && st.ls === '1' && st.btn === '달력으로' && /예\) 10\/30/.test(st.ph) && tv === '11/30' && st2.type === 'date' && st2.ls === null && /^11\/30\(.\)$/.test(st2.show || ''), '[직접 입력] = 글자 칸(「예) 10/30」 · 11/30 침 · 이 기기 기억 om_cal_off) · [달력으로] = OS 날짜 칸(친 값 「11/30(요일)」 그대로)', { st, tv, st2 }); await cx.close(); }
+          const st2 = await p.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { type: i.type, ro: i.readOnly, ls: localStorage.getItem('om_cal_off'), show: i.value }; });
+          ok(st.type === 'text' && !st.ro && st.ls === '1' && st.btn === '달력으로' && /예\) 10\/30/.test(st.ph) && tv === '11/30' && st2.type === 'text' && st2.ro && st2.ls === null && /^11\/30\(.\)$/.test(st2.show || ''), '[직접 입력] = 글자 칸(「예) 10/30」 · 11/30 침 · 이 기기 기억 om_cal_off) · [달력으로] = 그린 달력 칸(친 값 「11/30(요일)」 그대로)', { st, tv, st2 }); await cx.close(); }
         { reset(); const { cx, p } = await newPage(384, 854, true); await p.goto(base + '?v=new&omcal=0'); await p.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await p.waitForSelector('#om-list .om-ml'); await OPEN['줄카드(현금표)'](p, true);
           const st = await p.evaluate(() => ({ type: document.getElementById('om-f-0-date').type, ls: localStorage.getItem('om_cal_off') })); await p.evaluate(() => localStorage.removeItem('om_cal_off'));
           ok(st.type === 'text' && st.ls === '1', '주소 ?omcal=0 = 이 기기 직접 입력(안내용 · ?omcal=1 = 달력)', st); await cx.close(); }

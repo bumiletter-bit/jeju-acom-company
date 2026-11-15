@@ -1149,6 +1149,7 @@
 
     // ── 정리 결과 카드 ────────────────────────────────
     function cardOpen(c) {
+        try { calHolLoad(); } catch (e) { /* 휴무일 못 읽음 = 지난 날만 막음 */ }   // #1167 첫 누름 전에 휴무일 목록(첫 누름에 휴무일이 통과하던 틈)
         // #1157(대표 11/15 「매칭 주소 카드 → 뒤로가기 → 입력삭제 창에서 또 뒤로가기 = 앱 꺼짐」) 판에서 연 줄 카드 = 판의 기록 칸은 두고 그 위에 칸 하나(omcard2)
         //   종전 = 판 칸을 되돌리고 줄 카드 칸을 새로 쌓음 → 뒤로가기로 판에 돌아올 때 판 칸을 popstate 안에서(사람 손 없이) 다시 쌓음 → 크롬이 그 앞 칸(목록)을 「건너뛸 칸」으로 찍어 다음 뒤로가기가 메모함·앱까지 빠짐
         const onPanel = !!(c.back && OM.card && OM.card === c.back);
@@ -1176,7 +1177,7 @@
             if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
             return;
         }
-        optClose(false); calClose(false);
+        optClose(false); calClose(false); CAL.nat = null;   // #1167 OS 날짜 칸 초점 채로 닫힘 = 다시 그리기 보류가 남지 않게
         if (c.wait) { const id = c.wait.id; c.wait = null; API.previewDel(id); }   // 정리 중에 닫음 = 그 요청 취소(손님 글 지움)
         OM.card = null;
         if (c.aseq && !c._aseqGo) OM.aseq = null;   // #880-b 이어서 확인 중에 그냥 닫음 = 멈춤
@@ -1660,7 +1661,7 @@
         const n = pxSelIds(c, d).length, go = box.querySelector('[data-cact="pxgo"]'); if (go) { go.disabled = !n; go.innerHTML = pxGoLabel(n, !!c.pxOnly); }
         const sv = $('om-card-save'); if (sv && c.mode === 'edit' && !c.wait) sv.innerHTML = saveLabel(blankN()); pxSumSync();   // #934-b 「고친 대로 저장 + n줄 짝짓기」
     }
-    const cardTyping = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!CAL.nat; };   // #857 치는 칸이 있으면 다시 안 그림
+    const cardTyping = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!(CAL.nat && CAL.nat.isConnected); };   // #857 치는 칸이 있으면 다시 안 그림
     function listRefreshCard(c) {   // #935 정리 결과 카드 = 목록 1회 재조회(폰 옛 목록 탓 ②·추가 매칭 후보 누락 막기) → 끝나면 카드 다시(치는 중이면 0.4초마다 미룸)
         if (!c || c.mode !== 'new' || c._refreshed) return; c._refreshed = true;
         load().then(() => { const go = () => { if (OM.card !== c || c._saving) return; if (cardTyping()) { setTimeout(go, 400); return; } renderCard(); }; go(); });   // 저장 중이면 건너뜀(저장 뒤 load 가 그림)
@@ -1822,7 +1823,7 @@
         const res = API.pairHint ? await API.pairHint(k.show) : { ok: false }, b = res.ok && res.body ? res.body : null;   // 옛 짝 API 묶음(검증 가짜 등) = 안 부름
         c.hint[k.d] = { st: 'done', groups: b && Array.isArray(b.groups) ? b.groups.filter(g => g && Array.isArray(g.ids) && g.ids.length).slice(0, 5) : [], need: b && Array.isArray(b.need) ? b.need : [] };
         if (OM.card !== c || !c.hint[k.d].groups.length) return;
-        const typing = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!CAL.nat; };
+        const typing = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!(CAL.nat && CAL.nat.isConnected); };
         const go = () => { if (OM.card !== c) return; if (typing()) { setTimeout(go, 400); return; } renderCard(); };   // 치는 칸이 있으면 0.4초마다 다시 봄(칸을 떠나고 누르는 단추가 끝난 뒤 그림)
         go();
     }
@@ -1892,7 +1893,18 @@
             <p class="om-ordn">${sp ? `저장하면 주문번호 줄 ${sp.length}개로 나뉘어 저장돼요(전화번호 줄은 안 남아요)${dated.length ? ` · ${dated.map(z => `${md(ordDate(r, z.e))} 주문(${z.x.qty || '?'}박스)의 주소 줄 ${z.x.qty || ''}개에는 발송일 칸에 ${md(ordDate(r, z.e))}를 직접 넣어 주세요`).join(' · ')}` : ''}` : '주문별 발송일이 다르면 주문번호 줄로 나뉘어 저장돼요 · 지금은 전부 같아 전화번호 줄 하나로 저장돼요'}</p></div>`;
     }
     const ordSibs = r => (OM.list || []).filter(x => x.kind === 'line' && !isShipRow(x) && x.state === 'open' && x.id != null && x.id !== r.id && !isPhoneKey(x.key) && lineD(x) === lineD(r) && String(x.plat || '') === String(r.plat || '') && String(x.note || '').replace(/\s+/g, '') === String(r.note || '').replace(/\s+/g, ''));
+    // #1168(대표 11/15 「선물하기는 줄 합치기 누르지 않도록 매칭 상태 유지 · 개별발송 건은 설명해서 직원들도 안 헷갈리게」) = 주문번호 줄의 번호(checked.buyer)가 그 주문의 구매자 번호와 같을 때만 [전화번호 줄 하나로 합치기]
+    //   선물하기(구매자 번호 없음)·받는 분 번호로 넣은 줄 = 합치면 받는 분 번호 줄이 되어 「네이버 주문 확인 중」(매칭 풀림 · 11/15 실사례 707) → 단추 없이 주문번호 매칭 그대로 + 설명 · 찾는 중 = 단추 없음
+    const ordBuyerOk = r => { const L = r && r._lk; if (!L || L.state !== 'done' || L.key !== digits(r.key)) return null; const m = lkIn(r); if (!m.length) return null; if (!m.some(x => 'buyer_tel' in x)) return true; const b = digits(r.checked && r.checked.buyer); return m.some(x => digits(x.buyer_tel) === b); };   /* 주문번호 찾기 = 서버 buyer_tel(그 주문 구매자 번호 · 선물하기 = 없음) · 칸이 없는 옛 찾기 길(문자 수집 표) = 종전 그대로 */
+    const giftBoxN = r => { const m = lkIn(r); return Math.max(Array.isArray(r.boxes) ? r.boxes.length : 0, ...m.map(x => Number(x.qty) || 1), 1); };
+    const GIFT_BOX_NOTE = '박스마다 따로 보낼 땐 줄을 합치거나 번호를 바꾸지 말고 [고객정보수정]의 [고치기]에서 박스마다 받는 분만 넣어 주세요';
     function ordMergeHtml(r) {
+        const bk = ordBuyerOk(r);
+        if (bk !== true) {   /* #1168 합치기 막음 */
+            const n = bk === null ? 0 : giftBoxN(r);
+            return `<div class="om-ordbox om-giftbox" role="group" aria-label="주문번호 줄"><b>주문번호 줄 · 넣은 번호 ${esc(lineShow(r))}</b>
+            <p class="om-ordn">${bk === null ? '이 주문의 구매자 번호를 확인하는 중이에요' : `선물하기처럼 구매자 번호가 없거나 받는 분 번호로 넣은 주문이라 주문번호로 매칭돼요 · 전화번호 줄로 합치지 않아요(합치면 매칭이 풀려요)${n >= 2 ? ' · ' + GIFT_BOX_NOTE : ''}`}</p></div>`;
+        }
         const sibs = ordSibs(r), same = sibs.every(x => (x.ship_date || null) === (r.ship_date || null));
         return `<div class="om-ordbox" role="group" aria-label="주문번호 줄"><b>주문번호 줄 · 구매자 ${esc(lineShow(r))}${sibs.length ? ` · 같은 구매자 주문번호 줄 ${sibs.length}개 더(${esc(sibs.map(x => (x.ship_date ? md(x.ship_date) : '다음 발주') + ' ' + String(x.key)).join(', '))})` : ''}</b>
             <p class="om-ordn">${same ? '발송일이 모두 같아 전화번호 줄 하나로 합칠 수 있어요(주문번호 줄들은 「비운 것」으로)' : '발송일이 다르면 그대로 두세요 · 같게 고친 뒤 합칠 수 있어요'}</p>
@@ -1998,7 +2010,7 @@
         const cut = cutHtml(L.cut);   // #1101
         return `<div class="om-ordbox om-cebox" role="group" aria-label="이 번호 주문 ${os.length}건"><b>이 번호 발송 전 주문 ${os.length}건 · 고칠 주문의 [고치기]를 눌러 주세요</b>${cut}<ul class="om-ordl">${os.map(o => { const xo = r._xo && r._xo[o.id], open = !!(xo && xo.bx); const rv = String(o.recv || '').trim(), ad = String(o.addr || '').trim(), pd = o.x.paid_at ? ` · ${esc(md(o.x.paid_at))} 결제` : '';   // #1100 받는 분·주소 있으면 두 줄(1줄 = 이름 · 주소 앞부분 · 2줄 = 판매처 · 품목 · 박스 · 결제일 · 주문번호는 [고치기] 판 머리) · 둘 다 없으면 종전 꼴
             const tH = rv || ad ? `<span class="om-ce-t two"><span class="om-ce-who">${rv ? `<b>${esc(rv)}</b>` : ''}${rv && ad ? ' · ' : ''}${ad ? esc(ad) : ''}</span><span class="om-ce-sub">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스${pd}</span></span>` : `<span class="om-ce-t">${esc(o.x.plat || '')} · ${esc(optBrief(o.option))} ${o.qty || 1}박스 · ${esc(o.id)}${pd}</span>`;
-            return `<li class="om-ce-o">${tH}${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
+            return `<li class="om-ce-o">${tH}${o.x && o.x.as === 'recv' && !digits(o.x.buyer_phone) && (Number(o.qty) || 1) >= 2 ? `<p class="om-ordn om-giftn">선물하기 주문(구매자 번호 없음) · 주문번호로 매칭돼요 · ${GIFT_BOX_NOTE.replace(' [고객정보수정]의', '')}</p>` : ''}${o.one ? `<button type="button" class="om-btn sm om-boxbtn" data-cact="cefix" data-ri="${ri}" data-o="${esc(o.id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '고치는 중' : '고치기'}</button>` : '<small>주문이 여러 줄이라 최종발주 카드에서</small>'}${open ? bxPanel(xo.bx, ri, o.id) : ''}</li>`; }).join('')}</ul></div>`;
     }
     function ceGo() {   // 꼬리표 번호 → 그 번호 고객정보수정 카드(줄 하나 = 찾기 열쇠 · 저장 안 함)
         const te = $('om-tp-tel'), d = digits(te.value);
@@ -2074,6 +2086,7 @@
     }
     async function ordMerge(c, r, b) {
         if (!r || c.mode !== 'edit' || r.id == null || !r.checked || !isPhoneKey(r.checked.buyer)) return;
+        if (ordBuyerOk(r) !== true) { toast('구매자 번호가 없는 주문(선물하기 등)이라 주문번호로 매칭돼요 · 합치지 않아요'); return; }   // #1168
         const sibs = ordSibs(r); if (!sibs.every(x => (x.ship_date || null) === (r.ship_date || null))) { toast('발송일이 다른 줄이 있어요 · 같게 고친 뒤 합쳐 주세요'); return; }
         b.disabled = true; const tel = telShow(r.checked.buyer);
         const res = await API.update(r.id, { key: tel, note: r.note, plat: r.plat, ship_date: r.ship_date || null, checked: { plat: r.plat || '네이버', as: 'buyer', at: new Date().toISOString() } });
@@ -2444,6 +2457,7 @@
             if (!bad && posts.length) { const res = await API.save({ raw: '', tags: [], source: 'manual', rows: posts.map(outRow) }); if (!res.ok) bad = res; }
             if (OM.card !== c) return;
             if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+            { const te0 = $('om-tp-tel'); if (te0) te0.value = ''; OM.tpLast = null; OM.tpSaved = null; }   // #1168 저장 뒤 꼬리표 번호 칸 비움(다음 손님 번호를 지우고 넣지 않게)
             cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}`); load(); return;
         }
         { const bi = rows.findIndex(r => szBlock(r)); if (bi >= 0) { c._saving = false; toast(szBlock(rows[bi])); cardReveal(c, c.rows.indexOf(rows[bi])); return; } }   // #1061-b 카드 [저장]·[고친 대로 저장] 길도 같은 판정
@@ -2650,16 +2664,16 @@
     document.addEventListener('scroll', e => { if (CAL.inp && !(CAL.el && CAL.el.contains(e.target))) calPlace(); }, true);
     const calInput0 = (attrs, iso, ph, label, dis) => `<input class="om-sd" readonly inputmode="none" autocomplete="off" ${attrs} data-iso="${esc(iso || '')}" value="${esc(iso ? mdw(iso) : '')}" placeholder="${esc(ph)}" aria-haspopup="dialog"${label ? ` aria-label="${esc(label)}"` : ''}${dis ? ' disabled' : ''}>`;
 
-    // ── #1166(대표 11/15 「달력으로 고」 · #1161·#1165 가 대표 폴드7 앱에서 튕겨 v5.9.812 로 되돌린 뒤) = 「달력 시험」 스위치 뒤에서만 · 기본 꺼짐 = v5.9.812 글자 입력 그대로
-    //   켜기 = 이 기기에서만(localStorage om_cal_beta · 주소 ?omcal=1 / 끄기 ?omcal=0 · 메모함 머리 [달력 시험] = 대표·관리자) · 폰(터치) = OS 날짜 고르기(투명 type=date 를 「11/16(월)」 칸 위에 겹침 · 손가락이 직접 엶)
-    //   PC = #1165 직접 그린 달력([확인]) · 튕김 단서 = 고객정보수정 [고치기]가 날짜 칸에 초점 → 미뤄 둔 카드 다시 그리기(#857 「치는 중이면 미룸」)가 달력이 초점을 가져가는 순간 renderCard → 칸 갈아 끼움
-    //   → 달력·OS 날짜 칸이 떠 있는 동안은 「치는 중」과 같이 다시 그리기 보류(typing 판정에 CAL.inp·CAL.nat) · 기록 40줄 = 머리 [기록 보기](번호·이름 없음)
-    //   🔁 대표 11/15 「그냥 아예 스위치 말고 바로 하도록」 = 기본 달력(모든 기기) · 기기별 [직접 입력] = 종전 글자 입력(om_cal_off = '1' 기억 · [달력으로] 되돌림) · 「기록」 = 카드 머리 작은 단추(좁은 폰 = [직접 입력] 길게 누름)
+    // ── #1166(대표 11/15 「달력으로 고」) · #1167(대표 「디자인만 달력 우리 디자인 구도로 · 처음엔 우리 디자인이었어」) = 기본 = 그린 달력(PC·폰 · 인디고 · [취소][확인])
+    //   폰 OS 날짜 창 길(투명 type=date)은 남김 = 주소 ?omcal=2 로 이 기기만(om_cal_native 기억) · [직접 입력] = 종전 글자 입력(om_cal_off · [달력으로]) · ?omcal=1 = 둘 다 지우고 그린 달력 · ?omcal=0 = 직접 입력
+    //   튕김 단서 = 고객정보수정 [고치기]가 날짜 칸에 초점 → 미뤄 둔 카드 다시 그리기(#857 「치는 중이면 미룸」)가 달력이 초점을 가져가는 순간 renderCard → 칸 갈아 끼움
+    //   → 달력(CAL.inp)·OS 날짜 칸(CAL.nat)이 떠 있는 동안은 「치는 중」과 같이 다시 그리기 보류(typing 판정 3곳) · 기록 40줄 = 카드 머리 「기록」(좁은 폰 = [직접 입력] 길게 · 번호·이름 없음)
     const CALB_KEY = 'om_cal_off';
     const calOn = () => { try { return localStorage.getItem(CALB_KEY) !== '1'; } catch (e) { return true; } };
     const calSet = on => { try { if (on) localStorage.removeItem(CALB_KEY); else localStorage.setItem(CALB_KEY, '1'); } catch (e) { /* 저장 못 함 = 그대로 */ } };
-    const calNative = () => { try { return window.matchMedia('(pointer: coarse)').matches || phoneW(); } catch (e) { return false; } };
-    (function () { try { const q = new URLSearchParams(location.search).get('omcal'); if (q === '1' || q === '0') calSet(q === '1'); } catch (e) { /* 주소 못 읽음 */ } })();
+    const CALN_KEY = 'om_cal_native';
+    const calNative = () => { try { return localStorage.getItem(CALN_KEY) === '1'; } catch (e) { return false; } };   /* #1167 기본 = 폰도 그린 달력 · OS 날짜 창 = ?omcal=2 기기만 */
+    (function () { try { const q = new URLSearchParams(location.search).get('omcal'); if (q === '1' || q === '0' || q === '2') { calSet(q !== '0'); if (q === '2') localStorage.setItem(CALN_KEY, '1'); else localStorage.removeItem(CALN_KEY); } } catch (e) { /* 주소 못 읽음 */ } })();
     const CLOG = [];
     function calLog(t) { const d = new Date(Date.now() + 9 * 3600e3); CLOG.push(`${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')} ${t}`); if (CLOG.length > 40) CLOG.shift(); }
     window.addEventListener('resize', () => { if (OM.el && !OM.el.hidden) calLog('화면 크기 ' + innerWidth + 'x' + innerHeight); });
@@ -2690,7 +2704,6 @@
         if (k === 'ord') { const e = r._ord && r._ord.by[t.dataset.o]; if (!e) return; if (iso) { e.touched = true; e.date = iso; } else { e.touched = false; e.date = null; } if (CAL.nat === t) CAL.nat = null; ordRefresh(ri); return; }
         if (k === 'ce') { const bx = bxGet(r, t.dataset.x); if (bx) { bx.date = iso || ''; calNatShow(t, bx.date); } }
     }
-    function calChip() { const b = $('om-calb'); if (b) b.remove(); }   /* #1166 시험 꼴 머리 단추 없앰(기본 달력) */
     function calChipClick(e) {
         const b = e.target.closest('[data-calb]'); if (!b) return; const k = b.dataset.calb;
         if (CAL.lp) { CAL.lp = false; return; }   /* 길게 누름 = 기록만 */
@@ -2773,7 +2786,7 @@
             OWN.on = fo; OWN.stack = [];   /* #1148 되돌리던 칸(skip)은 그대로 — 닫자마자 다시 열면 그 popstate 를 마저 삼키고 쌓는다 */
             OM.tpLast = null; OM.tpSaved = null; el.hidden = false; document.body.classList.add('om-open'); el.classList.toggle('over-fo', fo); hbPush('om', () => close(false));
         }
-        OM.tab = 'open'; syncTabs(); inState(); load(); calChip();   // #1166 달력 시험 단추(대표·관리자 · 켠 기기)
+        OM.tab = 'open'; syncTabs(); inState(); load();
         requestAnimationFrame(xLayout);   // #850-f 창이 보인 뒤 줄 × 자리
         if (!(opts && opts.noFocus)) setTimeout(() => { const t = phoneW() ? $('om-close') : $('om-raw'); if (t) t.focus({ preventScroll: true }); }, 60);
     }
@@ -2905,7 +2918,7 @@
     }
     // 카드를 다시 그리되 칸을 치는 중이면 그 칸을 떠난 뒤(#857 · hintLoad 와 같은 꼴)
     function renderSoon(c) {
-        const typing = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!CAL.nat; };
+        const typing = () => { const ae = document.activeElement; return !!(ae && $('om-card').contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.type !== 'checkbox' && ae.type !== 'radio') || !!CAL.inp || !!(CAL.nat && CAL.nat.isConnected); };
         const go = () => { if (OM.card !== c) return; if (typing()) { setTimeout(go, 400); return; } renderCard(); };
         go();
     }
