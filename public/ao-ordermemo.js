@@ -2672,8 +2672,8 @@
     const calOn = () => { try { return localStorage.getItem(CALB_KEY) !== '1'; } catch (e) { return true; } };
     const calSet = on => { try { if (on) localStorage.removeItem(CALB_KEY); else localStorage.setItem(CALB_KEY, '1'); } catch (e) { /* 저장 못 함 = 그대로 */ } };
     const CALN_KEY = 'om_cal_native';
-    const calNative = () => { try { return localStorage.getItem(CALN_KEY) === '1'; } catch (e) { return false; } };   /* #1167 기본 = 폰도 그린 달력 · OS 날짜 창 = ?omcal=2 기기만 */
-    (function () { try { const q = new URLSearchParams(location.search).get('omcal'); if (q === '1' || q === '0' || q === '2') { calSet(q !== '0'); if (q === '2') localStorage.setItem(CALN_KEY, '1'); else localStorage.removeItem(CALN_KEY); } } catch (e) { /* 주소 못 읽음 */ } })();
+    const calNative = () => { try { const v = localStorage.getItem(CALN_KEY); if (v === '1') return true; if (v === '0') return false; return window.matchMedia('(pointer: coarse)').matches || phoneW(); } catch (e) { return false; } };   /* #1169(대표 폰 v5.9.814 그린 달력 「날 누르면 바로 튕김」) 폰(터치) 기본 = v5.9.813 OS 날짜 창 · PC = 그린 달력 · ?omcal=1 = 이 기기 그린 달력(om_cal_native '0') · ?omcal=2 = OS 날짜 창('1') */
+    (function () { try { const q = new URLSearchParams(location.search).get('omcal'); if (q === '1' || q === '0' || q === '2') { calSet(q !== '0'); if (q === '2') localStorage.setItem(CALN_KEY, '1'); else if (q === '1') localStorage.setItem(CALN_KEY, '0'); } } catch (e) { /* 주소 못 읽음 */ } })();
     const CLOG = [];
     function calLog(t) { const d = new Date(Date.now() + 9 * 3600e3); CLOG.push(`${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')} ${t}`); if (CLOG.length > 40) CLOG.shift(); }
     window.addEventListener('resize', () => { if (OM.el && !OM.el.hidden) calLog('화면 크기 ' + innerWidth + 'x' + innerHeight); });
