@@ -2512,7 +2512,9 @@
     //   칸 = 읽기 전용(폰 자판 안 뜸 · 글자 치는 길 없음) · 저장 값 꼴 그대로(줄 = r.ship_date YYYY-MM-DD → setV · 주문별 = e.date · 고객정보수정 = bx.date) · 보이는 글만 「11/16(월)」
     //   모양 = 공통 달력(styles.css .akm-cal · 야간 ao-dark.css) 틀 그대로 · 메모함 겹 안(fixed) · 지난 날·발송 휴무일(no_ship)은 못 고름 · [오늘][내일][비우기]
     //   칸 셋 = data-omcal="fd"(줄 카드·주문입력·정리 결과의 「발송일」) · "ord"(#938 주문별 발송일) · "ce"(#1027 고객정보수정 주문 발송일) · 뒤로가기·Esc = 달력만 닫힘(hbPush 'omcal')
-    const CAL = { el: null, inp: null, y: 0, m: 0, hol: null, holAt: 0 };
+    //   #1165(대표 11/15 폰 「달력 눌러서 체크하니깐 바로 꺼져버려 · 날 뜨고 확인 누르도록」) 원인 = 화면이 낮을 때(자판이 떠 있던 폰) 아래 판이 칸을 가린다고 카드를 밀어 올리다 칸이 화면 위로 나감 → 스크롤 듣개가 「칸이 화면 밖 = 닫음」으로 곧바로 닫음
+    //     → 화면 밖이어도 안 닫음 · 밀어 올리기는 칸 위가 화면 안에 남는 만큼만 · 열린 뒤 0.35초는 바깥 누름 무시 · 날 누름 = 「고른 날」만(CAL.pend) → [확인] = 칸에 넣고 닫음 · [취소]·바깥·Esc·뒤로가기 = 그대로 닫음
+    const CAL = { el: null, inp: null, y: 0, m: 0, hol: null, holAt: 0, pend: '', t0: 0 };
     const isoAdd = (d, n) => { const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})$/); const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)); return t.toISOString().slice(0, 10); };
     const calOff = d => d < todayStr() ? '지난 날짜' : CAL.hol && CAL.hol.has(d) ? (CAL.hol.get(d) || '발송 휴무일') : '';
     function calHolLoad() {
@@ -2529,8 +2531,9 @@
         const el = document.createElement('div'); el.className = 'akm-cal om-cal'; el.id = 'om-cal'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', '발송일 고르기'); el.hidden = true;
         el.addEventListener('click', e => {
             const nv = e.target.closest('[data-nav]'); if (nv) { if (nv.disabled) return; CAL.m += Number(nv.dataset.nav); if (CAL.m < 0) { CAL.m = 11; CAL.y--; } if (CAL.m > 11) { CAL.m = 0; CAL.y++; } calRender(); const k = CAL.el.querySelector(`[data-nav="${nv.dataset.nav}"]`); if (k && !k.disabled) k.focus({ preventScroll: true }); return; }
-            const q = e.target.closest('[data-pick]'); if (q) { if (q.disabled) return; calPick(q.dataset.pick === 'clear' ? null : q.dataset.pick === 'today' ? todayStr() : isoAdd(todayStr(), 1)); return; }
-            const d = e.target.closest('[data-d]'); if (d && !d.disabled) calPick(d.dataset.d);
+            const ok = e.target.closest('[data-cal]'); if (ok) { if (ok.dataset.cal === 'ok') calPick(CAL.pend || null); else calClose(true); return; }   /* #1165 [확인] = 고른 값 넣기 · [취소] = 그대로 */
+            const q = e.target.closest('[data-pick]'); if (q) { if (q.disabled) return; calSel(q.dataset.pick === 'clear' ? '' : q.dataset.pick === 'today' ? todayStr() : isoAdd(todayStr(), 1)); return; }
+            const d = e.target.closest('[data-d]'); if (d && !d.disabled) calSel(d.dataset.d);
         });
         el.addEventListener('keydown', calKey);
         (OM.el || document.body).appendChild(el); CAL.el = el;
@@ -2538,8 +2541,8 @@
     }
     function calRender() {
         const el = CAL.el, inp = CAL.inp; if (!el || !inp) return;
-        const fa = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null, keep = fa ? (fa.dataset.d ? `[data-d="${fa.dataset.d}"]` : fa.dataset.nav ? `[data-nav="${fa.dataset.nav}"]` : fa.dataset.pick ? `[data-pick="${fa.dataset.pick}"]` : '') : '';   /* 다시 그려도(휴무일 읽힘 등) 초점 자리 그대로 */
-        const sel = inp.dataset.iso || '', t = todayStr(), tm = isoAdd(t, 1), first = new Date(Date.UTC(CAL.y, CAL.m, 1)).getUTCDay(), nowM = +t.slice(5, 7) - 1, nowY = +t.slice(0, 4);
+        const fa = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null, keep = fa ? (fa.dataset.d ? `[data-d="${fa.dataset.d}"]` : fa.dataset.nav ? `[data-nav="${fa.dataset.nav}"]` : fa.dataset.pick ? `[data-pick="${fa.dataset.pick}"]` : fa.dataset.cal ? `[data-cal="${fa.dataset.cal}"]` : '') : '';   /* 다시 그려도(휴무일 읽힘 등) 초점 자리 그대로 */
+        const sel = CAL.pend, t = todayStr(), tm = isoAdd(t, 1), first = new Date(Date.UTC(CAL.y, CAL.m, 1)).getUTCDay(), nowM = +t.slice(5, 7) - 1, nowY = +t.slice(0, 4);
         let cells = '';
         for (let i = 0; i < 42; i++) {
             const dt = new Date(Date.UTC(CAL.y, CAL.m, i - first + 1)), d = dt.toISOString().slice(0, 10), off = calOff(d), cls = ['akm-cal-day'];
@@ -2548,21 +2551,25 @@
         }
         const prevOff = CAL.y < nowY || (CAL.y === nowY && CAL.m <= nowM);
         el.innerHTML = `<div class="akm-cal-head"><button type="button" class="akm-cal-nav" data-nav="-1" aria-label="이전 달"${prevOff ? ' disabled' : ''}>‹</button><div class="akm-cal-title" aria-live="polite">${CAL.y}년 ${CAL.m + 1}월</div><button type="button" class="akm-cal-nav" data-nav="1" aria-label="다음 달">›</button></div>
+            <p class="om-cal-pick" aria-live="polite">고른 날 <b>${sel ? esc(mdw(sel)) : esc(CAL_EMPTY[inp.dataset.omcal] || '비움')}</b>${sel === (inp.dataset.iso || '') ? '' : ' <small>· [확인]을 눌러야 들어가요</small>'}</p>
             <div class="akm-cal-week" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
             <div class="akm-cal-grid">${cells}</div>
-            <div class="akm-cal-foot om-cal-foot"><button type="button" class="akm-cal-today-btn" data-pick="today"${calOff(t) ? ' disabled' : ''}>오늘</button><button type="button" class="akm-cal-today-btn" data-pick="tomorrow"${calOff(tm) ? ' disabled' : ''}>내일</button><button type="button" class="om-cal-clr" data-pick="clear"${sel ? '' : ' disabled'}>${inp.dataset.omcal === 'fd' ? '비우기 · 다음 발주' : '비우기'}</button></div>`;
+            <div class="akm-cal-foot om-cal-foot"><button type="button" class="akm-cal-today-btn" data-pick="today"${calOff(t) ? ' disabled' : ''}>오늘</button><button type="button" class="akm-cal-today-btn" data-pick="tomorrow"${calOff(tm) ? ' disabled' : ''}>내일</button><button type="button" class="om-cal-clr" data-pick="clear"${sel ? '' : ' disabled'}>${inp.dataset.omcal === 'fd' ? '비우기 · 다음 발주' : '비우기'}</button></div>
+            <div class="om-cal-acts"><button type="button" class="om-btn" data-cal="no">취소</button><button type="button" class="om-btn primary" data-cal="ok">확인</button></div>`;
         if (keep) { const k = el.querySelector(keep); if (k && !k.disabled) { if (k.dataset.d) k.tabIndex = 0; k.focus({ preventScroll: true }); } }
     }
     function calPlace() {
         const el = CAL.el, inp = CAL.inp; if (!el || !inp) return;
-        if (!inp.isConnected) { const n = calFind(inp); if (n) { CAL.inp = n; n.setAttribute('aria-expanded', 'true'); calPlace(); return; } calClose(false); return; }   /* 칸이 다시 그려짐 = 새 칸에 붙음 */
+        if (!inp.isConnected) { const n = calFind(inp); if (n) { CAL.inp = n; n.setAttribute('aria-expanded', 'true'); calPlace(); } return; }   /* 칸이 다시 그려짐 = 새 칸에 붙음(못 찾으면 그대로 · [확인] 때 다시 찾음) */   /* 칸이 다시 그려짐 = 새 칸에 붙음 */
         const r = inp.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight, pw = el.offsetWidth, ph = el.offsetHeight;
-        if (r.bottom < 0 || r.top > vh || !r.width) { calClose(false); return; }   /* 칸이 화면 밖으로 밀려남 = 닫음 */
-        if (phoneW()) {   /* 폰 = 아래 판(옵션 고르기 판과 같은 꼴 · CSS) · 고르는 칸이 판에 가리면 칸을 판 위로 밀어 올림 */
+        if (OM.el) OM.el.classList.toggle('cal-open', phoneW());   /* 폴드 접고 펴기(폭 변화) = 판 꼴만 바뀜 · 닫지 않음 */
+        if (phoneW()) {   /* 폰 = 아래 판(옵션 고르기 판과 같은 꼴 · CSS) · 고르는 칸이 판에 가리면 칸을 판 위로 밀어 올림(칸 위가 화면 안에 남는 만큼만 · #1165 = 칸이 화면 밖이어도 안 닫음) */
             el.style.left = ''; el.style.top = '';
-            const st = vh - ph - 12; if (r.bottom > st) { let sc = inp.parentElement; while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement; if (sc && sc !== document.body) sc.scrollTop += Math.ceil(r.bottom - st); }
+            const st = vh - ph - 12, dy = Math.min(r.bottom - st, r.top - 8);
+            if (dy > 0 && !CAL.moved) { CAL.moved = true; let sc = inp.parentElement; while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement; if (sc && sc !== document.body) sc.scrollTop += Math.ceil(dy); }
             return;
         }
+        if (r.bottom < 0 || r.top > vh || !r.width) return;   /* 칸이 화면 밖 = 자리만 그대로(닫지 않음) */
         const cb = OM.card && $('om-card') ? $('om-card').getBoundingClientRect() : null, rx = cb && cb.width > pw + 16 ? Math.min(vw, cb.right) : vw;   /* 카드 안에 맞춤(카드가 넓을 때) */
         let left = Math.min(Math.max(8, r.left), rx - pw - 8), top = r.bottom + 6;
         if (top + ph > vh - 8) top = r.top - ph - 6 >= 8 ? r.top - ph - 6 : Math.max(8, vh - ph - 8);
@@ -2570,16 +2577,20 @@
     }
     function calOpen(inp) {
         if (!inp || inp.disabled) return;
-        if (CAL.inp === inp) { calClose(true); return; }
+        if (CAL.inp === inp) { if (performance.now() - CAL.t0 < 350) return; calClose(true); return; }   /* #1165 빠른 두 번 누름 = 안 닫음 */
         if (CAL.inp) calClose(false);
         if (OM.opt) optClose(false);
         const el = calEl(), base = inp.dataset.iso || todayStr();
-        CAL.inp = inp; CAL.y = +base.slice(0, 4); CAL.m = +base.slice(5, 7) - 1;
+        CAL.inp = inp; CAL.pend = inp.dataset.iso || ''; CAL.t0 = performance.now(); CAL.moved = false; CAL.y = +base.slice(0, 4); CAL.m = +base.slice(5, 7) - 1;
         calHolLoad(); calRender(); el.hidden = false; if (OM.el) OM.el.classList.toggle('cal-open', phoneW()); calPlace();
         inp.setAttribute('aria-expanded', 'true');
         hbPush('omcal', () => calClose(false, true));
         const f = el.querySelector('.akm-cal-day.sel:not([disabled])') || el.querySelector('.akm-cal-day.today:not([disabled])') || el.querySelector('.akm-cal-day:not([disabled]):not(.out)');
         if (f) { f.tabIndex = 0; f.focus({ preventScroll: true }); }
+    }
+    function calSel(iso) {   /* #1165 날·[오늘]·[내일]·[비우기] = 고른 값만 바꿈(칸은 [확인] 때) */
+        CAL.pend = iso || ''; if (iso) { const y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (y !== CAL.y || m !== CAL.m) { CAL.y = y; CAL.m = m; } }
+        calRender(); const b = iso && CAL.el.querySelector(`.akm-cal-day[data-d="${iso}"]`); if (b && document.activeElement && document.activeElement.dataset && document.activeElement.dataset.d) { CAL.el.querySelectorAll('.akm-cal-day').forEach(x => { x.tabIndex = -1; }); b.tabIndex = 0; b.focus({ preventScroll: true }); }
     }
     function calClose(hist, fromHist) {
         const inp = CAL.inp; if (!inp) return;
@@ -2621,8 +2632,12 @@
         }
         if (k === 'ce') { const bx = bxGet(r, inp.dataset.x); if (bx) { bx.date = iso || ''; show(bx.date); } calClose(true); }
     }
-    function calOutside(e) { if (!CAL.inp || !CAL.el) return; if (CAL.el.contains(e.target) || e.target === CAL.inp) return; calClose(false); }
-    document.addEventListener('pointerdown', calOutside, true);
+    const CAL_EMPTY = { fd: '다음 발주', ord: '줄 발송일', ce: '그대로' };
+    function calOutside(e) {   /* #1165 바깥 누름 = 달력만 닫고 그 누름은 삼킴(아래 「처음으로」·카드 뒤 흐림 등이 같이 눌리던 것) · 연 뒤 0.35초 = 연 손가락의 뒤따르는 누름 무시 */
+        if (!CAL.inp || !CAL.el) return; const t = e.target; if (CAL.el.contains(t) || t === CAL.inp) return;
+        e.preventDefault(); e.stopPropagation(); if (e.type !== 'click' || performance.now() - CAL.t0 < 350) return; calClose(false);
+    }
+    ['pointerdown', 'mousedown', 'click'].forEach(t => document.addEventListener(t, calOutside, true));
     window.addEventListener('resize', () => { if (CAL.inp) calPlace(); });
     document.addEventListener('scroll', e => { if (CAL.inp && !(CAL.el && CAL.el.contains(e.target))) calPlace(); }, true);
     const calInput = (attrs, iso, ph, label, dis) => `<input class="om-sd" readonly inputmode="none" autocomplete="off" ${attrs} data-iso="${esc(iso || '')}" value="${esc(iso ? mdw(iso) : '')}" placeholder="${esc(ph)}" aria-haspopup="dialog"${label ? ` aria-label="${esc(label)}"` : ''}${dis ? ' disabled' : ''}>`;

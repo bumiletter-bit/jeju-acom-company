@@ -1032,3 +1032,14 @@ html .om-modal .om-cal .akm-cal-day.sel { background: var(--d-accent); color: va
     .om-modal.cal-open::after { content: ""; position: fixed; inset: 0; z-index: 974; background: rgba(16, 24, 40, .35); }
 }
 @media (prefers-reduced-motion: reduce) { .om-modal .akm-cal.om-cal { animation: none; } }
+/* #1165 고른 날 한 줄 + [취소][확인](확인을 눌러야 칸에 들어감) · 폰 아래 판이 화면보다 길면 판 안에서 밀리고 [확인] 줄은 늘 보임 */
+.om-cal .om-cal-pick { margin: 0 0 8px; padding: 6px 8px; border-radius: 8px; background: var(--d-accent-soft); color: var(--d-ink); font-size: 12.5px; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.om-cal .om-cal-pick b { color: var(--d-accent); font-weight: 800; }
+.om-cal .om-cal-pick small { color: var(--d-sub); font-size: 11.5px; font-weight: 600; }
+.om-cal .om-cal-acts { display: flex; gap: 8px; margin-top: 8px; }
+.om-cal .om-cal-acts .om-btn { flex: 1 1 0; min-height: 40px; justify-content: center; }
+@media (max-width: 960px), (pointer: coarse) { .om-cal .om-cal-acts .om-btn { min-height: 48px; font-size: 15px; } .om-cal .om-cal-pick { font-size: 14px; } }
+@media (max-width: 720px) {
+    .om-modal .akm-cal.om-cal { max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain; }
+    .om-cal .om-cal-acts { position: sticky; bottom: calc(-12px - env(safe-area-inset-bottom, 0px)); margin: 8px -16px calc(-12px - env(safe-area-inset-bottom, 0px)); padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--d-card); border-top: 1px solid var(--d-line); }
+}

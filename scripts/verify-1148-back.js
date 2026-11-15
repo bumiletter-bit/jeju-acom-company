@@ -129,7 +129,7 @@ function mut(L) {
             a = await seq('⑦ 줄카드→발송일 달력', fo, async p => { await openRow(p); await p.click('#om-f-0-date'); await p.waitForSelector('#om-cal:not([hidden])'); await settle(p); }, 4);
             ok(a[0].s === '메모함>현금표>줄카드>달력' && a[1].s === '메모함>현금표>줄카드' && a[2].s === '메모함>현금표' && a[3].s === '메모함', '⑦' + tag + ' 발송일 달력 → back = 달력만 닫힘(줄 카드 그대로) → back = 현금 줄 표 → back = 목록', T['⑦ 줄카드→발송일 달력' + tag]); no0(a, '⑦' + tag);
             // ⑦-b 달력에서 날 고른 뒤 back = 「저장 안 하고 닫을까요?」(고친 것 = 발송일)
-            a = await seq('⑦-b 달력 고름→back', fo, async p => { await openRow(p); await p.click('#om-f-0-date'); await p.waitForSelector('#om-cal:not([hidden])'); await p.click('#om-cal [data-pick="tomorrow"]'); await settle(p); }, 2);
+            a = await seq('⑦-b 달력 고름→back', fo, async p => { await openRow(p); await p.click('#om-f-0-date'); await p.waitForSelector('#om-cal:not([hidden])'); await p.click('#om-cal [data-pick="tomorrow"]'); await p.click('#om-cal [data-cal="ok"]'); await settle(p); }, 2);
             ok(a[0].s === '메모함>현금표>줄카드' && a[1].s === '메모함>현금표>줄카드>묻기' && S.puts.length === 0, '⑦-b' + tag + ' [내일] 고르면 달력 닫힘(기록 칸도 빠짐) → back = 「저장 안 하고 닫을까요?」(종전 규칙)', T['⑦-b 달력 고름→back' + tag]); no0(a, '⑦-b' + tag);
             // ⑤ 추가(새 글 정리) 카드
             a = await seq('⑤ 정리 결과 카드', fo, async p => {
