@@ -846,3 +846,12 @@ html[data-ao-theme="dark"] .fo-om-link.fo-om-apply:disabled { background: #1A1F3
 .fo-src[data-src="card"] { background: #FFF1D6; color: #8A5300; }
 html[data-ao-theme="dark"] .fo-src { background: rgba(129, 140, 248, .22); color: #C7CBFF; }
 html[data-ao-theme="dark"] .fo-src[data-src="card"] { background: rgba(251, 191, 36, .2); color: #FCD98A; }
+
+/* #1159(대표 11/15 「밑에 칸은 많은데 위로 잘려 있어」) 자동 송장 등록 결과 = 묶음이 보이는 높이를 다 채움(머리부터 보이게 내림 = final-order.js showSec)
+ * 결과 칸 줄 사이 12px(종전 0 · 요약 글·칩·채널 카드가 붙어 보였음) · [등록] 줄 = 맨 아래 붙음(내용이 길면 화면 아래 끝에 떠 있음) · 펼친 목록 틀 = 화면 높이에 맞게 */
+.fo-ia.has-out { min-height: 100%; }
+.fo-ia.has-out > .fo-ia-out { flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.fo-ia-out > .fo-ia-regbar { margin: auto -20px 0; padding: 12px 20px; position: sticky; bottom: -24px; z-index: 2; background: #fff; border-top: 1px solid var(--f-line); }
+.fo-ia-list .fo-ia-scroll { max-height: clamp(280px, calc(100vh - 480px), 720px); }
+@media (max-width: 640px) { .fo-ia-out > .fo-ia-regbar { margin: auto -16px 0; padding: 10px 16px; bottom: -20px; } }
+html[data-ao-theme="dark"] .fo-ia-out > .fo-ia-regbar { background: var(--fd-card); }

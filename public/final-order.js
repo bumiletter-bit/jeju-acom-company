@@ -3285,7 +3285,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const sb = $('fo-ia-send'); if (sb) sb.disabled = ia.busy || ia.sent;
         $('fo-ia').classList.toggle('busy', ia.busy);
     }
-    function resetOut() { ia.res = null; ia.picks = new Map(); ia.sugg = new Set(); ia.reg = null; ia.sent = false; closeModal(false); const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; }
+    function resetOut() { ia.res = null; ia.picks = new Map(); ia.sugg = new Set(); ia.reg = null; ia.sent = false; closeModal(false); const o = $('fo-ia-out'); o.hidden = true; o.innerHTML = ''; $('fo-ia').classList.remove('has-out'); }
 
     // ── 짝 맞추기 ────────────────────────────────────────────────────────
     async function match() {
@@ -3298,7 +3298,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             let indiv = null; try { const v = JSON.parse(localStorage.getItem('akm_fo_indiv') || 'null'); if (v && Array.isArray(v.keys) && Date.now() - Number(v.at || 0) < 3 * 86400e3) indiv = Object.assign({ date: v.date, at: v.at, keys: v.keys }, Array.isArray(v.hold) ? { hold: v.hold } : {}); } catch (e) { indiv = null; }   // #894 F2
             const r = await call('match', Object.assign({ files }, indiv ? { indiv } : {}));
             if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
-            ia.res = r; seedSuggest(); say(''); render(); showOut($('fo-ia-out'));
+            ia.res = r; seedSuggest(); say(''); render(); showSec();
         } catch (err) { say(err && err.message ? err.message : String(err), true); showOut($('fo-ia-msg')); }
         finally { clearInterval(tick); ia.busy = false; sync(); }
     }
@@ -3308,6 +3308,15 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const box = el.closest('.fo-body'), r = box ? box.getBoundingClientRect() : { top: 0, bottom: window.innerHeight || document.documentElement.clientHeight }, t = el.getBoundingClientRect().top;   // 보이는 칸 = 최종발주 창 안 스크롤 칸(.fo-body)
         if (t >= r.top && t <= r.bottom - 80) return;
         el.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    // #1159(대표 11/15 「위로 잘려 있어」) 결과가 나오면 묶음 머리(제목)부터 보이게 — 종전은 결과 칸 머리를 판 맨 위에 붙여 제목·파일 줄이 위로 잘렸다
+    //   제목과 요약 칩이 이미 보이면 안 움직임 · 움직일 때는 최종발주 스크롤 칸(.fo-body)만 움직임(바깥 틀은 그대로) · 묶음 위 8px 여유
+    function showSec() {
+        const sec = $('fo-ia'), sc = sec && sec.closest('.fo-body'), sum = sec && sec.querySelector('.fo-ia-sum'); if (!sc || !sum) return;
+        const r = sc.getBoundingClientRect(), t = sec.getBoundingClientRect().top, sb = sum.getBoundingClientRect().bottom;
+        if (t >= r.top && sb <= r.bottom) return;
+        const y = Math.max(0, sc.scrollTop + t - r.top - 8), smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (typeof sc.scrollTo === 'function') sc.scrollTo({ top: y, behavior: smooth ? 'smooth' : 'auto' }); else sc.scrollTop = y;
     }
     const todoRows = () => ((ia.res && ia.res.rows) || []).filter(r => r.status === 'todo');
     // #841 서버가 미리 고른 운송장(suggest · 고를 목록 안의 것만) = 선택해 두고 「확인 필요」 · 사람이 바꾸면 「고름」
@@ -3329,22 +3338,22 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             </div>
             <ul class="fo-ch fo-ia-ch">${CH.map(chRow).join('')}</ul>
             <div class="fo-ia-todo" id="fo-ia-todo">${todo.length ? todo.map(cardHtml).join('') : '<p class="fo-done">고를 것이 없어요 · 전부 자동으로 짝이 맞았어요</p>'}</div>
-            ${listHtml(`자동 ${auto.length}`, auto, x => [CH_LABEL[x.channel] || x.channel, who(x), `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
-            ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], x => ['', who(x), x.product, tno(x.tracking), x.why])}
-            ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], x => ['', who(x), x.product || '', tno(x.tracking), x.why])}
-            ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], x => ['', who(x), x.product, tno(x.tracking), x.why])}
-            <div class="fo-acts">
+            ${listHtml(`자동 ${auto.length}`, auto, !todo.length, x => [CH_LABEL[x.channel] || x.channel, who(x), `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
+            ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], false, x => ['', who(x), x.product, tno(x.tracking), x.why])}
+            ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], false, x => ['', who(x), x.product || '', tno(x.tracking), x.why])}
+            ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], false, x => ['', who(x), x.product, tno(x.tracking), x.why])}
+            <div class="fo-acts fo-ia-regbar">
                 <button type="button" class="fo-btn primary" id="fo-ia-reg">등록</button>
                 <span class="fo-msg" id="fo-ia-reg-msg" role="status"></span>
             </div>
             <div class="fo-ia-result" id="fo-ia-result" hidden></div>
             <div class="fo-reset-confirm fo-ia-confirm send" id="fo-ia-confirm" role="alertdialog" aria-labelledby="fo-ia-q" hidden></div>`;
-        out.hidden = false; regNote(); sync();
+        out.hidden = false; $('fo-ia').classList.add('has-out'); regNote(); sync();
     }
     const trk = x => { const a = x.tracking_all || []; return tno(x.tracking || '') + (a.length > 1 ? ` 외 ${a.length - 1}` : ''); };
-    function listHtml(title, list, cols) {
+    function listHtml(title, list, open, cols) {   // #1159 open = 할 일 0 이면 자동 목록을 처음부터 펼쳐 남는 높이를 씀(누르면 접힘 · 종전 동작 그대로)
         if (!list.length) return '';
-        return `<details class="fo-ia-list"><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+        return `<details class="fo-ia-list"${open ? ' open' : ''}><summary>${esc(title)}건 보기</summary><div class="fo-ia-scroll"><table><thead><tr><th>채널</th><th>받는 분</th><th>상품</th><th>운송장</th><th>근거</th></tr></thead><tbody>${list.map(x => `<tr>${cols(x).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
     }
     const marksWho = m => { const t = Date.parse(String(m.updated_at || '')), d = Number.isFinite(t) ? new Date(t + 9 * 3600e3).toISOString() : ''; return [d ? `${+d.slice(5, 7)}/${+d.slice(8, 10)} ${d.slice(11, 16)}` : '', m.updated_by ? esc(m.updated_by) : ''].filter(Boolean).map(x => ' · ' + x).join(''); };   // #939 표식 저장 시각·저장한 사람
     function cardHtml(x) {
