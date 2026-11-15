@@ -990,3 +990,45 @@ html[data-ao-theme="dark"] .om-pill.k-kind { background: #0C4A6E; color: #BAE6FD
 .om-out-t { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--px-sub, var(--d-sub)); line-height: 1.4; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .om-pxs-wrap .om-px-paired .om-out-t { margin: 0 0 4px; }
 .om-indiv.om-out { font-variant-numeric: tabular-nums; }
+/* #1161 발송일 = 눌러서 달력(ao-ordermemo.js CAL) · 달력 모양 = 공통 .akm-cal(styles.css · 야간 ao-dark.css) 그대로 · 여기는 메모함 겹 안 자리·크기·막은 날만 */
+.om-modal input.om-sd { cursor: pointer; caret-color: transparent; padding-right: 32px; text-overflow: clip; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2' ry='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; background-size: 16px 16px; font-variant-numeric: tabular-nums; }
+.om-modal input.om-sd:disabled { cursor: not-allowed; }
+.om-modal input.om-sd[aria-expanded="true"] { border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }
+.om-orddt input.om-sd { width: 9.5em; }
+.om-modal .akm-cal.om-cal { position: fixed; z-index: 976; box-sizing: border-box; background: var(--d-card); border-color: var(--d-line); color: var(--d-ink); }
+/* 색 = 메모함 --d-* 토큰(밝음 = 공통 달력과 같은 값 · 야간 = 메모함 야간 토큰 · ao-dark.css 의 .akm-cal 줄보다 앞섬) */
+.om-cal .akm-cal-title { color: var(--d-ink); }
+.om-cal .akm-cal-nav { color: var(--d-sub); }
+.om-cal .akm-cal-nav:hover:not(:disabled), .om-cal .akm-cal-day:hover:not(:disabled):not(.sel) { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-cal .akm-cal-week span { color: var(--d-dim); }
+.om-cal .akm-cal-day { color: var(--d-ink); }
+.om-cal .akm-cal-day.today { box-shadow: inset 0 0 0 1.5px var(--d-accent); }
+.om-cal .akm-cal-day.sel { background: var(--d-accent); color: var(--d-card); box-shadow: none; }
+.om-cal .akm-cal-foot { border-top-color: var(--d-line); }
+.om-cal .akm-cal-today-btn { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-cal .akm-cal-today-btn:hover:not(:disabled) { background: var(--d-accent); color: var(--d-card); }
+html[data-ao-theme="dark"] .om-cal .akm-cal-week span:first-child, html[data-ao-theme="dark"] .om-cal .akm-cal-day.sun { color: #F6948D; }
+html[data-ao-theme="dark"] .om-cal .akm-cal-week span:last-child, html[data-ao-theme="dark"] .om-cal .akm-cal-day.sat { color: #8AB4FA; }
+.om-cal .akm-cal-week span:first-child, .om-cal .akm-cal-day.sun { color: #D92D20; }
+.om-cal .akm-cal-week span:last-child, .om-cal .akm-cal-day.sat { color: #2563EB; }
+.om-modal .akm-cal.om-cal[hidden] { display: none; }
+.om-cal .akm-cal-nav:disabled { opacity: .35; cursor: default; background: transparent; }
+.om-cal .akm-cal-day.off { opacity: .32; cursor: not-allowed; text-decoration: line-through; text-decoration-thickness: 1px; background: transparent; }
+.om-cal .akm-cal-day:focus-visible, .om-cal .akm-cal-nav:focus-visible, .om-cal .om-cal-foot button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.om-cal .om-cal-foot { gap: 6px; }
+.om-cal .om-cal-foot .akm-cal-today-btn:disabled { opacity: .4; cursor: default; }
+.om-cal .om-cal-clr { margin-left: auto; padding: 6px 12px; border: 1px solid var(--d-line); border-radius: 8px; background: transparent; color: var(--d-sub); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.om-cal .om-cal-clr:hover:not(:disabled) { border-color: var(--d-accent); color: var(--d-accent); }
+.om-cal .om-cal-clr:disabled { opacity: .4; cursor: default; }
+@media (max-width: 960px), (pointer: coarse) {
+    .om-modal .akm-cal.om-cal { width: min(340px, calc(100vw - 16px)); }
+    .om-cal .akm-cal-nav { width: 44px; height: 44px; }
+    .om-cal .akm-cal-day { height: 44px; font-size: 15px; }
+    .om-cal .om-cal-foot button { min-height: 44px; padding-inline: 14px; font-size: 13px; }
+}
+html .om-modal .om-cal .akm-cal-day.sel { background: var(--d-accent); color: var(--d-card); font-weight: 700; }   /* 고른 날 = 일·토요일 색보다 앞섬 */
+@media (max-width: 720px) {   /* #1161 폰 = 아래 판(옵션 고르기 판 꼴) · 뒤 흐림 = 누르면 닫힘 */
+    .om-modal .akm-cal.om-cal { left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none; border-radius: 16px 16px 0 0; border-width: 1px 0 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); animation: om-sheet 220ms var(--d-ease); }
+    .om-modal.cal-open::after { content: ""; position: fixed; inset: 0; z-index: 974; background: rgba(16, 24, 40, .35); }
+}
+@media (prefers-reduced-motion: reduce) { .om-modal .akm-cal.om-cal { animation: none; } }

@@ -90,6 +90,7 @@
     const errText = (res, fb) => { const b = res && res.body; return (b && (b.error_text || b.message || (typeof b.error === 'string' && /[가-힣]/.test(b.error) ? b.error : ''))) || fb || '다시 시도해 주세요'; };
     const API = {
         list: st => safe(call('/api/order-memo?state=' + encodeURIComponent(st))),
+        holidays: () => safe(call('/api/agent-office/shipping-holidays')),   // #1161 발송일 달력 = 발송 휴무일 흐리게(읽기만 · 발송휴무 달력과 같은 길)
         preview: body => safe(call('/api/order-memo/preview', 'POST', body)),
         previewGet: id => safe(call('/api/order-memo/preview/' + encodeURIComponent(id))),          // 2-1b 창구 정리 기다리기 { state: wait|done|fail }
         previewDel: id => safe(call('/api/order-memo/preview/' + encodeURIComponent(id), 'DELETE')), // done·fail 직후 · 취소 · 시간 넘김 = 손님 글을 서버에서 지움
@@ -316,6 +317,7 @@
             if (OM.ask) { askClose(true); return; }   // #878 삭제 확인 창 = 취소
             if (e.target && e.target.id === 'om-cash-q' && e.target.value) { e.target.value = ''; OM.cq = ''; OM.cpage = 0; renderCash(); return; }
             if (e.target && e.target.id === 'om-clr-q' && e.target.value) { e.target.value = ''; OM.clq = ''; renderList(); return; }   // #903 같은 꼴   // #878 찾기 칸 Esc = 값만 비움(메모함 안 닫힘)
+            if (CAL.inp) { calClose(true); return; }   // #1161 발송일 달력 = 달력만 닫힘
             if (OM.opt) { optClose(true); return; }
             if (OM.card) { cardClose(); return; }
             if (OM.tp) { tpClose(true); return; }   // #862 줄 입력판
@@ -1173,7 +1175,7 @@
             if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
             return;
         }
-        optClose(false);
+        optClose(false); calClose(false);
         if (c.wait) { const id = c.wait.id; c.wait = null; API.previewDel(id); }   // 정리 중에 닫음 = 그 요청 취소(손님 글 지움)
         OM.card = null;
         if (c.aseq && !c._aseqGo) OM.aseq = null;   // #880-b 이어서 확인 중에 그냥 닫음 = 멈춤
@@ -1259,7 +1261,8 @@
             input = `<div class="om-seg" role="radiogroup" aria-label="${esc(f.label)}">${PLATS.concat(OM.card && OM.card.mode === 'edit' ? [] : [CASH_PLAT]).map(p => `<button type="button" role="radio" class="om-seg-b" data-cact="plat" data-ri="${ri}" data-v="${esc(p)}" aria-checked="${v === p ? 'true' : 'false'}">${p}</button>`).join('')}</div><p class="om-lk" id="om-lk-${ri}" role="status" aria-live="polite" data-k="${lkKind(r)}">${lkHtml(r, ri)}</p><div class="om-orders" id="om-ord-${ri}">${ordHtml(r, ri)}</div><div class="om-boxp" id="om-box-${ri}">${r.kind === 'line' ? boxPanelHtml(r, ri) : ''}</div><div class="om-boxp" id="om-xbox-${ri}">${r.kind === 'line' ? xboxPanelHtml(r, ri) : ''}</div>`;
         } else {
             const at = f.kind === 'outk' ? 'data-fo="1"' : f.kind === 'shipdate' ? 'data-fd="1"' : f.kind === 'sender' ? 'data-fs="1"' : f.i != null ? `data-fi="${f.i}"` : `data-fk="${f.k}"`;
-            if (lockK) input = `<div class="om-telrow"><input id="${id}" class="om-locked" inputmode="tel" data-ri="${ri}" ${at} value="${esc(v)}" readonly aria-readonly="true" aria-describedby="${id}-lk"></div><p class="om-lock-n" id="${id}-lk">묶여 있는 동안은 못 바꿔요 · 풀려면 [현금으로 변경하기]</p>`;   /* #1153 매칭 열쇠 = 잠금 · [수취인과 동일] 없음 */
+            if (f.kind === 'shipdate') input = calInput(`id="${id}" data-ri="${ri}" ${at} data-omcal="fd"${aria}`, r.ship_date, '다음 발주', '', false);   /* #1161 달력 칸(보이는 글 「11/16(월)」 · 값 = r.ship_date) */
+            else if (lockK) input = `<div class="om-telrow"><input id="${id}" class="om-locked" inputmode="tel" data-ri="${ri}" ${at} value="${esc(v)}" readonly aria-readonly="true" aria-describedby="${id}-lk"></div><p class="om-lock-n" id="${id}-lk">묶여 있는 동안은 못 바꿔요 · 풀려면 [현금으로 변경하기]</p>`;   /* #1153 매칭 열쇠 = 잠금 · [수취인과 동일] 없음 */
             else {
                 input = `<input id="${id}" ${f.kind === 'tel' || f.kind === 'outk' ? 'inputmode="tel" ' : ''}${f.ph ? `placeholder="${esc(f.ph)}" ` : ''}data-ri="${ri}" ${at} value="${esc(v)}"${aria}>`;
                 if (r.kind === 'cash' && f.i === 10) input = `<div class="om-telrow">${input}${sameBtn(r, ri)}</div>`;   // #862 구매자 연락처 = 받는 분 연락처 그대로 넣기
@@ -1411,6 +1414,7 @@
     }
     function onCardLeave(e) {   // #862 보내는 분 칸을 떠날 때 「드림」(치는 중엔 안 바꿈)
         const t = e.target;
+        if (t && t.dataset && t.dataset.omcal) return;   // #1161 달력 칸 = 고른 순간 반영(떠날 때 다시 읽지 않음)
         if (t && t.dataset && t.dataset.cact === 'orddate' && OM.card) { ordDateCommit(t); return; }
         if (t && t.dataset && t.dataset.cact === 'cedate' && OM.card) { ceDateCommit(t); return; }   // #1027   // #938 주문별 발송일 = 칸을 떠날 때
         if (t && t.id === 'om-ind-key') { indCommit(t); return; }   // #895
@@ -1880,7 +1884,7 @@
         const dated = sp ? sp.filter(z => ordDate(r, z.e)) : [];
         const bos = boxOrders(r), bOf = x => bos.find(y => String(y.x.order_no) === String(x.order_no) && boxOk(y) && (!crossK(r) || itemK(y.option) !== crossK(r))), yOf = x => bos.find(y => String(y.x.order_no) === String(x.order_no));   // #1025 다른 품목 주문 = 과수 칸·사이즈 칩(xoHtml)   // #1021 주문마다 박스별 단추(한 줄 주문 · 2박스↑만)
         return `<div class="om-ordbox" role="group" aria-label="주문별 발송일"><b>이 번호 주문 ${L.length}건 · 주문마다 발송일을 다르게 하려면 여기서</b>
-            <ul class="om-ordl">${L.map(x => { const e = o.by[x.order_no], dt = ordDate(r, e), bo = bOf(x); return `<li><label class="om-ordck"><input type="checkbox" data-cact="ordchk" data-ri="${ri}" data-o="${esc(x.order_no)}"${e.on ? ' checked' : ''}> <span>${esc(optBrief(x.option))}${x.qty ? ` ${x.qty}박스` : ''} · ${esc(x.order_no)}${x.paid_at ? ` · ${esc(md(x.paid_at))} 결제` : ''}</span></label>${bo ? boxBtn(ri, bo) : xoHtml(r, ri, yOf(x))}<label class="om-orddt"><span>발송일</span><input data-cact="orddate" data-ri="${ri}" data-o="${esc(x.order_no)}" value="${esc(dt ? md(dt) : '')}" placeholder="비우면 줄 발송일" inputmode="numeric"${e.on ? '' : ' disabled'}></label></li>`; }).join('')}</ul>
+            <ul class="om-ordl">${L.map(x => { const e = o.by[x.order_no], dt = ordDate(r, e), bo = bOf(x); return `<li><label class="om-ordck"><input type="checkbox" data-cact="ordchk" data-ri="${ri}" data-o="${esc(x.order_no)}"${e.on ? ' checked' : ''}> <span>${esc(optBrief(x.option))}${x.qty ? ` ${x.qty}박스` : ''} · ${esc(x.order_no)}${x.paid_at ? ` · ${esc(md(x.paid_at))} 결제` : ''}</span></label>${bo ? boxBtn(ri, bo) : xoHtml(r, ri, yOf(x))}<label class="om-orddt"><span>발송일</span>${calInput(`data-cact="orddate" data-omcal="ord" data-ri="${ri}" data-o="${esc(x.order_no)}"`, dt, '줄 발송일', '', !e.on)}</label></li>`; }).join('')}</ul>
             <p class="om-ordn">${sp ? `저장하면 주문번호 줄 ${sp.length}개로 나뉘어 저장돼요(전화번호 줄은 안 남아요)${dated.length ? ` · ${dated.map(z => `${md(ordDate(r, z.e))} 주문(${z.x.qty || '?'}박스)의 주소 줄 ${z.x.qty || ''}개에는 발송일 칸에 ${md(ordDate(r, z.e))}를 직접 넣어 주세요`).join(' · ')}` : ''}` : '주문별 발송일이 다르면 주문번호 줄로 나뉘어 저장돼요 · 지금은 전부 같아 전화번호 줄 하나로 저장돼요'}</p></div>`;
     }
     const ordSibs = r => (OM.list || []).filter(x => x.kind === 'line' && !isShipRow(x) && x.state === 'open' && x.id != null && x.id !== r.id && !isPhoneKey(x.key) && lineD(x) === lineD(r) && String(x.plat || '') === String(r.plat || '') && String(x.note || '').replace(/\s+/g, '') === String(r.note || '').replace(/\s+/g, ''));
@@ -1956,7 +1960,7 @@
         const f = (b, i, k, label, ph, more) => `<label class="om-bx-f" for="${id(i, k)}"><span>${label}</span><input id="${id(i, k)}" data-cact="bxf" data-ri="${ri}"${X} data-bi="${i}" data-k="${k}" value="${esc(b[k])}" placeholder="${esc(ph)}"${more || ''}></label>`;
         return `<div class="om-boxes" role="group" aria-label="박스별 카드 · ${bx.qty}박스">
             <div class="om-boxes-h"><b>${x ? esc(optBrief(bx.option)) + ' ' : ''}${bx.ce ? bx.qty + '박스 고치기' : '박스별 ' + bx.qty + '박스'}</b><span>빈칸 = 주문 그대로</span>${bx.qty > 1 ? `<button type="button" class="om-btn sm" data-cact="bxsame" data-ri="${ri}"${X}>전부 박스 1과 같게</button>` : ''}<button type="button" class="om-btn sm" data-cact="bxclose" data-ri="${ri}"${X}>${bx.ce ? '고치기 닫기' : '박스별 안 함'}</button></div>
-            ${bx.ce ? `<label class="om-bx-date"><span>발송일</span><input data-cact="cedate" data-ri="${ri}"${X} value="${esc(bx.date ? md(bx.date) : '')}" placeholder="그대로 · 예) 11/8" inputmode="numeric" aria-label="이 주문 발송일"></label>` : ''}
+            ${bx.ce ? `<label class="om-bx-date"><span>발송일</span>${calInput(`data-cact="cedate" data-omcal="ce" data-ri="${ri}"${X}`, bx.date, '그대로', '이 주문 발송일', false)}</label>` : ''}
             ${x && bx.ce ? `<p class="om-ordn">주문번호 ${esc(x)}</p>` : ''}${x && !bx.ce ? `<p class="om-ordn">이 주문은 저장 때 박스별 줄로 따로 들어가요(${esc(x)})</p>` : ''}${bx.over ? `<p class="om-ordn">20박스까지만 박스별로 적을 수 있어요 · 나머지는 최종발주 카드에서</p>` : ''}
             ${bx.arr.map((b, i) => `<fieldset class="om-boxrow${b.s ? ' off' : ''}"><legend>박스 ${i + 1}</legend>
               <div class="om-bx-top">${tailH(b, i)}${bx.qty === 1 ? '<span class="om-bx-hint">안 보내려면 발송일을 뒤로 넣어 주세요</span>' : `<label class="om-bx-s"><input type="checkbox" data-cact="bxs" data-ri="${ri}"${X} data-bi="${i}"${b.s ? ' checked' : ''}> 이번에 안 보냄</label>`}</div>
@@ -2268,6 +2272,7 @@
         });
     }
     async function onCard(e) {
+        const ci = e.target.closest('input[data-omcal]'); if (ci && OM.card) { calOpen(ci); return; }   // #1161 발송일 칸 = 달력
         const b = e.target.closest('[data-cact]'); if (!b || !OM.card) return;
         const a = b.dataset.cact, c = OM.card, ri = Number(b.dataset.ri), r = c.rows[ri];
         if (a === 'cancel') { cardClose(); return; }
@@ -2329,6 +2334,7 @@
             const el = $(fid(ri, f));
             if (f.kind === 'option') { renderCard(); }
             else if (f.kind === 'platform') renderCard();
+            else if (el && f.kind === 'shipdate') { if (CAL.inp === el) calClose(false); el.dataset.iso = r.ship_date || ''; el.value = r.ship_date ? mdw(r.ship_date) : ''; touched(ri, f); }   /* #1161 달력 칸 = 보이는 글 「11/16(월)」 */
             else if (el) { el.value = getV(r, f); touched(ri, f); }
             const back = $(fid(ri, f)); if (back) back.focus({ preventScroll: true });
             return;
@@ -2420,7 +2426,7 @@
         c._saving = true;   // #935 저장 중 = 재조회 끝나도 카드 다시 안 그림(단추가 되살아나 이중 저장·못 본 줄 체크 막기 · 실패 분기에서 false)
         let rows = c.rows.filter(r => !r._new);   // #850-c 더하고 손대지 않은 빈 줄은 그냥 버림
         if (c.cedit) {   // #1027 고객정보수정 = 바꾼 주문마다 ⓐ 날짜 줄 · ⓑ 박스별 줄 · 같은 번호·같은 주문 열린 줄이 있으면 그 줄 PUT · 없으면 한 묶음 POST
-            const act = document.activeElement; if (act && act.dataset && act.dataset.cact === 'cedate') ceDateCommit(act);
+            const act = document.activeElement; if (act && act.dataset && act.dataset.cact === 'cedate' && !act.dataset.omcal) ceDateCommit(act);
             const ce = c.rows.find(r => r._ce), out = ce ? ceRows(ce) : [];
             if (!out.length) { c._saving = false; toast('바꾼 것이 없어요 · 저장하지 않았어요'); return; }
             const keep0 = btn.innerHTML; btn.disabled = true; btn.textContent = '저장하는 중…';
@@ -2501,6 +2507,125 @@
         if (c.rows.some(r => r.kind === 'line')) setTimeout(() => { if (OM.el && !OM.el.hidden && (OM.list || []).some(x => x.kind === 'line' && x.badge && x.badge.state === 'unknown')) load(); }, 6000);   // #936 즉시 조회가 끝난 숫자로 배지 한 번 더
         if (goNext) ld.then(() => aseqNext());   // #880-b 이어서 확인 = 저장 뒤 다음 줄 카드
     }
+
+    // ── #1161(대표 11/15 「발주메모함 발송일 달력으로 해서 클릭하도록 · 11/16 이렇게 말고」) 발송일 칸 = 눌러서 달력 ─────
+    //   칸 = 읽기 전용(폰 자판 안 뜸 · 글자 치는 길 없음) · 저장 값 꼴 그대로(줄 = r.ship_date YYYY-MM-DD → setV · 주문별 = e.date · 고객정보수정 = bx.date) · 보이는 글만 「11/16(월)」
+    //   모양 = 공통 달력(styles.css .akm-cal · 야간 ao-dark.css) 틀 그대로 · 메모함 겹 안(fixed) · 지난 날·발송 휴무일(no_ship)은 못 고름 · [오늘][내일][비우기]
+    //   칸 셋 = data-omcal="fd"(줄 카드·주문입력·정리 결과의 「발송일」) · "ord"(#938 주문별 발송일) · "ce"(#1027 고객정보수정 주문 발송일) · 뒤로가기·Esc = 달력만 닫힘(hbPush 'omcal')
+    const CAL = { el: null, inp: null, y: 0, m: 0, hol: null, holAt: 0 };
+    const isoAdd = (d, n) => { const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})$/); const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)); return t.toISOString().slice(0, 10); };
+    const calOff = d => d < todayStr() ? '지난 날짜' : CAL.hol && CAL.hol.has(d) ? (CAL.hol.get(d) || '발송 휴무일') : '';
+    function calHolLoad() {
+        if (CAL.hol && Date.now() - CAL.holAt < 600e3) return;
+        CAL.holAt = Date.now();
+        API.holidays().then(res => {
+            if (!res.ok || !Array.isArray(res.body.rows)) return;   /* 못 읽으면 지난 날짜만 막음(서버 검사 그대로) */
+            const m = new Map(); res.body.rows.forEach(x => { if (x && x.no_ship && x.holiday_date) m.set(String(x.holiday_date).slice(0, 10), '발송 휴무일' + (x.reason ? ' · ' + String(x.reason) : '')); });
+            CAL.hol = m; if (CAL.inp) calRender();
+        });
+    }
+    function calEl() {
+        if (CAL.el && CAL.el.isConnected) return CAL.el;
+        const el = document.createElement('div'); el.className = 'akm-cal om-cal'; el.id = 'om-cal'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', '발송일 고르기'); el.hidden = true;
+        el.addEventListener('click', e => {
+            const nv = e.target.closest('[data-nav]'); if (nv) { if (nv.disabled) return; CAL.m += Number(nv.dataset.nav); if (CAL.m < 0) { CAL.m = 11; CAL.y--; } if (CAL.m > 11) { CAL.m = 0; CAL.y++; } calRender(); const k = CAL.el.querySelector(`[data-nav="${nv.dataset.nav}"]`); if (k && !k.disabled) k.focus({ preventScroll: true }); return; }
+            const q = e.target.closest('[data-pick]'); if (q) { if (q.disabled) return; calPick(q.dataset.pick === 'clear' ? null : q.dataset.pick === 'today' ? todayStr() : isoAdd(todayStr(), 1)); return; }
+            const d = e.target.closest('[data-d]'); if (d && !d.disabled) calPick(d.dataset.d);
+        });
+        el.addEventListener('keydown', calKey);
+        (OM.el || document.body).appendChild(el); CAL.el = el;
+        return el;
+    }
+    function calRender() {
+        const el = CAL.el, inp = CAL.inp; if (!el || !inp) return;
+        const fa = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null, keep = fa ? (fa.dataset.d ? `[data-d="${fa.dataset.d}"]` : fa.dataset.nav ? `[data-nav="${fa.dataset.nav}"]` : fa.dataset.pick ? `[data-pick="${fa.dataset.pick}"]` : '') : '';   /* 다시 그려도(휴무일 읽힘 등) 초점 자리 그대로 */
+        const sel = inp.dataset.iso || '', t = todayStr(), tm = isoAdd(t, 1), first = new Date(Date.UTC(CAL.y, CAL.m, 1)).getUTCDay(), nowM = +t.slice(5, 7) - 1, nowY = +t.slice(0, 4);
+        let cells = '';
+        for (let i = 0; i < 42; i++) {
+            const dt = new Date(Date.UTC(CAL.y, CAL.m, i - first + 1)), d = dt.toISOString().slice(0, 10), off = calOff(d), cls = ['akm-cal-day'];
+            if (dt.getUTCMonth() !== CAL.m) cls.push('out'); if (i % 7 === 0) cls.push('sun'); else if (i % 7 === 6) cls.push('sat'); if (d === t) cls.push('today'); if (d === sel) cls.push('sel'); if (off) cls.push('off');
+            cells += `<button type="button" class="${cls.join(' ')}" data-d="${d}" tabindex="-1" aria-label="${esc(mdw(d))}${d === t ? ' 오늘' : ''}${off ? ' · ' + esc(off) : ''}"${d === sel ? ' aria-pressed="true"' : ''}${off ? ` disabled title="${esc(off)}"` : ''}>${dt.getUTCDate()}</button>`;
+        }
+        const prevOff = CAL.y < nowY || (CAL.y === nowY && CAL.m <= nowM);
+        el.innerHTML = `<div class="akm-cal-head"><button type="button" class="akm-cal-nav" data-nav="-1" aria-label="이전 달"${prevOff ? ' disabled' : ''}>‹</button><div class="akm-cal-title" aria-live="polite">${CAL.y}년 ${CAL.m + 1}월</div><button type="button" class="akm-cal-nav" data-nav="1" aria-label="다음 달">›</button></div>
+            <div class="akm-cal-week" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="akm-cal-grid">${cells}</div>
+            <div class="akm-cal-foot om-cal-foot"><button type="button" class="akm-cal-today-btn" data-pick="today"${calOff(t) ? ' disabled' : ''}>오늘</button><button type="button" class="akm-cal-today-btn" data-pick="tomorrow"${calOff(tm) ? ' disabled' : ''}>내일</button><button type="button" class="om-cal-clr" data-pick="clear"${sel ? '' : ' disabled'}>${inp.dataset.omcal === 'fd' ? '비우기 · 다음 발주' : '비우기'}</button></div>`;
+        if (keep) { const k = el.querySelector(keep); if (k && !k.disabled) { if (k.dataset.d) k.tabIndex = 0; k.focus({ preventScroll: true }); } }
+    }
+    function calPlace() {
+        const el = CAL.el, inp = CAL.inp; if (!el || !inp) return;
+        if (!inp.isConnected) { const n = calFind(inp); if (n) { CAL.inp = n; n.setAttribute('aria-expanded', 'true'); calPlace(); return; } calClose(false); return; }   /* 칸이 다시 그려짐 = 새 칸에 붙음 */
+        const r = inp.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight, pw = el.offsetWidth, ph = el.offsetHeight;
+        if (r.bottom < 0 || r.top > vh || !r.width) { calClose(false); return; }   /* 칸이 화면 밖으로 밀려남 = 닫음 */
+        if (phoneW()) {   /* 폰 = 아래 판(옵션 고르기 판과 같은 꼴 · CSS) · 고르는 칸이 판에 가리면 칸을 판 위로 밀어 올림 */
+            el.style.left = ''; el.style.top = '';
+            const st = vh - ph - 12; if (r.bottom > st) { let sc = inp.parentElement; while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement; if (sc && sc !== document.body) sc.scrollTop += Math.ceil(r.bottom - st); }
+            return;
+        }
+        const cb = OM.card && $('om-card') ? $('om-card').getBoundingClientRect() : null, rx = cb && cb.width > pw + 16 ? Math.min(vw, cb.right) : vw;   /* 카드 안에 맞춤(카드가 넓을 때) */
+        let left = Math.min(Math.max(8, r.left), rx - pw - 8), top = r.bottom + 6;
+        if (top + ph > vh - 8) top = r.top - ph - 6 >= 8 ? r.top - ph - 6 : Math.max(8, vh - ph - 8);
+        el.style.left = Math.max(8, left) + 'px'; el.style.top = top + 'px';
+    }
+    function calOpen(inp) {
+        if (!inp || inp.disabled) return;
+        if (CAL.inp === inp) { calClose(true); return; }
+        if (CAL.inp) calClose(false);
+        if (OM.opt) optClose(false);
+        const el = calEl(), base = inp.dataset.iso || todayStr();
+        CAL.inp = inp; CAL.y = +base.slice(0, 4); CAL.m = +base.slice(5, 7) - 1;
+        calHolLoad(); calRender(); el.hidden = false; if (OM.el) OM.el.classList.toggle('cal-open', phoneW()); calPlace();
+        inp.setAttribute('aria-expanded', 'true');
+        hbPush('omcal', () => calClose(false, true));
+        const f = el.querySelector('.akm-cal-day.sel:not([disabled])') || el.querySelector('.akm-cal-day.today:not([disabled])') || el.querySelector('.akm-cal-day:not([disabled]):not(.out)');
+        if (f) { f.tabIndex = 0; f.focus({ preventScroll: true }); }
+    }
+    function calClose(hist, fromHist) {
+        const inp = CAL.inp; if (!inp) return;
+        CAL.inp = null; if (CAL.el) CAL.el.hidden = true; if (OM.el) OM.el.classList.remove('cal-open'); inp.removeAttribute('aria-expanded');
+        if (!fromHist) hbDrop('omcal');
+        if (hist !== false && inp.isConnected) inp.focus({ preventScroll: true });
+    }
+    function calKey(e) {
+        if (e.key === 'Tab') {   /* 초점은 달력 안에서만(칸 → 달 단추 → 날 → 아래 단추) */
+            const L = [...CAL.el.querySelectorAll('button:not([disabled])')].filter(b => !b.classList.contains('akm-cal-day') || b.tabIndex === 0); if (!L.length) return;
+            const i = L.indexOf(document.activeElement); e.preventDefault(); L[(i + (e.shiftKey ? -1 : 1) + L.length) % L.length].focus({ preventScroll: true }); return;
+        }
+        const st = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key]; const cur = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.d : ''; if (!st || !cur) return;
+        e.preventDefault();
+        let d = cur; for (let k = 0; k < 60; k++) { d = isoAdd(d, st); if (!calOff(d)) break; if (d < todayStr()) return; }
+        if (calOff(d)) return;
+        const y = +d.slice(0, 4), m = +d.slice(5, 7) - 1; if (y !== CAL.y || m !== CAL.m) { CAL.y = y; CAL.m = m; calRender(); }
+        CAL.el.querySelectorAll('.akm-cal-day').forEach(b => { b.tabIndex = -1; }); const b = CAL.el.querySelector(`[data-d="${d}"]`); if (b) { b.tabIndex = 0; b.focus({ preventScroll: true }); }
+    }
+    function calFind(inp) {   /* 달력이 떠 있는 동안 그 칸이 다시 그려졌으면 같은 자리 새 칸 */
+        if (!inp || inp.isConnected) return inp; const card = $('om-card'); if (!card) return null; const k = inp.dataset.omcal, ri = inp.dataset.ri;
+        if (k === 'fd') return inp.id ? $(inp.id) : null;
+        if (k === 'ord') return card.querySelector(`input[data-omcal="ord"][data-ri="${ri}"][data-o="${CSS.escape(inp.dataset.o || '')}"]`);
+        if (k === 'ce') return card.querySelector(`input[data-omcal="ce"][data-ri="${ri}"]${inp.dataset.x ? `[data-x="${CSS.escape(inp.dataset.x)}"]` : ''}`);
+        return null;
+    }
+    function calPick(iso) {
+        if (CAL.inp && !CAL.inp.isConnected) { const n = calFind(CAL.inp); if (n) CAL.inp = n; }
+        const inp = CAL.inp; if (!inp || !OM.card) { calClose(true); return; }
+        const k = inp.dataset.omcal, ri = Number(inp.dataset.ri), r = OM.card.rows[ri]; if (!r) { calClose(true); return; }
+        const show = v => { inp.dataset.iso = v || ''; inp.value = v ? mdw(v) : ''; };
+        if (k === 'fd') { const f = fieldsOf(r).find(x => x.kind === 'shipdate'); setV(r, f, iso || ''); r._dateBad = false; show(r.ship_date); calClose(true); touched(ri, f); return; }
+        if (k === 'ord') {
+            const e = r._ord && r._ord.by[inp.dataset.o]; if (!e) { calClose(true); return; }
+            if (iso) { e.touched = true; e.date = iso; } else { e.touched = false; e.date = null; }
+            const o = inp.dataset.o; calClose(false); ordRefresh(ri);
+            const back = $('om-card').querySelector(`input[data-cact="orddate"][data-ri="${ri}"][data-o="${CSS.escape(o)}"]`); if (back) back.focus({ preventScroll: true });
+            return;
+        }
+        if (k === 'ce') { const bx = bxGet(r, inp.dataset.x); if (bx) { bx.date = iso || ''; show(bx.date); } calClose(true); }
+    }
+    function calOutside(e) { if (!CAL.inp || !CAL.el) return; if (CAL.el.contains(e.target) || e.target === CAL.inp) return; calClose(false); }
+    document.addEventListener('pointerdown', calOutside, true);
+    window.addEventListener('resize', () => { if (CAL.inp) calPlace(); });
+    document.addEventListener('scroll', e => { if (CAL.inp && !(CAL.el && CAL.el.contains(e.target))) calPlace(); }, true);
+    const calInput = (attrs, iso, ph, label, dis) => `<input class="om-sd" readonly inputmode="none" autocomplete="off" ${attrs} data-iso="${esc(iso || '')}" value="${esc(iso ? mdw(iso) : '')}" placeholder="${esc(ph)}" aria-haspopup="dialog"${label ? ` aria-label="${esc(label)}"` : ''}${dis ? ' disabled' : ''}>`;
 
     // ── 옵션정보 고르기(찾기 · 최근 고른 것 위) ─────────────
     function optOpen(ri, btn, box) {
@@ -2725,7 +2850,8 @@
         const p1 = $('om-card').querySelector('[data-cact="p1go"]'); if (p1) p1.closest('.om-pair').hidden = indKeyOk(c);   // 켜고 번호 = #874 ① 묻기 숨김(다음 그리기 때 pairHtml 이 안 그림)
         const sv = $('om-card-save'); if (sv && !c.wait) { sv.innerHTML = saveLabel(blankN()); saveSync(sv); }
     }
-    function onCardKey(e) { if (e.target && e.target.id === 'om-ind-key' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); indCommit(e.target); } if (e.target && e.target.dataset && (e.target.dataset.cact === 'orddate' || e.target.dataset.cact === 'cedate') && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); e.target.blur(); } }   // #938
+    function onCardKey(e) { if (e.target && e.target.dataset && e.target.dataset.omcal && (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') && !e.isComposing) { e.preventDefault(); calOpen(e.target); return; }   /* #1161 달력 칸 = Enter·Space·↓ 로 열림 */
+        if (e.target && e.target.id === 'om-ind-key' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); indCommit(e.target); } if (e.target && e.target.dataset && (e.target.dataset.cact === 'orddate' || e.target.dataset.cact === 'cedate') && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); e.target.blur(); } }   // #938
     function onCardChange(e) {
         const t = e.target; if (!t || t.id !== 'om-file') return;
         const f = t.files && t.files[0]; t.value = ''; if (f && OM.card) fileLoad(OM.card, f);
