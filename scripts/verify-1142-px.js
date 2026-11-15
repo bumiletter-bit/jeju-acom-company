@@ -20,6 +20,13 @@ patch('function pxList() {', 'function pxList() { const L = pxList0(); return S.
 patch("if (req.method === 'PUT') {", "if (req.method === 'PUT' && S.putFail) return send(500, { ok: false, error: '가짜 저장 실패' });\n        if (req.method === 'PUT') {");
 patch('try { S.puts.push(JSON.parse(b)); } catch (e) { }', 'try { const j = JSON.parse(b); j._id = Number(u.pathname.split(\'/\').pop()); S.puts.push(j); (S.log = S.log || []).push([\'put\', j._id, j]); } catch (e) { }');
 patch('S.pairs.push(j);', "S.pairs.push(j); if (!j.undo) (S.log = S.log || []).push(['pair', (j.ids || []).map(Number), j.key]);");
+// #1161 발송일 달력 = 발송 휴무일 하나(오늘 + 3 · 읽기 GET 만) · 화면 날짜 셈(KST)
+const kIso = n => new Date(Date.now() + 9 * 3600e3 + n * 864e5).toISOString().slice(0, 10);
+const HOL1161 = { hol: kIso(3), yest: kIso(-1) }, TMW = kIso(1), TMW_SHOW = (() => { const d = new Date(TMW + 'T00:00:00Z'); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '(' + '일월화수목금토'[d.getUTCDay()] + ')'; })();
+patch("if (u.pathname === '/api/order-memo/pair' && req.method === 'POST')", "if (u.pathname === '/api/agent-office/shipping-holidays') { S.holGets = (S.holGets || 0) + 1; return send(200, { rows: [{ id: 1, holiday_date: '" + HOL1161.hol + "', reason: '시험 휴무', no_ship: true, no_arrive: false }, { id: 2, holiday_date: '" + kIso(4) + "', reason: '도착만', no_ship: false, no_arrive: true }] }); }\n        if (u.pathname === '/api/order-memo/pair' && req.method === 'POST')");
+const CALS = {};
+const CALG = H => { const el = document.getElementById('om-cal'), inp = document.getElementById('om-f-0-date'); if (!el || el.hidden || !inp) return null; const r = el.getBoundingClientRect(), ir = inp.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2), days = [...el.querySelectorAll('.akm-cal-day')], q = d => el.querySelector(`.akm-cal-day[data-d="${d}"]`);
+    return { inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, onTop: el.contains(top), coverInp: !(r.bottom <= ir.top + 1 || r.top >= ir.bottom - 1 || r.right <= ir.left || r.left >= ir.right), focusIn: el.contains(document.activeElement), minDay: Math.round(Math.min(...days.map(d => d.getBoundingClientRect().height))), pastOff: !q(H.yest) || q(H.yest).disabled, holOff: !q(H.hol) || (q(H.hol).disabled && /휴무/.test(q(H.hol).title)), arrOk: !q(H.hol.slice(0, 8) + String(+H.hol.slice(8) + 1).padStart(2, '0')) || !q(H.hol.slice(0, 8) + String(+H.hol.slice(8) + 1).padStart(2, '0')).disabled, bg: getComputedStyle(el).backgroundColor, sw: document.documentElement.scrollWidth, w: Math.round(r.width), title: el.querySelector('.akm-cal-title').textContent, pick: !!el.querySelector('.om-cal-pick') && el.querySelector('.om-cal-pick').getBoundingClientRect().top >= 0, foot: [...el.querySelectorAll('.om-cal-foot button')].map(b => b.textContent + (b.disabled ? '(x)' : '')).join('|') }; };
 const M = new Function('require', 'ROOT', 'path', 'fs', 'http', 'execSync', 'chromium', 'XLSX', 'ok', B + '\nreturn { S, serve, until, jusoQuiet, PXL, PXK, CAT };')(require, ROOT, path, fs, http, execSync, chromium, XLSX, ok);
 const { S, serve, until, PXL, CAT } = M;
 const dg = s => String(s || '').replace(/\D/g, '');
@@ -183,6 +190,7 @@ function mut(L) {
         for (const [w, h, dark] of [[1500, 940, false], [720, 900, false], [390, 844, false], [1500, 940, true], [390, 844, true]]) {
             reset(); const cz = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: w <= 720, isMobile: w <= 720 }); const pz = await cz.newPage(); pz.on('pageerror', e => pe.push('align ' + w + ' ' + String(e)));
             await openPanel(pz); if (dark) await pz.evaluate(() => document.documentElement.setAttribute('data-ao-theme', 'dark'));
+            if (dark) await pz.addStyleTag({ path: path.join(ROOT, 'public', 'ao-dark.css') });   /* #1161 실제 앱처럼 야간 공통 색(ao-dark.css · 달력 .akm-cal 줄 포함)도 실음 */
             const nm = w + (dark ? ' 야간' : ''), bad = [];
             for (const v of ['204', '192']) {
                 await pz.click(`#om-card [data-cact="pxrowopen"][data-v="${v}"]`); await pz.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await pz.evaluate(() => document.querySelectorAll('#om-card details.om-more').forEach(d => d.open = true)); await pz.waitForTimeout(150);
@@ -206,11 +214,44 @@ function mut(L) {
                     && G.sBg && G.sBg !== G.rBg && G.sBg !== G.bBg && G.sBg !== 'rgba(0, 0, 0, 0)' && /^보내는 분 정보/.test(G.sH.trim()) && G.ic === 'true,true,true' && G.md && G.md.same && G.md.w9 > G.md.wd && G.exp !== 'below'
                     && G.rH >= (touch ? 50 : 48) && G.rF >= (touch ? 18 : 17) && G.rF > G.bF && G.rH > G.bH && G.rBg !== G.bBg && G.rBg !== 'rgba(0, 0, 0, 0)',
                     nm + ' 줄 카드 ' + v + ' 묶음(#1158) = 받는 분(c3·c6·c8·배송메세지·발송일 · 배송메세지 넓게 + 발송일 옆 · 머리 · 칸 ' + (touch ? '50/18px' : '48/17px') + '↑) · 주문한 분(c10) · 보내는 분(c0·c1·c12 · 호박색 바탕 = 받는 분·주문한 분과 다름) · 머리 아이콘 셋 · 체험장 체크 = 품목 위 · 탭 순서 = 화면 순서(구매자 연락처가 발송일 뒤로)', G);
-                const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox]):not([readonly])', a => a.map(e => e.id));
+                const ids = await pz.$$eval('#om-card .om-rowcard input[id^="om-f-0-"]:not([type=checkbox]):not([readonly]):not([type=date])', a => a.map(e => e.id));   /* #1166 폰 발송일 = OS 날짜 칸(아래 따로) */
                 for (const id of ids) {
                     const v0 = await pz.inputValue('#' + id); await pz.fill('#' + id, id.endsWith('date') ? '11/30' : /-c(1|6|10)$/.test(id) ? '010-1234-56789012' : (v0 || '') + '고침'); await pz.locator('#' + id).blur(); await pz.waitForTimeout(80);
                     const a = await pz.evaluate(ALIGN); if (a.row.length || a.cover.length || a.wrap.length || a.over || a.sw > w) bad.push([v, id, a]);
                     const u = pz.locator(`#om-card [data-f="${id}"]`); if (await u.isVisible()) { await u.click(); await pz.waitForTimeout(60); }
+                }
+                // #1161 발송일 = 달력 칸(읽기 전용) → 눌러 달력(카드 위 · 화면 안 · 칸 안 덮음 · 지난 날·휴무일 막음) → [내일] → 칸 「M/D(요일)」 · 줄 맞춤 그대로 → 처음 값
+                if (!touch) {   /* #1166 PC = 직접 그린 달력 · 폰(터치) = OS 날짜 칸(else) */
+                    const sd = await pz.evaluate(() => { const i = document.getElementById('om-f-0-date'); return { ro: i.readOnly, im: i.inputMode, ph: i.placeholder, v: i.value }; });
+                    await pz.click('#om-f-0-date'); await pz.waitForSelector('#om-cal:not([hidden])'); await pz.waitForTimeout(120);
+                    const g = await pz.evaluate(CALG, HOL1161);
+                    if (process.env.SHOT1161 && v === '192') await pz.screenshot({ path: path.join(process.env.SHOT1161, 'cal-' + w + (dark ? 'D' : '') + '.png') }).catch(() => { });
+                    CALS[nm + ' ' + v] = g;
+                    ok(sd.ro && sd.im === 'none' && g && g.inView && g.onTop && (!g.coverInp || (touch && g.pick)) && g.focusIn && g.sw <= w && g.minDay >= (touch ? 44 : 32) && g.pastOff && g.holOff && g.foot === '오늘|내일|비우기 · 다음 발주(x)' && (!dark || g.bg !== 'rgb(255, 255, 255)'),
+                        nm + ' ' + v + ' #1161 발송일 칸 = 읽기 전용(자판 안 뜸) · 누르면 달력 = 카드 위·화면 안·칸 안 덮음·초점 달력 안 · 날 ' + (touch ? '44' : '32') + 'px↑ · 지난 날·휴무일 막음 · [오늘][내일][비우기]' + (dark ? ' · 야간 바탕' : ''), { sd, g });
+                    await pz.click('#om-cal [data-pick="tomorrow"]'); await pz.waitForTimeout(60); const pk = await pz.evaluate(() => ({ on: !document.getElementById('om-cal').hidden, t: (document.querySelector('#om-cal .om-cal-pick') || {}).textContent || '', v: document.getElementById('om-f-0-date').value })); ok(pk.on && pk.t.includes(TMW_SHOW) && pk.v === sd.v, nm + ' ' + v + ' #1165 [내일] = 고른 날만(「고른 날 ' + TMW_SHOW + '」 · 칸은 [확인] 전 그대로 · 달력 그대로)', pk); await pz.click('#om-cal [data-cal="ok"]'); await pz.waitForTimeout(120);
+                    const af = await pz.evaluate(() => ({ cal: !document.getElementById('om-cal').hidden, v: document.getElementById('om-f-0-date').value, f: document.activeElement && document.activeElement.id, undo: !document.querySelector('#om-card [data-f="om-f-0-date"]').hidden, fit: (i => i.scrollWidth <= i.clientWidth)(document.getElementById('om-f-0-date')), phFit: (i => { const v = i.value; i.value = ''; const r = i.scrollWidth <= i.clientWidth; i.value = v; return r; })(document.getElementById('om-f-0-date')) }));
+                    const a = await pz.evaluate(ALIGN); if (a.row.length || a.cover.length || a.wrap.length || a.over || a.sw > w) bad.push([v, 'date-cal', a]);
+                    ok(!af.cal && af.v === TMW_SHOW && af.f === 'om-f-0-date' && af.undo && af.fit && sd.ph === '다음 발주', nm + ' ' + v + ' [내일] = 달력 닫힘 · 칸 「' + TMW_SHOW + '」(안 잘림) · 초점 칸으로 · 「처음 값」 보임 · 빈칸 글 「다음 발주」', af);
+                    await pz.click('#om-card [data-f="om-f-0-date"]'); await pz.waitForTimeout(80);
+                    ok(await pz.inputValue('#om-f-0-date') === sd.v, nm + ' ' + v + ' 처음 값 = 발송일 칸 처음 글로', await pz.inputValue('#om-f-0-date'));
+                    if (v === '192') {   /* 탭 순서 = 배송메세지 → 발송일 → 구매자 연락처(#1158 그대로) */
+                        await pz.focus('#om-f-0-c9'); await pz.keyboard.press('Tab'); const t1 = await pz.evaluate(() => document.activeElement.id); await pz.keyboard.press('Tab'); const t2 = await pz.evaluate(() => document.activeElement.id);
+                        await pz.focus('#om-f-0-date'); await pz.keyboard.press('Enter'); await pz.waitForTimeout(80); const kOpen = await pz.isVisible('#om-cal'); await pz.keyboard.press('Escape'); await pz.waitForTimeout(80);
+                        const kEsc = await pz.evaluate(() => ({ cal: !document.getElementById('om-cal').hidden, card: !document.getElementById('om-card').hidden, f: document.activeElement.id }));
+                        ok(t1 === 'om-f-0-date' && t2 === 'om-f-0-c10' && kOpen && !kEsc.cal && kEsc.card && kEsc.f === 'om-f-0-date', nm + ' 탭 순서 c9 → 발송일 → c10 · Enter = 달력 · Esc = 달력만 닫힘(카드 그대로 · 초점 칸으로)', { t1, t2, kOpen, kEsc });
+                    }
+                } else {   /* #1166 폰 = 투명 type=date(OS 날짜 창) · 값은 fill(OS 창 흉내) · 휴무일·지난 날 안 바뀜 · 「M/D(요일)」 · 처음 값 · 탭 순서 */
+                    const sv = () => pz.evaluate(() => { const i = document.getElementById('om-f-0-date'), w = i.closest('.om-sdw'), s = w && w.querySelector('.om-sdv'); return { type: i.type, min: i.min, v: i.value, show: s ? s.value : null, ph: s ? s.placeholder : '', fit: s ? s.scrollWidth <= s.clientWidth : false, undo: !document.querySelector('#om-card [data-f="om-f-0-date"]').hidden, red: i.closest('.om-f').classList.contains('blank') }; });
+                    const n0 = await sv(); await pz.focus('#om-f-0-date'); await pz.waitForTimeout(250);
+                    await pz.locator('#om-f-0-date').fill(HOL1161.hol); await pz.waitForTimeout(80); const nh = await sv();
+                    await pz.locator('#om-f-0-date').fill(TMW); await pz.waitForTimeout(80); const nt = await sv();
+                    const a = await pz.evaluate(ALIGN); if (a.row.length || a.cover.length || a.wrap.length || a.over || a.sw > w) bad.push([v, 'date-native', a]);
+                    if (process.env.SHOT1161 && v === '192') await pz.screenshot({ path: path.join(process.env.SHOT1161, 'native-' + w + (dark ? 'D' : '') + '.png') }).catch(() => { });
+                    ok(n0.type === 'date' && n0.min && n0.ph === '다음 발주' && nh.show === n0.show && nt.show === TMW_SHOW && nt.v === TMW && nt.fit && nt.undo && !nt.red, nm + ' ' + v + ' #1166 폰 발송일 = OS 날짜 칸(type=date · min 오늘) · 휴무일 안 바뀜 · 「' + TMW_SHOW + '」(안 잘림 · 빨강 아님) · 「처음 값」 보임', { n0, nh, nt });
+                    await pz.click('#om-card [data-f="om-f-0-date"]'); await pz.waitForTimeout(80); const nu = await sv();
+                    ok(nu.show === n0.show && nu.v === n0.v, nm + ' ' + v + ' 처음 값 = 발송일 칸 처음으로', nu);
+                    if (v === '192') { await pz.focus('#om-f-0-c9'); await pz.keyboard.press('Tab'); const t1 = await pz.evaluate(() => document.activeElement.id); await pz.focus('#om-f-0-c10'); await pz.keyboard.press('Shift+Tab'); const t2 = await pz.evaluate(() => document.activeElement.id); ok(t1 === 'om-f-0-date' && t2 === 'om-f-0-date', nm + ' 탭 순서 c9 → 발송일 → c10(폰 OS 날짜 칸 · [×]는 탭 밖 · 날짜 칸 안 조각 이동은 브라우저 몫이라 c10 에서 거꾸로 확인)', { t1, t2 }); }
                 }
                 if (v === '204') ok(ids.includes('om-f-0-c1') && ids.includes('om-f-0-outk') && !ids.includes('om-f-0-c10') && ids.includes('om-f-0-c0'), nm + ' 입력삭제 주소 줄 카드 = 보내는 분 이름·번호·택배 양식 구매자 연락처 칸 있음 · 구매자 번호(c10)는 읽기 전용', ids);
                 await pz.click('#om-card [data-cact="cancel"]'); await pz.waitForTimeout(150); if (await pz.isVisible('#om-card [data-cact="discard"]')) await pz.click('#om-card [data-cact="discard"]'); await pz.waitForSelector('#om-card:not([hidden]) .om-pxs-sum'); await pz.waitForTimeout(150);
@@ -331,6 +372,29 @@ function mut(L) {
             if (dark) ok(b0.bg !== 'rgba(0, 0, 0, 0)' && b0.fg !== 'rgb(16, 24, 40)', nm + ' 야간 = 판 색·글 색 야간 값', b0);
             await cx.close();
         }
+        // #1161 서버로 가는 값 꼴 = 종전과 같음 — 메모 줄(190) 고치기 카드 · HEAD(글자 「M/D」 치고 떠남) vs 지금(달력 [내일]) · PUT 본문 바이트 같음
+        console.log('①-h #1161 발송일 달력 = PUT 값 꼴 종전 그대로 · 비우기 · 휴무일 읽기 1회');
+        {
+            const putOf = async (v) => {
+                reset(); S.holGets = 0; const cv = await browser.newContext({ viewport: { width: 1500, height: 940 } }); const pv = await cv.newPage(); pv.on('pageerror', e => pe.push('put1161 ' + v + ' ' + String(e)));
+                S.n = 4; S.ent = 1; await pv.goto(base + '?v=' + v); await pv.evaluate(() => window.AkmOrderMemo.open({ noFocus: true })); await pv.waitForSelector('#om-list .om-ml');
+                await pv.locator('#om-list .om-ml', { hasText: PXL }).locator('.om-ml-t').first().click(); await pv.waitForSelector('#om-card:not([hidden]) #om-f-0-date'); await pv.waitForTimeout(250);
+                let clr = null;
+                if (v === 'old') { await pv.fill('#om-f-0-date', TMW_SHOW.replace(/[(].[)]$/, '')); await pv.locator('#om-f-0-date').blur(); }   /* #1166 HEAD(v5.9.812) = 글자 입력 */   /* #1165 HEAD = #1161 달력(날 누르면 바로 들어감) */
+                else {
+                    await pv.click('#om-f-0-date'); await pv.waitForSelector('#om-cal:not([hidden])'); await pv.click('#om-cal [data-pick="tomorrow"]'); await pv.click('#om-cal [data-cal="ok"]'); await pv.waitForTimeout(100);
+                    await pv.click('#om-f-0-date'); await pv.waitForSelector('#om-cal:not([hidden])'); const f1 = await pv.textContent('#om-cal [data-pick="clear"]'); await pv.click('#om-cal [data-pick="clear"]'); await pv.click('#om-cal [data-cal="ok"]'); await pv.waitForTimeout(100);
+                    clr = { f1, v: await pv.inputValue('#om-f-0-date'), undo: await pv.isVisible('#om-card [data-f="om-f-0-date"]') };
+                    await pv.click('#om-f-0-date'); await pv.waitForSelector('#om-cal:not([hidden])'); await pv.click(`#om-cal .akm-cal-day[data-d="${TMW}"]`); await pv.click('#om-cal [data-cal="ok"]'); await pv.waitForTimeout(100);
+                }
+                await until(() => pv.evaluate(() => !/확인 중/.test(document.getElementById('om-card-save').textContent))); await pv.click('#om-card-save'); await until(() => S.puts.length); await pv.waitForTimeout(200);
+                const r = { put: S.puts[0], hol: S.holGets || 0, clr }; await cv.close(); return r;
+            };
+            const o = await putOf('old'), n = await putOf('new'), noAt = x => JSON.stringify(x || {}).replace(/"at":"[^"]*"/g, '"at":"T"');
+            ok(o.put && n.put && n.put.ship_date === TMW && noAt(o.put) === noAt(n.put), '달력으로 고른 발송일 PUT 본문 = 종전(HEAD v5.9.812 글자 입력)과 바이트 같음 · ship_date = ' + TMW, { old: noAt(o.put).slice(0, 300), now: noAt(n.put).slice(0, 300) });
+            ok(n.clr && /비우기/.test(n.clr.f1) && n.clr.v === '' && !n.clr.undo && n.hol === 1 && o.hol === 0, '[비우기 · 다음 발주] → [확인] = 칸 빈칸 · 처음(빈칸)과 같아 「처음 값」 숨음 · 휴무일 읽기 = 달력 처음 열 때 1회(HEAD v5.9.812 = 0)', n);
+        }
+        console.log('  달력 수치', JSON.stringify(CALS));
         console.log('  세 폭 수치', JSON.stringify(LAY));
         ok(LAY['1500'].판폭 === 1100 && LAY['720'].판폭 === 720 && LAY['390'].판폭 === 390 && LAY['1500'].줄카드폭 <= 700, '판 폭 = 1500 → 1100 · 720 → 720(꽉 참) · 390 → 390 · 줄 카드는 종전 폭(700 이하 = 원래 자리 카드 그대로)', LAY);
         ok(pe.length === 0, '스크립트 오류 0', pe);

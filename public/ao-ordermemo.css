@@ -990,3 +990,105 @@ html[data-ao-theme="dark"] .om-pill.k-kind { background: #0C4A6E; color: #BAE6FD
 .om-out-t { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--px-sub, var(--d-sub)); line-height: 1.4; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .om-pxs-wrap .om-px-paired .om-out-t { margin: 0 0 4px; }
 .om-indiv.om-out { font-variant-numeric: tabular-nums; }
+/* #1161 발송일 = 눌러서 달력(ao-ordermemo.js CAL) · 달력 모양 = 공통 .akm-cal(styles.css · 야간 ao-dark.css) 그대로 · 여기는 메모함 겹 안 자리·크기·막은 날만 */
+.om-modal input.om-sd { cursor: pointer; caret-color: transparent; padding-right: 32px; text-overflow: clip; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2' ry='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; background-size: 16px 16px; font-variant-numeric: tabular-nums; }
+.om-modal input.om-sd:disabled { cursor: not-allowed; }
+.om-modal input.om-sd[aria-expanded="true"] { border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }
+.om-orddt input.om-sd { width: 9.5em; }
+.om-modal .akm-cal.om-cal { position: fixed; z-index: 976; box-sizing: border-box; background: var(--d-card); border-color: var(--d-line); color: var(--d-ink); }
+/* 색 = 메모함 --d-* 토큰(밝음 = 공통 달력과 같은 값 · 야간 = 메모함 야간 토큰 · ao-dark.css 의 .akm-cal 줄보다 앞섬) */
+.om-cal .akm-cal-title { color: var(--d-ink); }
+.om-cal .akm-cal-nav { color: var(--d-sub); }
+.om-cal .akm-cal-nav:hover:not(:disabled), .om-cal .akm-cal-day:hover:not(:disabled):not(.sel) { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-cal .akm-cal-week span { color: var(--d-dim); }
+.om-cal .akm-cal-day { color: var(--d-ink); }
+.om-cal .akm-cal-day.today { box-shadow: inset 0 0 0 1.5px var(--d-accent); }
+.om-cal .akm-cal-day.sel { background: var(--d-accent); color: var(--d-card); box-shadow: none; }
+.om-cal .akm-cal-foot { border-top-color: var(--d-line); }
+.om-cal .akm-cal-today-btn { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-cal .akm-cal-today-btn:hover:not(:disabled) { background: var(--d-accent); color: var(--d-card); }
+html[data-ao-theme="dark"] .om-cal .akm-cal-week span:first-child, html[data-ao-theme="dark"] .om-cal .akm-cal-day.sun { color: #F6948D; }
+html[data-ao-theme="dark"] .om-cal .akm-cal-week span:last-child, html[data-ao-theme="dark"] .om-cal .akm-cal-day.sat { color: #8AB4FA; }
+.om-cal .akm-cal-week span:first-child, .om-cal .akm-cal-day.sun { color: #D92D20; }
+.om-cal .akm-cal-week span:last-child, .om-cal .akm-cal-day.sat { color: #2563EB; }
+.om-modal .akm-cal.om-cal[hidden] { display: none; }
+.om-cal .akm-cal-nav:disabled { opacity: .35; cursor: default; background: transparent; }
+.om-cal .akm-cal-day.off { opacity: .32; cursor: not-allowed; text-decoration: line-through; text-decoration-thickness: 1px; background: transparent; }
+.om-cal .akm-cal-day:focus-visible, .om-cal .akm-cal-nav:focus-visible, .om-cal .om-cal-foot button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.om-cal .om-cal-foot { gap: 6px; }
+.om-cal .om-cal-foot .akm-cal-today-btn:disabled { opacity: .4; cursor: default; }
+.om-cal .om-cal-clr { margin-left: auto; padding: 6px 12px; border: 1px solid var(--d-line); border-radius: 8px; background: transparent; color: var(--d-sub); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.om-cal .om-cal-clr:hover:not(:disabled) { border-color: var(--d-accent); color: var(--d-accent); }
+.om-cal .om-cal-clr:disabled { opacity: .4; cursor: default; }
+@media (max-width: 960px), (pointer: coarse) {
+    .om-modal .akm-cal.om-cal { width: min(340px, calc(100vw - 16px)); }
+    .om-cal .akm-cal-nav { width: 44px; height: 44px; }
+    .om-cal .akm-cal-day { height: 44px; font-size: 15px; }
+    .om-cal .om-cal-foot button { min-height: 44px; padding-inline: 14px; font-size: 13px; }
+}
+html .om-modal .om-cal .akm-cal-day.sel { background: var(--d-accent); color: var(--d-card); font-weight: 700; }   /* 고른 날 = 일·토요일 색보다 앞섬 */
+@media (max-width: 720px) {   /* #1161 폰 = 아래 판(옵션 고르기 판 꼴) · 뒤 흐림 = 누르면 닫힘 */
+    .om-modal .akm-cal.om-cal { left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none; border-radius: 16px 16px 0 0; border-width: 1px 0 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); animation: om-sheet 220ms var(--d-ease); }
+    .om-modal.cal-open::after { content: ""; position: fixed; inset: 0; z-index: 974; background: rgba(16, 24, 40, .35); }
+}
+@media (prefers-reduced-motion: reduce) { .om-modal .akm-cal.om-cal { animation: none; } }
+/* #1165 고른 날 한 줄 + [취소][확인](확인을 눌러야 칸에 들어감) · 폰 아래 판이 화면보다 길면 판 안에서 밀리고 [확인] 줄은 늘 보임 */
+.om-cal .om-cal-pick { margin: 0 0 8px; padding: 6px 8px; border-radius: 8px; background: var(--d-accent-soft); color: var(--d-ink); font-size: 12.5px; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.om-cal .om-cal-pick b { color: var(--d-accent); font-weight: 800; }
+.om-cal .om-cal-pick small { color: var(--d-sub); font-size: 11.5px; font-weight: 600; }
+.om-cal .om-cal-acts { display: flex; gap: 8px; margin-top: 8px; }
+.om-cal .om-cal-acts .om-btn { flex: 1 1 0; min-height: 40px; justify-content: center; }
+@media (max-width: 960px), (pointer: coarse) { .om-cal .om-cal-acts .om-btn { min-height: 48px; font-size: 15px; } .om-cal .om-cal-pick { font-size: 14px; } }
+@media (max-width: 720px) {
+    .om-modal .akm-cal.om-cal { max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain; }
+    .om-cal .om-cal-acts { position: sticky; bottom: calc(-12px - env(safe-area-inset-bottom, 0px)); margin: 8px -16px calc(-12px - env(safe-area-inset-bottom, 0px)); padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--d-card); border-top: 1px solid var(--d-line); }
+}
+/* #1166 달력 시험(스위치 켬일 때만 쓰임) — 폰 OS 날짜 칸 = 보이는 칸 위에 같은 크기 투명 type=date(손가락이 직접 엶) · [×] 비우기 · 머리 「달력 시험 중」 · 기록 판 */
+.om-sdw { position: relative; display: block; width: 100%; }
+.om-orddt .om-sdw { display: inline-block; width: 9.5em; }
+.om-bx-date .om-sdw { display: inline-block; width: 150px; }
+.om-sdw > input.om-sdv { pointer-events: none; }
+.om-sdw > input.om-sdn { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; font-size: 16px; -webkit-appearance: none; appearance: none; background: transparent; color: transparent; }
+.om-sdw > input.om-sdn:disabled { cursor: not-allowed; }
+.om-sdw > input.om-sdn::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.om-sdw:focus-within > input.om-sdv { border-color: var(--d-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--d-accent) 20%, transparent); }
+.om-sdw > .om-sdx { position: absolute; top: 50%; right: 30px; z-index: 2; width: 36px; height: 36px; margin-top: -18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--d-sub); font-size: 20px; line-height: 1; cursor: pointer; }
+.om-sdw > .om-sdx:hover, .om-sdw > .om-sdx:active { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-sdw > .om-sdx[hidden] { display: none; }
+.om-calb { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; }
+.om-calb em { font-style: normal; font-weight: 800; color: #B54708; background: #FEF0C7; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+html[data-ao-theme="dark"] .om-calb em { color: #FCD34D; background: rgba(245, 158, 11, .16); }
+.om-calb .om-btn.sm { min-height: 32px; padding: 0 10px; font-size: 12px; }
+@media (max-width: 560px) { .om-calb em { display: none; } .om-calb.on::before { content: "시험"; font-weight: 800; color: #B54708; } }
+.om-callog { position: fixed; z-index: 982; left: 12px; right: 12px; top: 64px; max-height: 70vh; display: flex; flex-direction: column; border-radius: 12px; background: var(--d-card); color: var(--d-ink); box-shadow: 0 18px 44px -12px rgba(16, 24, 40, .45), inset 0 0 0 1px var(--d-card-line); }
+.om-callog-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--d-line); }
+.om-callog-h b { flex: 1; font-size: 14px; }
+.om-callog pre { margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.om-card-h .om-calb-card { margin-left: auto; }
+.om-card-h .om-calb-card em { font-size: 11px; padding: 2px 6px; }
+@media (max-width: 560px) { .om-card-h .om-calb-card em { display: none; } .om-card-h .om-calb-card.on::before { content: none; } }
+/* #1166 폰 OS 날짜 칸 = 달력 그림 없이 [×] 자리만(좁은 칸에서 「11/17(화)」 안 가림) · 카드 머리 [기록][끄기] 줄 꺾임 막기 */
+.om-sdw > input.om-sdv { background-image: none; padding-right: 36px; }
+.om-sdw > .om-sdx { right: 2px; }
+.om-card-h:has(.om-calb-card) h3 { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.om-card-h .om-calb-card { flex: none; }
+.om-card-h .om-calb-card .om-btn.sm { white-space: nowrap; padding: 0 8px; }
+@media (max-width: 480px) { .om-card-h .om-calb-card [data-calb="off"] { display: none; } }
+.om-card .om-sdw > input.om-sdv { padding-left: 10px; padding-right: 30px; }
+.om-sdw > .om-sdx { width: 30px; }
+@media (max-width: 480px) { .om-card .om-grp-recv .om-sdw > input.om-sdv { font-size: 16px; letter-spacing: -.01em; } }
+.om-card-h:has(.om-calb-card) .om-btn { white-space: nowrap; }
+/* #1166-b 기본 달력 = 카드 머리 작은 [직접 입력]/[달력으로] + 「기록」(좁은 폰 = [직접 입력] 길게 누름) */
+.om-card-h .om-calb-card { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.om-card-h .om-calb-card [data-calb="off"], .om-card-h .om-calb-card [data-calb="on"] { display: inline-flex; }
+.om-calx { min-height: 36px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--d-sub); font: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap; cursor: pointer; -webkit-touch-callout: none; user-select: none; }
+.om-calx:hover { background: var(--d-accent-soft); color: var(--d-accent); }
+.om-calx:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.om-calx.om-callg { color: var(--d-dim); font-weight: 600; font-size: 11.5px; padding: 0 6px; }
+@media (max-width: 480px) { .om-card-h .om-calb-card .om-callg { display: none; } }
+@media (pointer: coarse) { .om-calx { min-height: 44px; } }
+.om-calx { display: inline-flex; align-items: center; justify-content: center; }
+@media (max-width: 480px) {   /* 좁은 폰 = 카드 머리 「처음으로」는 ↺ 아이콘만(#1150 「처음 값」과 같은 꼴 · 글은 읽기 도구용으로 남김) */
+    .om-card-h:has(.om-calb-card) .om-reset { width: 44px; padding: 0; justify-content: center; font-size: 0; }
+    .om-card-h:has(.om-calb-card) .om-reset svg { width: 18px; height: 18px; }
+}

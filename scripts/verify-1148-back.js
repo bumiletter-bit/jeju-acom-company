@@ -53,7 +53,8 @@ function mut(L) {
         const q = id => document.getElementById(id), vis = id => !!(q(id) && !q(id).hidden), C = q('om-card');
         const om = vis('desk-om'), card = !!(C && !C.hidden), kind = !card ? '' : C.querySelector('.om-pxs-sum') ? '판' : '줄카드', ask = vis('om-ask'), opt = vis('om-optpop'), conf = !!(C && C.querySelector('.om-confirm'));
         const prev = !!(q('desk-om') && q('desk-om').classList.contains('prev-open'));
-        const s = [om ? '메모함' : '', prev ? '현금표' : '', card ? kind : '', opt ? '품목' : '', ask ? '확인창' : '', conf ? '묻기' : ''].filter(Boolean).join('>') || '없음';
+        const cal = vis('om-cal');   /* #1161 발송일 달력 */
+        const s = [om ? '메모함' : '', prev ? '현금표' : '', card ? kind : '', opt ? '품목' : '', cal ? '달력' : '', ask ? '확인창' : '', conf ? '묻기' : ''].filter(Boolean).join('>') || '없음';
         return { na: (window.__noAct || []).slice(), away: false, om, card, kind, ask, opt, conf, s, fo: !!(window.__fo && window.__fo.open), hb: (window.AkmAoDesk._hb.stack || []).map(e => e.k).join(','), pend: C ? C.querySelectorAll('.om-pxrow-pend, .om-pend-t').length : 0, chk: C ? [...C.querySelectorAll('.om-pairx-b input[data-cact="pxchk"]:checked')].map(i => i.dataset.v).join() : '', qv: (C && C.querySelector('[id^="om-px-q-"]') || {}).value || '' };
     });
     const back = async p => { await p.goBack({ waitUntil: 'commit', timeout: 3000 }).catch(() => null); await p.waitForTimeout(900); return layers(p); };
@@ -124,6 +125,12 @@ function mut(L) {
             ok(a[0].s === '메모함>현금표>줄카드>품목' && a[1].s === '메모함>현금표>줄카드' && a[2].s === '메모함>현금표' && a[3].s === '메모함', '④' + tag + ' 품목 고르기 → back = 줄 카드 → back = 목록', T['④ 줄카드→품목고르기' + tag]);
             a = await seq('④-b 지우기 확인창', fo, async p => { const x = p.locator('#om-list [data-act="del"], #om-ctw [data-act="del"]').first(); if (await x.count()) { await x.click(); await settle(p); } });
             ok(a[0].s === '메모함>확인창' && a[1].s === '메모함' && a[2].s === '없음', '④-b' + tag + ' 지우기 확인 창 → back = 목록 → back = 메모함 닫힘', T['④-b 지우기 확인창' + tag]);
+            // ⑦ #1166 폰 = OS 날짜 칸(창 자체는 흉내 못 함) · 칸을 누른 채 back = 줄 카드 그대로(고친 것 없음 = 묻기 없음) → back = 현금표 → 목록 · 칸 눌러도 기록 칸 안 쌓임
+            a = await seq('⑦ 줄카드→발송일 칸', fo, async p => { await openRow(p); const b = await p.locator('#om-f-0-date').boundingBox(); await p.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); await settle(p); }, 4);
+            ok(a[0].s === '메모함>현금표>줄카드' && a[1].s === '메모함>현금표' && a[2].s === '메모함' && a[3].s === '없음', '⑦' + tag + ' 발송일 칸(OS 날짜) 누른 채 back = 줄 카드 닫힘(고친 것 없음) → 현금 줄 표 → 목록 → 메모함 닫힘 · 한 번에 한 겹', T['⑦ 줄카드→발송일 칸' + tag]); no0(a, '⑦' + tag);
+            // ⑦-b 날 고른 뒤 back = 「저장 안 하고 닫을까요?」(고친 것 = 발송일)
+            a = await seq('⑦-b 날 고름→back', fo, async p => { await openRow(p); { const b = await p.locator('#om-f-0-date').boundingBox(); await p.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); }   /* 손가락이 칸을 누르고 OS 창에서 고름(fill = 창 흉내) */ await p.locator('#om-f-0-date').fill(new Date(Date.now() + 9 * 3600e3 + 2 * 864e5).toISOString().slice(0, 10)); await settle(p); }, 2);
+            ok(a[0].s === '메모함>현금표>줄카드' && a[1].s === '메모함>현금표>줄카드>묻기' && S.puts.length === 0, '⑦-b' + tag + ' 날 고름(OS 날짜) → back = 「저장 안 하고 닫을까요?」(종전 규칙)', T['⑦-b 날 고름→back' + tag]); no0(a, '⑦-b' + tag);
             // ⑤ 추가(새 글 정리) 카드
             a = await seq('⑤ 정리 결과 카드', fo, async p => {
                 S.preview = { ok: true, rows: [{ kind: 'line', key: '010-4400-5678', note: '큰 걸로', plat: '네이버', line: ['', '010-4400-5678', '큰 걸로', '네이버'].join('\t'), sure: true, check_why: [] }] };
