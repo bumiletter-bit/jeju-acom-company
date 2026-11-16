@@ -3858,8 +3858,9 @@ async function renderDocList() {
         const isAdmin = currentUser?.role === 'admin';
 
         tbody.innerHTML = docs.map(d => {
-            const statusClass = d.status === 'approved' ? 'status-approved' : d.status === 'rejected' ? 'status-rejected' : 'status-pending';
-            const statusLabel = d.status === 'approved' ? '승인' : d.status === 'rejected' ? '반려' : '대기중';
+            const isCancelled = d.status === 'cancelled';   // #1172 취소 승인된 서류 = 회색 「취소」(종전 「대기중」으로 찍힘) · 관리 칸 빈칸
+            const statusClass = d.status === 'approved' ? 'status-approved' : d.status === 'rejected' ? 'status-rejected' : isCancelled ? 'status-cancelled' : 'status-pending';
+            const statusLabel = d.status === 'approved' ? '승인' : d.status === 'rejected' ? '반려' : isCancelled ? '취소' : '대기중';
             let dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
             if (d.subType === '시간차' && d.startTime && d.endTime) {
                 dateStr += ` (${d.startTime}~${d.endTime})`;
@@ -3870,7 +3871,8 @@ async function renderDocList() {
             // 수정: 대기중/반려 → 본인, 승인 → 결재자
             const canEdit = (d.status === 'pending' && isMine) || (d.status === 'rejected' && isMine) || (d.status === 'approved' && isMyApproval);
             // 삭제: 대기중/반려 → 본인 또는 결재자, 승인 → 결재자만
-            const canDelete = (d.status === 'approved' && isMyApproval) || (d.status !== 'approved' && (isMine || isMyApproval));
+            // #1172 취소된 서류 = 삭제 단추 없음(서버 삭제가 반려 아니면 연차를 또 돌려줌 · 취소 때 이미 복구)
+            const canDelete = !isCancelled && ((d.status === 'approved' && isMyApproval) || (d.status !== 'approved' && (isMine || isMyApproval)));
 
             let actions = '';
             if (canEdit) actions += `<button class="btn-view" onclick="openEditDocument(${d.id})">${d.status === 'rejected' ? '재제출' : '수정'}</button>`;

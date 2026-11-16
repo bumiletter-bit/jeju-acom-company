@@ -4425,6 +4425,8 @@ textarea.form-input {
 .status-approved::before { background: #12B76A; }
 .status-rejected { background: #FEF3F2; color: #B42318; border: none; }
 .status-rejected::before { background: #F04438; }
+.status-cancelled { background: #F2F4F7; color: #475467; border: none; }   /* #1172 취소 승인된 서류 = 회색(.pill-off 와 같은 색) */
+.status-cancelled::before { background: #98A2B3; }
 
 /* B-1b. 공통 pill 배지 (사용중/작동중/꺼짐/준비중 등 — 인라인 스타일 대체) */
 .pill {
