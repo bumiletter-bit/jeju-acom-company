@@ -2648,6 +2648,8 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
         } else {
             if (!isApplicant && !isApprover) return res.status(403).json({ error: '수정 권한이 없습니다' });
         }
+        // #1174(11/16) 취소된 서류는 수정 막음 — 취소 승인 때 연차를 이미 돌려줘서, 고치면 옛 차감을 또 돌려주고 새로 차감했다(연차·일정·상태 무변경으로 끝)
+        if (d.status === 'cancelled') return res.status(400).json({ error: '취소된 서류는 수정할 수 없어요 · 새로 올려 주세요' });
 
         const { subType, startDate, endDate, reason, approverId, startTime, endTime } = req.body;
         const newSubType = subType || d.sub_type;
@@ -2665,7 +2667,9 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
         }
 
         let newDeducted = 0;
-        if (d.type === 'vacation') {
+        // #1174(11/16) 음수 차감 = 수기 이력의 「추가일수」(manual POST · app.js saveManualDoc 만 음수를 만듦) → 수정해도 연차를 다시 계산하지 않고 그 값 그대로(위 복구도 oldDeducted > 0 이라 안 돎 · annual_leave 무변경)
+        if (oldDeducted < 0) newDeducted = oldDeducted;
+        else if (d.type === 'vacation') {
             if (newSubType === '연차') {
                 const s = new Date(newStartDate);
                 const e = new Date(newEndDate);
