@@ -1,6 +1,7 @@
 // #588-d(대표 GO 10/8) 창구용 — 자사몰(카페24) 옵션 결제가를 네이버 결제가에 맞추기
 //   node scripts/desk/mall-price.js preview                       오늘 새벽 자동 점검(05:10) 결과만 빨리 보기 — 어긋난 옵션·없는 옵션
 //   node scripts/desk/mall-price.js preview <상품> [--snapshot]    그 상품의 계획 표(쓰기 0) — 네이버 실시간 정본 ↔ 카페24 지금 값
+//   node scripts/desk/mall-price.js preview|apply <상품> [지시 id] --with-hidden   #1180 이름이 네이버와 같은 카페24 미노출 품목도 추가금만 맞춤(판매·진열은 그대로 미노출 · 요청엔 additional_amount 만) · 미노출+추가금 0(값 넣은 적 없는 자리)은 50% 가드 제외 · 음수는 멈춤
 //   node scripts/desk/mall-price.js apply <상품> <지시 id>         계획대로 카페24 추가금(필요하면 기본가)을 바꿈 → 90초 뒤 다시 읽어 확인 → 이어서 screen(결과 JSON 의 screen 칸)
 //   node scripts/desk/mall-price.js screen <상품> [지시 id]         #714 스냅샷 즉시 재수집(최대 6분) → 자사몰 화면 가격 = 카페24 결제가인지 표(same/diff) · 공개 응답 at 확인 · 카페24 쓰기 0
 //   node scripts/desk/mall-price.js restore <상품> <지시 id>       이 도구로 바꾸기 직전 값으로 되돌림
@@ -38,7 +39,7 @@ async function resolve(arg, snap) {
     return { nno, cno: map[nno].c24, minAdd: Number(map[nno].minAdd) || 0, map };
 }
 // 계획 = 카페24를 어떻게 바꾸면 네이버 결제가와 같아지는가
-async function plan(arg, useSnap) {
+async function plan(arg, useSnap, withHidden) {
     const snap = await M.latestSnapshot(); const R = await resolve(arg, snap);
     let nv, source;
     if (!useSnap) { try { nv = (await M.naverLive([R.nno]))[R.nno]; source = '네이버 실시간'; } catch (e) { source = null; var liveErr = e.message; } }
@@ -65,7 +66,16 @@ async function plan(arg, useSnap) {
             P.stops.push(`카페24에 「${txt}」 옵션이 없어요 — 관리자 화면에서 옵션을 추가(또는 이름을 네이버와 글자까지 같게)한 뒤 다시 해 주세요`); continue;
         }
         const v = h[0]; used.add(v.code);
-        if (!(v.selling === 'T' && v.display === 'T')) { P.rows.push({ opt: txt, naver: pay, c24: c.base + v.add, state: '카페24 미노출', code: v.code }); P.stops.push(`「${txt}」는 카페24에서 미노출 상태예요 — 다시 팔 것인지 총괄에게 확인해 주세요(이 도구는 노출을 바꾸지 않아요)`); continue; }
+        if (!(v.selling === 'T' && v.display === 'T')) {
+            // #1180 --with-hidden = 이름이 네이버와 같은 미노출 품목은 추가금만 맞춤(판매·진열 칸은 요청에 안 실음 = 계속 미노출) · 없으면 종전대로 멈춤
+            if (!withHidden) { P.rows.push({ opt: txt, naver: pay, c24: c.base + v.add, state: '카페24 미노출', code: v.code }); P.stops.push(`「${txt}」는 카페24에서 미노출 상태예요 — 다시 팔 것인지 총괄에게 확인해 주세요(이 도구는 노출을 바꾸지 않아요)`); continue; }
+            const curH = c.base + v.add, addH = pay - targetBase, fresh = v.add === 0;
+            const rowH = { opt: txt, code: v.code, naver: pay, c24: curH, diff: curH - pay, add_now: v.add, add_new: addH, state: v.add === addH ? '미노출 · 같음' : '미노출 · 추가금만' };
+            if (addH < 0) { rowH.state = '막음(음수 추가금)'; P.stops.push(`「${txt}」(미노출)는 새 기본가보다 싸서 추가금이 음수가 돼요 — 총괄 확인이 필요해요`); }
+            else if (curH !== pay && !fresh && Math.abs(pay - curH) > curH * 0.5) { rowH.state = '막음(50% 넘는 변화)'; P.stops.push(`「${txt}」(미노출) ${won(curH)} → ${won(pay)}원은 한 번에 50% 넘는 변화예요 — 총괄 확인이 필요해요`); }
+            else if (v.add !== addH) { if (fresh && curH !== pay && Math.abs(pay - curH) > curH * 0.5) rowH.note = '50% 가드 제외 = 미노출 · 추가금 0(값을 넣은 적 없는 자리)'; P.puts.push({ code: v.code, name: v.name, body: { additional_amount: String(addH) }, before: v.add, pay_before: curH, pay_after: pay, hidden: true }); }
+            P.rows.push(rowH); continue;
+        }
         const cur = c.base + v.add, add = pay - targetBase;
         const row = { opt: txt, code: v.code, naver: pay, c24: cur, diff: cur - pay, add_now: v.add, add_new: add, state: cur === pay && v.add === add ? '같음' : '바꿈' };
         if (cur !== pay && Math.abs(pay - cur) > cur * 0.5) { row.state = '막음(50% 넘는 변화)'; P.stops.push(`「${txt}」 ${won(cur)} → ${won(pay)}원은 한 번에 50% 넘는 변화예요 — 총괄 확인이 필요해요`); }
@@ -81,7 +91,7 @@ async function plan(arg, useSnap) {
         if (add < 0) P.stops.push(`「${v.name}」는 새 기본가보다 싸서 추가금이 음수가 돼요 — 네이버에서 내린 옵션이면 먼저 미노출(hide)로 바꾼 뒤 다시 맞추세요. 계속 팔 옵션이면 총괄 확인이 필요해요`);
         else if (add !== v.add) P.puts.push({ code: v.code, name: v.name, body: { additional_amount: String(add) }, before: v.add, pay_before: cur, pay_after: cur });
     }
-    if (hidden.length) P.notes.push(`미노출 옵션 ${hidden.length}개는 건드리지 않아요`);
+    if (hidden.length) P.notes.push(withHidden ? `미노출 옵션 ${hidden.length}개 = 판매·진열은 그대로(미노출) · 이름이 네이버와 같은 것만 추가금을 맞춰요(--with-hidden)` : `미노출 옵션 ${hidden.length}개는 건드리지 않아요`);
     if (targetBase !== c.base) { P.base_change = { from: c.base, to: targetBase }; if (Math.abs(targetBase - c.base) > c.base * 0.5) P.stops.push(`기본가 ${won(c.base)} → ${won(targetBase)}원은 50% 넘는 변화예요 — 총괄 확인이 필요해요`); P.notes.push('기본가가 바뀌어요 — 바꾸는 몇 분 동안 일부 옵션 결제가가 잠깐 어긋날 수 있어요(주문이 뜸한 때 권장)'); }
     if (liveMin !== R.minAdd) P.minAdd_change = { from: R.minAdd, to: liveMin };
     if (nv.statusType && nv.statusType !== 'SALE') P.notes.push(`네이버 상품 상태 = ${nv.statusType}(판매 중 아님)`);
@@ -121,7 +131,7 @@ async function screen(arg, orderId) {
     await M.stepLog(orderId, '자사몰 화면: ' + (out.ok ? `스냅샷 #${rf.id} 반영 · 화면 = 결제가` : '화면 반영 확인 안 됨'));
     return out;
 }
-const table = P => P.rows.map(r => `${r.state.padEnd(4)} | 네이버 ${r.naver == null ? '—' : won(r.naver)} | 자사몰 ${r.c24 == null ? '—' : won(r.c24)}${r.diff ? `(${r.diff > 0 ? '+' : ''}${won(r.diff)})` : ''}${r.add_new != null && r.add_new !== r.add_now ? ` | 추가금 ${won(r.add_now)}→${won(r.add_new)}` : ''} | ${r.opt}`);
+const table = P => P.rows.map(r => `${r.state.padEnd(4)} | 네이버 ${r.naver == null ? '—' : won(r.naver)} | 자사몰 ${r.c24 == null ? '—' : won(r.c24)}${r.diff ? `(${r.diff > 0 ? '+' : ''}${won(r.diff)})` : ''}${r.add_new != null && r.add_new !== r.add_now ? ` | 추가금 ${won(r.add_now)}→${won(r.add_new)}` : ''} | ${r.opt}${r.note ? ' · ' + r.note : ''}`);
 // 사람에게 보여 줄 「바뀌는 것」 — 결제가가 달라지는 옵션만 · 기본가 때문에 추가금만 옮기는 옵션은 건수로
 const changes = P => P.puts.filter(t => t.pay_before !== t.pay_after).map(t => `${t.name.slice(-30)}: ${won(t.pay_before)} → ${won(t.pay_after)}원`).concat(P.puts.some(t => t.pay_before === t.pay_after) ? [`결제가는 그대로 · 추가금만 옮기는 옵션 ${P.puts.filter(t => t.pay_before === t.pay_after).length}개`] : []);
 async function putAll(cno, base, puts, orderId) {
@@ -173,16 +183,17 @@ async function checkout(nno, cases) {
 (async () => {
     const args = process.argv.slice(2), cmd = args.shift();
     const fi = args.indexOf('--snapshot'); const useSnap = fi >= 0; if (useSnap) args.splice(fi, 1);
+    const hi = args.indexOf('--with-hidden'); const withHidden = hi >= 0; if (withHidden) args.splice(hi, 1);   // #1180 미노출 품목 추가금도(preview·apply)
     if (cmd === 'preview' && !args[0]) {
         const last = (await M.cfgGet('cafe24_sync_last')) || {};
         console.log(JSON.stringify({ checked_at: last.at, mode: last.mode, checked: last.checked, price_mismatch: last.optMismatch || [], option_missing: last.optMissing || [], base_diffs: (last.diffs || []).concat(last.blocked || []), errors: last.errors || [], note: '새벽 자동 점검 결과예요(그 뒤 네이버에서 바꾼 것은 안 보여요) — 상품을 주면 지금 값으로 다시 봅니다: mall-price.js preview <상품>' }, null, 1));
     } else if (cmd === 'preview') {
-        const { P } = await plan(args[0], useSnap);
+        const { P } = await plan(args[0], useSnap, withHidden);
         console.log(JSON.stringify({ ...P, puts: undefined, rows: undefined, table: table(P), will_change: changes(P), note: '미리 보기 — 아직 아무것도 바꾸지 않았어요' }, null, 1));
     } else if (cmd === 'apply') {
         const orderId = parseInt(args[1], 10); if (!orderId) throw new Error('사용: mall-price.js apply <상품> <지시 id>');
         const actor = await M.who(orderId); await M.stepLog(orderId, '자사몰 가격: 네이버·카페24 지금 값 읽는 중');
-        const { P, c } = await plan(args[0], useSnap);
+        const { P, c } = await plan(args[0], useSnap, withHidden);
         if (P.stops.length) { console.log(JSON.stringify({ ok: false, stopped: true, stops: P.stops, table: table(P), note: '멈췄어요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
         if (!P.can_apply) { console.log(JSON.stringify({ ok: true, changed: false, table: table(P), note: '이미 네이버와 같아요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
         const prev = (await M.cfgGet('mall_price_prev')) || {}; const list = Array.isArray(prev[P.nno]) ? prev[P.nno] : [];
