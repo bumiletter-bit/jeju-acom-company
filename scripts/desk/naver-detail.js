@@ -3,6 +3,7 @@
 //   node scripts/desk/naver-detail.js plan <backup_id|상품번호> --detail <html> | --status <값>
 //                                       | --opt <옵션 id> name1=…|price=…|stock=…|usable=… (옵션마다 한 번씩) | --sale-price <원> | --name "<글>"
 //                                       | --add-opt "<이름1>[|<이름2>[|<이름3>]]=<추가금>[=<재고>]" (#733 새 옵션 · 여러 번 · 재고 기본 99999 · 끝에 붙음 · 되돌리기 = 숨김)
+//                                         [--opt-order "<옵션 id>,+1,<옵션 id>,+2,…"](#1177 · --add-opt 와 같이만 · 지금 옵션 전부(숨김 포함) + 새 옵션 전부를 화면 순서대로 · +n = n번째 --add-opt · 되돌리기 = 보관본 순서)
 //                                       | --group-name1|2|3 "<묶음 이름>" | --discount <원|n%> | --custom-name <입력형 옵션 id>=<새 이름> (#773 · 여러 번 가능) | --weight <kg>(#842 상품 무게) | --page-title "<글>" --tags "<글#번호,…>"(#842 검색 설정 · 태그는 통째)
 //                                       [--card-fix](상세의 링크 카드를 글 링크로 바꿔 보냄 · 없으면 카드가 있을 때 멈춤) [--accept-impact](묶음 이름 영향 🔴 을 되묻고 「응」 받은 뒤만)
 //                                                                              바뀌는 곳만 전/후 표 + 카드 글(보내지 않음 · 쓰기 0)
@@ -49,6 +50,7 @@ function parseOpts(args) {
         else if (a === '--from' || a === '--price') o[a.slice(2)] = args[++i];
         else if (a === '--opt-name1') (o.newOpt = o.newOpt || []).push(args[++i]);
         else if (a === '--add-opt') (o.addOpt = o.addOpt || []).push(args[++i]);
+        else if (a === '--opt-order') o.optOrder = args[++i];                   // #1177 옵션 화면 순서 「id,+1,id,+2,…」(+n = n번째 --add-opt)
         else if (a === '--dry') o.dry = true;
         else if (a === '--group-name1' || a === '--group-name2' || a === '--group-name3') (o.groupName = o.groupName || {})['name' + a.slice(-1)] = args[++i];   // #773 옵션 묶음 이름
         else if (a === '--discount') o.discount = args[++i];                    // #773 즉시할인 <원|n%>
@@ -132,6 +134,20 @@ function buildPatch(o) {
     if (o.stock != null) errs.push('재고는 옵션마다 넣어요: --opt <옵션 id> stock=<수> (옵션 id 는 show 의 옵션 표)');
     if (o.opt) { const p = parseOptArgs(o.opt); errs.push(...p.errs); if (!p.errs.length) patch.options = p.opts; }
     if (o.addOpt) { const p = parseAddOpts(o.addOpt); errs.push(...p.errs); if (!p.errs.length) patch.options_add = p.opts; }
+    if (o.optOrder != null) {   // #1177 옵션 순서 — 지금 옵션 id 와 +n(n번째 --add-opt · 1부터)을 쉼표로 · 서버 꼴 = id 글 · 'add:<0부터>'
+        if (!o.addOpt) errs.push('--opt-order 는 --add-opt 와 같이만 써요(새 옵션을 붙이면서 순서를 정함)');
+        else if (!String(o.optOrder).split(',').some(x => x.trim())) errs.push('--opt-order 가 비었어요 — "<옵션 id>,+1,<옵션 id>,+2,…" 꼴로(#1178)');
+        else {
+            const out = [];
+            for (const raw of String(o.optOrder).split(',').map(x => x.trim()).filter(Boolean)) {
+                const m = /^\+(\d+)$/.exec(raw);
+                if (m) { if (Number(m[1]) < 1) errs.push(`--opt-order 「${raw}」: +1 부터예요`); else out.push('add:' + (Number(m[1]) - 1)); }
+                else if (/^\d+$/.test(raw)) out.push(raw);
+                else errs.push(`--opt-order 「${raw}」: 옵션 id(show 의 옵션 표) 또는 +n(n번째 --add-opt)이에요`);
+            }
+            if (out.length) patch.options_order = out;
+        }
+    }
     if (o.sale_price != null) { const n = toInt(o.sale_price); if (n == null || n <= 0) errs.push('판매가는 1원 이상 정수예요'); else patch.sale_price = n; }
     if (o.groupName) {   // #773 묶음 이름 — 주문서 옵션 글 「묶음: 값」 앞부분(송장 매칭·발송안내가 읽음)
         const g = {}; for (const [k, v] of Object.entries(o.groupName)) { const t = String(v == null ? '' : v).trim(); if (!t) errs.push(`--group-name${k.slice(4)} 이 비었어요`); else if (t.length > 50) errs.push(`묶음 이름은 50자까지예요(${t.length}자)`); else g[k] = t; }
@@ -286,7 +302,18 @@ function planRows(before, patch) {
             if (tenX(base, pay)) { stops.push(`새 옵션 「${nm}」 결제가 ${won(pay)}원 = 기본 결제가 ${won(base)}원의 10배 넘게 달라요 — 숫자를 다시 확인해 주세요`); continue; }
             rows.push({ field: `새 옵션 「${nm}」`, before: '(없음)', after: `추가금 ${won(x.price)}원 · 결제가 ${won(pay)}원 · 재고 ${won(x.stock)}` });
         }
-        warns.push('새 옵션은 옵션 목록 맨 끝에 붙어요 · 되돌리기(revert) = 새 옵션을 숨김(판매 안 함 · 삭제 아님)');
+        if ('options_order' in patch) {   // #1177 옵션 순서 — 서버 npwCheckPatch 와 같은 거절 · 전/후 줄
+            const want = [...oc.map(c => String(c.id)), ...patch.options_add.map((_, i) => 'add:' + i)], got = patch.options_order.map(String);
+            const label = t => { const m = /^add:(\d+)$/.exec(t); if (m) { const x = patch.options_add[Number(m[1])]; return x ? `${[x.name1, x.name2, x.name3].filter(Boolean).join(' / ')}(새)` : t; } const c = oc.find(y => String(y.id) === t); return c ? optName(c) + (c.usable === false ? '(숨김)' : '') : t; };
+            const bad = got.filter(t => !want.includes(t)), dup = got.filter((t, i) => got.indexOf(t) !== i);
+            if (bad.length) stops.push(`옵션 순서에 이 상품에 없는 것: ${bad.map(t => t.replace(/^add:(\d+)$/, (m, n) => '+' + (Number(n) + 1))).join(', ')} — 옵션 id 는 show 의 옵션 표 · 새 옵션은 +1 ~ +${patch.options_add.length}`);
+            else if (dup.length) stops.push(`옵션 순서에 두 번 들어간 것: ${dup.map(label).join(', ')}`);
+            else if (got.length !== want.length) stops.push(`옵션 순서는 지금 옵션 ${oc.length}개(숨김 포함) + 새 옵션 ${patch.options_add.length}개 = ${want.length}개를 모두 적어요(빠진 것: ${want.filter(t => !got.includes(t)).map(label).join(', ')})`);
+            else {
+                rows.push({ field: '옵션 화면 순서', before: oc.map(c => optName(c) + (c.usable === false ? '(숨김)' : '')).join(' → '), after: got.map(label).join(' → ') });
+                warns.push('옵션 순서 = 손님 옵션 목록 순서(정렬 「등록순」 상품 · 보낸 배열 순서) · 되돌리기(revert) = 보관본 순서 + 새 옵션 숨김');
+            }
+        } else warns.push('새 옵션은 옵션 목록 맨 끝에 붙어요(순서를 정하려면 --opt-order) · 되돌리기(revert) = 새 옵션을 숨김(판매 안 함 · 삭제 아님)');
         warns.push('자사몰(카페24) 옵션은 관리자 화면에서 따로 만들어야 해요 · 송장변환 품목 연결(단가표 이름)도 확인');
         if (op.statusType === 'OUTOFSTOCK' && patch.options_add.some(x => x.stock > 0) && !('status' in patch)) warns.push('지금 품절 상태예요 — 재고 있는 옵션을 붙이면 서버가 판매중으로도 같이 돌려요');
     }

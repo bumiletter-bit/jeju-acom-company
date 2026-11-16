@@ -91,6 +91,7 @@ function fakeNaver(product, opts = {}) {
                 let mx = Math.max(0, ...oc.filter(o => o.id != null).map(o => Number(o.id)));
                 for (const o of oc) if (o.id == null) o.id = ++mx;
                 if (opts.addReorder) oc.sort((a, b) => b.id - a.id);
+                if (opts.sortById) oc.sort((a, b) => a.id - b.id);   // #1178 보낸 배열 순서를 무시하고 id 순으로 두는 네이버인 척
             }
             if (opts.putZeroStock) for (const o of st.product.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;   // 재고가 0 으로 들어간 척
             sum();
@@ -853,6 +854,60 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const bo = await run({ op: 'backup', product_no: CH, order_id: 101 }, ko.deps);
         const ao = await run({ op: 'apply', order_id: 101, backup_id: bo.backup_id, patch: { options_add: [{ name1: '10kg', price: 20000, stock: 5 }] } }, ko.deps);
         ok(ao.ok && ao.auto_sale === true && ko.nv.product.originProduct.statusType === 'SALE' && ao.new_options[0].id === 3, '품절 상품 옵션 추가(재고>0) = 판매 복귀 길 · 새 id', [ao.auto_sale, ao.sale_attempts, ao.new_options]);
+    }
+
+    console.log('⑰ #1177 옵션 순서(options_order) — 새 옵션을 사이사이에 · 되돌리기 = 보관본 순서 + 새 옵션 숨김');
+    {
+        const ADD = [{ name1: '1kg', price: -20000, stock: 7 }, { name1: '3kg', price: 5000, stock: 8 }, { name1: '10kg', price: 20000, stock: 9 }];
+        const ORD = ['add:0', '1', 'add:1', '2', 'add:2'];   // 1kg · 2.5kg(1) · 3kg · 4kg(2) · 10kg
+        const k = mk();
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options_add: ADD, options_order: ORD } }, k.deps);
+        const sent = k.nv.puts[0] && k.nv.puts[0].originProduct.detailAttribute.optionInfo.optionCombinations;
+        ok(ap.ok && sent && sent.map(o => o.optionName1).join() === '1kg,2.5kg,3kg,4kg,10kg' && sent[1].id === 1 && sent[3].id === 2 && sent[0].id == null && sent[0].stockQuantity === 7,
+            '바디 = 정한 순서(기존 id 그대로 · 새 조합 id 없이)', sent && sent.map(o => [o.id, o.optionName1]));
+        ok(ap.new_options && ap.new_options.map(x => x.name + ':' + x.id).join() === '1kg:3,3kg:4,10kg:5' && ap.new_options.every(x => x.id != null),
+            '새 id 를 이름으로 찾음(자리가 끝이 아니어도)', ap.new_options);
+        ok(ap.unexpected_paths.length === 0 && ap.not_applied.length === 0 && ap.sale_ok.ok === true && ap.option_ids_kept === true, '순서 바꿔도 unexpected 0 · not_applied 0 · sale_ok ✓', [ap.unexpected_paths, ap.not_applied, ap.sale_ok]);
+        const now = k.nv.product.originProduct.detailAttribute.optionInfo.optionCombinations;
+        ok(now.map(o => o.optionName1).join() === '1kg,2.5kg,3kg,4kg,10kg', '재조회 순서 = 정한 순서', now.map(o => o.optionName1));
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
+        const back = k.nv.product.originProduct.detailAttribute.optionInfo.optionCombinations;
+        ok(rv.ok && back.map(o => o.optionName1).join() === '2.5kg,4kg,1kg,3kg,10kg' && back.slice(2).every(o => o.usable === false) && back.slice(0, 2).every(o => o.usable !== false) && rv.same_as_before === true && rv.sale_ok.ok === true,
+            '되돌리기 = 보관본 순서(2.5kg·4kg) 먼저 + 새 옵션 3개 숨김 · same_as_before', [back.map(o => [o.optionName1, o.usable]), rv.residual_paths]);
+        // 순서 없이 옵션 추가(종전) = 끝에 붙음 그대로
+        const k0 = mk();
+        const b0 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k0.deps);
+        const a0 = await run({ op: 'apply', order_id: 101, backup_id: b0.backup_id, patch: { options_add: ADD } }, k0.deps);
+        ok(a0.ok && k0.nv.puts[0].originProduct.detailAttribute.optionInfo.optionCombinations.map(o => o.optionName1).join() === '2.5kg,4kg,1kg,3kg,10kg', '순서 칸 없으면 종전대로 끝에');
+        ok(a0.not_applied.length === 0, '순서 칸 없으면 순서 판정 없음(not_applied 0)', a0.not_applied);
+        ok(ap.not_applied.indexOf('options_order') < 0, '정한 순서대로 남으면 not_applied 에 options_order 없음');
+        // #1178 네이버가 순서를 무시(id 순)하면 = not_applied 'options_order' · 그래도 다른 칸은 성공
+        const ks = mk(null, { sortById: true });
+        const bs = await run({ op: 'backup', product_no: CH, order_id: 101 }, ks.deps);
+        const as = await run({ op: 'apply', order_id: 101, backup_id: bs.backup_id, patch: { options_add: ADD, options_order: ORD } }, ks.deps);
+        ok(as.ok && JSON.stringify(as.not_applied) === '["options_order"]' && as.unexpected_paths.length === 0 && as.new_options.every(x => x.id != null), '순서 무시한 네이버 = not_applied options_order 한 줄(새 옵션·가격은 정상)', [as.not_applied, as.unexpected_paths]);
+        // #1178 순서를 거꾸로 두는 네이버 = apply not_applied · revert 도 보관본 순서가 아니면 residual options_order_not_restored
+        const kr = mk(null, { addReorder: true });
+        const br = await run({ op: 'backup', product_no: CH, order_id: 101 }, kr.deps);
+        const ar = await run({ op: 'apply', order_id: 101, backup_id: br.backup_id, patch: { options_add: ADD, options_order: ORD } }, kr.deps);
+        ok(ar.ok && ar.not_applied.includes('options_order'), '거꾸로 둔 네이버 = apply not_applied options_order', ar.not_applied);
+        const rr = await run({ op: 'revert', order_id: 101, backup_id: br.backup_id }, kr.deps);
+        ok(rr.ok && rr.residual_paths.includes('options_order_not_restored') && rr.same_as_before === false, '되돌린 뒤 순서가 보관본과 다름 = residual options_order_not_restored · same_as_before false', rr.residual_paths);
+        ok(rv.residual_paths.indexOf('options_order_not_restored') < 0, '제대로 되돌린 경우엔 그 줄 없음');
+        // #1178 창구 --opt-order 빈 값·쉼표만 = 한 줄 거절
+        const nd = require(path.join(__dirname, 'desk', 'naver-detail.js'));
+        for (const v of ['', ' , ,', ',']) { const r = nd.buildPatch(nd.parseOpts(['--add-opt', '1kg=0', '--opt-order', v]).o); ok(r.errs.length === 1 && /--opt-order 가 비었어요/.test(r.errs[0]) && !('options_order' in r.patch), `창구 --opt-order 「${v}」 = 한 줄 거절`, r.errs); }
+        // 거절
+        const kx = mk();
+        const bx = await run({ op: 'backup', product_no: CH, order_id: 101 }, kx.deps);
+        const t = async (patch, re, name) => { const x = await run({ op: 'apply', order_id: 101, backup_id: bx.backup_id, patch }, kx.deps); ok(!x.ok && re.test(x.error), name, x); };
+        await t({ options_order: ['1', '2'], sale_price: 30000 }, /옵션 추가\(options_add\)와 같이만/, '옵션 추가 없이 순서만 = 거절');
+        await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2'] }, /모두 적어요/, '하나 빠짐 = 거절');
+        await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2', 'add:1'] }, /두 번/, '같은 자리 두 번 = 거절');
+        await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '99', 'add:2'] }, /id 도/, '없는 id = 거절');
+        await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2', 'add:3'] }, /id 도/, '없는 새 자리 = 거절');
+        ok(kx.nv.puts.length === 0, '거절 동안 PUT 0');
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

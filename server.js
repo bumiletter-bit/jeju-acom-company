@@ -17795,6 +17795,12 @@ function npwSortOpts(j) {
     if (oc.length) oc.sort((a, b) => (a.id == null) - (b.id == null) || (Number(a.id) || 0) - (Number(b.id) || 0));
     return c;
 }
+// #1178 순서를 바꾼 apply 를 되돌린 뒤 = 보관본 옵션이 보관본 순서로 맨 앞에 있어야 · 아니면 residual 'options_order_not_restored'(옵션 순서를 안 준 patch = 빈 배열)
+function npwOrderBack(patch, before, back) {
+    if (!Array.isArray(patch && patch.options_order) || !patch.options_order.length) return [];
+    const want = npwOptions(before).map(o => String(o.id)), got = npwOptions(back).slice(0, want.length).map(o => String(o.id));
+    return JSON.stringify(got) === JSON.stringify(want) ? [] : ['options_order_not_restored'];
+}
 // 재조회에서 새로 생긴 조합(지금 id 목록에 없고 이름이 options_add 와 같은 것) → [{ add 자리, 조합 }]
 function npwFindAdded(cur, after, adds) {
     const old = new Set(npwOptions(cur).map(o => String(o.id)));
@@ -17816,7 +17822,16 @@ function npwApplyPatch(j, patch) {
     }
     if (Array.isArray(patch.options_add) && patch.options_add.length) {
         const oc = npwGet(j, ['originProduct', 'detailAttribute', 'optionInfo', 'optionCombinations']);
-        if (Array.isArray(oc)) for (const p of patch.options_add) oc.push(npwAddCombo(p));
+        if (Array.isArray(oc)) {
+            const n0 = oc.length;
+            for (const p of patch.options_add) oc.push(npwAddCombo(p));
+            // #1177 옵션 순서(options_order) — 붙인 뒤 화면 순서대로 다시 세움(지금 옵션 = id 글 · 새 옵션 = 'add:<options_add 자리>') · 검사는 npwCheckPatch
+            if (Array.isArray(patch.options_order) && patch.options_order.length === oc.length) {
+                const pick = (t) => { const m = /^add:(\d+)$/.exec(String(t)); return m ? oc[n0 + Number(m[1])] : oc.slice(0, n0).find(o => String(o.id) === String(t)); };
+                const sorted = patch.options_order.map(pick);
+                if (sorted.every(Boolean) && new Set(sorted).size === oc.length) oc.splice(0, oc.length, ...sorted);
+            }
+        }
     }
     // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름 — 준 칸만(즉시할인은 discountMethod 의 value·unitType 만 · 다른 칸 그대로)
     if (patch.group_names && typeof patch.group_names === 'object') {
@@ -17879,7 +17894,7 @@ function npwCheckPatch(patch, before) {
     const keys = Object.keys(patch);
     if (!keys.length) return 'patch 가 비었어요';
     if (keys.includes('stock')) return NPW_STOCK_MSG;
-    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];
+    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'options_order', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];
     const bad = keys.filter(k => !allowed.includes(k));
     if (bad.length) return '허용되지 않은 칸: ' + bad.join(', ') + ' (허용 = ' + allowed.join(', ') + ')';
     if ('group_names' in patch) {   // #773 옵션 묶음 이름 — 지금 있는 묶음만 · 1~50자
@@ -17986,6 +18001,19 @@ function npwCheckPatch(patch, before) {
             const t = npwAddTuple(p);
             if (seen.has(t)) return `옵션 추가 ${i + 1}: 같은 이름 조합이 이미 있어요(숨김 포함)`;
             seen.add(t);
+        }
+    }
+    if ('options_order' in patch) {   // #1177 옵션 순서 — 옵션 추가와 같이만 · 지금 옵션 id 전부 + 'add:<자리>' 전부를 한 번씩
+        const ord = patch.options_order, adds = Array.isArray(patch.options_add) ? patch.options_add : [];
+        if (!adds.length) return '옵션 순서(options_order)는 옵션 추가(options_add)와 같이만 보내요';
+        const have = npwOptions(before).map(o => String(o.id));
+        const want = [...have, ...adds.map((_, i) => 'add:' + i)];
+        if (!Array.isArray(ord) || ord.length !== want.length) return `옵션 순서는 지금 옵션 ${have.length}개(숨김 포함) + 새 옵션 ${adds.length}개 = ${want.length}개를 모두 적어요`;
+        const got = ord.map(x => String(x)), seenO = new Set();
+        for (const x of got) {
+            if (!want.includes(x)) return `옵션 순서 「${x}」: 이 상품 옵션 id 도 'add:<새 옵션 자리>' 도 아니에요`;
+            if (seenO.has(x)) return `옵션 순서 「${x}」 가 두 번 들어 있어요`;
+            seenO.add(x);
         }
     }
     if ('sale_price' in patch) {
@@ -18485,7 +18513,7 @@ async function naverProductWriteRun(req, deps) {
             // #733-B 옵션 추가: 새 조합(재조회에서 id 생김)을 이름으로 찾아 기대값에 id 를 채우고 · 비교는 id 순으로(순서 바뀜 흔들림 방지)
             const adds = Array.isArray(patch.options_add) ? patch.options_add : [];
             const added = adds.length ? npwFindAdded(cur, after, adds) : [];
-            if (adds.length) { const roc = npwOptions(ref), n0 = roc.length - adds.length; added.forEach(({ i, o }) => { if (o && roc[n0 + i]) roc[n0 + i].id = o.id; }); }
+            if (adds.length) { const roc = npwOptions(ref); added.forEach(({ i, o }) => { const r = o && roc.find(x => x.id == null && npwOptTuple(x) === npwAddTuple(adds[i])); if (r) r.id = o.id; }); }   // #1177 새 조합 자리는 이름으로(옵션 순서를 바꾸면 끝이 아님)
             const view = (j) => adds.length ? npwSortOpts(npwStripVolatile(j)) : npwStripVolatile(j);
             const all = npwDiff(view(before), view(after));
             const changed = all.filter(p => !NPW_STOCK_RE.test(p) || npwIsExpected(p, exp));
@@ -18516,6 +18544,12 @@ async function naverProductWriteRun(req, deps) {
                 if (o.price !== p.price) not_applied.push(`options_add.${i}.price`);
                 if (o.stockQuantity !== p.stock) not_applied.push(`options_add.${i}.stock`);
                 if (o.usable === false) not_applied.push(`options_add.${i}.usable`);
+            }
+            // #1178 옵션 순서 — 다시 읽은 배열의 실제 순서(새 조합 = 찾은 id → 'add:<자리>')가 options_order 와 다르면 not_applied(위 비교는 id 순이라 순서를 못 봄)
+            if (Array.isArray(patch.options_order) && patch.options_order.length) {
+                const curIds = new Set(npwOptions(cur).map(o => String(o.id)));
+                const tok = (o) => { if (curIds.has(String(o.id))) return String(o.id); const f = added.find(x => x.o && String(x.o.id) === String(o.id)); return f ? 'add:' + f.i : '?' + o.id; };
+                if (JSON.stringify(npwOptions(after).map(tok)) !== JSON.stringify(patch.options_order.map(String))) not_applied.push('options_order');
             }
             const new_options = added.map(({ i, o }) => ({ i, id: o ? o.id : null, name: o ? npwOptName(o) : [adds[i].name1, adds[i].name2, adds[i].name3].filter(Boolean).join(' / '),
                 price: o ? o.price ?? null : null, stock: o ? o.stockQuantity ?? null : null, usable: o ? o.usable ?? null : null, pay: o ? npwPay(after, o) : null }));
@@ -18579,6 +18613,15 @@ async function naverProductWriteRun(req, deps) {
         if (radds.length) {
             for (const { o } of npwFindAdded(before, body, radds)) if (o) { if (o.usable !== false) { o.usable = false; needPut = true; } hidden.push(String(o.id)); }
         }
+        // #1177 옵션 순서를 바꿨으면 보관본 순서로(보관본 옵션 먼저 · 숨긴 새 옵션은 그 뒤 지금 순서대로)
+        if (Array.isArray(patch.options_order) && patch.options_order.length) {
+            const oc = npwGet(body, ['originProduct', 'detailAttribute', 'optionInfo', 'optionCombinations']);
+            if (Array.isArray(oc)) {
+                const rank = new Map(npwOptions(before).map((o, i) => [String(o.id), i]));
+                const re = oc.map((o, i) => [o, rank.has(String(o.id)) ? rank.get(String(o.id)) : rank.size + i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+                if (re.some((o, i) => o !== oc[i])) { oc.splice(0, oc.length, ...re); needPut = true; }
+            }
+        }
         // 품절(OUTOFSTOCK)이 0 으로 만든 옵션 재고만 보관본 값으로 — 적용 뒤에도 0 이고 지금도 0 인 조합
         if (patch.status === 'OUTOFSTOCK') {
             const bOpt = npwOptions(before), aOpt = npwOptions(row.after_json || {});
@@ -18641,7 +18684,7 @@ async function naverProductWriteRun(req, deps) {
         const allBack = npwDiff(rview(refBack), rview(back));
         const detail_filtered = detailFiltered(npwGet(before, NPW_FIELDS.detail_html), npwGet(back, NPW_FIELDS.detail_html));
         const hidden_not_applied = radds.length ? npwFindAdded(before, back, radds).filter(({ o }) => o && o.usable !== false).map(({ o }) => String(o.id)) : [];
-        const residual = [...npwNoStock(allBack).filter(p => !((detail_filtered || cards_fixed) && p === npwPathStr(NPW_FIELDS.detail_html))), ...npwOptRegen(before, back), ...hidden_not_applied.map(id => 'option_still_usable:' + id)], stock_paths = allBack.filter(p => NPW_STOCK_RE.test(p));
+        const residual = [...npwNoStock(allBack).filter(p => !((detail_filtered || cards_fixed) && p === npwPathStr(NPW_FIELDS.detail_html))), ...npwOptRegen(before, back), ...hidden_not_applied.map(id => 'option_still_usable:' + id), ...npwOrderBack(patch, before, back)], stock_paths = allBack.filter(p => NPW_STOCK_RE.test(p));
         const sale_ok = (detail_filtered || cards_fixed) ? dropDetailBad(npwSaleCheck(back, refBack)) : npwSaleCheck(back, refBack);   // #773 카드를 글 링크로 바꾼 상세 = 보관본과 다른 게 정상   // 보관본이 판매중이었다면 ok true 여야 「되돌림 = 다시 팔림」
         const options_table = npwOptTable(cur, back), price_basis = npwPriceBasis(cur, back);
         await db.query(`UPDATE naver_product_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
