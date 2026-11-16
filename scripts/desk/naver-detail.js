@@ -412,6 +412,9 @@ function planRows(before, patch) {
             warns.push(`무게는 기준 옵션(추가금 0) 무게와 같게 · 단위가격(${u.unitCapacity || 100}g당)은 네이버가 결제가 ÷ 총용량으로 다시 셈`);
         }
     }
+    // #1179 품절 유지 저장 — 지금 품절 · 상태 안 바꿈 · 통째 저장 칸 있음 · 저장 뒤 재고 합 0(서버 stayOut 과 같은 조건)
+    if (op.statusType === 'OUTOFSTOCK' && !('status' in patch) && PUT_KEYS.some(k => k in patch) && stockAfter(before, patch) + (patch.options_add || []).reduce((s, x) => s + (Number(x.stock) || 0), 0) === 0)
+        warns.push('품절 유지 저장(재고 0) — 손님은 계속 품절 · 서버가 바디 상태만 SALE 로 보내고(품절 바디는 네이버가 400) 다시 읽어 품절인지 확인해요 · 판매를 열려면 재고를 넣거나 --status 판매중(#1179)');
     return { rows: stops.length ? [] : rows, warns, stops };
 }
 // 통째 PUT 을 타는 patch(서버 usesPut 과 같음) — 설정 'naver_product_write'.put_enabled 가 true 일 때만 서버가 받음(#721-B · 판매중지·재개는 늘 열림)
@@ -714,14 +717,15 @@ async function main(argv, deps) {
         if (res.custom_after) for (const x of (patch.custom_options || [])) { const b = (res.custom_before || []).find(c => String(c.id) === String(x.id)), a = (res.custom_after || []).find(c => String(c.id) === String(x.id)); extra.push('입력형 옵션(' + x.id + '): ' + (b ? b.name : '(없음)') + ' → ' + (a ? a.name : '(없음)')); }
         if (res.cards_fixed) extra.push('링크 카드 ' + res.cards_fixed + '개를 글 링크로 바꿔 보냈어요: ' + (res.cards_fixed_list || []).map(c => c.title || c.kind).slice(0, 4).join(' · '));
         if ('options_add' in patch && !(res.new_options || []).length) extra.push('🔴 새 옵션이 다시 읽은 상품에 안 보여요 — show 로 확인 · 다시 보내지 말고 총괄에게');
-        if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명', discount: '즉시할인', 'weight.value': '무게', 'weight.total': '단위가격 총용량', 'seo.page_title': '검색 페이지 제목', 'seo.seller_tags': '판매자 태그' })[k] || (/^group_names\./.test(k) ? '묶음 이름 ' + k.slice(-1) + '번' : /^custom_options\./.test(k) ? '입력형 옵션 ' + k.split('.')[1] : null) || (/^options_add\./.test(k) ? '새 옵션 ' + (Number(k.split('.')[1]) + 1) + '번째' + (k.split('.')[2] ? ' ' + ({ price: '추가금', stock: '재고', usable: '판매' })[k.split('.')[2]] : '') : k)).join(' · ')}`);
+        if (res.stay_out) extra.push(miss.includes('stay_outofstock') ? '🔴 품절 유지 저장: 다시 읽으니 품절(OUTOFSTOCK)이 아니에요 — 옵션 재고가 0 이라 살 수는 없지만 show 로 확인하고 총괄에게(#1179)' : '품절 유지 저장 ✓ = 재고 0 그대로 저장 · 다시 읽어도 품절(OUTOFSTOCK) · 손님은 계속 품절(#1179)');
+        if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ stay_outofstock: '품절 유지', options_order: '옵션 화면 순서', detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명', discount: '즉시할인', 'weight.value': '무게', 'weight.total': '단위가격 총용량', 'seo.page_title': '검색 페이지 제목', 'seo.seller_tags': '판매자 태그' })[k] || (/^group_names\./.test(k) ? '묶음 이름 ' + k.slice(-1) + '번' : /^custom_options\./.test(k) ? '입력형 옵션 ' + k.split('.')[1] : null) || (/^options_add\./.test(k) ? '새 옵션 ' + (Number(k.split('.')[1]) + 1) + '번째' + (k.split('.')[2] ? ' ' + ({ price: '추가금', stock: '재고', usable: '판매' })[k.split('.')[2]] : '') : k)).join(' · ')}`);
         const rowsAfter = res.options_table ? P.rows.filter(r => !/^옵션 「/.test(r.field)).concat(optionRows(res.options_table)) : P.rows;
         const eb = expectBad(patch).concat(res.detail_filtered === true ? ['detail'] : []);
         const sb = saleOkSelf(row.before_json), sa = res.sale_ok || null, sold = !!(sa && sb.ok && (sa.bad || []).filter(b => !eb.includes(b)).length);
         extra.push(saleLine('건들기 전 판매 정상', sb), saleLine('건든 뒤 판매 정상', sa, eb));
         if (sold) extra.push('🔴 건들기 전엔 정상으로 팔리던 상품이 지금은 아니에요 — 되돌리기를 권합니다');
         extra.push(undo);
-        const red = bad.length || sold || ('options_add' in patch && !(res.new_options || []).length);
+        const red = bad.length || sold || ('options_add' in patch && !(res.new_options || []).length) || miss.includes('stay_outofstock');
         return out({ ok: true, changed: true, product_no: row.product_no, backup_id: row.id, changed_paths: res.changed_paths || [], unexpected_paths: bad, not_applied: miss,
             options_table: res.options_table || undefined, price_basis: res.price_basis || undefined, option_ids_kept: res.option_ids_kept,
             sale_ok_before: sb, sale_ok_after: sa,

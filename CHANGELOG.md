@@ -1,3 +1,13 @@
+## v5.9.822 (2026-11-16) — #1179 네이버 품절 상품 「품절 유지 저장(재고 0)」
+
+- 발단 = 대표 「미리 다 세팅해 놓으면 편한 거 아니야」(산하홍 #1177) · 품절 상품은 바디 statusType OUTOFSTOCK 이라 PUT 400(시험용 한라봉 실측 11/16 · invalid_fields originProduct.statusType)
+- server.js #720-B = 지금 OUTOFSTOCK · patch 에 status 없음 · 통째 PUT 칸 있음 · 보낼 바디 재고 합 0 일 때만 바디 statusType 을 SALE 로(재고 0 그대로) → 다시 읽어 품절이 아니면 not_applied 'stay_outofstock' · 결과에 stay_out · revert 도 같은 길
+- 그 밖(판매중 상품 · 재고 있는 옵션 추가 = auto_sale · --status 지정) = 종전 그대로
+- 창구 naver-detail.js = plan 카드 「품절 유지 저장(재고 0)」 줄 · 결과 카드 ✓/🔴
+- 워커1 시공(verify-720-write 244/244 · verify-773-npw 71/71 · 읽기 전용 기동 200) · 워커2 읽기 점검(배포 막을 것 0)
+- 후보(워커2) = 단일 상품 stockQuantity 칸이 없을 때 0 으로 세는 것 막기(Number.isFinite) · revert 결과에도 품절 확인 표시
+- 🔴 미실측 = 재고 0 + 바디 SALE 을 네이버가 품절로 두는지 → 시험용 한라봉에서 먼저
+
 ## v5.9.821 (2026-11-16) — #1178 네이버 옵션 추가 때 화면 순서 정하기(options_order)
 
 - 발단 = 산하홍 준비(#1177): 옵션 7개를 더하면 끝에 붙어 3·5·10kg 순서가 흐트러짐 → 대표 「귤 판매 페이지와 라임 같게」

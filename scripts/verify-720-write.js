@@ -80,6 +80,7 @@ function fakeNaver(product, opts = {}) {
         if (r.method === 'PUT' && r.path === `/external/v2/products/channel-products/${CH}`) {
             if (opts.putFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.foo', message: 'x' }] }; throw e; }
             // 실측(10/17 레드키위): 바디의 statusType 이 지금과 다르면 400 invalid originProduct.statusType
+            if (opts.outPut400 && st.product.originProduct.statusType === 'OUTOFSTOCK' && r.body.originProduct.statusType === 'OUTOFSTOCK') { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.statusType' }] }; throw e; }   // #1179 실측(11/16 한라봉): 품절 상품 바디 OUTOFSTOCK = 400
             if (r.body.originProduct.statusType !== st.product.originProduct.statusType && !(opts.putSaleOk && r.body.originProduct.statusType === 'SALE')) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.statusType' }] }; throw e; }
             // #723-D 실측 흉내: 품절 상품에 재고 PUT(상태 그대로) = 400
             if (opts.putStockWhileOut400 && st.product.originProduct.statusType === 'OUTOFSTOCK' && r.body.originProduct.statusType === 'OUTOFSTOCK' && r.body.originProduct.detailAttribute.optionInfo.optionCombinations.some(o => o.stockQuantity > 0)) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity' }] }; throw e; }
@@ -95,7 +96,7 @@ function fakeNaver(product, opts = {}) {
             }
             if (opts.putZeroStock) for (const o of st.product.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;   // 재고가 0 으로 들어간 척
             sum();
-            if (st.product.originProduct.stockQuantity === 0) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 조합 전부 0 = 품절
+            if (st.product.originProduct.stockQuantity === 0 && !opts.staySale) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 조합 전부 0 = 품절 · staySale = 재고 0 인데 SALE 로 남기는 네이버인 척(#1179)
             else if (wasOut && opts.putAutoSale) st.product.originProduct.statusType = 'SALE';   // 재고 채우면 네이버가 판매로 되돌리는 척(미확정)
             if (opts.stripLinks) st.product.originProduct.detailContent = st.product.originProduct.detailContent.replace(/\shref="[^"]*"/g, '');   // 일반 href 도 지우는 네이버인 척
             if (opts.sideEffect) opts.sideEffect(st.product);   // 네이버가 다른 칸까지 바꾼 척
@@ -908,6 +909,48 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '99', 'add:2'] }, /id 도/, '없는 id = 거절');
         await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2', 'add:3'] }, /id 도/, '없는 새 자리 = 거절');
         ok(kx.nv.puts.length === 0, '거절 동안 PUT 0');
+    }
+
+    console.log('⑱ #1179 품절 유지 저장 — 품절 상품에 재고 0 옵션 추가 = 바디 SALE 로 PUT · 다시 읽어 품절 확인 · 되돌리기도 같은 길');
+    {
+        const PO = JSON.parse(JSON.stringify(PRODUCT)); PO.originProduct.statusType = 'OUTOFSTOCK'; PO.originProduct.stockQuantity = 0;
+        for (const o of PO.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;
+        const ADD0 = [{ name1: '10kg', price: 20000, stock: 0 }];
+        // 네이버가 재고 0 이면 품절로 두는 판(가설)
+        const k = mk(PO, { putSaleOk: true, outPut400: true });
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options_add: ADD0 } }, k.deps);
+        const put = k.nv.puts[0] && k.nv.puts[0].originProduct;
+        ok(ap.ok && put && put.statusType === 'SALE' && put.detailAttribute.optionInfo.optionCombinations.every(o => o.stockQuantity === 0), '바디 = 상태만 SALE · 옵션 재고 전부 0 그대로', put && [put.statusType, put.detailAttribute.optionInfo.optionCombinations.map(o => o.stockQuantity)]);
+        ok(k.nv.product.originProduct.statusType === 'OUTOFSTOCK' && ap.stay_out === true && !ap.not_applied.includes('stay_outofstock') && ap.auto_sale === false && k.nv.statusPuts.length === 0, '다시 읽어 품절 그대로 · stay_out true · not_applied 에 stay_outofstock 없음 · change-status 0', [ap.not_applied, ap.auto_sale]);
+        ok(ap.unexpected_paths.length === 0 && ap.new_options.length === 1 && ap.new_options[0].stock === 0, '예상 밖 칸 0 · 새 옵션 재고 0', [ap.unexpected_paths, ap.new_options]);
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
+        const rput = k.nv.puts[1] && k.nv.puts[1].originProduct;
+        ok(rv.ok && rput && rput.statusType === 'SALE' && k.nv.product.originProduct.statusType === 'OUTOFSTOCK' && rv.same_as_before === true && JSON.stringify(rv.hidden_options) === '["3"]', '되돌리기 = 같은 길(바디 SALE · 재고 0) → 품절 그대로 · 새 옵션 숨김 · same_as_before', [rput && rput.statusType, rv.residual_paths]);
+        // 네이버가 SALE 로 남기는 판 = not_applied stay_outofstock(카드 🔴)
+        const k2 = mk(PO, { putSaleOk: true, outPut400: true, staySale: true });
+        const b2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k2.deps);
+        const a2 = await run({ op: 'apply', order_id: 101, backup_id: b2.backup_id, patch: { options_add: ADD0 } }, k2.deps);
+        ok(a2.ok && a2.stay_out === true && a2.not_applied.includes('stay_outofstock') && k2.nv.product.originProduct.statusType === 'SALE', 'SALE 로 남는 네이버 = not_applied stay_outofstock', a2.not_applied);
+        // 재고 있는 옵션 추가 = 종전 판매 복귀 길(auto_sale · stay_out 없음)
+        const k3 = mk(PO, { putSaleOk: true, outPut400: true });
+        const b3 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k3.deps);
+        const a3 = await run({ op: 'apply', order_id: 101, backup_id: b3.backup_id, patch: { options_add: [{ name1: '10kg', price: 20000, stock: 5 }] } }, k3.deps);
+        ok(a3.ok && a3.auto_sale === true && !('stay_out' in a3) && k3.nv.product.originProduct.statusType === 'SALE', '재고 있으면 종전 길(auto_sale · 판매중 · stay_out 칸 없음)', [a3.auto_sale, a3.stay_out]);
+        // 판매중 상품 = 종전 바이트(stay_out 칸 없음 · 바디 상태 그대로)
+        const k4 = mk();
+        const b4 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k4.deps);
+        const a4 = await run({ op: 'apply', order_id: 101, backup_id: b4.backup_id, patch: { options_add: ADD0 } }, k4.deps);
+        ok(a4.ok && !('stay_out' in a4) && k4.nv.puts[0].originProduct.statusType === 'SALE' && a4.not_applied.length === 0, '판매중 상품 = 종전 그대로(stay_out 칸 없음)', [a4.stay_out, a4.not_applied]);
+        // 품절 상품 + 상태 지정(--status 판매중 + 재고) = 종전 toSale 길
+        const k5 = mk(PO, { putSaleOk: true, outPut400: true });
+        const b5 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k5.deps);
+        const a5 = await run({ op: 'apply', order_id: 101, backup_id: b5.backup_id, patch: { status: 'SALE', options: [{ id: 1, stock: 3 }] } }, k5.deps);
+        ok(a5.ok && !('stay_out' in a5) && k5.nv.product.originProduct.statusType === 'SALE', '상태 지정 판매 복귀 = 종전 toSale 길', [a5.error, a5.stay_out]);
+        // 창구 plan 카드 = 품절 유지 저장 안내 한 줄(재고 0 일 때만)
+        const nd = require(path.join(__dirname, 'desk', 'naver-detail.js'));
+        const w0 = nd.planRows(PO, { options_add: ADD0 }).warns.some(w => /품절 유지 저장/.test(w)), w1 = nd.planRows(PO, { options_add: [{ name1: '10kg', price: 20000, stock: 5 }] }).warns.some(w => /품절 유지 저장/.test(w)), w2 = nd.planRows(PRODUCT, { options_add: ADD0 }).warns.some(w => /품절 유지 저장/.test(w));
+        ok(w0 && !w1 && !w2, '창구 카드 안내 = 품절 + 재고 0 일 때만', [w0, w1, w2]);
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);
