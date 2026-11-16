@@ -2753,8 +2753,8 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
             }
         }
 
-        // 반려 아닌 경우 연차 복구
-        if (d.status !== 'rejected' && Number(d.deducted_leave) !== 0) {
+        // 반려 아닌 경우 연차 복구 · #1173(11/16) 취소(cancelled)도 뺌 = 취소 승인(approve-modification cancel) 때 이미 복구했고 deducted_leave 는 그대로 남아 지우면 한 번 더 붙던 것
+        if (d.status !== 'rejected' && d.status !== 'cancelled' && Number(d.deducted_leave) !== 0) {
             await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
         }
 
