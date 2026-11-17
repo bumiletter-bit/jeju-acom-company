@@ -176,8 +176,10 @@
         window.addEventListener('popstate', () => { if (st.skipPop) { st.skipPop = false; return; } if (st.open) close(true); });
         $('fo-cash-pick').addEventListener('click', () => $('fo-cash').click());
         $('fo-cash').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f) readCash(f); });
-        $('fo-cash-clear').addEventListener('click', () => { if (st.busy) return; st.cash = null; st.cashName = ''; $('fo-cash').value = ''; markStale(); syncInput(); });
-        $('fo-cash-none').addEventListener('change', e => { st.cashNone = e.target.checked; if (st.cashNone) { st.cash = null; st.cashName = ''; } markStale(); syncInput(); });
+        // #1186 [파일 빼기]·[오늘은 없음] 때 발주 메모함이 넣은 현금 줄이 말없이 같이 빠지던 것:
+        //   올린 파일 + 메모함 줄 = 올린 파일만 빼고 메모함 현금 줄은 남김 · 메모함 줄뿐이었으면 빼되 띠에 「메모함 현금 n줄도 빠졌어요 [다시 넣기]」
+        $('fo-cash-clear').addEventListener('click', () => { if (st.busy) return; const g = omCashGone(); st.cash = null; st.cashName = ''; $('fo-cash').value = ''; omCashAfter(g, true); markStale(); syncInput(); });
+        $('fo-cash-none').addEventListener('change', e => { st.cashNone = e.target.checked; if (st.cashNone) { const g = omCashGone(); st.cash = null; st.cashName = ''; omCashAfter(g, false); } markStale(); syncInput(); });
         mountMemoEd();
         $('fo-memo').addEventListener('input', () => { markStale(); fitMemoEd(); if (st.memoEd && st.judged) st.memoEd.ed.classList.add('stale'); });
         $('fo-ship').addEventListener('change', markStale);
@@ -295,6 +297,14 @@
         const base = st.cash.rows.filter(r => !r.om);
         st.cash = Object.assign({}, st.cash, { rows: base.concat(OMF.cash.map((r, i) => Object.assign({}, r, { no: base.length + i + 2, om: true }))) });
     }
+    // #1186 현금 칸을 비우기 직전의 메모함 현금 줄 상태 → 비운 뒤 처리(keepOm = 올린 파일만 빼는 경우 메모함 줄은 다시 넣음)
+    function omCashGone() { const has = !!(st.cash && st.cash.ok && st.cash.rows.some(r => r.om)) && !OMF.removed && OMF.cash.length > 0; return { has, onlyOm: st.cashName === '발주 메모함', n: has ? st.cash.rows.filter(r => r.om).length : 0 }; }
+    function omCashNote(html) { const b = $('fo-om-band'); if (!b) return; const old = b.querySelector('.fo-om-cashgone'); if (old) old.remove(); if (!html) return; b.hidden = false; b.insertAdjacentHTML('beforeend', `<span class="fo-om-cashgone"> · ${html}</span>`); }
+    function omCashAfter(g, keepOm) {
+        if (!g || !g.has) return;
+        if (keepOm && !g.onlyOm) { omApplyCash(); toast(`올린 현금파일만 뺐어요 · 발주 메모함 현금 ${g.n}줄은 그대로예요`, 3500); return; }
+        omCashNote(`<b class="fo-om-fail" role="alert">발주 메모함 현금 ${g.n}줄도 빠졌어요</b>(양식에 안 들어가요) <button type="button" class="fo-om-link" data-om="cashback">다시 넣기</button>`);
+    }
     function omApplyCash() {
         if (!OMF.cash.length) return;
         if (st.cash && st.cash.ok) { omMergeCash(); return; }
@@ -335,7 +345,17 @@
         const date = ($('fo-ship') || {}).value;
         if (!date || OMF.busy || (st.busy && !fromLoad) || (st.ai && st.ai.running) || (!force && (OMF.date === date || OMF.removed))) return;
         let r = OMF.pend && OMF.pend.date === date ? OMF.pend.r : null; OMF.pend = null;
-        if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?sm=1&date=' + encodeURIComponent(date)); } catch (e) { r = null; } OMF.busy = false; }   // 404·오류 = 지금처럼
+        let omFail = false;
+        if (!r) { OMF.busy = true; try { r = await window.api('/api/order-memo/for-ship?sm=1&date=' + encodeURIComponent(date)); } catch (e) { r = null; omFail = !(e && e.status === 404); } OMF.busy = false; }   // 404(옛 서버) = 지금처럼 조용히
+        // #1186 불러오기 실패(통신 끊김·서버 오류)를 「받은 것」으로 치지 않는다 — 빨간 띠 + [다시 시도] · 다음 판정 때도 다시 시도(OMF.date 를 안 찍음)
+        //   기준 발송일을 바꾼 뒤 실패했으면 앞 날짜 몫(입력삭제·현금 줄)은 빼 둔다(다른 날 줄이 남은 채 판정되지 않게)
+        if (omFail) {
+            if (($('fo-ship') || {}).value !== date) return;
+            let tookPrev = false;
+            if (OMF.date && OMF.date !== date && !OMF.removed && (OMF.lines.length || OMF.cash.length)) { const ids0 = OMF.ids.slice(); omTake(); if (ids0.length) omPost(ids0, true); Object.assign(OMF, { ids: [], lines: [], cash: [], shipMemos: [], normal: [], boxRows: [], date: '' }); tookPrev = true; markStale(); syncInput(); }
+            omBand(`<b class="fo-om-fail" role="alert">발주 메모함을 불러오지 못했어요</b> · 메모함 줄(입력삭제 · 날짜 지정 · 현금 줄)이 안 들어간 채예요${tookPrev ? ' · 앞 날짜에 넣었던 줄은 뺐어요' : ''} · 파일을 만들기 전에 꼭 <button type="button" class="fo-om-link" data-om="again">다시 시도</button>`);
+            return;
+        }
         if (r && r.ok && ((st.busy && !fromLoad) || (st.ai && st.ai.running)) && ($('fo-ship') || {}).value === date) { OMF.pend = { date, r }; return; }   // 그사이 판정·AI 읽기가 시작됨 = 끝난 뒤 이 응답으로
         if (!r || !r.ok || ($('fo-ship') || {}).value !== date) { if (!r) OMF.date = date; return; }
         if (OMF.date && OMF.ids.length) { omTake(); omPost(OMF.ids.slice(), true); }   // 기준 발송일을 바꿈 = 앞 날짜 몫을 빼고 새로
@@ -395,6 +415,7 @@
             omBand(`발주 메모함 줄을 뺐어요 <button type="button" class="fo-om-link" data-om="again">다시 넣기</button>`);
             markStale(); syncInput(); return;
         }
+        if (b.dataset.om === 'cashback') { if (st.busy) return; if (!st.cash) { $('fo-cash-none').checked = false; st.cashNone = false; } omApplyCash(); omCashNote(''); toast('발주 메모함 현금 줄을 다시 넣었어요', 2500); markStale(); syncInput(); return; }   /* #1186 */
         if (b.dataset.om === 'again') { if (!st.busy) { OMF.removed = false; OMF.date = ''; OMF.ids = []; OMF.lines = []; OMF.cash = []; OMF.boxRows = []; omInsert(true); } return; }
         if (b.dataset.om === 'clear') {
             if (b.dataset.arm !== '1') { omArm(b); return; }   // #859 두 번 눌러야 비움(첫 누름 = 주황 안내 · 3초 · 다른 데 누르면 되돌아감)
@@ -864,7 +885,7 @@
             if (l.expect != null && l.expect !== l.hits) return put(l.srcLine, { k: 'warn', t: `건수 다름 ${l.hits}건`, tip: `비고는 ${l.expect}건인데 실제 ${l.hits}건` });
             put(l.srcLine, { k: 'ok', t: `확인완료 ${l.hits}건`, tip: '' });
         });
-        (st.prep.notes || []).forEach(x => { if (['line-split', 'line-noship', 'indiv-nodate'].includes(x.type)) put(x.srcLine, { k: 'warn', t: '확인 필요', tip: x.detail || '' }); });
+        (st.prep.notes || []).forEach(x => { if (['line-split', 'line-noship', 'indiv-nodate', 'line-baddate'].includes(x.type)) put(x.srcLine, { k: 'warn', t: '확인 필요', tip: x.detail || '' }); });
         (st.sizeRes || new Map()).forEach((r, i) => {
             if (i < 0 || i >= n) return;
             if (r.k === 'ok' && marks[i] && marks[i].k === 'ok') { marks[i] = { k: 'ok', t: marks[i].t + ' · 사이즈', tip: r.t }; return; }
@@ -1270,6 +1291,7 @@
             else if (n.type === 'line-noship') cards.push({ id: 'lnoship:' + n.srcLine + ':' + n.raw, type: 'line', tag: '메모 줄', title: n.raw, lines: [['이유', n.detail || '요청한 날이 토요일이거나 발송휴무일이에요.']], choices: [['ok', '확인함', 1]] });
             else if (n.type === 'weekday') info.push({ t: `요일 풀이: ${n.raw} → ${n.detail}`, line: n.srcLine });
             else if (n.type === 'indiv-today') info.push({ t: `날짜 없는 개별발송 줄: ${n.raw} → ${n.detail || '기준 발송일 개별발송으로 읽었어요'}`, line: n.srcLine, indivRaw: n.raw });
+            else if (n.type === 'line-baddate') cards.push({ id: 'lbaddate:' + n.srcLine + ':' + n.raw, type: 'line', tag: '메모 줄', title: n.raw, lines: [['이유', n.detail || '달력에 없는 날짜예요. 날짜를 고쳐 적고 [다시 판정]을 눌러 주세요.'], ['처리', '이 카드는 메모 칸에서 그 줄의 날짜를 고치면(또는 줄을 지우면) 사라져요 · 그 전에는 파일을 만들 수 없어요(날짜 없이 넘기면 오늘 나가요).']], choices: [] });   /* #1186-b 단추 없음 = 줄을 고쳐야만 넘어감 */
             else if (n.type === 'indiv-nodate') cards.push({ id: 'lnodate:' + n.srcLine + ':' + n.raw, type: 'line', tag: '메모 줄', title: n.raw, lines: [['이유', '개별발송 줄에 날짜가 없어요. 요청일자를 적고 [다시 판정]을 눌러 주세요.']], choices: [['ok', '확인함', 1]] });
         });
         (st.prep.senders || []).forEach(sd => {
@@ -1369,7 +1391,7 @@
         // #583-f(대표 10/8): AI 읽기가 실패했거나 꺼져 있으면, AI 에 올렸던 메모 가운데 다른 확인 카드가 없는 것을 전부 「메모 확인」 카드로 — 사람이 [그대로 두기]/[기본 문구로]/[제외]를 정해야 파일을 만들 수 있다.
         //   기본 문구·기사님에게 하는 말뿐인 메모는 애초에 AI 에 안 올리므로 카드도 없다. AI 가 다시 읽어 성공하면 이 카드들은 사라지고 AI 결과(AI 처리 카드·확인 카드)로 바뀐다.
         st.missCard = new Map();
-        if (st.ai.failed && !st.ai.running) {
+        if ((st.ai.failed || st.ai.partial) && !st.ai.running) {   /* #1186 일부만 읽은 경우도(byKey 에 없는 메모만 카드가 됨) */
             const byK = new Map(s.merged.map(e => [keyOf(e), e])), hasAiCard = k => cards.some(c => AI_KIND[c.type] && (c.keys || [c.id.slice(c.id.indexOf(':') + 1)]).includes(k));
             (st.ai.items || []).forEach(g => {
                 const es = (g.keys || []).map(k => byK.get(k)).filter(e => e && !e.individual && (!(e.excluded && !e.userTouched) || e._missExcl) && memoOf(e) === g.memo && !st.ai.byKey.has(keyOf(e)) && !hasAiCard(keyOf(e)) && !st.missCard.has(keyOf(e)));
@@ -2043,7 +2065,7 @@
           const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감|^오늘 발송 제외\(사람\)/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
           const order = st.info.map((it, i) => [rank(it), i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
           $('fo-info').innerHTML = st.info.length ? `<details${st.infoClosed ? '' : ' open'}><summary>참고 ${st.info.length}건 (확인만 하면 돼요 · 줄을 누르면 그 주문·메모 줄로 가요 · 여기를 누르면 접혀요)</summary><ul>${order.map(([, i]) => infoHtml(st.info[i], i)).join('')}</ul></details>` : ''; }
-        const open = pending(), ordOpen = open.filter(cd => cd.type === 'order').length;
+        const open = pending(), ordOpen = open.filter(cd => cd.type === 'order' && !cd.recheck).length;   /* #1186 「메모 재확인」 카드는 일괄 단추가 안 닫는다(1831행과 같은 기준) */
         const aiDoneN = st.cards.filter(isAiDone).length, total = st.cards.filter(cd => cd.type !== 'fix').length;
         const head = total || st.cards.length ? `<div class="fo-cards-head"><h3>확인할 것 <b>${open.length}</b>건 <small>/ 전체 ${total}건${aiDoneN ? ` · AI 처리 ${aiDoneN}건` : ''}</small></h3>${ordOpen > 1 ? `<button type="button" class="fo-btn sm" data-bulk="send">남은 주문 확인 ${ordOpen}건 모두 오늘 발송</button>` : ''}</div>` : '<p class="fo-empty">확인할 것이 없어요. 바로 파일을 만들 수 있어요.</p>';
         // #517: 카드가 많을 때(설날 실파일 = 100장 안팎) 종류별로 걸러 본다 — 남은 건수가 있는 종류만 칩으로
@@ -2205,7 +2227,14 @@
         if (b.dataset.choice) return decide(b.dataset.id, b.dataset.choice);
         if (b.dataset.undo) return decide(b.dataset.undo, undefined);
         if (b.dataset.unpatchCard) return unpatchCard(b.dataset.unpatchCard);
-        if (b.dataset.bulk === 'send') { pending().filter(cd => cd.type === 'order').forEach(cd => st.dec.set(cd.id, 'send')); st.out = null; $('fo-result').hidden = true; return renderSummaryOnly(); }
+        if (b.dataset.bulk === 'send') {   /* #1186 재확인 카드는 남김 · 카드 배송메세지 칸에 고친 글은 낱개 [오늘 발송]과 같게 읽음 */
+            st.ordMemo = st.ordMemo || new Map();
+            pending().filter(cd => cd.type === 'order' && !cd.recheck).forEach(cd => {
+                const btn = Array.from(document.querySelectorAll('.fo-card [data-choice="send"]')).find(x => x.dataset.id === cd.id), card = btn && btn.closest('.fo-card'), el = card && card.querySelector('[data-f="memo"]'), val = el ? String(el.value || '').replace(/\r/g, '').trim() : null;
+                if (val != null && val !== (cd.memoOrig || '')) st.ordMemo.set(cd.id, val); else if (el) st.ordMemo.delete(cd.id);
+                st.dec.set(cd.id, 'send');
+            });
+            st.out = null; $('fo-result').hidden = true; return renderSummaryOnly(); }
         if (b.dataset.memo) {
             if (b.dataset.memo === 'keep') return decide(b.dataset.id, { use: false });
             const el = b.closest('.fo-card').querySelector('[data-f="memo"]');
@@ -2482,7 +2511,7 @@
         bar.hidden = !(st.phase === 'review' || st.phase === 'result');
         const btn = $('fo-ai-read'); btn.disabled = A.running || st.busy || !st.judged || !!st.stale; btn.textContent = A.done ? 'AI에게 다시 읽히기' : 'AI에게 메모 읽히기';
         $('fo-ai-stop').hidden = !A.running;
-        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = `AI가 메모 ${A.count}건을 읽었어요. 확실한 것은 처리했고(보라색 「AI가 처리」 표시가 붙은 카드 · [바꾸기]로 고칠 수 있어요), 애매한 것은 입력칸에 채워 두었으니 남은 카드만 확인해 주세요.`;
+        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = (A.partial ? `AI가 메모 ${A.total}건 중 ${A.count}건만 읽었어요 · 못 읽은 ${A.total - A.count}건은 「메모 확인」 카드로 떴어요(직접 정해 주세요). ` : `AI가 메모 ${A.count}건을 읽었어요. `) + `확실한 것은 처리했고(보라색 「AI가 처리」 표시가 붙은 카드 · [바꾸기]로 고칠 수 있어요), 애매한 것은 입력칸에 채워 두었으니 남은 카드만 확인해 주세요.`;
         if (!A.running && !A.done && !msg.classList.contains('err')) msg.textContent = A.note || '판정이 끝나면 애매한 메모를 AI가 한 번 더 읽어 카드에 채워 줘요(대표 PC의 창구가 켜져 있어야 해요).';
     }
     // auto = 판정 직후 자동 시작(#520). 읽을 메모가 앞서 읽은 것과 같으면 다시 읽지 않는다(판정을 다시 해도 앞선 결과를 그대로 쓴다).
@@ -2533,7 +2562,7 @@
             if (r.split && r.ship === 'go') r.ship = 'ask';
             g.keys.forEach(k => A.byKey.set(k, r));
         });
-        A.count = n; A.done = true;
+        A.count = n; A.total = A.items.length; A.partial = n < A.items.length;   /* #1186 답이 일부만 온 경우 = 못 읽은 메모를 「메모 확인」 카드로(아래 st.ai.partial) */ A.done = true;
         aiToCards();
     }
     // AI 판정을 카드에 반영한다(판정을 다시 해 카드가 새로 생겨도 부른다). 사람이 이미 정했거나 [바꾸기]로 되돌린 카드는 건드리지 않는다.
@@ -2839,11 +2868,24 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             });
             const reply = String(data.reply || '').trim();
             if (!out.length) { memoNote(reply || '클코도 그 줄들을 틀로 바꾸지 못했어요 — 직접 틀에 맞춰 적어 주세요.', true); return; }
-            out.forEach(o => { lines[o.i] = o.fixed; (st.lineFix = st.lineFix || new Map()).set(o.fixed.trim(), targets.find(x => x.i === o.i).raw.trim()); });   // #583 ⑤ 고친 줄 → 원문(「메모 재확인」 카드)
+            // #1186 기다리는 동안(최장 15분) 메모 칸에 사람이 적은 줄을 덮지 않는다 — 지금 메모 칸에서 그 원문 줄을 찾아 그 자리만 바꾼다(종전 = 묻기 전에 떠 둔 글로 통째 덮음)
+            //   원문 줄이 그사이 고쳐졌거나 지워졌으면 그 줄은 안 바꾼다(lost). 메모 칸이 그대로면 종전과 같은 결과
+            const curLines = String(E.ta.value || '').split('\n'), usedAt = new Set(); let lost = 0;
+            out.forEach(o => {
+                const raw = targets.find(x => x.i === o.i).raw, same = i => i >= 0 && i < curLines.length && !usedAt.has(i) && curLines[i].replace(/\r/g, '') === raw;
+                let at = same(o.i) ? o.i : -1; if (at < 0) for (let i = 0; i < curLines.length; i++) if (same(i)) { at = i; break; }
+                if (at < 0) { lost++; o.lost = true; return; }
+                usedAt.add(at); curLines[at] = o.fixed; (st.lineFix = st.lineFix || new Map()).set(o.fixed.trim(), raw.trim());   // #583 ⑤ 고친 줄 → 원문(「메모 재확인」 카드)
+            });
             st.memoAsk = false; syncInput();
-            E.ta.value = lines.join('\n');
-            chatSay('ai', `틀에 안 맞던 줄 ${out.length}줄을 클코가 틀로 고쳐 썼어요(번호는 그대로):\n${changed.join('\n')}${targets.length > out.length ? `\n그대로 둔 줄 ${targets.length - out.length}줄은 직접 틀에 맞춰 적어 주세요.` : ''}`);
-            memoNote(`클코가 ${out.length}줄을 틀로 고쳐 썼어요 — 다시 판정했어요.`);
+            if (lost === out.length) { memoNote('클코가 고쳐 쓴 줄이 왔는데, 그사이 메모 칸의 그 줄이 바뀌어 넣지 않았어요 — 지금 적힌 대로 두었어요.', true); return; }
+            E.ta.value = curLines.join('\n');
+            if (lost) { const drop = new Set(out.filter(o => o.lost).map(o => targets.find(x => x.i === o.i).raw.trim())); for (let i = changed.length - 1; i >= 0; i--) if ([...drop].some(d => changed[i].startsWith('· 「' + d + '」'))) changed.splice(i, 1); }
+            const nFix = out.length - lost;
+            chatSay('ai', `틀에 안 맞던 줄 ${nFix}줄을 클코가 틀로 고쳐 썼어요(번호는 그대로):\n${changed.join('\n')}${targets.length > nFix ? `\n그대로 둔 줄 ${targets.length - nFix}줄은 직접 틀에 맞춰 적어 주세요.` : ''}${lost ? `\n(그사이 메모 칸에서 바뀐 ${lost}줄은 건드리지 않았어요)` : ''}`);
+            // #1186 판정이 돌 수 없는 때(다른 판정·AI 읽기 중)는 「다시 판정했어요」라고 하지 않고 낡음 표시를 건다(파일 만들기 막힘 · [다시 판정])
+            if (st.busy || (st.ai && st.ai.running)) { memoNote(`클코가 ${nFix}줄을 틀로 고쳐 썼어요 — 지금은 다른 작업 중이라 판정을 못 했어요 · [다시 판정]을 눌러 주세요.`, true); markStale(); return; }
+            memoNote(`클코가 ${nFix}줄을 틀로 고쳐 썼어요 — 다시 판정했어요.`);
             await run(judge);
         } catch (err) { memoNote('⚠️ ' + (err && err.message ? err.message : err), true); }
         finally { st.memoAsk = false; band('memo', ''); syncInput(); }
@@ -3227,6 +3269,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         </div>
         <ul class="fo-ia-files" id="fo-ia-files" hidden></ul>
         <div class="fo-acts">
+            <label class="fo-pick fo-ia-datepick">발송일 <select id="fo-ia-date" aria-label="이 운송장을 보낸 날(발송일)"></select></label>
             <button type="button" class="fo-btn primary" id="fo-ia-match" disabled>짝 맞추기</button>
             <span class="fo-msg" id="fo-ia-msg" role="status" aria-live="polite"></span>
         </div>
@@ -3246,6 +3289,10 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         dz.addEventListener('drop', e => { dz.classList.remove('on'); if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return; e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); });
         $('fo-ia-files').addEventListener('click', e => { const b = e.target.closest('button[data-ia-rm]'); if (!b || ia.busy) return; ia.files.splice(Number(b.dataset.iaRm), 1); resetOut(); drawFiles(); });
         $('fo-ia-match').addEventListener('click', match);
+        // #1186 발송일 칸 — 기본 「자동」(파일 이름의 월.일 · 없으면 오늘) · 사람이 고르면 그 날짜로 서버에 보냄(ship_date) · 결과가 나온 뒤 바꾸면 결과를 지우고 다시 [짝 맞추기]
+        { const sel = $('fo-ia-date'), DOW = ['일', '월', '화', '수', '목', '금', '토'], t0 = Date.now() + 9 * 3600e3;
+            sel.innerHTML = '<option value="">자동 · 파일 이름의 날짜(없으면 오늘)</option>' + [0, -1, -2, -3, -4, -5, -6, -7].map(n => { const d = new Date(t0 + n * 86400e3), iso = d.toISOString().slice(0, 10); return `<option value="${iso}">${d.getUTCMonth() + 1}/${d.getUTCDate()}(${DOW[d.getUTCDay()]})${n === 0 ? ' 오늘' : n === -1 ? ' 어제' : ''}</option>`; }).join('');
+            sel.addEventListener('change', () => { if (ia.busy) return; if (ia.res) { resetOut(); say('발송일을 바꿨어요 · [짝 맞추기]를 다시 눌러 주세요'); } sync(); }); }
         $('fo-ia-out').addEventListener('change', onPick);
         $('fo-ia-out').addEventListener('click', onOutClick);
     }
@@ -3281,6 +3328,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function sync() {
         $('fo-ia-match').disabled = ia.busy || !ia.files.length;
         $('fo-ia-pick').disabled = ia.busy;
+        { const ds = $('fo-ia-date'); if (ds) ds.disabled = ia.busy || !!ia.reg; }   // #1186 준비·전송 뒤엔 발송일 잠금(바꾸려면 파일을 다시 올려 새로)
         const reg = $('fo-ia-reg'); if (reg) reg.disabled = ia.busy || !canReg() || todoLeft() > 0 || !!ia.reg;
         const sb = $('fo-ia-send'); if (sb) sb.disabled = ia.busy || ia.sent;
         $('fo-ia').classList.toggle('busy', ia.busy);
@@ -3296,7 +3344,8 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         try {
             const files = []; for (const f of ia.files) files.push({ name: f.name, data: await readB64(f) });
             let indiv = null; try { const v = JSON.parse(localStorage.getItem('akm_fo_indiv') || 'null'); if (v && Array.isArray(v.keys) && Date.now() - Number(v.at || 0) < 3 * 86400e3) indiv = Object.assign({ date: v.date, at: v.at, keys: v.keys }, Array.isArray(v.hold) ? { hold: v.hold } : {}); } catch (e) { indiv = null; }   // #894 F2
-            const r = await call('match', Object.assign({ files }, indiv ? { indiv } : {}));
+            const pickedDate = /^\d{4}-\d{2}-\d{2}$/.test(($('fo-ia-date') || {}).value || '') ? $('fo-ia-date').value : '';   // #1186 사람이 고른 발송일(자동이면 안 보냄 = 서버가 파일 이름·오늘)
+            const r = await call('match', Object.assign({ files }, indiv ? { indiv } : {}, pickedDate ? { ship_date: pickedDate } : {}));
             if (!r || !r.ok) throw new Error((r && r.error) || '짝 맞추기 결과를 받지 못했어요');
             ia.res = r; seedSuggest(); say(''); render(); showSec();
         } catch (err) { say(err && err.message ? err.message : String(err), true); showOut($('fo-ia-msg')); }
@@ -3331,7 +3380,8 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const files = (r.files || []).map((f, i) => { const lb = f.partner_label || (f.partner && f.partner !== '?' ? f.partner : '') || ('파일' + (i + 1)); return `${esc(lb)} ${Number(f.rows) || 0}박스`; }).join(' · ');   // #1051 거래처 이름 + 박스(운송장 1줄 = 1박스) · 못 정하면 「파일n」
         const chRow = c => { const b = (r.by_channel || {})[c] || {}; return `<li><b>${CH_LABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
         out.innerHTML = `
-            <p class="fo-hint">${esc(r.ship_date || '')} 발송분 · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 금일 미발송건 ${Number(r.orders_without_tracking) || 0}건(지정일 안 보낸 줄)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
+            ${r.marks && r.marks.source === 'none' ? `<p class="fo-hint fo-ia-warn" role="alert"><b>최종발주 표식 없음 · 날짜 확인</b> — ${esc(r.ship_date || '')} 날짜로 저장된 최종발주 표식(입력삭제 · 오늘 안 나감)이 없어요. 발송일이 맞는지 위 「발송일」 칸에서 확인해 주세요 · 그날 최종발주를 안 만들었다면 그대로 진행해도 돼요</p>` : ''}
+            <p class="fo-hint"><b>${esc(r.ship_date || '')} 발송분</b>${r.ship_date_src === 'picked' ? '(고른 날짜)' : r.ship_date_src === 'file' ? '(파일 이름에서 읽음)' : r.ship_date_src === 'today' ? '(파일 이름에 날짜가 없어 오늘로)' : ''} · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 금일 미발송건 ${Number(r.orders_without_tracking) || 0}건(지정일 안 보낸 줄)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
             ${fetchErr.length ? `<p class="fo-hint err" role="alert">${fetchErr.map(c => `${CH_LABEL[c]} 주문을 못 불러왔어요(${esc(r.fetch[c].error || '오류')}) — 그 채널 운송장은 「주문 없음」으로 남아요`).join('<br>')}</p>` : ''}
             <div class="fo-sum fo-ia-sum">
                 <span>자동 <b>${s.auto || 0}</b></span><span class="${todo.length ? 'warn' : ''}">할 일 <b>${todo.length}</b></span><span>현금(송장만) <b>${s.cash || 0}</b></span><span>수량2 <b>${qty2}</b></span><span>다른 주소 박스 <b>${s.extra || 0}</b></span><span>주문 없음 <b>${s.unmatched || 0}</b></span>
@@ -3366,13 +3416,19 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         </div>`;
     }
     function onPick(e) {
-        const sel = e.target.closest('select[data-ia-pick]'); if (!sel || ia.busy || ia.reg) return;
-        const id = sel.dataset.iaPick, v = sel.value;
+        const sel = e.target.closest('select[data-ia-pick]'); if (!sel) return;
+        const id = sel.dataset.iaPick;
+        // #1186 화면 표시 = 실제 전송이 늘 같게: 보내는 중·이미 보낸 뒤 = 고른 값으로 되돌림(안 바뀜) · [등록](준비)만 한 상태에서 바꾸면 준비를 무르고 다시 [등록]
+        if (ia.busy || ia.sent || (ia.reg && ia.reg.dry === false)) { const cur = ia.picks.get(id); sel.value = cur == null ? '' : cur; const m0 = $('fo-ia-reg-msg'); if (m0 && !ia.busy) { m0.classList.remove('err'); m0.textContent = '이미 채널에 보낸 뒤라 운송장을 바꿀 수 없어요'; } return; }
+        let redo = false;
+        if (ia.reg) { ia.reg = null; redo = true; const rb = $('fo-ia-result'); if (rb) { rb.hidden = true; rb.innerHTML = ''; } const cb = $('fo-ia-confirm'); if (cb) cb.hidden = true; }
+        const v = sel.value;
         ia.sugg.delete(id); if (!v) ia.picks.delete(id); else ia.picks.set(id, v);
         const card = sel.closest('.fo-card'), row = todoRows().find(x => x.id === id);
         if (card && row) { card.outerHTML = cardHtml(row); const ns = document.querySelector(`select[data-ia-pick="${CSS.escape(id)}"]`); if (ns) ns.focus({ preventScroll: true }); }
         const sp = $('fo-ia-out').querySelector('.fo-ia-sum span:nth-child(2)'); if (sp) sp.classList.toggle('warn', todoLeft() > 0);
         regNote(); sync();
+        if (redo) { const m1 = $('fo-ia-reg-msg'); if (m1 && !todoLeft()) m1.textContent = '운송장을 바꿨어요 · [등록]을 다시 눌러 주세요(앞의 준비는 지웠어요)'; }
     }
     function regNote() {
         const m = $('fo-ia-reg-msg'); if (!m) return;
@@ -3434,6 +3490,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
         const sum = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0);
         const held = items.filter(it => it.state === 'manual'), heldHtml = () => held.length ? `<ul class="fo-ia-bad">${held.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="failed"><b>수기 · 등록 안 함</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''} · ${esc(it.error || '고르지 않았거나 수기로 골랐어요')}</span></li>`; }).join('')}</ul>` : '';   // #961 이유 없는 수기 줄도 보임
+        // #1186 「이미 등록」으로 묶인 줄 가운데 앞 실행 결과를 모르는 것(전송 중 서버가 멈춤 등) = 따로 보여 줌(다시 안 보냄 · 채널 화면에서 확인)
+        const unk = items.filter(it => it.state === 'already' && /^(unknown|sending)$/.test(it.prev_state || ''));
+        const unkHtml = unk.length ? `<div class="fo-ia-um"><p class="fo-hint err" role="alert"><b>앞 실행에서 결과를 모르는 줄 ${unk.length}건</b> · 다시 보내지 않아요 · 채널 화면에서 발송처리가 됐는지 확인해 주세요</p><ul class="fo-ia-bad">${unk.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="unknown"><b>모름 · 채널에서 확인</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''}</span></li>`; }).join('')}</ul></div>` : '';
         let head, table, extra = '';
         if (g.dry === false) {
             const cf = g.confirmed;
@@ -3457,7 +3516,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
                 : `<div class="fo-acts"><span class="fo-msg" id="fo-ia-send-msg" role="status">${ia.sent ? '' : '지금은 채널 전송이 꺼져 있어요 — 준비만 저장했어요'}</span></div>`;
             extra = heldHtml() + extra;
         }
-        box.innerHTML = `${head}<div class="fo-ia-scroll"><table>${table}</table></div>${extra}
+        box.innerHTML = `${head}<div class="fo-ia-scroll"><table>${table}</table></div>${unkHtml}${extra}
             <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}<span class="fo-msg" id="fo-ia-dl-msg" role="status"></span></div>
             ${ums.length ? `<div class="fo-ia-um" id="fo-ia-um"><p class="fo-hint"><b>주문에 안 붙은 운송장 ${ums.length} (확인만)</b> · 전송 실패가 아니에요</p><ul class="fo-ia-bad">${ums.map(u => `<li data-k="um"><b>${esc(u.why)}</b><span>${esc(who(u.x))} · ${esc(u.x.product || '')} · ${esc(tno(u.x.tracking))}</span></li>`).join('')}</ul><div class="fo-acts"><button type="button" class="fo-btn" id="fo-ia-dl-um">이 줄 내려받기 (${ums.length})</button></div></div>` : ''}`;
         box.hidden = false; regNote();

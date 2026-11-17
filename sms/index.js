@@ -1484,6 +1484,15 @@ module.exports = function mountSms(app, deps) {
         const long = !!(safeMod && typeof safeMod.smsBytes === 'function') && safeMod.smsBytes(full) > 900;
         const body = long ? full : smsSafe(text); if (!body) return null;
         const c = await cfg(); const pieces = long ? [body] : splitForSms(body, c.max_chars);   // 직원·초안 발송도 봇 답과 같이 max_chars 조각(워커2 지적 · b-2 뒤 1000 으로 올리면 한 통)
+        // #1184 B8(점검 #1183): 직원 답·새 문자 = 같은 대화에 같은 글이 60초 안에 또 오면(두 번 누름 · 요청이 끊긴 뒤 다시 누름) 새로 넣지 않고 앞 것을 돌려준다
+        //   (톡톡 talkSend 막이와 같은 꼴 — 대화 열쇠로 잠근 채 보고 넣음 · 초안 보내기·자동 답 길은 무변경)
+        const lk = (kind === 'staff' || kind === 'staff_new') ? await pool.connect() : null;
+        try {
+        if (lk) {
+            await lk.query('BEGIN'); await lk.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, ['sms1184:' + t.id]);
+            const prev = (await lk.query(`SELECT * FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND sender = 'staff_desk' AND body = $2 AND state NOT IN ('cancelled', 'failed') AND created_at > NOW() - interval '60 seconds' ORDER BY id ASC LIMIT 1`, [t.id, pieces[0]])).rows[0];
+            if (prev) return Object.assign(prev, { dup: true });
+        }
         let m = null;
         for (let i = 0; i < pieces.length; i++) { const x = await addMessage({ thread_id: t.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'staff_desk', state: 'queued', rule_kind: kind || null, priority: Math.max(0, 9 - i), ai_json: { part: i + 1, parts: pieces.length }, send_after: new Date() }); if (!m) m = x; }
         await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND sender <> 'staff_desk'`, [t.id]);
@@ -1491,6 +1500,7 @@ module.exports = function mountSms(app, deps) {
         await writeAudit({ action: 'create', targetType: 'sms_reply', targetId: m.id, changes: { after: { thread: t.id, kind: kind || 'staff', bytes: byteLen(body) } }, source: 'sms', actor: who(req) });
         typingClear(t.id, req.user.id);   // #683 답이 나가면 입력 중 풀림(reply · send-draft)
         return m;
+        } finally { if (lk) { await lk.query('COMMIT').catch(() => { }); lk.release(); } }   // #1184 B8 잠금 풀기(잠금 묶음은 읽기만 · 넣기는 종전 그대로 바로 저장)
     }
     async function cancelPendingExcept(threadId, keepId) { await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND id <> $2`, [threadId, keepId]); }
     const loadThread = async (req, res) => { const id = parseInt(req.params.id, 10); const t = id ? (await pool.query(`SELECT * FROM sms_threads WHERE id = $1`, [id])).rows[0] : null; if (!t) { res.status(404).json({ ok: false, error: '없는 대화예요' }); return null; } return t; };
@@ -1499,7 +1509,7 @@ module.exports = function mountSms(app, deps) {
         const text = String(req.body && req.body.text || '').trim(); if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
         { const tl = staffTooLong(text); if (tl) return res.status(400).json(tooLongMsg(tl)); }   // #1116 상한 넘음 = 보내지 않고 알림(자르기·나누기 0)
-        const m = await queueStaffReply(t, text, req, 'staff'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' }); res.json({ ok: true, message_id: m.id });
+        const m = await queueStaffReply(t, text, req, 'staff'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' }); res.json({ ok: true, message_id: m.id, dup: !!m.dup });   // #1184 B8-b dup = 60초 안 같은 글(새로 안 넣음)
     }));
     // #688(대표 「고」 10/14): 우리가 먼저 보내기 — 문자가 온 적 없는 번호(또는 아무 번호)에 에이전트 오피스에서 새 문자. 폰 삼성 메시지로 손 발송은 서버에 안 남아(SMSGate 한계) 「보내기는 전부 여기서」.
     //   { phone, text } → 번호 정규화(받는 길과 같은 normalizePhone · 휴대폰 번호만) → 대화 찾기/만들기(threadFor) → 직원 답과 같은 길(queueStaffReply · sender staff_desk · 기존 발송 틱·한도·audit · 봇은 그 대화에 30분 침묵).
@@ -1519,7 +1529,7 @@ module.exports = function mountSms(app, deps) {
         const m = await queueStaffReply(t, text, req, 'staff_new'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' });
         const parts = Number(m.ai_json && m.ai_json.parts) || 1;
         const fresh = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1`, [t.id])).rows[0] || t;
-        res.json({ ok: true, thread_id: t.id, message_id: m.id, created: !before, parts, phone_tail: phoneTail(digits), thread: pub(fresh) });   // thread = 목록 줄과 같은 꼴(워커2 화면 계약)
+        res.json({ ok: true, thread_id: t.id, message_id: m.id, created: !before, parts, phone_tail: phoneTail(digits), thread: pub(fresh), dup: !!m.dup });   // thread = 목록 줄과 같은 꼴(워커2 화면 계약)
     }));
     app.post('/api/sms/threads/:id/send-draft', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;

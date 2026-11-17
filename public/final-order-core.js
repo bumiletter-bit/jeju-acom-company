@@ -22,7 +22,7 @@
     const fillRgb = s => (s && ((s.fill && s.fill.fgColor && s.fill.fgColor.rgb) || (s.fgColor && s.fgColor.rgb))) || '';
 
     // ── 날짜·줄 읽기(v2 와 같은 규칙) ─────────────────────────────────────────────────────────────────────
-    const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) ? null : dt.toISOString().slice(0, 10); };
+    const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d ? null : dt.toISOString().slice(0, 10); };
     // v2 parseDate(invoice-v2.js 69~86) 그대로: 9/20/26 · 2026-09-20 · 9.20 · 9월 20일 · 20일 · 오늘/내일
     function parseDate(s, today) {
         s = String(s || '').trim(); if (!s) return null;
@@ -33,14 +33,35 @@
         if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
         else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }
         else if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) { mo = +m[1]; d = +m[2]; }
-        else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; } }
+        else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; if (mo > 12) { mo = 1; y = ty + 1; } } }
         else return null;
         if (mo > 12 && d <= 12 && !y) return null;
         if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
         if (y == null) { y = ty; if (mo > 12) { mo -= 12; y++; } }
-        let iso = isoOf(y, mo, d); if (!iso) return null;
-        if (!m[3] && !/^\d{4}/.test(s) && Date.parse(iso) < Date.parse(today) - 300 * 86400e3) iso = isoOf(y + 1, mo, d);
+        const roll = !m[3] && !/^\d{4}/.test(s) && Date.UTC(y, mo - 1, d) < Date.parse(today) - 300 * 86400e3;   /* #1186 해 넘김 판정은 종전 그대로(넘치는 날 포함) · 없는 날은 못 읽음 */
+        let iso = isoOf(y, mo, d); if (!iso && !roll) return null;
+        if (roll) iso = isoOf(y + 1, mo, d);
         return iso;
+    }
+    // #1186-b 「날짜 꼴인데 달력에 없는 날」(11/31 · 2/30 · 30일 달의 31일) → 'M/D' 글 · 아니면 null. parseDate 와 같은 꼴만 본다(전화번호·수량·주소 숫자는 안 걸림 — 달 1~12 · 일 29~31 인데 parseDate 가 못 읽은 때뿐)
+    //   이런 줄을 「날짜 없음」으로 넘기면 입력삭제 줄이 기준 발송일로 찍혀 오늘 나간다(과발송) → 호출 쪽이 「없는 날짜」로 따로 걸러 사람이 고치게 한다
+    function ghostDate(s, today) {
+        s = String(s || '').trim(); if (!s || parseDate(s, today)) return null;
+        const tm = +today.slice(5, 7), td = +today.slice(8, 10); let m, mo = null, d = null;
+        if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { mo = +m[2]; d = +m[3]; }
+        else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; }
+        else if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) { mo = +m[1]; d = +m[2]; }
+        else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) mo = tm === 12 ? 1 : tm + 1; }
+        else return null;
+        return mo >= 1 && mo <= 12 && d >= 29 && d <= 31 ? mo + '/' + d : null;
+    }
+    // 한 줄 글에서 날짜 자리(탭 줄 첫 칸 · 첫 낱말 · 비고 안 날짜 꼴)에 적힌 「없는 날」 찾기 — 발주 메모함 서버(order-memo.js checkLine)가 쓴다 · 읽힌 날짜가 있으면 null
+    function ghostInLine(line, today) {
+        line = String(line == null ? '' : line).replace(/\r/g, '').trim(); if (!line) return null;
+        const f = readLine(line, today); if (f.date) return null;
+        const nd = (String(f.note || '').match(NOTE_DATE) || [])[0] || null;
+        for (const c of [f.form === 'tab' ? f.c[0] : null, f.t ? f.t[0] : null, nd]) { const g = c ? ghostDate(c, today) : null; if (g) return g; }
+        return null;
     }
     const chOfText = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;
     const HEADER_LINE = /^요청일자|전화번호 또는 상품주문번호|^플[렛랫]폼/;
@@ -673,6 +694,10 @@
             // 날짜: 칸에 적힌 날짜 → (공백 줄) 남는 글 안의 날짜 → 요일
             let date = f.form === 'sp-key' ? (f.keyAt === 0 ? ((keep.match(NOTE_DATE) || [])[0] ? parseDate(keep.match(NOTE_DATE)[0], today) : null) : null) : f.date;
             let dateText = null, converted = false;
+            // #1186-b 날짜 자리(첫 칸·첫 낱말·남는 글 안 날짜 꼴)에 달력에 없는 날이 적혀 있음 → 기준일로 찍지 않고 「없는 날짜」 카드(사람이 고친다)
+            let ghost = null;
+            if (!date) { const nd = s => { const x = String(s || '').match(NOTE_DATE); return x ? x[0] : null; }; for (const c of [f.form === 'tab' ? f.c[0] : null, f.t ? f.t[0] : null, nd(keep), nd(f.note)]) { const g = c ? ghostDate(c, today) : null; if (g) { ghost = g; break; } } }
+            if (ghost) notes.push({ srcLine, raw: line, type: 'line-baddate', detail: `「${ghost}」은 달력에 없는 날짜예요. 날짜를 고쳐 적고 [다시 판정]을 눌러 주세요.`, ghost });
             if (!date) {
                 const src = (f.lead ? f.lead + ' ' : '') + keep;
                 const wds = new Set(); let wm; WEEKDAY.lastIndex = 0; while ((wm = WEEKDAY.exec(src))) wds.add(wm[1] || wm[2]);
@@ -690,10 +715,10 @@
             if (INDIV_WORD.test(note) && !INDIV.test(note)) { note = (note + ' 입력o삭제x').trim(); appended = true; }
             // 날짜 없는 개별발송·입력삭제 줄 = 기준 발송일로 읽는다(대표 메모는 「번호 개별발송처리」처럼 짧게 적는다 · 잘못 읽혀도 현금파일에 줄이 없으면 카드가 막는다). 기준일을 못 받았으면 안내만.
             const indivNoDate = !date && (appended || INDIV.test(note)); let stamped = false;
-            if (indivNoDate && shipDate) { date = shipDate; dateText = `${+shipDate.slice(5, 7)}/${+shipDate.slice(8, 10)}`; stamped = true; }
+            if (indivNoDate && shipDate && !ghost) { date = shipDate; dateText = `${+shipDate.slice(5, 7)}/${+shipDate.slice(8, 10)}`; stamped = true; }
             if (f.form === 'sp-key' && f.keyAt > 0 && !converted && !stamped) { out.push(raw); return; }   // 번호가 첫 낱말이 아닌데 날짜를 못 붙인 줄 = 그대로(v2 형식 오류)
             if (stamped) notes.push({ srcLine, raw: line, type: 'indiv-today', detail: `날짜가 없어 기준일 ${dateText} 개별발송으로 읽었어요`, date: shipDate });
-            else if (indivNoDate) notes.push({ srcLine, raw: line, type: 'indiv-nodate', detail: '개별발송 줄에 요청일자가 없어요. 날짜가 없으면 입력삭제로 처리되지 않아요.' });   // v2 는 날짜 없는 줄을 「날짜 없음 확인」으로만 읽는다
+            else if (indivNoDate && !ghost) notes.push({ srcLine, raw: line, type: 'indiv-nodate', detail: '개별발송 줄에 요청일자가 없어요. 날짜가 없으면 입력삭제로 처리되지 않아요.' });   // v2 는 날짜 없는 줄을 「날짜 없음 확인」으로만 읽는다
             if (SPLIT_NOTE.test(keep)) notes.push({ srcLine, raw: line, type: 'line-split', detail: keep });
             if (seg != null) {
                 const s = readSender(seg, keyCount); const digits = dg(f.key);
@@ -914,7 +939,7 @@
     }
 
     const api = { sizeOnlyMemo, prepLines, sizeLines, gwaLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
-        parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
+        parseDate, ghostDate, ghostInLine, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;
 })(typeof window !== 'undefined' ? window : null);

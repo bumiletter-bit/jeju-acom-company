@@ -49,6 +49,8 @@ function fakeDb() {
         if (/^UPDATE experience_bookings SET status=\$2, name=CASE WHEN contact_at IS NOT NULL THEN name ELSE COALESCE\(\$3,name\) END, phone=CASE WHEN contact_at IS NOT NULL THEN phone ELSE COALESCE\(\$4,phone\) END/.test(s)) {   // #804 사람이 넣은 이름·번호는 메일이 안 덮음
             const r = byId(a[0]); Object.assign(r, { status: a[1], visit_date: a[4], visit_time: a[5], date_ok: a[6] }); if (!r.contact_at) { if (a[2] != null) r.name = a[2]; if (a[3] != null) r.phone = a[3]; } return { rows: [] }; }
         if (/^SELECT 1 FROM experience_mail_seen/.test(s)) return { rows: S.seen.has(a[0]) ? [{}] : [] };
+        if (/^SELECT uid FROM experience_mail_seen/.test(s)) return { rows: [] };   // #1184 B9-b 본 uid 먼저 빼기(가짜 = uid 기록 없음 → 종전처럼 메시지 번호로 확인)
+        if (/^UPDATE experience_mail_seen SET uid/.test(s)) return { rows: [] };   // #1184 B9-b 읽은 메일 uid 고쳐 적기
         if (/^INSERT INTO experience_mail_seen/.test(s)) { S.seen.add(a[0]); return { rows: [] }; }
         // 오늘 보낸 것 = 실제로 보낸 칸(sms_recv_at · sms_eve_at)만 — 'now' 또는 S.sentToday(미리 쓴 수)
         if (/sms_recv_at \+ interval '9 hours'/.test(s)) return { rows: [{ n: (S.sentToday || 0) + S.rows.filter(r => r.sms_recv_at === 'now').length + S.rows.filter(r => r.sms_eve_at === 'now').length }] };

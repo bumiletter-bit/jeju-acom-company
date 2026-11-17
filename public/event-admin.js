@@ -611,7 +611,7 @@
         if (!S.ev) { root.dataset.mode = ''; root.innerHTML = '<p class="ev-empty">불러오는 중</p>'; return; }
         if (!S.id) {   // 회차가 아직 없음(lucky_events 0행) — 서버는 옛 회차로 보지만 화면은 새 회차부터만 길을 연다
             root.dataset.mode = 'none';
-            root.innerHTML = `<div class="ev-headbox"><div class="ev-head"><div class="ev-head-main"><h2 class="ev-round">회차 없음</h2><span class="ev-pill ev-pill-off">회차 없음</span></div></div></div>
+            root.innerHTML = `<div class="ev-headbox"><div class="ev-head"><div class="ev-head-main"><h2 class="ev-round">이벤트 회차</h2><span class="ev-pill ev-pill-off">아직 없음</span></div></div></div>
                 <section class="ev-none" aria-labelledby="ev-none-h"><h3 id="ev-none-h">아직 만든 이벤트 회차가 없어요</h3><p class="ev-note">새 회차를 만들면 기간·경품·그림·문구를 차례로 채우고 미리보기로 확인한 뒤 열 수 있어요. 열기 전에는 손님에게 보이지 않아요.</p>${btn('새 회차 시작', 'data-ev="new"', 'primary')}</section>`;
             return;
         }

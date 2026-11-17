@@ -311,6 +311,7 @@ module.exports = function mountExperience(app, deps) {
         for (const c of ['sms_recv_try_at TIMESTAMPTZ', 'sms_recv_tries INTEGER NOT NULL DEFAULT 0', 'sms_eve_try_at TIMESTAMPTZ', 'sms_eve_tries INTEGER NOT NULL DEFAULT 0', 'sms_skip VARCHAR(20)', 'confirm_state VARCHAR(12)', 'confirm_tries INTEGER NOT NULL DEFAULT 0', 'confirm_at TIMESTAMPTZ', 'confirm_error TEXT', 'dispatch_tries INTEGER NOT NULL DEFAULT 0', 'dispatch_at TIMESTAMPTZ', 'dispatch_error TEXT', 'contact_at TIMESTAMPTZ', 'contact_by VARCHAR(60)', 'sms_recv_via VARCHAR(10)', 'sms_eve_via VARCHAR(10)'])   // #808 *_via = 실제로 나간 길(alimtalk = 알림톡(실패 땐 알리고가 문자로 대체) | lms = 문자)   // #804 contact_* = 사람이 플레이스 손님 이름·번호를 넣은 때·사람(메일 재수집이 덮지 않음 · 문자 대상)
             await pool.query(`ALTER TABLE experience_bookings ADD COLUMN IF NOT EXISTS ${c}`);
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_mail_seen (message_id VARCHAR(200) PRIMARY KEY, uid BIGINT, booking_id INTEGER, state VARCHAR(16), seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+        await pool.query(`ALTER TABLE experience_mail_seen ADD COLUMN IF NOT EXISTS uidv BIGINT`);   // #1184 B9-b 읽은 때의 메일함 UIDVALIDITY(바뀌면 그 uid 기록은 안 믿음 · 옛 줄 = NULL)
         // #822(대표 10/22) 현장 판매(귤) = 그날 체험장에서 직접 판 귤 매출 — 날짜당 한 줄(합계 + 자유 메모) · 체험 예약 결제(네이버·플레이스)와 섞지 않음 · 이 창과 엑셀 둘째 시트에만 보임(정산·통계 무관)
         await pool.query(`CREATE TABLE IF NOT EXISTS experience_daily_sales (day DATE PRIMARY KEY, amount INTEGER NOT NULL DEFAULT 0, memo VARCHAR(200), updated_by VARCHAR(60), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
         // #940(대표 11/1) 날마다 특이사항 메모(알바 휴무 등) = 날짜당 한 줄 · 손님·알림톡·문자 흐름과 무관
@@ -517,7 +518,12 @@ module.exports = function mountExperience(app, deps) {
         const hide = (e) => new Error(String(e && e.message || e).split(pass).join('(비밀값)').split(user).join('(메일 계정)').slice(0, 200));
         let im;
         try { im = await (deps.imapOpen || imapOpen)({ host: 'imap.naver.com', port: 993, user, pass, timeoutMs: 40000 }); } catch (e) { throw hide(e); }
-        try { await im.login(); await im.examine('INBOX'); return await fn(im); }
+        try {
+            await im.login(); const ex = await im.examine('INBOX');
+            const vm = /UIDVALIDITY (\d+)/i.exec((Array.isArray(ex) ? ex : []).map(x => (x && x.text) || '').join(' '));   // #1184 B9-b 메일함 번호 체계(바뀌면 uid 가 다른 메일을 가리킴)
+            im.uidv = vm ? Number(vm[1]) : null;
+            return await fn(im);
+        }
         catch (e) { throw hide(e); }
         finally { await im.close(); }
     }
@@ -554,15 +560,28 @@ module.exports = function mountExperience(app, deps) {
             res = await withImap(async (im) => {
                 const uids = await im.search('SINCE ' + imapDate(Date.now() - c.days * 86400000) + ' ' + imapFromCrit(c.from_terms));
                 const out = { found: uids.length, done: 0, unknown: 0, canceled: 0, skip: 0 };
-                for (const uid of uids.slice(-c.max_per_tick)) {
+                // #1184 B9(점검 #1183): 안 읽은 메일만 오래된 것부터 max_per_tick 통 — 이미 읽은 메일은 몫을 쓰지 않음(종전 = 최근 20통만 봐서 3일 안에 20통 넘게 밀리면 앞 메일이 영영 안 읽힘)
+                //   #1184 B9-b(워커3 교차 점검): 읽은 메일은 uid 로 한 번에 먼저 뺀다(DB 한 번 · 머리 받기 0) — 종전 고침은 읽은 메일 머리도 틱마다 받고 그 몫(200)이 차면 201번째부터 영영 안 읽혔음
+                //   uid 기록 = 같은 메일함 번호 체계(uidv)일 때만 믿음(옛 줄 uidv NULL = 믿음 · 체계가 바뀌면 다시 머리로 확인) · 안 본 uid 는 머리의 메시지 번호로 한 번 더 확인
+                const uidv = im.uidv != null ? im.uidv : null;
+                const seenU = new Set(uids.length ? (await pool.query('SELECT uid FROM experience_mail_seen WHERE uid = ANY($1::bigint[]) AND (uidv IS NULL OR $2::bigint IS NULL OR uidv = $2::bigint)', [uids, uidv])).rows.map(x => Number(x.uid)) : []);
+                const fresh = uids.filter(u => !seenU.has(Number(u)));
+                out.skip = uids.length - fresh.length;
+                const HDR_MAX = Math.max(200, c.max_per_tick * 10);   // 안 본 uid 머리 받기 상한(한 틱이 길어지지 않게 · 남은 것은 다음 틱)
+                let hdrN = 0;
+                for (const uid of fresh) {
+                    if (out.done >= c.max_per_tick || hdrN >= HDR_MAX) break;
+                    hdrN++;
                     const hdr = await im.fetch(uid, 'BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]');
                     const mid = (hdr ? hdr.toString('latin1') : '').replace(/^message-id:\s*/i, '').replace(/[<>\s]/g, '').slice(0, 200) || ('uid' + uid);
-                    if ((await pool.query('SELECT 1 FROM experience_mail_seen WHERE message_id=$1', [mid])).rows.length) { out.skip++; continue; }
+                    if ((await pool.query('SELECT 1 FROM experience_mail_seen WHERE message_id=$1', [mid])).rows.length) {   // 읽은 메일인데 uid 가 바뀜(메일함 번호 체계 변경 등) = uid 만 고쳐 다음 틱부터 uid 로 빠지게
+                        await pool.query('UPDATE experience_mail_seen SET uid = $2, uidv = $3 WHERE message_id = $1', [mid, uid, uidv]); out.skip++; continue;
+                    }
                     const raw = await im.fetch(uid, 'BODY.PEEK[]');
-                    if (!raw || raw.length > 2 * 1024 * 1024) { await pool.query('INSERT INTO experience_mail_seen (message_id, uid, state) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [mid, uid, 'too-big']); continue; }
+                    if (!raw || raw.length > 2 * 1024 * 1024) { await pool.query('INSERT INTO experience_mail_seen (message_id, uid, state, uidv) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [mid, uid, 'too-big', uidv]); continue; }
                     const mail = parseMail(raw); if (!mail.messageId) mail.messageId = mid;
                     const s = await savePlace(mail, uid);
-                    await pool.query('INSERT INTO experience_mail_seen (message_id, uid, booking_id, state) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [mid, uid, s.id || null, s.state]);
+                    await pool.query('INSERT INTO experience_mail_seen (message_id, uid, booking_id, state, uidv) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [mid, uid, s.id || null, s.state, uidv]);
                     out.done++; if (s.state === 'unknown') out.unknown++; if (s.state === 'canceled') out.canceled++;
                 }
                 return out;

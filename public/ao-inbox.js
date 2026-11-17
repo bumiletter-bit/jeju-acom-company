@@ -331,7 +331,7 @@
             else { nd = String(r.body.draft != null ? (typeof r.body.draft === 'object' ? r.body.draft.text || '' : r.body.draft) : (r.body.draft_text || r.body.text || '')); note = typeof r.body.invoice_note === 'string' ? r.body.invoice_note.trim() : ''; }
         } catch (e) { msg = '통신이 끊겼어요'; }
         finally { I.drafting = false; }
-        if (I.open !== k) return;
+        if (I.open !== k) { sync(); return; }   // #1184 A12 만드는 중 다른 대화로 옮겼어도 단추 잠김을 풀어 둠(종전 = 다음 입력까지 잠김)
         if (msg || !nd) { toast('초안을 만들지 못했어요: ' + (msg || '봇이 답을 만들지 못했어요. 직접 적어 주세요'), 5000); sync(); return; }
         I.thread.draft = nd; I.tsig = ''; I.invNote = note ? { k, draft: nd, note } : null;
         fillDraft(); sync();

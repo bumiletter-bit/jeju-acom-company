@@ -255,6 +255,21 @@ function buildCard(m, orders) {
     };
 }
 
+// #1186 발송일 읽기 도우미(순수) — realDay = 달력에 있는 YYYY-MM-DD 인지 · fileShipDate = 파일 이름의 「월.일」 → YYYY-MM-DD(못 읽으면 null)
+//   종전 = 이름의 첫 「숫자.숫자」를 그대로 월-일로 → 「2.5kg」이 02-05 · 「0.5」「26.11」 같은 없는 날은 DB 에서 500. 지금 = 앞이 숫자가 아니고 뒤가 숫자·무게 단위가 아닌 것 중 달력에 있는 첫 날짜
+//   해 = 올해 · 오늘보다 한 달 넘게 뒤면 작년(1월에 올린 12월 파일)
+function realDay(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); if (!m) return false; const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return t.getUTCFullYear() === +m[1] && t.getUTCMonth() === +m[2] - 1 && t.getUTCDate() === +m[3]; }
+function fileShipDate(name, today) {
+    const s = String(name || ''), ty = +String(today).slice(0, 4), re = /(\d{1,2})\.(\d{1,2})/g; let m;
+    while ((m = re.exec(s))) {
+        const pre = m.index ? s[m.index - 1] : '', post = s.slice(m.index + m[0].length);
+        const iso = [ty, m[1].padStart(2, '0'), m[2].padStart(2, '0')].join('-');
+        if (/\d/.test(pre) || /^(\d|\s*(kg|g|키로|박스|개|과)(?![가-힣a-z]))/i.test(post) || !realDay(iso)) { re.lastIndex = m.index + 1; continue; }
+        if (Date.parse(iso) > Date.parse(today) + 31 * 86400e3) { const prev = [ty - 1, iso.slice(5, 7), iso.slice(8, 10)].join('-'); return realDay(prev) ? prev : null; }
+        return iso;
+    }
+    return null;
+}
 module.exports = function mountInvoiceAuto(app, d) {
     const { pool, authMiddleware, adminOnly, writeAudit, adminActor, ExcelJS, lois, fetchers, kstToday } = d;
     const log = d.log || console;
@@ -278,6 +293,7 @@ module.exports = function mountInvoiceAuto(app, d) {
         await pool.query(`ALTER TABLE invoice_auto_items ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
         // #939 그날 최종발주 표식(입력삭제 주문·오늘 안 나감 주문 열쇠 · 주문번호뿐 · 손님 정보 0) = 날짜당 한 줄(같은 날 다시 만들면 통째 교체 = 마지막이 정본) · 30일
         await pool.query(`CREATE TABLE IF NOT EXISTS final_order_marks (ship_date DATE PRIMARY KEY, indiv JSONB NOT NULL DEFAULT '[]', hold JSONB NOT NULL DEFAULT '[]', updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_by TEXT)`);
+        await healSending();   // #1186 기동 복구(함수 선언은 아래 · 호출은 장착이 끝난 뒤라 닿음)
     }
 
     // #939(대표 11/1 · 간혹 노트북에서 최종발주 · 자동 송장은 발주컴퓨터) 최종발주 표식을 서버에 → 자동 송장이 PC·브라우저와 무관하게 읽음
@@ -316,12 +332,15 @@ module.exports = function mountInvoiceAuto(app, d) {
                 const wb = new ExcelJS.Workbook(); try { await wb.xlsx.load(buf); } catch (e) { return res.status(400).json({ ok: false, error: '엑셀을 읽지 못했어요: ' + name }); }
                 const rows = lois.shipRows(wb);
                 if (!rows.length) return res.status(400).json({ ok: false, error: '「운송장번호」 머리글이 있는 시트가 없어요(CJ 운송장 시트인지 확인): ' + name });
-                const pm = name.match(/\(([^)]+)\)/); const partner = pm ? pm[1] : '?';
-                const dm = name.match(/(\d{1,2})\.(\d{1,2})/);
-                parsed.push({ name, partner, wb, rows, md: dm ? dm[1].padStart(2, '0') + '-' + dm[2].padStart(2, '0') : null });
+                const pm = (name.match(/\(([^)]+)\)/g) || []).map(x => x.slice(1, -1).trim()).find(x => x && !/^\d+$/.test(x)); const partner = pm || '?';   // #1186 브라우저가 붙인 「(1)」은 거래처 이름이 아님
+                parsed.push({ name, partner, wb, rows });
             }
             const today = kstToday();
-            const shipDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.ship_date || '')) ? req.body.ship_date : (parsed[0].md ? today.slice(0, 4) + '-' + parsed[0].md : today);
+            // #1186 발송일 = 화면이 보낸 날짜(사람이 고른 것) → 파일 이름의 「월.일」(「2.5kg」 같은 숫자·없는 날은 안 읽음) → 오늘 · 어디서 왔는지 ship_date_src 로 돌려줌
+            const bodyDate = String(req.body.ship_date || '');
+            if (bodyDate && !realDay(bodyDate)) return res.status(400).json({ ok: false, error: '발송일이 달력에 없는 날짜예요 — 발송일을 다시 골라 주세요' });
+            const fileDate = parsed.map(p => fileShipDate(p.name, today)).find(Boolean) || null;
+            const shipDate = bodyDate || fileDate || today, shipSrc = bodyDate ? 'picked' : fileDate ? 'file' : 'today';
             const days = Math.min(Math.max(parseInt(req.body.days, 10) || 30, 1), 60);
             // 3채널 재조회(읽기 · 종전 불러오기 함수 그대로) — 하나가 실패해도 나머지로
             const fetchInfo = {}, orders = [];
@@ -367,7 +386,7 @@ module.exports = function mountInvoiceAuto(app, d) {
                 [(adminActor(req) || {}).name || null, shipDate, hash.digest('hex').slice(0, 16), JSON.stringify(filesOut), JSON.stringify(fetchInfo), JSON.stringify(summary), JSON.stringify(stripPII(card))]);
             const runId = ins.rows[0].id;
             await writeAudit({ action: 'invoice_auto_match', targetType: 'invoice_auto_run', targetId: runId, changes: { ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, by_channel: card.by_channel }, source: 'invoice-auto', actor: adminActor(req) });
-            res.json({ ok: true, run_id: runId, ship_date: shipDate, files: filesOut, fetch: fetchInfo, summary, marks, ...card });
+            res.json({ ok: true, run_id: runId, ship_date: shipDate, ship_date_src: shipSrc, files: filesOut, fetch: fetchInfo, summary, marks, ...card });
         } catch (e) { log.error('[#838 자동 송장] 짝 맞추기 실패:', e && e.message); res.status(500).json({ ok: false, error: '짝 맞추기에 실패했어요 — 잠시 뒤 다시 해 주세요' }); }
         finally { _busy = false; }
     });
@@ -375,6 +394,13 @@ module.exports = function mountInvoiceAuto(app, d) {
     // ── #838-4 register = 준비(dry) → {dry:false} + send_enabled 이면 3채널 발송처리 ──
     const UNIT_KEY = row => row.channel === 'coupang' ? 'coupang:' + row.box_id : row.channel + ':' + row.order_key;   // 쿠팡 = 상자 · 그 밖 = 줄
     const BLOCK_STATES = ['sent', 'sending', 'unknown'];   // A: already 는 이 셋만(dry 준비 ready·실패 failed 는 새 실행이 덮음)
+    // #1186 전송 도중 서버가 멈추면(배포 재시작 등) 줄이 'sending' 에 남아 영영 「이미 등록」으로만 보였다 → 10분 넘은 sending = unknown(「모름 · 채널에서 확인」)
+    //   unknown 은 종전대로 다시 안 보냄(이중 전송 0) · 화면이 「앞 실행에서 결과를 모르는 줄」로 따로 보여 줌 · 기동(initDB)과 준비 저장 앞에서 한 번씩(가벼운 UPDATE)
+    const STALE_SENDING_MIN = 10;
+    async function healSending() {
+        try { const r = await pool.query(`UPDATE invoice_auto_items SET state = 'unknown', error_text = COALESCE(error_text, '전송 중 서버가 멈춤 · 채널 화면에서 발송 여부 확인'), updated_at = now() WHERE state = 'sending' AND updated_at < now() - make_interval(mins => $1::int)`, [STALE_SENDING_MIN]); if (r && r.rowCount) log.error('[자동 송장] 멈춘 sending ' + r.rowCount + '줄 → unknown'); return (r && r.rowCount) || 0; }
+        catch (e) { log.error('[자동 송장] sending 복구 실패:', e && e.message); return 0; }
+    }
     const errCls = e => (e && e.status >= 400 && e.status < 500) ? 'failed' : 'unknown';   // 4xx = 채널·relay 가 처리 전에 거절 · 그 밖(끊김·5xx) = 모름
     const errMsg = e => String((e && ((e.data && (e.data.error || e.data.message)) || e.reason || e.message)) || e || '').slice(0, 200);
     async function sendNaver(units) {   // ≤30 · 줄마다 판정(HTTP 상태만 믿지 않음 · 두 목록 어디에도 없으면 unknown)
@@ -405,7 +431,8 @@ module.exports = function mountInvoiceAuto(app, d) {
             let data = null, err = null;
             try { data = await transport.coupang(body); } catch (e) { err = e; data = e && e.data; }
             const dd = (data && data.data) ? data.data : (data || {});
-            const byBox = new Map((dd.responseList || []).map(x => [String(x.shipmentBoxId), x]));
+            // #1186 한 상자에 결과가 여러 줄 오면(옵션마다) 전부 성공일 때만 sent · 하나라도 실패면 그 실패로(종전 = 마지막 줄만 봄) · 상자당 한 줄(문서 예시 꼴)이면 종전과 같음
+            const byBox = new Map(); (dd.responseList || []).forEach(x => { const k = String(x.shipmentBoxId), cur = byBox.get(k); if (!cur || (cur.succeed === true && x.succeed !== true)) byBox.set(k, x); });
             for (const u of chunk) {
                 const x = byBox.get(u.box_id);
                 if (x && x.succeed === true) out.set(u.key, { state: 'sent' });
@@ -473,6 +500,7 @@ module.exports = function mountInvoiceAuto(app, d) {
                 u.rows.push(c.row); if (c.tr < u.tracking) u.tracking = c.tr; units.set(key, u);
             }
             // ③ 준비 저장(A: already = sent·sending·unknown 만 · 그 밖은 이 실행이 덮음)
+            await healSending();   // #1186 멈춘 sending → unknown(아래 prev 판정 전에)
             const ready = { naver: 0, coupang: 0, cafe24: 0 }; let already = 0; const readyUnits = [];
             for (const u of units.values()) {
                 const prev = (await pool.query(`SELECT run_id, state, tracking FROM invoice_auto_items WHERE idem_key = $1`, [u.key])).rows[0];
@@ -578,3 +606,6 @@ module.exports.maskRecipient = maskRecipient;
 module.exports.stripPII = stripPII;
 module.exports.canonOf = canonOf;
 module.exports.partnerGuess = partnerGuess;   // #1051
+
+module.exports.fileShipDate = fileShipDate;   // #1186
+module.exports.realDay = realDay;

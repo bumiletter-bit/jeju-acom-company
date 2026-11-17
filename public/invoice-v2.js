@@ -29,7 +29,7 @@
     const CH_LABEL = { naver: '🛒 네이버', cafe24: '🏠 자사몰', coupang: '🛍️ 쿠팡' };
     const PLACEHOLDER = new Set(['01000000000', '0000000000', '00000000000']);   // 네이버 선물하기 등 번호 비공개 주문의 자리표시 번호 — 실데이터에 존재(9/18 1건) → 어떤 칸에 적혀도 매칭 금지
     const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
-    const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) ? null : dt.toISOString().slice(0, 10); };
+    const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d ? null : dt.toISOString().slice(0, 10); };
     const mdLabel = iso => iso ? `${parseInt(iso.slice(5, 7))}/${parseInt(iso.slice(8, 10))}` : '';
     // embed(iframe) 모드: 내용 높이(달력 팝업 포함)를 바깥 페이지에 알려 iframe이 스크롤 없이 늘어나게 — 렌더·달력 열림/닫힘 때 즉시 + 주기
     const IS_EMBED = () => document.body.classList.contains('embed') && window.parent !== window;
@@ -82,13 +82,14 @@
         if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
         else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }
         else if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) { mo = +m[1]; d = +m[2]; }
-        else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; } }
+        else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; if (mo > 12) { mo = 1; y = ty + 1; } } }
         else return null;
         if (mo > 12 && d <= 12 && !y) return null;   // 애매한 D/M 형식은 안 받음
         if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
         if (y == null) { y = ty; if (mo > 12) { mo -= 12; y++; } }
-        let iso = isoOf(y, mo, d); if (!iso) return null;
-        if (!m[3] && !/^\d{4}/.test(s) && Date.parse(iso) < Date.parse(today) - 300 * 86400e3) iso = isoOf(y + 1, mo, d);
+        const roll = !m[3] && !/^\d{4}/.test(s) && Date.UTC(y, mo - 1, d) < Date.parse(today) - 300 * 86400e3;   /* #1186 해 넘김 판정은 종전 그대로(넘치는 날 포함) · 없는 날은 못 읽음 */
+        let iso = isoOf(y, mo, d); if (!iso && !roll) return null;
+        if (roll) iso = isoOf(y + 1, mo, d);
         return iso;
     }
     const chOfText = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;

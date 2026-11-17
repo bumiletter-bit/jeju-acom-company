@@ -115,8 +115,8 @@
             sure: r.sure === true, check_why: Array.isArray(r.check_why) ? r.check_why.map(String) : (r.check_why ? [String(r.check_why)] : []), src: r.src || '',
             stale: r.stale === true, indiv: r.indiv === true, state: r.state || 'open', used_on: r.used_on ? String(r.used_on).slice(0, 10) : null, cleared_at: r.cleared_at || '', entry: entry || {},
             addr_ok: r.addr_ok && typeof r.addr_ok === 'object' ? r.addr_ok : ('addr_ok' in r ? null : undefined) };   // #880-b 주소 「이대로 둘게요」 서버 기록 · undefined = 옛 서버(화면 기억 AKEPT 로)
-        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; o.exp_site = r.exp_site === true; o.pair_orig = r.pair_orig && typeof r.pair_orig === 'object' ? r.pair_orig : null; o.out_b = r.out_b ? String(r.out_b) : null; o.out_k = r.out_k ? String(r.out_k) : null; o.out_k_set = r.out_k_set ? String(r.out_k_set) : null; }   /* #1146 택배 양식에 나갈 B·K(서버 · 없으면 줄 값) */   // #949 붙기 전 번호 · #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
-        else { o.badge = r.badge && typeof r.badge === 'object' ? r.badge : null; o.boxes = Array.isArray(r.boxes) && r.boxes.length ? r.boxes : null; o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
+        if (o.kind === 'cash') { o.cells = Array.from({ length: 13 }, (_, i) => (Array.isArray(r.cells) && r.cells[i] != null ? String(r.cells[i]) : '')); o.missing = Array.isArray(r.missing) ? r.missing.map(Number) : []; o.service = r.service === true; o.exp_site = r.exp_site === true; o.split_done = /^\d{4}-\d{2}-\d{2}$/.test(String(r.split_done || '')) ? String(r.split_done) : null;   /* #1186 서버가 내려준 「발송처리 끝」 표식을 옮김(종전 = 안 옮겨 알약·lostOf 가 한 번도 안 탐) */ o.pair_orig = r.pair_orig && typeof r.pair_orig === 'object' ? r.pair_orig : null; o.out_b = r.out_b ? String(r.out_b) : null; o.out_k = r.out_k ? String(r.out_k) : null; o.out_k_set = r.out_k_set ? String(r.out_k_set) : null; }   /* #1146 택배 양식에 나갈 B·K(서버 · 없으면 줄 값) */   // #949 붙기 전 번호 · #900 1-C 서비스 줄(현금 꼴 「!」 · 입력삭제 대조 밖)
+        else { o.badge = r.badge && typeof r.badge === 'object' ? r.badge : null; o.boxes = Array.isArray(r.boxes) && r.boxes.length ? r.boxes : null; o.key = r.key || ''; o.note = r.note || ''; o.plat = r.plat || ''; o._key0 = digits(o.key); o._plat0 = o.plat;   /* #1186 받아 온 때의 번호·판매처(안 바뀌었으면 lkCheck 가 split_sent·pno·ship_memo 보존) */ o.line = r.line || [o.ship_date ? md(o.ship_date) : '', o.key, o.note, o.plat].join('\t'); o.checked = r.checked || null; }
         return o;
     }
     const outRow = r => Object.assign(r.kind === 'cash' ? Object.assign({ kind: 'cash', ship_date: r.ship_date || null, cells: r.cells.slice(), indiv: !!r.indiv }, r.pair_orig ? { pair_orig: r.pair_orig } : (r._ik != null && digits(r._ik0) ? { pair_orig: { a: r.cells[0] || '', b: r._ib0 || '', k: r._ik0, d: r.ship_date || null } } : {}), r.service ? { service: true } : {}, r.exp_site ? { exp_site: true } : {}, !r.service && (r._indOff || r._noIndiv) ? { no_indiv: true } : {}) : Object.assign({ kind: 'line', ship_date: r.ship_date || null, key: r.key, note: r.note, plat: r.plat, line: r.line, checked: r.checked || null }, Array.isArray(r.boxes) && r.boxes.length ? { boxes: r.boxes } : {}), r.src ? { src: r.src } : {});   // #1021 박스별 줄 = boxes   // 미리보기에서 받은 src·line 을 그대로(출처 보존 · 고쳤으면 서버가 다시 만듦 · 계약 §6)
@@ -127,6 +127,7 @@
     // #850-c 새로 더한 빈 줄(_new)은 손대기 전엔 빨간 글·빈칸 셈 없음(저장 때 그냥 버림) — 대표 「+ 메모 줄을 확인 단추로 착각」
     const blanksOf = (r, inCard) => r._new || r._ce ? [] : (r.kind === 'cash' ? CASH_FIELDS : LINE_FIELDS).filter(f => f.need && (inCard || !f.cardOnly) && !String(valOf(r, f)).trim());
     const isLater = r => !!(r.ship_date && OM.shipDate && r.ship_date > OM.shipDate);
+    const isPast = r => !!(r && (r.kind === 'cash' || (isBoxRow(r) && Array.isArray(r.boxes) && r.boxes.length > 0)) && r.state === 'open' && r.ship_date && OM.shipDate && r.ship_date < OM.shipDate);   /* #1186 지난 날짜 현금·주소 줄 = 서버 for-ship 이 「지난 날짜예요」로 빼는 줄(order-memo.js pickForShip) — 종전엔 「다음 발주」로 보였다 */
     const isCheck = r => !r.sure || blanksOf(r).length > 0;
     const whyOf = r => r.check_why.length ? r.check_why.join(' · ') : blanksOf(r).map(f => f.why).join(' · ');
     // 카드 안 줄 머리 이유 = 칸 아래 빨간 글과 겹치지 않는 것만(「주소가 없어요」는 배송지 칸 아래에 이미 있음)
@@ -136,6 +137,7 @@
     function pillOf(r) {
         if (isCheck(r)) return { k: 'check', t: (r.stale ? '오래된 ' : '') + (blanksOf(r).length ? '빈칸 ' + blanksOf(r).length : '확인') };   // stale = 7일 넘게 안 고친 확인 줄(설정 unsure_days 넘으면 · 대표 10/28 30→10일 서버가 지움)
         if (isLater(r)) return { k: 'later', t: md(r.ship_date) + ' 발송 · 대기' };
+        if (isPast(r)) return { k: 'past', t: '지난 날짜 · 안 들어감' };   /* #1186 */
         // #1020(대표 11/5) 날짜 줄 = 발송일 기준 · 「11/5 발송」 줄이 11/4 발주에서 보류(used_on 11/4)돼도 「11/4 발주에 넣음」(나갔다는 뜻으로 읽힘) 대신
         //   발송일 == 다음 발주 = 「오늘 발송」 · 발송일이 넣은 날보다 뒤 = 종전 「M/D 발송 · 대기」 · 「발주에 넣음」 = 발송일 없거나 발송일 ≤ 넣은 날일 때만
         if (r.ship_date && OM.shipDate && r.ship_date === OM.shipDate) return { k: 'today', t: '오늘 발송' };
@@ -762,6 +764,11 @@
             c.leftover = s.leftover || c.leftover || c.raw;
             c.deskNote = s.message || '창구가 정리하지 못했어요 — 남은 글은 직접 채워 주세요';
         }
+        // #1186 치는 칸·달력이 있으면 다시 그리기를 미룬다(pxRedraw 와 같은 꼴 · 종전 = 바로 다시 그려 치던 칸의 초점이 첫 빈칸으로 옮겨감 → 이어 친 글이 다른 칸에)
+        if (cardTyping()) { toast('창구 정리가 끝났어요 · 치던 칸을 벗어나면 결과가 보여요'); const go = () => { if (OM.card !== c) return; if (cardTyping()) { setTimeout(go, 400); return; } waitDraw(c); }; setTimeout(go, 400); return; }
+        waitDraw(c);
+    }
+    function waitDraw(c) {
         renderCard();
         c.rows.forEach((r, i) => { if (r.kind === 'line' && !r._lk && !r._new) lkRun(i); });   // #867 창구가 나중에 넣은 메모 줄도 판매처 확인(입력삭제 받는 분 번호 막기)
         c.rows.forEach((r, i) => { if (r.kind === 'cash' && !r._addr && String(r.cells[8] || '').trim()) addrRun(i); });   // #882 창구가 나중에 넣은 현금 줄도 주소 확인(종전 = cardOpen 의 lkAll 만 돌아 AI 줄은 빠졌음 · ACACHE 공용)
@@ -805,7 +812,7 @@
     // #878(대표 A안 10/27) 왼쪽 「지금 메모」 = 메모 줄(kind line)만 · 현금 줄(현금 손님·입력삭제 주소 줄) = 오른쪽 「현금 줄」 표에서만
     const memoRows = () => (OM.list || []).filter(r => r.kind !== 'cash');
     const cashRows = () => (OM.list || []).filter(r => r.kind === 'cash');
-    const RANK_K = { check: 0, next: 1, today: 1, later: 2, used: 3 };   // #1020 pillOf 와 같은 판정(오늘 발송 = 다음 발주 무리 · 보류됐다 뒤 날짜 = 날짜 대기 무리)
+    const RANK_K = { check: 0, past: 0, next: 1, today: 1, later: 2, used: 3 };   // #1020 pillOf 와 같은 판정(오늘 발송 = 다음 발주 무리 · 보류됐다 뒤 날짜 = 날짜 대기 무리)
     const rankOf = r => OM.tab !== 'open' ? 0 : (RANK_K[pillOf(r).k] ?? 1);   // 확인할 줄 → 다음 발주(미리 열어 넣은 줄도 · #873) → 날짜 대기 → 넣은 것 · 같은 무리 안은 최근 순
     const byRank = rows => rows.slice().sort((a, b) => rankOf(a) - rankOf(b) || String(b.entry.created_at || '').localeCompare(String(a.entry.created_at || '')));
     // #879(대표 10/27 · #878 다시) 왼쪽 = 「다음 발주에 들어갈 것」 메모 칸 꼴 상자(고정폭 글 한 줄씩 · 줄마다 체크·× · 누르면 고치기) · 비운 것(keep_days일) 탭은 종전 카드
@@ -841,9 +848,9 @@
         if (OM.loading && !rows) { ul.innerHTML = '<li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li><li class="om-skel" aria-hidden="true"></li>'; sum.textContent = ''; return; }
         if (OM.err) { ul.innerHTML = `<li class="om-empty err"><b>${esc(OM.err)}</b><button type="button" class="om-btn sm" data-act="reload">다시 불러오기</button></li>`; sum.textContent = ''; return; }
         if (isOpenTab && open.length) {
-            const ready = open.filter(r => !isCheck(r) && !isLater(r));
+            const ready = open.filter(r => !isCheck(r) && !isLater(r) && !isPast(r)), nPast = open.filter(r => !isCheck(r) && isPast(r)).length;   /* #1186 지난 날짜 줄은 「들어가요」에서 빼고 따로 */
             const nLine = ready.filter(r => r.kind === 'line').length, nCash = ready.filter(r => r.kind === 'cash').length, nLater = open.filter(r => !isCheck(r) && isLater(r)).length;
-            sum.innerHTML = `메모 ${nLine}줄 · 현금 ${nCash}줄 들어가요` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
+            sum.innerHTML = `메모 ${nLine}줄 · 현금 ${nCash}줄 들어가요` + (nLater ? ` · 날짜 대기 ${nLater}` : '') + (nPast ? ` · <em>지난 날짜 ${nPast}줄은 안 들어가요</em>` : '') + (nCheck ? ` · <em>확인 ${nCheck}</em>` : '');
         } else sum.textContent = isOpenTab ? '' : (rows && rows.length ? (OM.clq && OM.clq.trim() ? `${clrShown(rows).length}줄 찾음 · ` : '') + '최근 비운 줄이 위 · ' + (OM.keepDays ? `비운 지 ${OM.keepDays}일이 지나면` : '오래 지나면') + ' 영구로 지워져요.' : '');
         if (!rows || !rows.length) {
             const nc = cashRows().length;
@@ -1043,8 +1050,8 @@
         { const l = $('om-cselall'), t = l && l.parentNode.lastChild; if (t && t.nodeType === 3) t.textContent = big ? '이 쪽 전체 선택' : '전체 선택'; }   // #900 2-B 큰 표 = 보이는 쪽만
         cashAllBtn(big, found);
         const pb = $('om-prev-open'); if (pb) pb.textContent = all.length ? `현금 줄 ${all.length}` : '현금 줄';
-        const nChk = all.filter(isCheck).length, nWait = all.filter(r => !isCheck(r) && isLater(r)).length, held = $('om-cheld');
-        held.hidden = !(nChk || nWait); held.textContent = [nChk ? `확인 안 된 ${nChk}줄은 안 들어가요` : '', nWait ? `날짜 대기 ${nWait}줄은 그날 들어가요` : ''].filter(Boolean).join(' · ');
+        const nChk = all.filter(isCheck).length, nWait = all.filter(r => !isCheck(r) && isLater(r)).length, nPastC = all.filter(r => !isCheck(r) && isPast(r)).length, held = $('om-cheld');
+        held.hidden = !(nChk || nWait || nPastC); held.textContent = [nChk ? `확인 안 된 ${nChk}줄은 안 들어가요` : '', nWait ? `날짜 대기 ${nWait}줄은 그날 들어가요` : '', nPastC ? `지난 날짜 ${nPastC}줄은 안 들어가요 · 줄을 눌러 발송일을 고쳐 주세요` : ''].filter(Boolean).join(' · ');
         if (!OM.list) box.innerHTML = OM.loading ? '<div class="om-skel" aria-hidden="true"></div>' : '';
         else if (!all.length) box.innerHTML = '<p class="om-empty"><b>현금 줄이 없어요</b><span>[주문입력]이나 입력삭제 주소 줄을 넣으면 여기에 쌓여요.</span></p>';
         else if (!shown.length) box.innerHTML = `<p class="om-empty"><b>「${esc(OM.cq.trim())}」 찾는 현금 줄이 없어요</b></p>`;
@@ -2093,7 +2100,8 @@
         const res = await API.update(r.id, { key: tel, note: r.note, plat: r.plat, ship_date: r.ship_date || null, checked: { plat: r.plat || '네이버', as: 'buyer', at: new Date().toISOString() } });
         if (!res.ok) { b.disabled = false; toast(errText(res, '합치지 못했어요')); return; }
         let gone = 0; for (const x of sibs) { const y = await API.remove(x.id); if (y.ok) gone++; }
-        cardClose(true); toast(`전화번호 줄 ${tel} 하나로 합쳤어요${gone ? ` · 주문번호 줄 ${gone}개는 「비운 것」으로` : ''}`); load();
+        const left = sibs.length - gone;   /* #1186 못 지운 주문번호 줄 수 안내 */
+        cardClose(true); toast(`전화번호 줄 ${tel} 하나로 합쳤어요${gone ? ` · 주문번호 줄 ${gone}개는 「비운 것」으로` : ''}${left ? ` · 주문번호 줄 ${left}개가 남았어요 · 목록에서 직접 지워 주세요` : ''}`, left ? 6000 : undefined); load();
     }
     const canLook = k => { const s = String(k || '').trim(), d = digits(s); return /^\d{8}-\d{7}$/.test(s) || /^0\d{8,11}$/.test(d) || (!/^0/.test(d) && /^\d{10,20}$/.test(d)); };
     const lkIn = r => { const m = (r._lk && r._lk.matches) || []; return r.plat ? m.filter(x => x.plat === r.plat) : m; };
@@ -2137,7 +2145,8 @@
     // #867 손질 ① 입력삭제 줄 찾기가 도는 중이거나 지금 번호 ≠ 찾은 번호(0.7초 틈) = 잠깐 막음 · 찾기 결과가 없는 줄(_lk 없음)·연결 오류·판매처 미선택은 안 막음
     const indivPendAt = () => OM.card ? OM.card.rows.findIndex(r => !r._new && isIndivRow(r) && !!r._lk && (r._lk.state === 'busy' || r._lk.key !== digits(r.key))) : -1;
     const optBrief = s => shortOpt(String(s || '').replace(/^[^:]*선택\s*:\s*/, '').replace(/^\d+\.\s*/, ''));
-    function lkCheck(r) { const m = r.plat && r._lk && r._lk.state === 'done' ? lkIn(r) : [], b = !isPhoneKey(r.key) && r.checked && r.checked.buyer && isPhoneKey(r.checked.buyer) ? r.checked.buyer : null; r.checked = m.length ? Object.assign({ plat: r.plat, as: m[0].as, at: new Date().toISOString() }, b ? { buyer: b } : {}) : (b ? Object.assign({}, r.checked, { buyer: b }) : null); }   // #938 주문번호 줄의 구매자 번호(checked.buyer)는 찾기 결과가 와도 보존
+    function lkCheck(r) { const m = r.plat && r._lk && r._lk.state === 'done' ? lkIn(r) : [], b = !isPhoneKey(r.key) && r.checked && r.checked.buyer && isPhoneKey(r.checked.buyer) ? r.checked.buyer : null; const c0 = r.checked && typeof r.checked === 'object' && r._key0 != null && r._key0 === digits(r.key) && r._plat0 === r.plat ? r.checked : null, keep = {}; if (c0) ['split_sent', 'pno', 'ship_memo'].forEach(k => { if (c0[k] != null && c0[k] !== '') keep[k] = c0[k]; });   /* #1186 번호·판매처가 그대로면 첫날 발송처리 표식·고른 주문·배송메모는 찾기 결과가 다시 와도 보존(종전 = 새 객체로 덮어 저장 때 지워짐) */
+        r.checked = m.length ? Object.assign({ plat: r.plat, as: m[0].as, at: new Date().toISOString() }, b ? { buyer: b } : {}, keep) : (b ? Object.assign({}, r.checked, { buyer: b }) : (keep.split_sent && c0.plat && c0.as ? Object.assign({ plat: c0.plat, as: c0.as, at: c0.at || new Date().toISOString() }, keep) : null)); }   // #938 주문번호 줄의 구매자 번호(checked.buyer)는 찾기 결과가 와도 보존
     function lkPaint(ri) {   // 판매처 단추·결과 글·빈칸 숫자만 다시 칠함(다시 그리지 않음 — 초점·자판 유지)
         const c = OM.card, r = c && c.rows[ri]; if (!r) return;
         if (r._ce) { const ce = $('om-card').querySelector('#om-ce-' + ri); if (ce && !ce.contains(document.activeElement)) ce.innerHTML = ceListHtml(r, ri); return; }   // #1027
@@ -2469,11 +2478,12 @@
         if (c.mode !== 'edit') rows = rows.flatMap(r => r.kind === 'line' ? [r].concat(xoRows(r)) : [r]);   // #1025 다른 품목 주문 과수·사이즈 = 같은 묶음 두 번째 줄
         if (c.mode !== 'edit') rows = expandOrders(rows);   // #938 주문별 발송일이 다르면 주문번호 줄들로
         if (c.pair1 && c.pair1.seen && !indKeyOk(c)) c.rows.forEach(r => { if (r.kind === 'cash') r._noIndiv = c.pair1.seen.has(r) && !c.pair1.sel.has(r) && !r.indiv; });   // #900 1-H ① 묻기에서 체크를 끈 줄 = 같은 묶음에 그 번호 입력삭제 줄이 있어도 서버 markIndiv 가 짝짓지 않게(no_indiv)
-        if (!rows.length) { cardClose(true); return; }
-        if (c.ind && c.ind.on && !indKeyOk(c)) { toast('주문자(구매자) 번호를 넣거나 「입력삭제 주소예요」를 꺼 주세요'); const k = $('om-ind-key'); if (k) { k.scrollIntoView({ block: 'center' }); k.focus({ preventScroll: true }); } return; }   // #895
-        if (indivPendAt() >= 0) { toast('번호 확인 중이에요 · 잠시 뒤 다시 눌러 주세요'); return; }   // #867 손질 ①
+        if (!rows.length) { c._saving = false; cardClose(true); return; }
+        if (c.ind && c.ind.on && !indKeyOk(c)) { c._saving = false; /* #1186 저장이 막혀 돌아갈 때 저장 중 표시를 푼다(안 풀면 판의 줄이 안 눌림) */ toast('주문자(구매자) 번호를 넣거나 「입력삭제 주소예요」를 꺼 주세요'); const k = $('om-ind-key'); if (k) { k.scrollIntoView({ block: 'center' }); k.focus({ preventScroll: true }); } return; }   // #895
+        if (indivPendAt() >= 0) { c._saving = false; toast('번호 확인 중이에요 · 잠시 뒤 다시 눌러 주세요'); return; }   // #867 손질 ①
         const bad = indivBadAt();   // #867 입력삭제 줄이 받는 분 번호 = 저장 안 함(저장 안 되면 [메모함 적용하기]에도 안 들어감)
         if (bad >= 0) {
+            c._saving = false;
             toast('입력삭제는 구매자 번호로 넣어야 송장이 붙어요 · 구매자 번호로 바꾼 뒤 저장해 주세요');
             cardReveal(c, bad); const rc = $('om-card').querySelectorAll('.om-rowcard')[bad], t = rc && (rc.querySelector('.om-lk-fix') || rc.querySelector('#om-f-' + bad + '-key'));
             if (t) { t.scrollIntoView({ block: 'center' }); t.focus({ preventScroll: true }); }
@@ -2516,8 +2526,8 @@
             const sp = v => String(v || '').replace(/\s+/g, ' ').trim();   // 서버가 탭·줄바꿈을 빈칸으로 바꿔 저장 → 견줄 땐 빈칸 하나로 · 보낼 땐 서버에 저장된 글 그대로(claude-69)
             await Promise.all(rows.map((r, i) => { const x = sv[i], saved = x ? String((x.cells || [])[8] || '').trim() : ''; if (r.kind !== 'cash' || !r._addrOk || !x || x.id == null || sp(saved) !== sp(r._addrOk) || (x.addr_ok && x.addr_ok.raw === saved)) return null; return addrOkSave(x.id, saved); }));
         }
-        for (const id of drop) await API.remove(id);   // [바꾸기] = 새 줄 저장이 된 뒤 옛 줄을 「비운 것」으로(되살리기 가능)
-        if (skipped || drop.length) toast([skipped ? `같은 줄 ${skipped}개는 이미 있어 뺐어요` : '', drop.length ? `옛 줄 ${drop.length}개를 새 것으로 바꿨어요` : ''].filter(Boolean).join(' · '));
+        let dropFail = 0; for (const id of drop) { const y = await API.remove(id); if (!y || !y.ok) dropFail++; }   // [바꾸기] = 새 줄 저장이 된 뒤 옛 줄을 「비운 것」으로(되살리기 가능) · #1186 지우기 결과를 확인(실패를 성공으로 안내하지 않음)
+        if (skipped || drop.length) toast([skipped ? `같은 줄 ${skipped}개는 이미 있어 뺐어요` : '', drop.length - dropFail ? `옛 줄 ${drop.length - dropFail}개를 새 것으로 바꿨어요` : '', dropFail ? `옛 줄 ${dropFail}개가 남았어요 · 목록에서 직접 지워 주세요(같은 번호 줄이 둘이에요)` : ''].filter(Boolean).join(' · '), dropFail ? 6000 : undefined);
         c.rows.forEach(r => { if (r.kind === 'cash' && r.cells[4]) recentPut(optBase(r.cells[4])); });   // #856 최근 목록 = 꼬리 뗀 품목 이름
         const saved = (res.body && (Array.isArray(res.body.rows) ? res.body.rows : res.body.row ? [res.body.row] : [])).map(r => normRow(r));
         const n = saved.length || c.rows.length, nCheck = saved.length ? saved.filter(r => !r.sure).length : blankN();

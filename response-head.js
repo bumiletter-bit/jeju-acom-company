@@ -60,13 +60,16 @@ module.exports = function mountResponseHead(app, deps) {
     const cfgGet = async key => { try { const r = await pool.query(`SELECT value FROM ${T.config} WHERE key = $1`, [key]); return r.rows[0] ? r.rows[0].value : null; } catch (e) { return null; } };
 
     // ───────── 숫자 ─────────
+    // #1184 A12(점검 #1183): 셈 창 = KST 날짜로 「오늘 포함 n일」(화면 기간 글 from~to 와 같음 · 종전 = 지금부터 n×24시간이라 첫날 앞 반나절이 더 들어가 글보다 하루 길었음)
+    //   칸이 전부 timestamp(시간대 없음 · UTC 값)라 KST 첫날 0시를 UTC 글자로 바꿔 견준다
+    const winStart = days => new Date(Date.parse(kstDay(now() - (days - 1) * 86400e3) + 'T00:00:00+09:00')).toISOString().slice(0, 19).replace('T', ' ');
     async function talkStats(days) {
         const r = await pool.query(`
             WITH w AS (SELECT id, user_id, message, answered, bot_response, staff_response, reviewed_at FROM ${T.logs}
-                       WHERE received_at > (NOW() AT TIME ZONE 'UTC') - make_interval(days => $1::int) AND user_id IS NOT NULL AND user_id NOT LIKE 'kakao:%' AND user_id NOT LIKE 'mall:%'),
+                       WHERE received_at >= $1::timestamp AND user_id IS NOT NULL AND user_id NOT LIKE 'kakao:%' AND user_id NOT LIKE 'mall:%'),
                  r AS (SELECT user_id, COALESCE(max(id) FILTER (WHERE reviewed_at IS NOT NULL), 0) AS rid FROM w GROUP BY user_id),
                  l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, (btrim(COALESCE(message, '')) IN ('${ENTRY}', '${ENTRY2}') AND btrim(COALESCE(staff_response, '')) = '') ASC, id DESC)
-            SELECT l.id, l.message, l.answered, l.bot_response, l.staff_response, r.rid FROM l JOIN r USING (user_id)`, [days]);
+            SELECT l.id, l.message, l.answered, l.bot_response, l.staff_response, r.rid FROM l JOIN r USING (user_id)`, [winStart(days)]);
         const o = zero();
         for (const x of r.rows) { const b = talkBin(x); if (b) { o[b]++; o.total++; } }
         return o;
@@ -76,7 +79,7 @@ module.exports = function mountResponseHead(app, deps) {
               count(*) FILTER (WHERE (answered OR posted_at IS NOT NULL) AND posted_by = 'auto')::int AS bot,
               count(*) FILTER (WHERE ((answered OR posted_at IS NOT NULL) AND COALESCE(posted_by, '') <> 'auto') OR (NOT answered AND posted_at IS NULL AND reviewed_at IS NOT NULL))::int AS staff,
               count(*) FILTER (WHERE NOT answered AND posted_at IS NULL AND reviewed_at IS NULL)::int AS open
-            FROM ${table} WHERE collected_at > NOW() - make_interval(days => $1::int)`, [days])).rows[0];
+            FROM ${table} WHERE collected_at >= $1::timestamp`, [winStart(days)])).rows[0];
         return { total: r.bot + r.staff + r.open, bot: r.bot, staff: r.staff, open: r.open };
     }
     const _cache = new Map();   // days → { at, v }
@@ -118,9 +121,12 @@ module.exports = function mountResponseHead(app, deps) {
 
     app.get('/api/agent-office/response-stats', authMiddleware, guard(async (req, res) => {
         const days = String(req.query.days || '') === '30' ? 30 : 7;
-        const [c, st, mat, pv] = await Promise.all([counts(days), settings(), materials(), previewLeft()]);
+        const [c, st, mat, pv, c14] = await Promise.all([counts(days), settings(), materials(), previewLeft(), counts(14)]);
         const t = now();
-        res.json({ ok: true, days, from: kstDay(t - (days - 1) * 86400e3), to: kstDay(t), channels: c.channels, all: c.all, settings: st, materials: mat, preview: pv });
+        // #1184 A12(점검 #1183): ①「아직 안 답함」을 손님 연락 창과 같은 14일 기준으로도 실어 줌(open14 · 7일·30일 숫자와 따로 · 화면은 app.js 가 옆에 「14일 안 n건」)
+        //   ② 기간 글 from~to 는 종전 그대로(오늘 포함 n일) · 셈 창을 그 글에 맞춤(winStart)
+        const open14 = { all: c14.all ? c14.all.open : null }; for (const k of STAT_CH) open14[k] = c14.channels[k] ? c14.channels[k].open : null;
+        res.json({ ok: true, days, from: kstDay(t - (days - 1) * 86400e3), to: kstDay(t), channels: c.channels, all: c.all, open14, settings: st, materials: mat, preview: pv });
     }));
 
     // ───────── 미리보기 ─────────

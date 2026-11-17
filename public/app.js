@@ -1901,7 +1901,7 @@ async function renderSettlementCalendar() {
             entries: []
         };
 
-        dailyPayments[s.date].entries.push({ id: s.id, partner: s.partner, amount, isPaid, items: s.items });
+        dailyPayments[s.date].entries.push({ id: s.id, partner: s.partner, amount, isPaid, items: s.items, paidAmount: s.paidAmount });
 
         if (s.partner === '대성(시온)') {
             dailyPayments[s.date].daesung += amount;
@@ -1950,7 +1950,7 @@ async function renderSettlementCalendar() {
     Object.keys(dailyPayments).forEach(date => { monthlyTotal += dailyPayments[date].cj; });
     // CJ 이월금액 합산
     monthlyTotal += cjCarryover;
-    document.getElementById('monthly-total-badge').textContent = `${monthNum}월 총 결제금액: ${monthlyTotal.toLocaleString()}원`;
+    document.getElementById('monthly-total-badge').textContent = `${monthNum}월 전체(결제완료 포함): ${monthlyTotal.toLocaleString()}원`;   // #1185 옆 큰 카드(미결제만)와 헷갈리지 않게
 
     // CJ 카드: 이월금액 반영
     const cjTotal = cjCarryover + cjPayment;
@@ -2110,7 +2110,7 @@ window.showSettlementDayModal = function(dateStr) {
                 <span class="entry-partner" onclick="showSettlementItemsModal(${e.id})" title="클릭: 상품/수량 상세 (수량 수정 가능)" style="cursor:pointer;color:#0066CC;text-decoration:underline;">${partner}</span>
                 <span class="entry-amount">${e.amount.toLocaleString()}원</span>
                 <button class="${btnClass}" onclick="toggleSettlementPaid(${e.id})">${btnText}</button>
-            </div>`;
+            </div>${settlePaidDiffNote(e) ? `<div class="settle-paid-diff-row">${settlePaidDiffNote(e)}</div>` : ''}`;   // 입금 줄은 흐리게(opacity) 그려지므로 차이 글은 그 줄 밖 바로 아래(또렷하게)
         });
     });
 
@@ -2150,6 +2150,14 @@ window.showSettlementDayModal = function(dateStr) {
     document.body.appendChild(overlay);
 };
 
+// #1185-2(서버 #1184 B6): 입금 표시한 때 금액(paidAmount)과 지금 단가로 계산한 금액이 다르면 작은 주황 글 · null(그 전 입금 건)·미입금·같으면 아무것도 없음
+function settlePaidDiffNote(it) {
+    if (!it || !it.isPaid || it.paidAmount == null) return '';
+    const paid = Math.round(Number(it.paidAmount)), now = Math.round(Number(it.amount || 0));
+    if (!isFinite(paid) || paid === now) return '';
+    return `<span class="settle-paid-diff" title="입금 표시할 때 금액 ${paid.toLocaleString()}원 · 지금 단가표로 계산 ${now.toLocaleString()}원">단가표 바뀜 · 입금액 ${paid.toLocaleString()}원과 ${Math.abs(now - paid).toLocaleString()}원 차이</span>`;
+}
+
 window.toggleSettlementPaid = async function(id) {
     try {
         await api(`/api/settlements/${id}/toggle-paid`, 'PUT');
@@ -2159,6 +2167,12 @@ window.toggleSettlementPaid = async function(id) {
         // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림 — 여러 건 연속 체크 후 닫기 가능
         if (modal) { modal.remove(); if (dateStr) showSettlementDayModal(dateStr); }
     } catch (err) {
+        if (err && err.status === 409) {   // #1185-2 다른 사람(창)이 막 바꾼 줄 = 오류 창 없이 목록만 새로(서버 #1184 겹친 누름 409)
+            const modal = document.getElementById('settlement-day-modal'); const dateStr = modal ? modal.dataset.date : null;
+            await Promise.all([renderSettlementCalendar(), renderSettlementList(), renderWeeklySettlement()]).catch(() => {});
+            if (modal) { modal.remove(); if (dateStr) showSettlementDayModal(dateStr); }
+            return;
+        }
         akmAlert('결제완료 처리 실패: ' + err.message);
     }
 };
@@ -2786,7 +2800,7 @@ async function renderSettlementList() {
             const paidBadge = item.isPaid ? '<span class="badge-paid">✅</span>' : '<span class="badge-unpaid">☐</span>';
             return `<tr>
                 <td>${item.date}</td>
-                <td>${item.partner} ${fromPricingBadge}</td>
+                <td>${item.partner} ${fromPricingBadge}${settlePaidDiffNote(item)}</td>
                 <td>${(item.amount || 0).toLocaleString()} 원 ${paidBadge}</td>
                 <td>
                     ${item.items && item.items.length > 0 ? `<button class="btn-view-items" onclick="viewSettlementItems(${item.id})">상세</button>` : ''}
@@ -3128,7 +3142,7 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
 
 // 박스 표시용 짧은 라벨 + 색상
 function pricingBoxBadge(boxType) {
-    if (!boxType || boxType === '해당없음') return '<span style="color:#9ca3af;font-size:12px;">해당없음</span>';
+    if (!boxType || boxType === '해당없음') return '<span style="color:#9ca3af;font-size:12px;white-space:nowrap;">해당없음</span>';
     const opt = BOX_OPTIONS.find(o => o.value === boxType);
     const label = opt ? opt.label : boxType;
     // 귤박스=주황, 만감박스=초록, 선물용=보라 톤 (#420)
@@ -3136,7 +3150,7 @@ function pricingBoxBadge(boxType) {
     const isGift = boxType.indexOf('선물') === 0;
     const bg = isGyul ? '#FFF3E0' : (isGift ? '#EDE7F6' : '#E8F5E9');
     const color = isGyul ? '#E65100' : (isGift ? '#4527A0' : '#2E7D32');
-    return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">📦 ${label}</span>`;
+    return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;">📦 ${label}</span>`;
 }
 
 async function renderPricingList() {
@@ -3159,8 +3173,8 @@ async function renderPricingList() {
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-outline" style="margin-top:6px" onclick="editPricing(${item.id})">✏️ 수정</button><br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.partner}</td>` : ''}
                         <td>${it.name}</td>
-                        <td>${(it.price || 0).toLocaleString()} 원</td>
-                        <td>${pricingBoxBadge(it.boxType)}</td>
+                        <td style="white-space:nowrap;">${(it.price || 0).toLocaleString()} 원</td>
+                        <td style="white-space:nowrap;">${pricingBoxBadge(it.boxType)}</td>
                     </tr>`;
                 });
             }
@@ -3255,7 +3269,7 @@ async function renderUserList() {
                 <td>${u.position || '-'}</td>
                 <td><span class="user-color-dot" style="background:${u.color};display:inline-block;"></span> ${u.color}</td>
                 <td>${u.role === 'admin' ? '관리자' : u.role === 'accountant' ? '세무사' : '직원'}</td>
-                <td>${u.annualLeave}</td>
+                <td title="${u.annualLeave}일" style="white-space:nowrap;">${formatLeave(u.annualLeave)}</td>
                 <td>
                     ${u.retired
                         ? `<button class="btn-view-items" onclick="restoreUser(${u.id})">재입사</button>`
@@ -3630,6 +3644,7 @@ function resetDocForm() {
 window.resetDocForm = resetDocForm;
 
 function updateDocEndDateVisibility() {
+    setTimeout(updateDocDeductPreview, 0);   // #1185-2 종류를 바꾸면 차감 미리 보기도
     const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
                    (currentDocType === 'attendance' && selectedDocSubType === '기타');
     const showEndDate = currentDocType === 'vacation' || currentDocType === 'attendance';
@@ -3719,6 +3734,44 @@ function calcWorkHoursClient(startTimeStr, endTimeStr) {
     return Math.max(total - lunchOverlap, 0);
 }
 
+// #1185-2 「차감될 연차」 미리 보기 — 서버 식을 그대로 옮김(바꾸면 server.js 의 POST /api/documents · PUT /api/documents/:id 차감 계산과 calcWorkHours 도 같이)
+//   연차 = 달력 날수(끝−시작 +1 · 주말 포함) · 시간차 = 점심(12~13시) 뺀 시간 ÷ 8(소수 4자리) · 시간 없으면 0.5 · 병가·그 밖 = 0
+function docDeductDays(subType, startDate, endDate, startTime, endTime) {
+    if (subType === '연차') {
+        if (!startDate) return null;
+        const s = new Date(startDate), e = new Date(endDate || startDate);
+        if (isNaN(s) || isNaN(e)) return null;
+        return Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+    }
+    if (subType === '시간차') {
+        if (startTime && endTime) return parseFloat((calcWorkHoursClient(startTime, endTime) / 8).toFixed(4));
+        return 0.5;
+    }
+    return 0;
+}
+function docDeductText(days) {
+    if (days == null) return '';
+    if (days <= 0) return '차감될 연차 없음';
+    const f = formatLeave(days);
+    return '차감될 연차 ' + f + (Number.isInteger(days) ? '' : ` (${parseFloat(days.toFixed(4))}일)`);
+}
+function updateDocDeductPreview() {
+    const el = document.getElementById('doc-deduct-preview');
+    if (!el) return;
+    if (currentDocType !== 'vacation' || selectedDocSubType === '시간차') { el.textContent = ''; el.hidden = true; return; }   // 시간차는 바로 위 「차감 연차: n시간 (n일 차감)」 줄이 이미 같은 값
+    const s = document.getElementById('doc-start-date').value, e = document.getElementById('doc-end-date').value;
+    const st = document.getElementById('doc-start-time')?.value, et = document.getElementById('doc-end-time')?.value;
+    if (selectedDocSubType === '연차' && docRangeBad(s, e)) { el.textContent = DOC_RANGE_MSG; el.hidden = false; return; }
+    const d = docDeductDays(selectedDocSubType, s, e, st, et);
+    el.textContent = selectedDocSubType === '연차' && !s ? '' : docDeductText(d);
+    el.hidden = !el.textContent;
+}
+document.addEventListener('change', (ev) => {
+    const id = ev.target && ev.target.id;
+    if (id === 'doc-start-date' || id === 'doc-end-date' || id === 'doc-start-time' || id === 'doc-end-time') updateDocDeductPreview();
+    if (id === 'edit-doc-start' || id === 'edit-doc-end') updateEditDeductPreview();
+});
+
 function calcTimeLeave() {
     const startTime = document.getElementById('doc-start-time').value;
     const endTime = document.getElementById('doc-end-time').value;
@@ -3728,6 +3781,7 @@ function calcTimeLeave() {
     if (hours <= 0) { display.textContent = '시간을 확인해주세요'; return; }
     const days = parseFloat((hours / 8).toFixed(4));
     display.textContent = `차감 연차: ${hours}시간 (${days}일 차감) *점심시간 제외`;
+    updateDocDeductPreview();
 }
 window.calcTimeLeave = calcTimeLeave;
 
@@ -3780,6 +3834,16 @@ async function loadApprovers() {
     }
 }
 
+// #1185 기안서류 공통 — 종료일이 시작일보다 앞이면 막기(서버 400 과 같은 뜻 · 날짜 글은 YYYY-MM-DD 라 글자 비교로 충분) · 제출 단추 잠금(두 번 눌림 방지 · 끝나면 풀림)
+const DOC_RANGE_MSG = '끝나는 날이 시작일보다 빨라요 · 날짜를 다시 골라 주세요';   // 서버 docRangeError 와 같은 글(#1184 A9)
+const DOC_TIME_MSG = '끝나는 시각이 시작 시각보다 늦어야 해요';
+function docRangeBad(start, end) { return !!(start && end && String(end) < String(start)); }
+function docLockBtn(btn) {
+    if (!btn || btn.disabled) return null;
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    return () => { btn.disabled = false; btn.removeAttribute('aria-busy'); };
+}
+
 // 서류 제출
 document.getElementById('doc-submit').addEventListener('click', async () => {
     const approverId = approverList.length > 0 ? approverList[0].id : null;
@@ -3793,6 +3857,8 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
                    (currentDocType === 'attendance' && selectedDocSubType === '기타');
     const hasEndDate = currentDocType === 'vacation' || currentDocType === 'attendance';
+    if (hasEndDate && docRangeBad(startDate, endDate)) return akmAlert(DOC_RANGE_MSG);
+    if (selectedDocSubType === '시간차') { const st0 = document.getElementById('doc-start-time').value, et0 = document.getElementById('doc-end-time').value; if (st0 && et0 && et0 <= st0) return akmAlert(DOC_TIME_MSG); }
 
     if (isTime) {
         const st = document.getElementById('doc-start-time').value;
@@ -3819,8 +3885,11 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         body.endTime = document.getElementById('doc-end-time').value;
     }
 
+    const unlockDoc = docLockBtn(document.getElementById('doc-submit'));
+    if (!unlockDoc) return;   // 이미 보내는 중(두 번 눌림)
     try {
         await api('/api/documents', 'POST', body);
+        unlockDoc();
         akmAlert('서류가 제출되었습니다.');
 
         document.getElementById('doc-start-date').value = '';
@@ -3840,6 +3909,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
+        unlockDoc();
         akmAlert('제출 실패: ' + err.message);
     }
 });
@@ -4045,6 +4115,7 @@ async function showEditDocModal(doc) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'edit-doc-modal';
+    overlay.dataset.docType = doc.type || ''; overlay.dataset.st = doc.startTime || ''; overlay.dataset.et = doc.endTime || ''; overlay.dataset.ded = String(doc.deductedLeave ?? '');   // #1185-2 미리 보기 재료(서버 PUT 은 시간을 옛 서류 값으로 씀)
     overlay.innerHTML = `
         <div class="modal" style="max-width:480px;">
             <button class="modal-close" onclick="closeEditDocModal()">&times;</button>
@@ -4065,6 +4136,7 @@ async function showEditDocModal(doc) {
                     <input type="text" id="edit-doc-end" class="form-input akm-date" value="${doc.endDate || doc.startDate}" readonly autocomplete="off" placeholder="날짜 선택">
                 </div>
             </div>
+            <p id="edit-doc-deduct-preview" class="doc-deduct-preview" hidden aria-live="polite"></p>
             <div class="form-group">
                 <label>사유</label>
                 <textarea id="edit-doc-reason" class="form-input" rows="3">${doc.reason || ''}</textarea>
@@ -4095,12 +4167,26 @@ async function showEditDocModal(doc) {
     if (doc.type === 'vacation') {
         updateEditEndDateVisibility();
     }
+    updateEditDeductPreview();
+}
+
+// #1185-2 수정 창 「차감될 연차」 — 서버 PUT /api/documents/:id 식(수기 이력 = 음수 차감은 다시 계산 안 함 → 표시 안 함)
+function updateEditDeductPreview() {
+    const ov = document.getElementById('edit-doc-modal'), el = document.getElementById('edit-doc-deduct-preview');
+    if (!ov || !el) return;
+    const sub = document.querySelector('#edit-doc-subtype-group .btn-toggle.active')?.dataset.value;
+    if (!sub || ov.dataset.docType !== 'vacation' || Number(ov.dataset.ded) < 0) { el.hidden = true; el.textContent = ''; return; }
+    const s = document.getElementById('edit-doc-start').value, e = document.getElementById('edit-doc-end').value || s;
+    if (sub === '연차' && docRangeBad(s, e)) { el.textContent = DOC_RANGE_MSG; el.hidden = false; return; }
+    el.textContent = docDeductText(docDeductDays(sub, s, e, ov.dataset.st, ov.dataset.et));
+    el.hidden = !el.textContent;
 }
 
 window.selectEditSubType = function(btn) {
     btn.parentElement.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     updateEditEndDateVisibility();
+    updateEditDeductPreview();
 };
 
 function updateEditEndDateVisibility() {
@@ -4122,14 +4208,21 @@ window.submitEditDocument = async function(id, type) {
     const startDate = document.getElementById('edit-doc-start').value;
     const endDate = document.getElementById('edit-doc-end').value || startDate;
     const reason = document.getElementById('edit-doc-reason').value;
-    const editApprovers = await api('/api/users/approvers');
+    if (!startDate) return akmAlert('시작일을 입력하세요.');
+    const editEndGroup = document.getElementById('edit-doc-end-group');
+    if ((!editEndGroup || editEndGroup.style.display !== 'none') && docRangeBad(startDate, endDate)) return akmAlert(DOC_RANGE_MSG);   // #1185
+    const editBtn = document.querySelector('#edit-doc-modal [onclick^="submitEditDocument"]');
+    const unlockEdit = editBtn ? docLockBtn(editBtn) : () => {};
+    if (!unlockEdit) return;   // 이미 보내는 중(두 번 눌림)
+    let editApprovers = [];
+    try { editApprovers = await api('/api/users/approvers'); } catch (e) { unlockEdit(); return akmAlert('수정 실패: ' + e.message); }
     const approverId = editApprovers.length > 0 ? editApprovers[0].id : null;
 
-    if (!startDate) return akmAlert('시작일을 입력하세요.');
-    if (!approverId) return akmAlert('결재자 정보를 불러올 수 없습니다.');
+    if (!approverId) { unlockEdit(); return akmAlert('결재자 정보를 불러올 수 없습니다.'); }
 
     try {
         await api(`/api/documents/${id}`, 'PUT', { subType, startDate, endDate, reason, approverId: Number(approverId) });
+        unlockEdit();
         closeEditDocModal();
         const me = await api('/api/auth/me');
         currentUser = me;
@@ -4139,6 +4232,7 @@ window.submitEditDocument = async function(id, type) {
         if (currentUser.role === 'admin') await renderApprovalList();
         akmAlert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
     } catch (err) {
+        unlockEdit();
         akmAlert('수정 실패: ' + err.message);
     }
 };
@@ -4193,15 +4287,19 @@ window.submitModRequest = async function() {
         body.new_end_date = document.getElementById('mod-end-date').value;
         body.new_start_time = document.getElementById('mod-start-time').value || null;
         body.new_end_time = document.getElementById('mod-end-time').value || null;
+        if (docRangeBad(body.new_start_date, body.new_end_date)) return akmAlert(DOC_RANGE_MSG);   // #1185
     }
+    const unlockMod = docLockBtn(document.querySelector('#mod-request-modal [onclick^="submitModRequest"]')) || (document.querySelector('#mod-request-modal [onclick^="submitModRequest"]') ? null : () => {});
+    if (!unlockMod) return;   // 이미 보내는 중(두 번 눌림)
 
     try {
         await api(`/api/documents/${id}/request-modification`, 'PUT', body);
+        unlockMod();
         document.getElementById('mod-request-modal').style.display = 'none';
         await renderMyApprovedList();
         if (currentUser.role === 'admin') await renderApprovalList();
         akmAlert('수정 요청이 제출되었습니다.');
-    } catch (err) { akmAlert('요청 실패: ' + err.message); }
+    } catch (err) { unlockMod(); akmAlert('요청 실패: ' + err.message); }
 };
 
 // 수정 요청 승인/반려
@@ -5778,15 +5876,15 @@ async function loadBoxHistoryAll() {
                 const qtyDisplay = e.sign > 0 ? `+${e.qty}` : (e.sign < 0 ? `−${e.qty}` : `${e.qty}`);
                 const qtyColor = e.sign > 0 ? '#16a34a' : (e.sign < 0 ? '#dc2626' : '#0066CC');
                 return `<tr>
-                    <td>${e.date}</td>
-                    <td style="font-weight:600;">${esc(e.productName)}</td>
-                    <td style="color:${meta.color};font-weight:600;">${meta.label}</td>
-                    <td style="text-align:right;font-weight:700;color:${qtyColor};">${qtyDisplay}</td>
-                    <td style="font-size:12px;color:#6b7280;">${esc(e.note)}</td>
+                    <td style="white-space:nowrap;">${e.date}</td>
+                    <td style="font-weight:600;white-space:nowrap;">${esc(e.productName)}</td>
+                    <td style="color:${meta.color};font-weight:600;white-space:nowrap;">${meta.label}</td>
+                    <td style="text-align:right;font-weight:700;color:${qtyColor};white-space:nowrap;">${qtyDisplay}</td>
+                    <td class="bh-note" style="font-size:12px;color:#6b7280;">${esc(e.note)}</td>
                 </tr>`;
             }).join('');
-            tableEl.innerHTML = `<table class="data-table" style="font-size:13px;width:100%;">
-                <thead><tr><th>날짜</th><th>박스 종류</th><th>구분</th><th style="text-align:right;">수량</th><th>비고/품목</th></tr></thead>
+            tableEl.innerHTML = `<table class="data-table bh-table" style="font-size:13px;width:100%;">
+                <thead><tr><th style="white-space:nowrap;">날짜</th><th style="white-space:nowrap;">박스 종류</th><th style="white-space:nowrap;">구분</th><th style="text-align:right;white-space:nowrap;">수량</th><th>비고/품목</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`;
         }
@@ -7648,7 +7746,7 @@ function renderWorklogCalendar() {
                 } else {
                     // 자기 업무일지
                     if (isToday && !hasLog) {
-                        html += `<button class="worklog-write-btn" onclick="openWorklogModal('${dateStr}')">업무일지 작성</button>`;
+                        html += `<button class="worklog-write-btn" onclick="openWorklogModal('${dateStr}')" aria-label="업무일지 작성"><span class="wl-long">업무일지 </span>작성</button>`;
                     } else if (hasLog) {
                         html += `<button class="worklog-view-btn" onclick="openWorklogModal('${dateStr}')">보기/수정</button>`;
                     } else {
@@ -9789,9 +9887,9 @@ async function ssRenderMain() {
         <tr class="ss-spacer-row"><td colspan="2"></td></tr>
         <tr class="ss-tr"><th>합 계</th>
           <td><div class="ss-cmp ${subtotal < 0 ? 'ss-neg' : subtotal > 0 ? 'ss-pos' : 'ss-zer'}" id="ss_f_sub">${ssFmt(subtotal)}</div></td></tr>
+        <tr class="ss-deduct-row ss-ref-row" title="위 합계에 이미 빠져 있는 금액이에요(참고 · 아래 총 합계에서 다시 빼지 않음)"><th>카드비용 <span class="ss-ref-note">위 합계에 이미 반영</span></th>
+          <td><div class="ss-cmp ss-ref" id="ss_f_deduct_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div></td></tr>
         <tr class="ss-spacer-row"><td colspan="2"></td></tr>
-        <tr class="ss-deduct-row"><th>카드비용 차감</th>
-          <td><div class="ss-cmp ss-neg" id="ss_f_deduct_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div></td></tr>
         <tr class="ss-deduct-row"><th>정산항목 차감</th>
           <td><div class="ss-cmp ss-neg" id="ss_f_deduct_items">-${ssFmt(n('daesong') + n('hyodong') + n('aewol') + n('delivery'))}</div></td></tr>
         <tr class="ss-spacer-row"><td colspan="2"></td></tr>
@@ -13612,9 +13710,9 @@ function drawBotProducts() {
     const bpRow = p => `
         <tr id="botprod-row-${p.id}">
             <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}${p.naver_product_no ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px;">🛰️ 네이버 ${p.naver_product_no}</div>` : ''}</td>
-            <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
+            <td class="bp-st" style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" data-bp-status="${s}" onclick="pickBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
-            <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" oninput="markBotProdDirty(${p.id})" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td class="bp-price"><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" oninput="markBotProdDirty(${p.id})" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
             <td style="white-space:nowrap;">${(() => {   /* 지시 #156→#160: 단계형 뱃지 — ✅ 전부 준비 / 🔵 주문톡 OK·발송안내문 필요(정상 중간 상태) / ⚠️ 실제 결함만 / 회색 발송 대상 아님 */
                 const hasGuide = !!String(p.shipping_guide || '').trim();
                 if (!BOTPROD_STATUSES.includes(p.status)) return `<span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px; cursor:help;" title="상태값 이상(${escapeHtml(String(p.status))}) — 주문 알림톡 처리 불가, 상태를 다시 지정해주세요">⚠️ 미설정</span>`;
@@ -14135,6 +14233,13 @@ function rvAll(d) {   // #1122 「전체」 = 톡톡+상품문의+고객문의(�
     const o = { total: 0, bot: 0, staff: 0, open: 0 }; for (const k of ['talk', 'qna', 'inquiry']) { const c = d.channels[k]; if (c) for (const f in o) o[f] += Number(c[f]) || 0; }
     return o;
 }
+// #1185-2(서버 #1184 A12): 손님 연락 창과 같은 14일 기준 「아직 안 답함」 · 「전체」 = 톡톡+상품문의+고객문의 합(rvAll 과 같게 문자 제외) · 옛 서버(open14 없음) = 표시 안 함
+function rvOpen14(d) {
+    const o = d && d.open14; if (!o) return null;
+    if (RV.ch !== 'all') return o[RV.ch] == null ? null : Number(o[RV.ch]);
+    const ks = ['talk', 'qna', 'inquiry']; if (ks.some(k => o[k] == null)) return o.all == null ? null : Number(o.all);
+    return ks.reduce((t, k) => t + (Number(o[k]) || 0), 0);
+}
 function rvDraw() {
     rvInit();
     rvSeg('rv-days', [[7, '7일'], [30, '30일']], RV.days, 'rvSetDays');
@@ -14150,7 +14255,7 @@ function rvDraw() {
         else box.innerHTML = `
             <div class="rv-num"><b>${pct(c.bot, c.total)}%</b><span>봇이 답함</span><small>${c.bot}건</small></div>
             <div class="rv-num"><b>${pct(c.staff, c.total)}%</b><span>직원이 답함</span><small>${c.staff}건</small></div>
-            <button type="button" class="rv-num is-open" onclick="notiGo('agent-office?inbox=open')" title="에이전트 오피스 손님 연락에서 답해요"><b>${c.open}건</b><span>아직 안 답함</span><small>눌러서 답하러 가기</small></button>`;
+            <button type="button" class="rv-num is-open" onclick="notiGo('agent-office?inbox=open')" title="에이전트 오피스 손님 연락에서 답해요"><b>${c.open}건</b><span>아직 안 답함</span>${rvOpen14(d) != null ? `<em class="rv-open14">14일 안 ${rvOpen14(d)}건</em>` : ''}<small>눌러서 답하러 가기</small></button>`;
     }
     const rg = rvEl('rv-range'); if (rg) rg.textContent = d ? `${String(d.from || '').slice(5).replace('-', '/')} ~ ${String(d.to || '').slice(5).replace('-', '/')} · 손님 대화 기준 · 봇 답 뒤 직원이 다시 답한 대화는 「직원이 답함」으로 세요. 문자는 초안만이라 안 세요.` : '';
     const more = rvEl('rv-set-more');
@@ -15230,7 +15335,7 @@ async function renderMallGameConfig() {
     el.innerHTML = `
         <p class="text-muted" style="margin:0 0 8px;">자사몰 API 상태: <b>${d.mall_api === 'on' ? '🟢 가동' : '⚪ 준비 중 (MALL_API=off)'}</b> — 꺼져 있는 동안은 설정만 미리 준비됩니다. 아래 값은 <b>전부 화면에서 수정</b>되며 배포가 필요 없습니다.</p>
         <h3 style="font-size:14px; margin:12px 0 6px;">🎰 룰렛 확률 <span class="text-muted" style="font-weight:400; font-size:12px;">— 꽝 없음 · 합계가 100.0%가 아니면 저장되지 않습니다</span></h3>
-        <table class="data-table" style="max-width:640px;"><thead><tr><th>룰렛 칸</th><th>확률</th><th>물 개수</th><th>쿠폰 할인</th><th>키</th></tr></thead><tbody>${probRows}</tbody></table>
+        <div class="table-scroll-wrapper" style="max-width:640px;"><table class="data-table"><thead><tr><th>룰렛 칸</th><th>확률</th><th>물 개수</th><th>쿠폰 할인</th><th>키</th></tr></thead><tbody>${probRows}</tbody></table></div>
         <div id="mg-sum" style="margin:8px 0 4px; font-weight:700;"></div>
         <h3 style="font-size:14px; margin:14px 0 6px;">🌳 감귤나무 · 물 획득</h3>
         <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center;">

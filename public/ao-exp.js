@@ -76,14 +76,16 @@
         return el;
     }
     async function load(quiet) {
-        if (X.busy) return; X.busy = true;
+        if (X.busy) { if (!quiet) X.again = true; return; }   // #1184 B9 읽는 중에 달을 넘기면 끝난 뒤 그 달로 다시 읽음(종전 = 건너뛰어 빈 달로 보임)
+        X.busy = true; const ym = X.ym;
         const r0 = monthRange(X.ym), r2 = monthRange(shiftYm(X.ym, 2));   // #786 보는 달 ~ 2달 뒤까지 한 번에(다음 달 안내·자동 이동용 · 호출 수 그대로)
         try {
             const r = await call(`/api/agent-office/experience?from=${r0.from}&to=${r2.to}`);
+            if (ym !== X.ym) { X.again = true; return; }   // #1184 B9 받는 사이 달이 바뀜 = 옛 달 자료는 버리고 다시
             if (!r.ok) { if (!quiet) $('xp-body').innerHTML = `<div class="xp-empty">${esc(r.body.error || '체험 예약을 읽지 못했어요')}</div>`; return; }
             X.data = r.body; render();
         } catch (e) { if (!quiet) $('xp-body').innerHTML = '<div class="xp-empty">연결이 끊겼어요 — 잠시 뒤 다시</div>'; }
-        finally { X.busy = false; }
+        finally { X.busy = false; if (X.again) { X.again = false; load(); } }
     }
     const people = b => [b.exp_count ? `체험 ${b.exp_count}` : '', b.entry_count ? `입장 ${b.entry_count}` : '', b.infant_count ? `유아 ${b.infant_count}` : ''].filter(Boolean).join(' · ') || '인원 0';
     // #786 그 달 확정·방문 예약 수(취소·반품 빼고 · from 이 있으면 그날부터) · 1~2달 뒤 첫 예약 달
@@ -174,6 +176,8 @@
         return `<div class="xp-edit xp-delask" role="alertdialog" aria-labelledby="xp-da-${b.id}"><p id="xp-da-${b.id}"><b>우리가 취소한 예약인가요?</b> 삭제하면 인원·명단·전날 안내에서 빠져요 · 손님이 직접 취소한 건은 메일로 저절로 빠지니 그대로 두세요</p>
             <div class="xp-edit-acts"><button type="button" class="xp-btn danger" data-act="xdel-yes">삭제</button><button type="button" class="xp-btn" data-act="xdel-no">취소</button></div></div>`;
     }
+    // #1184 A7(점검 #1183): 번호 미입력 판 칸에 커서가 있거나 처음 값과 다른 글이 남아 있으면 1분 새로 고침을 쉰다(종전 = 다시 그리며 치던 이름·번호가 지워짐)
+    const quickBusy = () => Array.from(document.querySelectorAll('.xp-quick input')).some(i => i === document.activeElement || i.value !== i.defaultValue);
     // #804 번호 미입력 판 = 줄마다 바로 넣기(수정을 안 열어도)
     function quickHtml(b) {
         return `<div class="xp-edit xp-quick" data-id="${b.id}"><label>이름<input type="text" id="xp-q-name-${b.id}" maxlength="30" value="${esc(b.name || '')}" placeholder="손님 이름"></label>${telInput('xp-q-phone-' + b.id, b.phone)}<button type="button" class="xp-btn pri" data-act="qsave">저장·보내기</button><small class="xp-hint">저장하면 그 자리에서 접수 알림톡이 나가요 · 이름의 *(가린 글자)는 손님 이름으로 고쳐 주세요</small></div>`;
@@ -574,7 +578,7 @@
         // 뒤로가기 칸 = 지금 기록(ao-desk 의 aoDesk 깊이 값 포함) 위에 한 칸 — 깊이 값을 이어 붙여야 ao-desk 가 제 칸을 잘못 닫지 않는다
         try { history.pushState(Object.assign({}, history.state || {}, { xpExp: 1 }), ''); X.pushed = true; window.addEventListener('popstate', onPop); } catch (e) { X.pushed = false; }
         X.ym = ymOf(today()); X.day = null; X.edit = 0; X.memoOpen = 0; X.adding = null; X.addDraft = null; X.auto = true; X.jumpFrom = null; load();
-        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.adding && !X.memoOpen && !X.delAsk && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set')) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도
+        X.timer = setInterval(() => { if (!document.hidden && !X.edit && !X.adding && !X.memoOpen && !X.delAsk && !X.saleDirty && document.activeElement.id !== 'xp-note' && !document.activeElement.closest('#xp-set') && !quickBusy()) load(true); }, 60000);   // #822 현장 판매 적는 중엔 쉼 · #940 메모 칸에 있을 때도 · #1184 A7 번호 미입력 판에 치는 중·친 글이 남아 있을 때도
         setTimeout(() => { const c = $('xp-close'); if (c) c.focus({ preventScroll: true }); }, 0);
     }
     function close(fromPop) {

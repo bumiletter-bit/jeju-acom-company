@@ -569,9 +569,12 @@
                 showToast(`지시를 보냈어요(사진 ${imgs.length}장)`);
             } else if (S.images.length) {
                 const imgs = S.images.slice();
-                for (const im of imgs) newIds.push(idOf(await api('/api/agent-office/orders', 'POST', im.file
-                    ? { content: content || '첨부한 파일을 확인해줘', image_data: im.data, image_mime: im.mime, file_name: im.name }
-                    : { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime })));
+                for (const im of imgs) {
+                    newIds.push(idOf(await api('/api/agent-office/orders', 'POST', im.file
+                        ? { content: content || '첨부한 파일을 확인해줘', image_data: im.data, image_mime: im.mime, file_name: im.name }
+                        : { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime })));
+                    S.images = S.images.filter(x => x !== im);   // #1184 A12 보낸 장은 바로 뺀다(중간에 실패하면 남은 장만 다시 보내게 · 종전 = 앞 장이 또 나감)
+                }
                 showToast(imgs[0].file ? '파일과 함께 지시를 보냈어요' : `지시 ${imgs.length}건을 보냈어요`);
             } else {
                 newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content })));
@@ -584,7 +587,9 @@
             if (S.tab !== 'mine') await setTab('mine'); else { S.sig = ''; await loadOrders(true); }
             revealOrders(newIds.filter(Boolean));
         } catch (err) {
-            showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
+            const sentN = newIds.filter(Boolean).length, left = S.images.length;   // #1184 A12 장마다 보내다 중간에 끊긴 때
+            if (sentN && left) { renderThumbs(); S.sig = ''; loadOrders(true); }
+            showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요') + (sentN && left ? ' · 앞 ' + sentN + '건은 보냈어요(남은 ' + left + '장만 다시 보내 주세요)' : ''));
         } finally {
             S.sending = false; btn.disabled = false; btn.removeAttribute('aria-busy'); syncInput();
         }
@@ -1621,7 +1626,7 @@
         if (!(status >= 200 && status < 300) || !res || res.ok === false) { N.err = '보내지 못했어요: ' + ((res && res.error) || '다시 시도해 주세요'); if (N.on) smsNewSync(); else showToast(N.err, '', 5000); return; }
         N.phone = ''; N.text = ''; N.touched = false;
         if (ph.isConnected) ph.value = ''; if (ta.isConnected) ta.value = '';
-        showToast(smsFmtNo(phone) + ' 로 문자를 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요');
+        showToast(res.dup ? smsFmtNo(phone) + ' 로 방금 같은 글을 보냈어요 · 한 번만 나가요(새로 보내지 않았어요)' : smsFmtNo(phone) + ' 로 문자를 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요', '', res.dup ? 4000 : undefined);   // #1184 B8-b
         const id = Number(res.thread_id) || 0;
         smsNewClose(false, true);   // 뒤로가기 칸은 두고 그 자리에 보낸 대화를 연다
         if (INB.ch === 'sms' && smsVisible()) {
@@ -2061,7 +2066,7 @@
             else if (SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = j.draft_text || null; SMS.thread.thread.draft_kind = j.draft_kind || null; SMS.tsig = ''; SMS.manual = { id, text: String(j.draft_text || '') }; SMS.invNote = typeof j.invoice_note === 'string' && j.invoice_note.trim() && j.draft_text ? { id, draft: String(j.draft_text), note: j.invoice_note.trim() } : null; }
         } catch (e) { err = '통신이 끊겼어요. 다시 눌러 주세요'; }
         finally { SMS.drafting = false; }
-        if (SMS.open !== id) return;
+        if (SMS.open !== id) { smsSync(); return; }   // #1184 A12 만드는 중 다른 대화로 옮겼어도 단추 잠김을 풀어 둠
         if (err) { showToast(err, '', 5000); smsSync(); return; }
         await smsThread(true);   // 같은 채우기 규칙(#635·#681)으로 칸·띠를 맞춤
     }
@@ -2075,7 +2080,7 @@
             .then(r => r.json()).then(j => { if (j && j.ok && j.cleared && SMS.open === id && SMS.thread && SMS.thread.thread) { SMS.thread.thread.draft_text = null; SMS.thread.thread.draft_kind = null; SMS.tsig = ''; smsSync(); smsSummary(); smsList(true); S.inboxAt = 0; loadInbox(); } }).catch(() => { });
     }
     async function smsAct() {
-        const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;
+        const id = SMS.open; if (!id || SMS.sending || SMS.drafting || !SMS.thread) return;   // #1184 A12 초안 만드는 중엔 Ctrl+Enter 로도 안 나감(단추는 종전부터 잠김)
         if (Date.now() < (SMS.lockUntil || 0)) return;   // 초안이 막 바뀐 0.8초 동안은 단추·Ctrl+Enter 어느 쪽으로도 안 나간다
         const ta = $('sms-text'), text = ta.value.trim();
         if (!text) return;
@@ -2100,7 +2105,7 @@
             if (res && res.ok === false) throw new Error(res.error || '다시 시도해 주세요');
             okDone = true; typStop(true);   // #683 보냄 = 서버가 내 입력 표시를 지운다
             if (SMS.open === id && ta.isConnected) ta.value = '';
-            SMS.texts.delete(id); showToast('답을 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요');
+            SMS.texts.delete(id); showToast(res && res.dup ? '방금 같은 글을 보냈어요 · 한 번만 나가요(새로 보내지 않았어요)' : '답을 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요', '', res && res.dup ? 4000 : undefined);   // #1184 B8-b 60초 안 같은 글 = 서버가 앞 것을 돌려줌
             if (SMS.open === id && SMS.thread && SMS.thread.thread && window.AkmPoint) {   // #1108-③ 보낸 글에 포인트 금액이 있으면 지급 지시 띠(1회용 · ao-inbox.js AkmPoint)
                 const st = SMS.thread.thread, d = String(st.phone_full || '').replace(/\D/g, ''), tel = d.length === 11 ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : d;
                 window.AkmPoint.show({ form: $('sms-reply'), ch: 'sms', key: id, sent: text, reason: window.AkmPoint.reasonOf(st.customer_hint || ''), note: '네이버 주문 손님만 돼요(쿠팡·자사몰 손님은 네이버 포인트가 안 돼요)',
@@ -2613,6 +2618,9 @@
         $('desk-ship-now').addEventListener('click', () => shipOpen());
         $('ship-close').addEventListener('click', () => { toolShow(null); plusFocus('ship'); });
         $('qty-close').addEventListener('click', () => { pkClose(false); toolShow(null); plusFocus('qty'); });
+        // #1184 A12(점검 #1183) 배송조회·중간발주 카드도 Esc = [닫기](판매현황·가격 카드 #612 와 같은 꼴 · 찾기 칸에 글이 있으면 글만 · 품목 고르기 창이 떠 있으면 그 창만 = 1236 줄이 먼저 잡음)
+        $('desk-ship').addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { if (e.target.id === 'ship-q' && e.target.value) return; e.preventDefault(); toolShow(null); plusFocus('ship'); } });
+        $('desk-qty').addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented && !PK.open) { e.preventDefault(); pkClose(false); toolShow(null); plusFocus('qty'); } });
         $('ship-form').addEventListener('submit', e => { e.preventDefault(); shipGo(false); });
         ['ship-from', 'ship-to'].forEach(id => $(id).addEventListener('change', () => { shipRange(); shipNote(''); shipLoad(); }));
         $('ship-out').addEventListener('click', e => {
@@ -2824,6 +2832,34 @@
         S.loadP = loadOrdersNow(force);
         return S.loadP;
     }
+    // #1184 B10(점검 #1183): 진행 중 지시가 있을 때 1초 조회 = 그 줄들만(?ids=) 받아 상태·단계·쓰는 중 답을 고쳐 끼운다 — 끝난 줄이 생기거나 줄이 안 오면 전체 목록을 한 번 다시 받음
+    const isActSt = st => ACTIVE.includes(st) || st === '판독완료' || st === '확인표작성';
+    function loadActive() {
+        if (S.loading) return S.loadP;
+        S.loading = true;
+        S.loadP = loadActiveNow();
+        return S.loadP;
+    }
+    async function loadActiveNow() {
+        const tab = S.tab;
+        try {
+            const ids = S.orders.filter(o => isActSt(o.status)).map(o => o.id).slice(0, 20);
+            if (!ids.length) { S.again = true; return; }
+            const d = await api('/api/agent-office/desk/orders?ids=' + ids.join(','), 'GET', null, POLL_T);
+            if (tab !== S.tab) { S.again = true; return; }
+            const by = new Map((d.orders || []).map(o => [o.id, o]));
+            if (by.size !== ids.length || [...by.values()].some(o => !isActSt(o.status))) { S.again = true; return; }   // 끝났거나 안 보이게 된 줄 = 전체 다시
+            const orders = S.orders.map(o => by.has(o.id) ? Object.assign({}, o, by.get(o.id)) : o);
+            const sig = S.tab + '|' + orders.map(o => o.id + ':' + o.status + ':' + ((o.steps && o.steps.length) || 0) + ':' + (o.processed_at || '') + ':' + liveLen(o)).join(',');
+            if (tab === 'mine') for (const o of orders) if (o.status === '처리중' && !S.autoOpened.has(o.id)) { S.autoOpened.add(o.id); S.detail.add(o.id); }   // #498 과 같게
+            S.orders = orders;
+            if (sig !== S.sig) { S.sig = sig; renderList(); }
+        } catch (e) { /* 다음 tick 에 다시(전체 목록은 12초마다 그대로) */ }
+        finally {
+            S.loading = false;
+            if (S.again) { S.again = false; S.sig = ''; await loadOrders(true); }
+        }
+    }
     async function loadOrdersNow(force) {
         const tab = S.tab;
         try {
@@ -2957,7 +2993,8 @@
             const files = fl.length
                 ? mediaHtml + `<div class="desk-acts desk-files">${fl.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
-                    : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
+                    : urlOk(f) ? `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`
+                    : `<span class="desk-link" title="https 주소가 아니라 열지 않아요">${esc(f.label || '첨부')}</span>`).join('')}</div>` : '';   // #1184 A12 https 주소만 링크(javascript: 등 다른 꼴은 글자만)
             return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><button type="button" class="desk-sec-copy desk-a-copy" data-act="copytop" data-id="${o.id}" aria-label="답변 복사">복사</button><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${mdAnswer(text, o)}</div>${files}
                 <div class="desk-acts desk-a-acts">${(long || mid) && !full ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
@@ -3728,7 +3765,9 @@
         const hasActive = S.orders.some(o => ACTIVE.includes(o.status) || o.status === '판독완료' || o.status === '확인표작성');
         tickElapsed();
         // #580: 진행 중이면 1초마다(종전 2초) — 앞 요청이 아직 안 끝났으면 건너뛴다(겹쳐 쌓이지 않게) · 없으면 12초 그대로
-        if (hasActive ? !S.loading : S.tick % 12 === 0) loadOrders(false);
+        //   #1184 B10 진행 중 1초 = 그 줄들만(loadActive) · 12초마다 전체 목록 그대로
+        if (S.tick % 12 === 0) loadOrders(false);
+        else if (hasActive && !S.loading) loadActive();
         if (S.tick % 10 === 0) loadStatus();
         if (Date.now() - S.boardAt > 60000) { S.boardAt = Date.now(); loadBoard(); }
         if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }

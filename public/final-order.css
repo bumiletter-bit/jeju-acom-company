@@ -745,6 +745,11 @@ html:not([data-ao-theme="dark"]) .fo-fix > summary small { color: #586174; }
 .fo-ia-files .fo-x { min-width: 44px; min-height: 44px; border-radius: 10px; font-size: 18px; }
 .fo-ia-sum span.warn { border-color: #FEC84B; background: #FFFCF5; color: #B54708; }
 .fo-ia-sum span.warn b { color: #B54708; }
+.fo-om-fail { color: var(--f-err); }   /* #1186 발주 메모함 불러오기 실패 띠 */
+/* #1186 자동 송장 발송일 칸 · 「최종발주 표식 없음」 주황 띠(야간 = 최종발주 경고 토큰) */
+.fo-ia-datepick select { min-width: 0; max-width: 100%; min-height: 44px; }
+.fo-hint.fo-ia-warn { padding: 8px 12px; border: 1px solid #FEC84B; border-radius: 10px; background: #FFFCF5; color: #B54708; font-weight: 600; }
+html[data-ao-theme="dark"] .fo-hint.fo-ia-warn { border-color: var(--fd-warn-line); background: var(--fd-warn-bg); color: var(--fd-warn); }
 .fo-ia-ch li span em { font-style: normal; font-weight: 700; color: var(--f-ink); font-variant-numeric: tabular-nums; }
 .fo-ia-todo { display: flex; flex-direction: column; gap: 10px; }
 .fo-ia-todo .fo-pick select { min-width: 0; max-width: 100%; }
@@ -808,7 +813,7 @@ html[data-ao-theme="dark"] .fo-note { border-color: var(--n-line); border-left-c
 /* #841 자동 송장 등록 손질 — 미리 고른 운송장 「확인 필요」(주황 글) · 보낸 결과 팝업(인디고 · 44px · Esc·바깥 닫힘) */
 .fo-ia-sg { font-size: 13px; font-weight: 600; color: #B54708; overflow-wrap: anywhere; }
 .fo-iam { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 24, 40, .5); }
-.fo-iam-box { width: 100%; max-width: 520px; max-height: calc(100dvh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 20px; background: #fff; color: var(--f-ink); border: 1px solid var(--f-card-line); border-top: 4px solid var(--f-accent); border-radius: 14px; box-shadow: 0 24px 64px -12px rgba(16, 24, 40, .4); animation: fo-in 200ms var(--f-ease); }
+.fo-iam-box { width: 100%; max-width: 520px; max-height: 100%; /* #1186 dvh 안 씀 — 바깥 .fo-iam 이 화면 전체(fixed · padding 16)라 100% = 보이는 높이 − 32 */ overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 20px; background: #fff; color: var(--f-ink); border: 1px solid var(--f-card-line); border-top: 4px solid var(--f-accent); border-radius: 14px; box-shadow: 0 24px 64px -12px rgba(16, 24, 40, .4); animation: fo-in 200ms var(--f-ease); }
 .fo-iam-box[data-ok="false"] { border-top-color: #F59E0B; }
 .fo-iam-box h3 { margin: 0; font-size: 17px; font-weight: 700; }
 .fo-iam-big { margin: 0; font-size: 22px; font-weight: 700; color: #067647; }
@@ -855,3 +860,5 @@ html[data-ao-theme="dark"] .fo-src[data-src="card"] { background: rgba(251, 191,
 .fo-ia-list .fo-ia-scroll { max-height: clamp(280px, calc(100vh - 480px), 720px); }
 @media (max-width: 640px) { .fo-ia-out > .fo-ia-regbar { margin: auto -16px 0; padding: 10px 16px; bottom: -20px; } }
 html[data-ao-theme="dark"] .fo-ia-out > .fo-ia-regbar { background: var(--fd-card); }
+/* #1186 누름 자리 44(터치·좁은 화면) — 옵션 창 [닫기]·검색 칸 */
+@media (max-width: 960px), (pointer: coarse) { .fo-optpanel-x { min-height: 44px; min-width: 44px; } .fo .fo-optpanel-q input { min-height: 44px; } }

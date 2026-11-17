@@ -192,6 +192,8 @@ function adminOnly(req, res, next) {
 }
 // #561(대표 10/6): 관리자 계정 가운데 「대표만」 — 조가영 과장(관리자·경리)은 정산·지출결의는 그대로 쓰되 남의 채팅 이력·승인 결재함·데이터관리는 막는다
 const isOwnerUser = u => !!u && u.role === 'admin' && u.position === '대표';
+// #1184 A1(점검 #1183): 지시 1건 조회·닫기·오류 닫기·이어서 지시·첨부 파일 = 본인 또는 대표만(목록 desk/orders 와 같은 기준) · 작성자 번호가 빈 옛 지시는 대표만
+const deskOrderMine = (u, row) => !!u && !!row && (isOwnerUser(u) || (row.created_by_id != null && Number(row.created_by_id) === Number(u.id)));
 // #638(대표 「고」 10/11): 검증이 넣는 시험 지시는 「시험 번호 계정」(created_by_id ≥ 990000 · 실제 계정은 한참 아래) 이름으로 넣는다 → 실제 사용자의 목록·이력·상태 카드·알림·「응/아니오」 짝짓기에 끼지 않는다.
 //   규칙은 여기 한 곳. 시험 번호 본인이 볼 때는 자기 것이 보여야 하므로(검증이 「내 지시」를 본다) 보는 사람이 시험 번호면 거르지 않는다.
 const DESK_TEST_UID_MIN = 990000;
@@ -249,6 +251,7 @@ async function initDB() {
     // 정산 결제완료 상태 컬럼 추가
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`);   // #1184 B6 입금 표시한 때의 화면 금액(없으면 NULL = 종전처럼 지금 단가로 계산)
     // 박스재고 차감 완료 표시 (NULL = 미적용, NOT NULL = 적용 시각)
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS box_adjusted_at TIMESTAMP`);
     // CJ택배 일별 결제완료 상태
@@ -1863,12 +1866,18 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
         if (fields.length === 0) return res.status(400).json({ error: '수정할 항목이 없습니다' });
 
         values.push(req.params.id);
+        // #1184 B3(점검 #1183): 연차 숫자를 바꾸면 전·후를 audit_logs 에 남긴다(종전 = 기록 없음)
+        const leaveBefore = annualLeave !== undefined ? (await pool.query('SELECT name, annual_leave FROM users WHERE id = $1', [req.params.id])).rows[0] : null;
         await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`, values);
         authUserCacheDrop(req.params.id);   // #829 권한·직위 변경 즉시 반영
 
         const result = await pool.query('SELECT id, username, name, position, color, role, annual_leave FROM users WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
         const u = result.rows[0];
+        if (leaveBefore && Number(leaveBefore.annual_leave) !== Number(u.annual_leave)) {   // #1184 B3
+            await writeAudit({ action: 'annual_leave_edit', targetType: 'user', targetId: u.id,
+                changes: { before: { annual_leave: Number(leaveBefore.annual_leave) }, after: { annual_leave: Number(u.annual_leave) }, name: u.name }, source: 'admin_api', actor: adminActor(req) });
+        }
         res.json({ id: u.id, username: u.username, name: u.name, position: u.position, color: u.color, role: u.role, annualLeave: Number(u.annual_leave) });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2142,7 +2151,7 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
     try {
         const { type, status, mine } = req.query;
         let query = `
-            SELECT d.*, u1.name as applicant_name, u1.position as applicant_position, u2.name as approver_name
+            SELECT d.*, u1.name as applicant_name, u1.position as applicant_position, u2.name as approver_name, (u2.deleted_at IS NOT NULL) AS approver_retired
             FROM documents d
             JOIN users u1 ON d.applicant_id = u1.id
             LEFT JOIN users u2 ON d.approver_id = u2.id
@@ -2154,10 +2163,10 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
         if (type) { conditions.push(`d.type = $${idx++}`); values.push(type); }
         if (status) {
             if (status === 'pending') {
-                // pending 조회 시 modification_pending도 포함 + 본인이 결재자인 것만
+                // pending 조회 시 modification_pending도 포함 + 본인이 결재자인 것만 · #1184 A8 결재자가 퇴사한 서류는 대표 목록에도
                 conditions.push(`d.status IN ('pending', 'modification_pending')`);
-                conditions.push(`d.approver_id = $${idx++}`);
-                values.push(req.user.id);
+                conditions.push(`(d.approver_id = $${idx++} OR ($${idx++}::boolean AND u2.deleted_at IS NOT NULL))`);
+                values.push(req.user.id, isOwnerUser(req.user));
             } else {
                 conditions.push(`d.status = $${idx++}`); values.push(status);
             }
@@ -2327,12 +2336,41 @@ app.post('/api/documents/manual', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// #1184 B4(점검 #1183): 서류 상태 바꾸기·연차 처리·일정 = 한 묶음(BEGIN/COMMIT) — 서류 줄을 잠그고(FOR UPDATE) 상태를 다시 본 뒤
+//   조건부 UPDATE … RETURNING 이 성공한 때만 연차를 움직인다(같은 서류에 반려·취소 승인·삭제가 겹쳐 와도 연차가 두 번 돌아오지 않게 · 중간 실패 = 전부 되돌림)
+async function docTx(fn) {
+    const cl = await pool.connect();
+    try { await cl.query('BEGIN'); const out = await fn(cl); await cl.query('COMMIT'); return out; }
+    catch (e) { await cl.query('ROLLBACK').catch(() => { }); throw e; }
+    finally { cl.release(); }
+}
+const DOC_ERR = (status, msg) => Object.assign(new Error(msg), { httpStatus: status });
+// #1184 A8: 결재자가 퇴사한 대기·수정 대기 서류는 대표가 대신 승인·반려·수정 승인/반려(서류의 결재자 칸은 그대로 · 데이터 무변경)
+async function docLockRow(cl, id) {
+    return (await cl.query(
+        `SELECT d.*, (ua.deleted_at IS NOT NULL) AS approver_retired
+         FROM documents d LEFT JOIN users ua ON ua.id = d.approver_id
+         WHERE d.id = $1 FOR UPDATE OF d`, [id])).rows[0] || null;
+}
+const docCanDecide = (d, u) => !!d && !!u && (d.approver_id === u.id || (isOwnerUser(u) && d.approver_retired === true));
+// #1184 A9: 끝나는 날 < 시작일이면 막는다(종전 = 연차 −1 로 저장돼 반려·삭제 때 연차가 1일 깎임) · 시간차는 끝 시각이 시작 시각보다 늦어야(종전 = 0 시간 → 0.5일 차감 꼴)
+const docTimeMin = t => { const [h, m] = String(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+function docRangeError(startDate, endDate, subType, startTime, endTime) {
+    const s = String(startDate || '').slice(0, 10), e = String(endDate || startDate || '').slice(0, 10);
+    if (s && e && e < s) return '끝나는 날이 시작일보다 빨라요 · 날짜를 다시 골라 주세요';
+    if (subType === '시간차' && startTime && endTime && docTimeMin(endTime) <= docTimeMin(startTime)) return '끝나는 시각이 시작 시각보다 늦어야 해요';
+    return '';
+}
+const docErrOut = (res, err) => err && err.httpStatus ? res.status(err.httpStatus).json({ error: err.message }) : null;
+
 app.post('/api/documents', authMiddleware, async (req, res) => {
     try {
         const { type, subType, approverId, startDate, endDate, reason, startTime, endTime } = req.body;
         if (!type || !subType || !approverId || !startDate) {
             return res.status(400).json({ error: '필수 항목을 입력해주세요' });
         }
+        const rangeErr = docRangeError(startDate, endDate, subType, startTime, endTime);   // #1184 A9
+        if (rangeErr) return res.status(400).json({ error: rangeErr });
 
         // 휴가 연차 차감 계산
         let deductedLeave = 0;
@@ -2350,47 +2388,50 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
                 }
             }
             // 병가는 차감 없음
-
-            if (deductedLeave > 0) {
-                const userResult = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [req.user.id]);
-                if (Number(userResult.rows[0].annual_leave) < deductedLeave) {
-                    return res.status(400).json({ error: `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.` });
-                }
-                await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [deductedLeave, req.user.id]);
-            }
         }
 
         const actualEndDate = endDate || startDate;
-        const result = await pool.query(
-            'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave, start_time, end_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
-            [type, subType, req.user.id, approverId, startDate, actualEndDate, reason || '', deductedLeave, startTime || null, endTime || null]
-        );
-        const docId = result.rows[0].id;
-
-        // 휴가/근태: 캘린더에 일정 자동 생성
-        if (type === 'vacation' || type === 'attendance') {
-            let scheduleTitle = `${subType} - ${req.user.name}`;
-            if ((subType === '시간차' || subType === '기타') && startTime && endTime) {
-                scheduleTitle = `${subType}(${startTime}~${endTime}) - ${req.user.name}`;
+        // #1184 B4: 잔여 확인·차감·서류 넣기·일정 넣기 = 한 묶음(중간에 실패하면 연차도 그대로) · 사람 줄을 잠가 같은 사람의 두 제출이 잔여를 같이 읽지 않게
+        const docId = await docTx(async cl => {
+            if (deductedLeave > 0) {
+                const userResult = await cl.query('SELECT annual_leave FROM users WHERE id = $1 FOR NO KEY UPDATE', [req.user.id]);
+                if (Number(userResult.rows[0].annual_leave) < deductedLeave) {
+                    throw DOC_ERR(400, `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.`);
+                }
+                await cl.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [deductedLeave, req.user.id]);
             }
-            const multiDay = subType === '연차' || subType === '시간차';
-            if ((type === 'vacation' && multiDay) || type === 'attendance') {
-                const start = new Date(startDate);
-                const end = new Date(actualEndDate);
-                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                    const dateStr = d.toISOString().split('T')[0];
-                    await pool.query(
+            const result = await cl.query(
+                'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave, start_time, end_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+                [type, subType, req.user.id, approverId, startDate, actualEndDate, reason || '', deductedLeave, startTime || null, endTime || null]
+            );
+            const newId = result.rows[0].id;
+
+            // 휴가/근태: 캘린더에 일정 자동 생성
+            if (type === 'vacation' || type === 'attendance') {
+                let scheduleTitle = `${subType} - ${req.user.name}`;
+                if ((subType === '시간차' || subType === '기타') && startTime && endTime) {
+                    scheduleTitle = `${subType}(${startTime}~${endTime}) - ${req.user.name}`;
+                }
+                const multiDay = subType === '연차' || subType === '시간차';
+                if ((type === 'vacation' && multiDay) || type === 'attendance') {
+                    const start = new Date(startDate);
+                    const end = new Date(actualEndDate);
+                    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                        const dateStr = d.toISOString().split('T')[0];
+                        await cl.query(
+                            'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                            [req.user.id, dateStr, scheduleTitle, type, newId]
+                        );
+                    }
+                } else {
+                    await cl.query(
                         'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
-                        [req.user.id, dateStr, scheduleTitle, type, docId]
+                        [req.user.id, startDate, scheduleTitle, type, newId]
                     );
                 }
-            } else {
-                await pool.query(
-                    'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
-                    [req.user.id, startDate, scheduleTitle, type, docId]
-                );
             }
-        }
+            return newId;
+        });
 
         // 알림: 결재자에게
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
@@ -2403,6 +2444,7 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
 
         res.json({ id: docId, success: true });
     } catch (err) {
+        if (docErrOut(res, err)) return;
         console.error('POST /api/documents error:', err);
         res.status(500).json({ error: err.message });
     }
@@ -2410,17 +2452,16 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
 
 app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
-
-        const d = doc.rows[0];
-        // 지정된 결재자만 승인 가능 (대표 자체결재 포함)
-        if (d.approver_id !== req.user.id) {
-            return res.status(403).json({ error: '지정된 결재자만 승인할 수 있습니다' });
-        }
-        if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
-
-        await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['approved', req.params.id]);
+        const d = await docTx(async cl => {
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
+            // 지정된 결재자만 승인 가능 (대표 자체결재 포함) · #1184 A8 결재자가 퇴사했으면 대표도
+            if (!docCanDecide(d, req.user)) throw DOC_ERR(403, '지정된 결재자만 승인할 수 있습니다');
+            if (d.status !== 'pending') throw DOC_ERR(400, '이미 처리된 서류입니다');
+            const u = await cl.query(`UPDATE documents SET status = 'approved', processed_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING id`, [d.id]);
+            if (!u.rows.length) throw DOC_ERR(400, '이미 처리된 서류입니다');
+            return d;
+        });
 
         // 알림: 신청자에게
         const tl = { vacation: '휴가', attendance: '근태', reason: '시말서' };
@@ -2433,31 +2474,30 @@ app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
+        if (docErrOut(res, err)) return;
         res.status(500).json({ error: err.message });
     }
 });
 
 app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
-
-        const d = doc.rows[0];
-        // 지정된 결재자만 반려 가능
-        if (d.approver_id !== req.user.id) {
-            return res.status(403).json({ error: '지정된 결재자만 반려할 수 있습니다' });
-        }
-        if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
-
-        // 연차 복구 (차감이면 +, 추가였으면 -)
-        if (Number(d.deducted_leave) !== 0) {
-            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
-        }
-
-        // 연동된 일정 삭제
-        await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
-
-        await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['rejected', req.params.id]);
+        const d = await docTx(async cl => {
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
+            // 지정된 결재자만 반려 가능 · #1184 A8 결재자가 퇴사했으면 대표도
+            if (!docCanDecide(d, req.user)) throw DOC_ERR(403, '지정된 결재자만 반려할 수 있습니다');
+            if (d.status !== 'pending') throw DOC_ERR(400, '이미 처리된 서류입니다');
+            // #1184 B4: 상태를 먼저 바꾸고(조건부) 성공한 때만 연차 복구
+            const u = await cl.query(`UPDATE documents SET status = 'rejected', processed_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING deducted_leave, applicant_id`, [d.id]);
+            if (!u.rows.length) throw DOC_ERR(400, '이미 처리된 서류입니다');
+            // 연차 복구 (차감이면 +, 추가였으면 -)
+            if (Number(u.rows[0].deducted_leave) !== 0) {
+                await cl.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [u.rows[0].deducted_leave, u.rows[0].applicant_id]);
+            }
+            // 연동된 일정 삭제
+            await cl.query('DELETE FROM schedules WHERE document_id = $1', [d.id]);
+            return d;
+        });
 
         // 알림: 신청자에게
         const tl2 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
@@ -2470,6 +2510,7 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
+        if (docErrOut(res, err)) return;
         res.status(500).json({ error: err.message });
     }
 });
@@ -2477,7 +2518,7 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
 // 수정/취소 요청
 app.put('/api/documents/:id/request-modification', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        const doc = await pool.query('SELECT d.*, (ua.deleted_at IS NOT NULL) AS approver_retired FROM documents d LEFT JOIN users ua ON ua.id = d.approver_id WHERE d.id = $1', [req.params.id]);
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
         const d = doc.rows[0];
         if (d.applicant_id !== req.user.id) return res.status(403).json({ error: '본인 서류만 수정 요청할 수 있습니다' });
@@ -2485,20 +2526,30 @@ app.put('/api/documents/:id/request-modification', authMiddleware, async (req, r
 
         const { modification_type, modification_reason, new_start_date, new_end_date, new_start_time, new_end_time } = req.body;
         if (!modification_type || !modification_reason) return res.status(400).json({ error: '수정 유형과 사유를 입력해주세요' });
+        if (modification_type !== 'cancel') {   // #1184 A9 바꿀 날짜·시각도 거꾸로면 막음
+            const rangeErr = docRangeError(new_start_date || d.start_date, new_end_date || d.end_date, d.sub_type, new_start_time || d.start_time, new_end_time || d.end_time);
+            if (rangeErr) return res.status(400).json({ error: rangeErr });
+        }
 
-        await pool.query(
+        const u = await pool.query(
             `UPDATE documents SET status = 'modification_pending',
              modification_type = $1, modification_reason = $2,
              new_start_date = $3, new_end_date = $4, new_start_time = $5, new_end_time = $6
-             WHERE id = $7`,
+             WHERE id = $7 AND status = 'approved' RETURNING id`,
             [modification_type, modification_reason, new_start_date || null, new_end_date || null, new_start_time || null, new_end_time || null, req.params.id]
         );
+        if (!u.rows.length) return res.status(400).json({ error: '승인된 서류만 수정 요청할 수 있습니다' });   // #1184 B4 겹친 요청
 
-        // 알림: 결재자에게
+        // 알림: 결재자에게 · #1184 A8 결재자가 퇴사했으면 대표에게
+        let notifyTo = d.approver_id;
+        if (d.approver_retired) {
+            const ceo = (await pool.query("SELECT id FROM users WHERE position = '대표' AND role = 'admin' AND deleted_at IS NULL ORDER BY id LIMIT 1")).rows[0];
+            if (ceo) notifyTo = ceo.id;
+        }
         const tl3 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
         const modLabel = modification_type === 'cancel' ? '취소' : '수정';
         await createNotification(
-            d.approver_id, 'modification_requested',
+            notifyTo, 'modification_requested',
             '서류 수정 요청',
             `${req.user.name}님이 ${tl3[d.type] || d.type}(${d.sub_type}) ${modLabel}을 요청했습니다.`,
             'documents?id=' + d.id
@@ -2511,83 +2562,89 @@ app.put('/api/documents/:id/request-modification', authMiddleware, async (req, r
 // 수정 요청 승인
 app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
-        const d = doc.rows[0];
-        // 지정된 결재자만 처리 가능 (대표 자체결재 포함)
-        if (d.approver_id !== req.user.id) return res.status(403).json({ error: '지정된 결재자만 처리할 수 있습니다' });
-        if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
+        const d = await docTx(async cl => {
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
+            // 지정된 결재자만 처리 가능 (대표 자체결재 포함) · #1184 A8 결재자가 퇴사했으면 대표도
+            if (!docCanDecide(d, req.user)) throw DOC_ERR(403, '지정된 결재자만 처리할 수 있습니다');
+            if (d.status !== 'modification_pending') throw DOC_ERR(400, '수정 대기 중인 서류가 아닙니다');
 
-        if (d.modification_type === 'cancel') {
-            // 취소: 연차 복구 + 일정 삭제 + status cancelled
-            if (Number(d.deducted_leave) !== 0) {
-                await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
-            }
-            await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
-            await pool.query(
-                `UPDATE documents SET status = 'cancelled', processed_at = NOW(),
-                 modification_type = NULL, modification_reason = NULL,
-                 new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
-                 WHERE id = $1`, [req.params.id]
-            );
-        } else {
-            // 수정: 날짜 변경 + 연차 재계산 + 일정 재생성
-            const newStart = d.new_start_date || d.start_date;
-            const newEnd = d.new_end_date || d.end_date;
-            const newStartTime = d.new_start_time || d.start_time;
-            const newEndTime = d.new_end_time || d.end_time;
-            const oldDeducted = Number(d.deducted_leave);
+            if (d.modification_type === 'cancel') {
+                // 취소: status cancelled(조건부 · #1184 B4 먼저) → 성공한 때만 연차 복구 + 일정 삭제
+                const u = await cl.query(
+                    `UPDATE documents SET status = 'cancelled', processed_at = NOW(),
+                     modification_type = NULL, modification_reason = NULL,
+                     new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+                     WHERE id = $1 AND status = 'modification_pending' RETURNING id`, [d.id]
+                );
+                if (!u.rows.length) throw DOC_ERR(400, '수정 대기 중인 서류가 아닙니다');
+                if (Number(d.deducted_leave) !== 0) {
+                    await cl.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
+                }
+                await cl.query('DELETE FROM schedules WHERE document_id = $1', [d.id]);
+            } else {
+                // 수정: 날짜 변경 + 연차 재계산 + 일정 재생성
+                const newStart = d.new_start_date || d.start_date;
+                const newEnd = d.new_end_date || d.end_date;
+                const newStartTime = d.new_start_time || d.start_time;
+                const newEndTime = d.new_end_time || d.end_time;
+                const oldDeducted = Number(d.deducted_leave);
+                const rangeErr = docRangeError(newStart, newEnd, d.sub_type, newStartTime, newEndTime);   // #1184 A9 (막기 전에 들어온 요청)
+                if (rangeErr) throw DOC_ERR(400, '바꿀 ' + rangeErr.replace(' · 날짜를 다시 골라 주세요', '') + ' · 반려해 주세요');
 
-            // 새 연차 차감량 계산
-            let newDeducted = 0;
-            if (d.type === 'vacation') {
-                if (d.sub_type === '연차') {
-                    const s = new Date(newStart);
-                    const e = new Date(newEnd);
-                    newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
-                } else if (d.sub_type === '시간차') {
-                    if (newStartTime && newEndTime) {
-                        const hours = calcWorkHours(newStartTime, newEndTime);
-                        newDeducted = parseFloat((hours / 8).toFixed(4));
-                    } else { newDeducted = 0.5; }
+                // 새 연차 차감량 계산
+                let newDeducted = 0;
+                if (d.type === 'vacation') {
+                    if (d.sub_type === '연차') {
+                        const s = new Date(newStart);
+                        const e = new Date(newEnd);
+                        newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+                    } else if (d.sub_type === '시간차') {
+                        if (newStartTime && newEndTime) {
+                            const hours = calcWorkHours(newStartTime, newEndTime);
+                            newDeducted = parseFloat((hours / 8).toFixed(4));
+                        } else { newDeducted = 0.5; }
+                    }
+                }
+
+                // 서류 업데이트(조건부 · #1184 B4 먼저)
+                const u = await cl.query(
+                    `UPDATE documents SET status = 'approved', processed_at = NOW(),
+                     start_date = $1, end_date = $2, start_time = $3, end_time = $4, deducted_leave = $5,
+                     modification_type = NULL, modification_reason = NULL,
+                     new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+                     WHERE id = $6 AND status = 'modification_pending' RETURNING id`,
+                    [newStart, newEnd, newStartTime, newEndTime, newDeducted, d.id]
+                );
+                if (!u.rows.length) throw DOC_ERR(400, '수정 대기 중인 서류가 아닙니다');
+
+                // 연차 차이 반영
+                const diff = oldDeducted - newDeducted;
+                if (diff !== 0) {
+                    await cl.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [diff, d.applicant_id]);
+                }
+
+                // 기존 일정 삭제 + 새 일정 생성
+                await cl.query('DELETE FROM schedules WHERE document_id = $1', [d.id]);
+                if (d.type === 'vacation' || d.type === 'attendance') {
+                    const userName = (await cl.query('SELECT name FROM users WHERE id = $1', [d.applicant_id])).rows[0].name;
+                    let scheduleTitle = `${d.sub_type} - ${userName}`;
+                    if (d.sub_type === '시간차' && newStartTime && newEndTime) {
+                        scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
+                    }
+                    const start = new Date(newStart);
+                    const end = new Date(newEnd);
+                    for (let dt = new Date(start); dt <= end; dt.setDate(dt.getDate() + 1)) {
+                        const dateStr = dt.toISOString().split('T')[0];
+                        await cl.query(
+                            'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                            [d.applicant_id, dateStr, scheduleTitle, d.type, d.id]
+                        );
+                    }
                 }
             }
-
-            // 연차 차이 반영
-            const diff = oldDeducted - newDeducted;
-            if (diff !== 0) {
-                await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [diff, d.applicant_id]);
-            }
-
-            // 기존 일정 삭제 + 새 일정 생성
-            await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
-            if (d.type === 'vacation' || d.type === 'attendance') {
-                const userName = (await pool.query('SELECT name FROM users WHERE id = $1', [d.applicant_id])).rows[0].name;
-                let scheduleTitle = `${d.sub_type} - ${userName}`;
-                if (d.sub_type === '시간차' && newStartTime && newEndTime) {
-                    scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
-                }
-                const start = new Date(newStart);
-                const end = new Date(newEnd);
-                for (let dt = new Date(start); dt <= end; dt.setDate(dt.getDate() + 1)) {
-                    const dateStr = dt.toISOString().split('T')[0];
-                    await pool.query(
-                        'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
-                        [d.applicant_id, dateStr, scheduleTitle, d.type, req.params.id]
-                    );
-                }
-            }
-
-            // 서류 업데이트
-            await pool.query(
-                `UPDATE documents SET status = 'approved', processed_at = NOW(),
-                 start_date = $1, end_date = $2, start_time = $3, end_time = $4, deducted_leave = $5,
-                 modification_type = NULL, modification_reason = NULL,
-                 new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
-                 WHERE id = $6`,
-                [newStart, newEnd, newStartTime, newEndTime, newDeducted, req.params.id]
-            );
-        }
+            return d;
+        });
 
         // 알림: 신청자에게
         const tl4 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
@@ -2600,24 +2657,30 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
         );
 
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        if (docErrOut(res, err)) return;
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // 수정 요청 반려
 app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
-        const d = doc.rows[0];
-        if (d.approver_id !== req.user.id) return res.status(403).json({ error: '지정된 결재자만 처리할 수 있습니다' });
-        if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
-        // 기존 승인 상태로 복원, 수정요청 내용 초기화
-        await pool.query(
-            `UPDATE documents SET status = 'approved',
-             modification_type = NULL, modification_reason = NULL,
-             new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
-             WHERE id = $1`, [req.params.id]
-        );
+        const d = await docTx(async cl => {
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
+            if (!docCanDecide(d, req.user)) throw DOC_ERR(403, '지정된 결재자만 처리할 수 있습니다');   // #1184 A8 결재자가 퇴사했으면 대표도
+            if (d.status !== 'modification_pending') throw DOC_ERR(400, '수정 대기 중인 서류가 아닙니다');
+            // 기존 승인 상태로 복원, 수정요청 내용 초기화
+            const u = await cl.query(
+                `UPDATE documents SET status = 'approved',
+                 modification_type = NULL, modification_reason = NULL,
+                 new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+                 WHERE id = $1 AND status = 'modification_pending' RETURNING id`, [d.id]
+            );
+            if (!u.rows.length) throw DOC_ERR(400, '수정 대기 중인 서류가 아닙니다');
+            return d;
+        });
 
         // 알림: 신청자에게
         const tl5 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
@@ -2630,108 +2693,113 @@ app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, re
         );
 
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        if (docErrOut(res, err)) return;
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // 서류 수정
 app.put('/api/documents/:id', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+        await docTx(async cl => {   // #1184 B4: 옛 차감 복구·새 차감·서류·일정 = 한 묶음(서류 줄 잠금 · 잔여 부족이면 통째로 되돌림)
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
 
-        const d = doc.rows[0];
-        const isApplicant = d.applicant_id === req.user.id;
-        const isApprover = d.approver_id === req.user.id;
-        // 권한: 대기중/반려 → 신청자 본인 또는 결재자, 승인 → 결재자만
-        if (d.status === 'approved') {
-            if (!isApprover) return res.status(403).json({ error: '승인된 서류는 결재자만 수정할 수 있습니다' });
-        } else {
-            if (!isApplicant && !isApprover) return res.status(403).json({ error: '수정 권한이 없습니다' });
-        }
-        // #1174(11/16) 취소된 서류는 수정 막음 — 취소 승인 때 연차를 이미 돌려줘서, 고치면 옛 차감을 또 돌려주고 새로 차감했다(연차·일정·상태 무변경으로 끝)
-        if (d.status === 'cancelled') return res.status(400).json({ error: '취소된 서류는 수정할 수 없어요 · 새로 올려 주세요' });
-
-        const { subType, startDate, endDate, reason, approverId, startTime, endTime } = req.body;
-        const newSubType = subType || d.sub_type;
-        const newStartDate = startDate || d.start_date;
-        const newEndDate = endDate || startDate || d.end_date;
-        const newReason = reason !== undefined ? reason : d.reason;
-        const newApproverId = approverId || d.approver_id;
-        const newStartTime = startTime !== undefined ? startTime : d.start_time;
-        const newEndTime = endTime !== undefined ? endTime : d.end_time;
-
-        // 연차 재계산: 기존 차감분 복구 후 새로 차감
-        const oldDeducted = Number(d.deducted_leave);
-        if (d.status !== 'rejected' && oldDeducted > 0) {
-            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
-        }
-
-        let newDeducted = 0;
-        // #1174(11/16) 음수 차감 = 수기 이력의 「추가일수」(manual POST · app.js saveManualDoc 만 음수를 만듦) → 수정해도 연차를 다시 계산하지 않고 그 값 그대로(위 복구도 oldDeducted > 0 이라 안 돎 · annual_leave 무변경)
-        if (oldDeducted < 0) newDeducted = oldDeducted;
-        else if (d.type === 'vacation') {
-            if (newSubType === '연차') {
-                const s = new Date(newStartDate);
-                const e = new Date(newEndDate);
-                newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
-            } else if (newSubType === '시간차') {
-                if (newStartTime && newEndTime) {
-                    const hours = calcWorkHours(newStartTime, newEndTime);
-                    newDeducted = parseFloat((hours / 8).toFixed(4));
-                } else {
-                    newDeducted = 0.5;
-                }
+            const isApplicant = d.applicant_id === req.user.id;
+            const isApprover = docCanDecide(d, req.user);   // #1184 A8 결재자가 퇴사했으면 대표도 결재자로
+            // 권한: 대기중/반려 → 신청자 본인 또는 결재자, 승인 → 결재자만
+            if (d.status === 'approved') {
+                if (!isApprover) throw DOC_ERR(403, '승인된 서류는 결재자만 수정할 수 있습니다');
+            } else {
+                if (!isApplicant && !isApprover) throw DOC_ERR(403, '수정 권한이 없습니다');
             }
-            if (newDeducted > 0) {
-                const userResult = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [d.applicant_id]);
-                if (Number(userResult.rows[0].annual_leave) < newDeducted) {
-                    if (d.status !== 'rejected' && oldDeducted > 0) {
-                        await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
+            // #1174(11/16) 취소된 서류는 수정 막음 — 취소 승인 때 연차를 이미 돌려줘서, 고치면 옛 차감을 또 돌려주고 새로 차감했다(연차·일정·상태 무변경으로 끝)
+            if (d.status === 'cancelled') throw DOC_ERR(400, '취소된 서류는 수정할 수 없어요 · 새로 올려 주세요');
+
+            const { subType, startDate, endDate, reason, approverId, startTime, endTime } = req.body;
+            const newSubType = subType || d.sub_type;
+            const newStartDate = startDate || d.start_date;
+            const newEndDate = endDate || startDate || d.end_date;
+            const newReason = reason !== undefined ? reason : d.reason;
+            const newApproverId = approverId || d.approver_id;
+            const newStartTime = startTime !== undefined ? startTime : d.start_time;
+            const newEndTime = endTime !== undefined ? endTime : d.end_time;
+            const rangeErr = docRangeError(newStartDate, newEndDate, newSubType, newStartTime, newEndTime);   // #1184 A9
+            if (rangeErr) throw DOC_ERR(400, rangeErr);
+
+            // 연차 재계산: 기존 차감분 복구 후 새로 차감
+            const oldDeducted = Number(d.deducted_leave);
+            if (d.status !== 'rejected' && oldDeducted > 0) {
+                await cl.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
+            }
+
+            let newDeducted = 0;
+            // #1174(11/16) 음수 차감 = 수기 이력의 「추가일수」(manual POST · app.js saveManualDoc 만 음수를 만듦) → 수정해도 연차를 다시 계산하지 않고 그 값 그대로(위 복구도 oldDeducted > 0 이라 안 돎 · annual_leave 무변경)
+            if (oldDeducted < 0) newDeducted = oldDeducted;
+            else if (d.type === 'vacation') {
+                if (newSubType === '연차') {
+                    const s = new Date(newStartDate);
+                    const e = new Date(newEndDate);
+                    newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+                } else if (newSubType === '시간차') {
+                    if (newStartTime && newEndTime) {
+                        const hours = calcWorkHours(newStartTime, newEndTime);
+                        newDeducted = parseFloat((hours / 8).toFixed(4));
+                    } else {
+                        newDeducted = 0.5;
                     }
-                    return res.status(400).json({ error: `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.` });
                 }
-                await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [newDeducted, d.applicant_id]);
+                if (newDeducted > 0) {
+                    const userResult = await cl.query('SELECT annual_leave FROM users WHERE id = $1 FOR NO KEY UPDATE', [d.applicant_id]);
+                    if (Number(userResult.rows[0].annual_leave) < newDeducted) {
+                        // 묶음을 되돌리므로 위 복구도 같이 취소된다(종전 = 복구분을 다시 빼서 맞춤 · 안내 숫자는 종전과 같게 복구한 뒤 값)
+                        throw DOC_ERR(400, `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.`);
+                    }
+                    await cl.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [newDeducted, d.applicant_id]);
+                }
             }
-        }
 
-        // 반려 상태에서 수정 → 대기중으로 재제출
-        const newStatus = d.status === 'rejected' ? 'pending' : d.status;
+            // 반려 상태에서 수정 → 대기중으로 재제출
+            const newStatus = d.status === 'rejected' ? 'pending' : d.status;
 
-        await pool.query(
-            'UPDATE documents SET sub_type=$1, start_date=$2, end_date=$3, reason=$4, approver_id=$5, deducted_leave=$6, status=$7, processed_at=$8, start_time=$9, end_time=$10 WHERE id=$11',
-            [newSubType, newStartDate, newEndDate, newReason, newApproverId, newDeducted, newStatus, newStatus === 'pending' ? null : d.processed_at, newStartTime || null, newEndTime || null, req.params.id]
-        );
+            await cl.query(
+                'UPDATE documents SET sub_type=$1, start_date=$2, end_date=$3, reason=$4, approver_id=$5, deducted_leave=$6, status=$7, processed_at=$8, start_time=$9, end_time=$10 WHERE id=$11',
+                [newSubType, newStartDate, newEndDate, newReason, newApproverId, newDeducted, newStatus, newStatus === 'pending' ? null : d.processed_at, newStartTime || null, newEndTime || null, d.id]
+            );
 
-        // 연동 일정 재생성
-        await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
-        if (d.type === 'vacation' || d.type === 'attendance') {
-            const applicant = await pool.query('SELECT name FROM users WHERE id = $1', [d.applicant_id]);
-            const userName = applicant.rows[0].name;
-            let scheduleTitle = `${newSubType} - ${userName}`;
-            if (newSubType === '시간차' && newStartTime && newEndTime) {
-                scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
-            }
-            const multiDay = newSubType === '연차' || newSubType === '병가' || newSubType === '시간차';
-            if (d.type === 'vacation' && multiDay) {
-                const s = new Date(newStartDate);
-                const e = new Date(newEndDate);
-                for (let dd = new Date(s); dd <= e; dd.setDate(dd.getDate() + 1)) {
-                    const dateStr = dd.toISOString().split('T')[0];
-                    await pool.query(
+            // 연동 일정 재생성
+            await cl.query('DELETE FROM schedules WHERE document_id = $1', [d.id]);
+            if (d.type === 'vacation' || d.type === 'attendance') {
+                const applicant = await cl.query('SELECT name FROM users WHERE id = $1', [d.applicant_id]);
+                const userName = applicant.rows[0].name;
+                let scheduleTitle = `${newSubType} - ${userName}`;
+                if (newSubType === '시간차' && newStartTime && newEndTime) {
+                    scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
+                }
+                const multiDay = newSubType === '연차' || newSubType === '병가' || newSubType === '시간차';
+                if (d.type === 'vacation' && multiDay) {
+                    const s = new Date(newStartDate);
+                    const e = new Date(newEndDate);
+                    for (let dd = new Date(s); dd <= e; dd.setDate(dd.getDate() + 1)) {
+                        const dateStr = dd.toISOString().split('T')[0];
+                        await cl.query(
+                            'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                            [d.applicant_id, dateStr, scheduleTitle, d.type, d.id]
+                        );
+                    }
+                } else {
+                    await cl.query(
                         'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
-                        [d.applicant_id, dateStr, scheduleTitle, d.type, req.params.id]
+                        [d.applicant_id, newStartDate, scheduleTitle, d.type, d.id]
                     );
                 }
-            } else {
-                await pool.query(
-                    'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
-                    [d.applicant_id, newStartDate, scheduleTitle, d.type, req.params.id]
-                );
             }
-        }
+        });
 
         res.json({ success: true });
     } catch (err) {
+        if (docErrOut(res, err)) return;
         console.error('PUT /api/documents/:id error:', err);
         res.status(500).json({ error: err.message });
     }
@@ -2739,33 +2807,35 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
 
 app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
     try {
-        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
-        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+        await docTx(async cl => {   // #1184 B4: 지우기와 연차 복구를 한 묶음 · 두 번 눌러도 둘째는 「없음」(연차 한 번만)
+            const d = await docLockRow(cl, req.params.id);
+            if (!d) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
 
-        const d = doc.rows[0];
-        const isDaepyo = req.user.position === '대표';
-        const isApplicant = d.applicant_id === req.user.id;
-        const isApprover = d.approver_id === req.user.id;
-        // 대표는 모든 서류 삭제 가능
-        if (!isDaepyo) {
-            // 대기/반려: 신청자 본인 또는 결재자
-            // 승인 완료: 결재자만 (신청자는 수정요청으로)
-            if (d.status === 'approved') {
-                if (!isApprover) return res.status(403).json({ error: '승인된 서류는 결재자만 삭제할 수 있습니다' });
-            } else {
-                if (!isApplicant && !isApprover) return res.status(403).json({ error: '삭제 권한이 없습니다' });
+            const isDaepyo = req.user.position === '대표';
+            const isApplicant = d.applicant_id === req.user.id;
+            const isApprover = d.approver_id === req.user.id;
+            // 대표는 모든 서류 삭제 가능
+            if (!isDaepyo) {
+                // 대기/반려: 신청자 본인 또는 결재자
+                // 승인 완료: 결재자만 (신청자는 수정요청으로)
+                if (d.status === 'approved') {
+                    if (!isApprover) throw DOC_ERR(403, '승인된 서류는 결재자만 삭제할 수 있습니다');
+                } else {
+                    if (!isApplicant && !isApprover) throw DOC_ERR(403, '삭제 권한이 없습니다');
+                }
             }
-        }
 
-        // 반려 아닌 경우 연차 복구 · #1173(11/16) 취소(cancelled)도 뺌 = 취소 승인(approve-modification cancel) 때 이미 복구했고 deducted_leave 는 그대로 남아 지우면 한 번 더 붙던 것
-        if (d.status !== 'rejected' && d.status !== 'cancelled' && Number(d.deducted_leave) !== 0) {
-            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
-        }
-
-        // 연동 일정은 ON DELETE CASCADE로 자동 삭제
-        await pool.query('DELETE FROM documents WHERE id = $1', [req.params.id]);
+            // 연동 일정은 ON DELETE CASCADE로 자동 삭제 · #1184 B4 지우기가 성공한 때만 연차 복구
+            const del = await cl.query('DELETE FROM documents WHERE id = $1 RETURNING id', [d.id]);
+            if (!del.rows.length) throw DOC_ERR(404, '서류를 찾을 수 없습니다');
+            // 반려 아닌 경우 연차 복구 · #1173(11/16) 취소(cancelled)도 뺌 = 취소 승인(approve-modification cancel) 때 이미 복구했고 deducted_leave 는 그대로 남아 지우면 한 번 더 붙던 것
+            if (d.status !== 'rejected' && d.status !== 'cancelled' && Number(d.deducted_leave) !== 0) {
+                await cl.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
+            }
+        });
         res.json({ success: true });
     } catch (err) {
+        if (docErrOut(res, err)) return;
         res.status(500).json({ error: err.message });
     }
 });
@@ -3966,6 +4036,69 @@ app.post('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
 
 // === Settlements API (인증 추가) ===
 
+// #1184 B6(점검 #1183): 정산 한 줄의 화면 금액 계산 = 목록(GET /api/settlements)과 입금 표시(toggle-paid)가 같이 쓰는 한 곳 — 본문은 종전 목록 안 계산을 글자 그대로 옮김(식 무변경)
+function settleDisplayCalc(row, mappingsByPartner) {
+    // JSONB 안전 파싱 헬퍼
+    function safeItems(val) {
+        if (!val) return [];
+        if (typeof val === 'string') { try { return JSON.parse(val); } catch { return []; } }
+        return Array.isArray(val) ? val : [];
+    }
+    const items = safeItems(row.items);
+    const settlementDate = normDateSafe(row.date);
+
+    // SQL에서 가져온 pricing items 사용 (정확한 날짜 범위 매칭만, fallback 없음)
+    const rawPricingItems = safeItems(row.pricing_items);
+
+    // pricing의 품목별 단가 맵 생성 (jsonb_agg 결과는 배열의 배열)
+    const priceMap = {};
+    rawPricingItems.forEach(pItems => {
+        const pArr = safeItems(pItems);
+        pArr.forEach(item => {
+            if (item && item.name) priceMap[item.name] = Number(item.price) || 0;
+        });
+    });
+
+    // 해당 거래처의 product_mappings
+    const partnerMappings = mappingsByPartner[row.partner] || {};
+
+    // items의 단가를 pricing 단가로 업데이트
+    let updatedItems = items;
+    if (Object.keys(priceMap).length > 0 && items.length > 0) {
+        updatedItems = items.map(item => {
+            if (!item || !item.name) return item;
+            // 1차: 정확한 이름 매칭
+            if (priceMap[item.name] !== undefined) {
+                const newPrice = priceMap[item.name];
+                return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
+            }
+            // 2차: product_mappings 테이블 기반 매칭
+            const mappedName = partnerMappings[item.name];
+            if (mappedName && priceMap[mappedName] !== undefined) {
+                const newPrice = priceMap[mappedName];
+                return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
+            }
+            // 3차: 정확 substring 매칭 (무게·등급 구분) — 대표 7/21: 품목명 변경 시 특징매칭이 2.5kg↔4.5kg 뒤섞던 버그 방지
+            const exactHit = matchSettlementItemExact(item.name, priceMap);
+            if (exactHit) {
+                return { ...item, price: exactHit.price, subtotal: exactHit.price * (item.qty || 0) };
+            }
+            // 4차: 특징 기반 매칭 (fallback)
+            const featurePrice = matchItemToPricing(item.name, priceMap);
+            if (featurePrice !== undefined) {
+                return { ...item, price: featurePrice, subtotal: featurePrice * (item.qty || 0) };
+            }
+            // 미매칭 시 원본 유지
+            return item;
+        });
+    }
+
+    const updatedAmount = updatedItems.length > 0
+        ? updatedItems.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0)
+        : Number(row.amount);
+    return { items: updatedItems, amount: updatedAmount };
+}
+
 app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { month } = req.query;
@@ -4002,67 +4135,13 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         });
 
         const data = result.rows.map(row => {
-            const items = safeItems(row.items);
-            const settlementDate = normDateSafe(row.date);
-
-            // SQL에서 가져온 pricing items 사용 (정확한 날짜 범위 매칭만, fallback 없음)
-            const rawPricingItems = safeItems(row.pricing_items);
-
-            // pricing의 품목별 단가 맵 생성 (jsonb_agg 결과는 배열의 배열)
-            const priceMap = {};
-            rawPricingItems.forEach(pItems => {
-                const pArr = safeItems(pItems);
-                pArr.forEach(item => {
-                    if (item && item.name) priceMap[item.name] = Number(item.price) || 0;
-                });
-            });
-
-            // 해당 거래처의 product_mappings
-            const partnerMappings = mappingsByPartner[row.partner] || {};
-
-            // items의 단가를 pricing 단가로 업데이트
-            let updatedItems = items;
-            if (Object.keys(priceMap).length > 0 && items.length > 0) {
-                updatedItems = items.map(item => {
-                    if (!item || !item.name) return item;
-                    // 1차: 정확한 이름 매칭
-                    if (priceMap[item.name] !== undefined) {
-                        const newPrice = priceMap[item.name];
-                        return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
-                    }
-                    // 2차: product_mappings 테이블 기반 매칭
-                    const mappedName = partnerMappings[item.name];
-                    if (mappedName && priceMap[mappedName] !== undefined) {
-                        const newPrice = priceMap[mappedName];
-                        return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
-                    }
-                    // 3차: 정확 substring 매칭 (무게·등급 구분) — 대표 7/21: 품목명 변경 시 특징매칭이 2.5kg↔4.5kg 뒤섞던 버그 방지
-                    const exactHit = matchSettlementItemExact(item.name, priceMap);
-                    if (exactHit) {
-                        return { ...item, price: exactHit.price, subtotal: exactHit.price * (item.qty || 0) };
-                    }
-                    // 4차: 특징 기반 매칭 (fallback)
-                    const featurePrice = matchItemToPricing(item.name, priceMap);
-                    if (featurePrice !== undefined) {
-                        return { ...item, price: featurePrice, subtotal: featurePrice * (item.qty || 0) };
-                    }
-                    // 미매칭 시 원본 유지
-                    return item;
-                });
-            }
-
-            const updatedAmount = updatedItems.length > 0
-                ? updatedItems.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0)
-                : Number(row.amount);
-
-            // 디버깅 로그: 모든 정산에 대해 pricing 매칭 상태 출력
-            const origAmount = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
-            console.log(`[정산] ${settlementDate} ${row.partner} | DB금액=${origAmount} → 적용금액=${updatedAmount} | priceMap=${JSON.stringify(priceMap)} | items=${JSON.stringify(items.map(i => i.name))}`);
-
+            // #1184 B6 계산은 settleDisplayCalc 한 곳(식 무변경) · B10 행마다 찍던 [정산] priceMap 로그는 뺌(조회 한 번에 수백 줄)
+            const { items: updatedItems, amount: updatedAmount } = settleDisplayCalc(row, mappingsByPartner);
             return {
                 id: row.id, date: row.date, partner: row.partner,
                 amount: updatedAmount, items: updatedItems, fromPricing: row.from_pricing,
-                isPaid: row.is_paid || false, paidAt: row.paid_at
+                isPaid: row.is_paid || false, paidAt: row.paid_at,
+                paidAmount: row.paid_amount == null ? null : Number(row.paid_amount)   // #1184 B6 입금 표시한 때의 화면 금액(그 전 입금 건 = null → 화면은 종전처럼 amount)
             };
         });
         res.json(data);
@@ -4245,13 +4324,27 @@ app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) =
 
 app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (req, res) => {
     try {
+        // #1184 B6(점검 #1183): 입금 표시하는 순간의 화면 금액을 paid_amount 로 고정(나중에 단가표를 고쳐도 입금한 금액이 남게) · 입금 풀면 NULL
+        //   금액 = 목록과 같은 settleDisplayCalc(그 날짜 단가표 + 품목 매칭) · 계산식 무변경
+        const cur = (await pool.query(
+            `SELECT s.*, (SELECT jsonb_agg(p.items ORDER BY p.id ASC) FROM pricing p
+                          WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
+             FROM settlements s WHERE s.id = $1`, [req.params.id])).rows[0];
+        if (!cur) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
+        let paidAmount = null;
+        if (!cur.is_paid) {
+            const mappingsByPartner = { [cur.partner]: {} };
+            (await pool.query('SELECT sales_name, pricing_name FROM product_mappings WHERE partner = $1 ORDER BY id', [cur.partner])).rows
+                .forEach(m => { mappingsByPartner[cur.partner][m.sales_name] = m.pricing_name; });
+            paidAmount = settleDisplayCalc(cur, mappingsByPartner).amount;
+        }
         const result = await pool.query(
-            'UPDATE settlements SET is_paid = NOT COALESCE(is_paid, false), paid_at = CASE WHEN COALESCE(is_paid, false) = false THEN NOW() ELSE NULL END WHERE id = $1 RETURNING *',
-            [req.params.id]
+            'UPDATE settlements SET is_paid = NOT COALESCE(is_paid, false), paid_at = CASE WHEN COALESCE(is_paid, false) = false THEN NOW() ELSE NULL END, paid_amount = CASE WHEN COALESCE(is_paid, false) = false THEN $2::numeric ELSE NULL END WHERE id = $1 AND COALESCE(is_paid, false) = $3 RETURNING *',
+            [req.params.id, paidAmount, !!cur.is_paid]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
+        if (result.rows.length === 0) return res.status(409).json({ error: '다른 곳에서 방금 바뀌었어요 · 새로 고침 뒤 다시 눌러 주세요' });
         const row = result.rows[0];
-        res.json({ id: row.id, isPaid: row.is_paid, paidAt: row.paid_at });
+        res.json({ id: row.id, isPaid: row.is_paid, paidAt: row.paid_at, paidAmount: row.paid_amount == null ? null : Number(row.paid_amount) });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4606,7 +4699,9 @@ app.get('/api/settlement-completions', authMiddleware, adminOnly, async (req, re
         if (month) {
             // 해당 월에 걸치는 주차들 조회
             const startOfMonth = month + '-01';
-            const endOfMonth = month + '-31';
+            // #1184 B10(점검 #1183): 달 끝날 = 그 달 실제 마지막 날(종전 '-31' = 30일까지인 달·2월에 날짜 오류) · UTC 로 계산해 시간대 무관
+            const ym = /^(\d{4})-(\d{2})$/.exec(String(month));
+            const endOfMonth = ym ? `${month}-${String(new Date(Date.UTC(Number(ym[1]), Number(ym[2]), 0)).getUTCDate()).padStart(2, '0')}` : month + '-31';
             result = await pool.query(
                 "SELECT sc.*, u.name as completed_by_name FROM settlement_completions sc LEFT JOIN users u ON sc.completed_by = u.id WHERE sc.week_start <= $2 AND sc.week_end >= $1 ORDER BY sc.week_start, sc.partner",
                 [startOfMonth, endOfMonth]
@@ -5270,6 +5365,8 @@ app.post('/api/settlement-status', authMiddleware, adminOnly, async (req, res) =
 app.delete('/api/settlement-status/:date', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM settlement_status WHERE date = $1', [req.params.date]);
+        // #1184 B10(점검 #1183): 지운 날짜가 속한 네이버 정산 회차 대조도 다시 계산(저장 때와 같은 길 · 종전 = 지운 값이 대조 카드에 남음) — 실패해도 삭제 결과 무영향
+        try { await settleReconRecomputeInputs(String(req.params.date).slice(0, 10)); } catch (e) { console.error('[settle-recon #468 delete-hook]', String(e && e.message || e).slice(0, 160)); }
         res.json({ success: true });
     } catch (err) {
         console.error('DELETE /api/settlement-status error:', err);
@@ -15650,7 +15747,7 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
         // #477: 되묻기(질문)에 답하기 + 끝난 지시에 [이어서 지시](앞 답을 이어받아 고치기·추가 요청) — 끝난 지시는 상태를 그대로 둔다
         const FOLLOWABLE = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
         if (q.status !== '질문' && !FOLLOWABLE.includes(q.status)) throw { status: 400, message: '처리가 끝난 뒤에 이어서 지시할 수 있어요' };
-        if (q.created_by_id && q.created_by_id !== req.user.id && req.user.role !== 'admin') throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };
+        if (!deskOrderMine(req.user, q)) throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };   // #1184 A1: 작성자 번호가 빈 옛 지시는 대표만(종전 = 누구나)
         const r = await pool.query(
             `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to, image_data, image_mime, file_name) VALUES ($1, '대기', $2, $3, $4, $5, $6, $7) RETURNING id, status`,
             [text, req.user.name || req.user.username, req.user.id, q.id, imageData || null, imageData ? imageMime : null, att.fileName || null]);
@@ -15686,6 +15783,20 @@ app.post('/api/agent-office/desk/wake', authMiddleware, async (req, res) => {
 // 내 지시·전체 지시 목록 (창구 화면 — 이미지 원문 제외)
 app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
     try {
+        // #1184 B10(점검 #1183): 진행 중 지시 1초 조회 = ?ids=1,2 → 그 줄들의 상태·단계·(진행 중일 때만) 쓰는 중 답만(목록 전체 40줄·결과 JSON 을 매초 받던 것 · 전체 목록 12초는 그대로)
+        //   보는 기준 = 아래 목록과 같음(대표 = 전부 · 그 밖 = 내 지시만 · 시험 번호 지시 제외) · 한 번에 20개까지
+        if (req.query.ids != null) {
+            const ids = [...new Set(String(req.query.ids).split(',').map(x => parseInt(x, 10)).filter(n => Number.isInteger(n) && n > 0))].slice(0, 20);
+            if (!ids.length) return res.json({ orders: [], light: true });
+            const lp = [ids, DESK_ACTIVE_STATUS.concat(['판독완료', '확인표작성'])];
+            let lw = `o.id = ANY($1::int[]) AND o.is_deleted = false` + deskNoTestSql('o', req.user.id);
+            if (!isOwnerUser(req.user)) { lp.push(req.user.id); lw += ` AND o.created_by_id = $3`; }
+            const lr = await pool.query(
+                `SELECT o.id, o.status, o.processed_at, o.run_id, CASE WHEN o.status = ANY($2::text[]) THEN o.result END AS result,
+                        (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
+                 FROM pending_orders o WHERE ${lw}`, lp);
+            return res.json({ orders: lr.rows, light: true });
+        }
         const limit = Math.min(parseInt(req.query.limit) || 40, 200);
         // #476(대표 9/30): 전체 지시·대표 확인함은 관리자만 — 직원에게는 늘 본인 지시만 내려준다(화면 탭만 숨기지 않고 서버에서도)
         // #538(대표 10/5): 이전 채팅 이력(history=1) — 직원 = 본인 것 전부(채팅 종료로 내린 것 포함) · 관리자 = 모두. 검색어 q = 지시 글·답 글
@@ -16052,8 +16163,8 @@ app.post('/api/agent-office/orders/:id/close', authMiddleware, /* 직원 가능 
     try {
         const r = await pool.query(
             `UPDATE pending_orders SET status='질문종결', processed_at=NOW()
-             WHERE id=$1 AND status='질문' AND is_deleted=false RETURNING id`, [req.params.id]);
-        if (r.rows.length === 0) throw { status: 400, message: '질문 상태인 지시만 종결할 수 있습니다' };
+             WHERE id=$1 AND status='질문' AND is_deleted=false AND ($2::boolean OR created_by_id = $3::int) RETURNING id`, [req.params.id, isOwnerUser(req.user), req.user.id]);   // #1184 A1 본인 또는 대표
+        if (r.rows.length === 0) throw { status: 400, message: '질문 상태인 내 지시만 종결할 수 있습니다' };
         await writeAudit({
             action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
             changes: { after: { status: '질문종결(미응답)' } },
@@ -16112,10 +16223,13 @@ app.post('/api/agent-office/orders/:id/process', authMiddleware, adminOnly, asyn
 app.get('/api/agent-office/orders/:id', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT id, content, status, result, run_id, created_at, processed_at, created_by
+            `SELECT id, content, status, result, run_id, created_at, processed_at, created_by, created_by_id
              FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '지시를 찾을 수 없습니다' };
-        res.json({ order: r.rows[0] });
+        // #1184 A1: 본인 또는 대표 · 「[이벤트그림]」 지시는 이벤트 관리 화면이 직원끼리 같이 보므로(후보 그림 받기) 그대로 누구나
+        if (!deskOrderMine(req.user, r.rows[0]) && !String(r.rows[0].content || '').startsWith('[이벤트그림]')) throw { status: 403, message: '내가 보낸 지시만 볼 수 있습니다' };
+        const { created_by_id: _cbi, ...order } = r.rows[0];
+        res.json({ order });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -16133,17 +16247,30 @@ app.post('/api/agent-office/settlement-ocr-save', authMiddleware, adminOnly, asy
         const items = srcRows.map(x => ({ name: x.matched || x.name, qty: Number(x.qty) || 0, price: Number(x.price) || 0, subtotal: Number(x.subtotal) || (Number(x.price) || 0) * (Number(x.qty) || 0) }));
         const total = items.reduce((s, it) => s + it.subtotal, 0);
         const boxTotal = items.reduce((s, it) => s + it.qty, 0);
-        const del = await pool.query(`DELETE FROM settlements WHERE partner=$1 AND date::text=$2 RETURNING id`, [partner, date]);
-        await pool.query(`INSERT INTO settlements (date, partner, amount, items, from_pricing) VALUES ($1,$2,$3,$4,TRUE)`,
-            [date, partner, total, JSON.stringify(items)]);
+        // #1184 A13(점검 #1183): 지우고 넣기·확인표 닫기 = 한 묶음(중간에 실패하면 옛 정산 그대로) · 같은 날 다시 저장해도 입금 표시(is_paid·paid_at·paid_amount)는 옛 줄 것을 이어 받음(종전 = 지워져 미입금으로 보임)
+        const cl = await pool.connect();
+        let del;
+        try {
+            await cl.query('BEGIN');
+            //   입금 시각은 글자로 받아 그대로 넣는다(칸이 시간대 없는 timestamp — JS Date 로 오가면 9시간 어긋날 수 있음)
+            del = await cl.query(`DELETE FROM settlements WHERE partner=$1 AND date::text=$2 RETURNING id, is_paid, paid_at::text AS paid_at_txt, paid_amount`, [partner, date]);
+            const paidRows = del.rows.filter(x => x.is_paid);
+            const keepPaid = paidRows.length > 0;
+            const keepAt = keepPaid ? paidRows.map(x => x.paid_at_txt).filter(Boolean).sort().pop() || null : null;   // 가장 늦은 입금 시각(같은 꼴 글자라 글자 순 = 시각 순)
+            const keepAmt = keepPaid && paidRows.every(x => x.paid_amount != null) ? paidRows.reduce((t, x) => t + Number(x.paid_amount), 0) : null;
+            await cl.query(`INSERT INTO settlements (date, partner, amount, items, from_pricing, is_paid, paid_at, paid_amount) VALUES ($1,$2,$3,$4,TRUE,$5,$6::timestamp,$7)`,
+                [date, partner, total, JSON.stringify(items), keepPaid, keepAt, keepAmt]);
+            await cl.query(`UPDATE pending_orders SET status='완료', processed_at=NOW(),
+            result = jsonb_set(jsonb_set(result, '{type}', '"settlement_saved_ocr"'), '{saved_partner}', $2) WHERE id=$1`,
+                [order_id, JSON.stringify(partner)]);
+            await cl.query('COMMIT');
+        } catch (e) { await cl.query('ROLLBACK').catch(() => { }); throw e; }
+        finally { cl.release(); }
         await writeAudit({
             action: del.rows.length ? 'update' : 'create', targetType: 'settlement', targetId: null,
-            changes: { after: { via: 'image_ocr', partner, date, box_total: boxTotal, amount: total, overwrote: del.rows.length, manual_match: !!(editedRows && editedRows.length) } },
+            changes: { after: { via: 'image_ocr', partner, date, box_total: boxTotal, amount: total, overwrote: del.rows.length, kept_paid: del.rows.some(x => x.is_paid), manual_match: !!(editedRows && editedRows.length) } },
             source: 'agent_office', actor: adminActor(req),
         });
-        await pool.query(`UPDATE pending_orders SET status='완료', processed_at=NOW(),
-            result = jsonb_set(jsonb_set(result, '{type}', '"settlement_saved_ocr"'), '{saved_partner}', $2) WHERE id=$1`,
-            [order_id, JSON.stringify(partner)]);
         // #1081(대표 11/9) 정산관리 입력 텔레그램 끔(회사프로그램 알림·카드는 그대로)
         res.json({ message: `${partner} ${date} 정산관리에 ${del.rows.length ? '덮어쓰기' : '저장'} 완료 (${boxTotal}박스, ${total.toLocaleString()}원)`, partner, total, overwrote: del.rows.length });
     } catch (err) { handleAdminErr(res, err); }
@@ -16154,8 +16281,8 @@ app.post('/api/agent-office/orders/:id/ack-error', authMiddleware, /* 직원 가
     try {
         const r = await pool.query(
             `UPDATE pending_orders SET status='오류확인', processed_at=NOW()
-             WHERE id=$1 AND status='오류' AND is_deleted=false RETURNING id`, [req.params.id]);
-        if (r.rows.length === 0) throw { status: 400, message: '오류 상태인 지시만 확인 처리할 수 있습니다' };
+             WHERE id=$1 AND status='오류' AND is_deleted=false AND ($2::boolean OR created_by_id = $3::int) RETURNING id`, [req.params.id, isOwnerUser(req.user), req.user.id]);   // #1184 A1 본인 또는 대표
+        if (r.rows.length === 0) throw { status: 400, message: '오류 상태인 내 지시만 확인 처리할 수 있습니다' };
         await writeAudit({
             action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
             changes: { after: { status: '오류확인' } },
@@ -16252,7 +16379,16 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
 app.get('/api/agent-office/files/:id/download', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT filename, data FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [req.params.id]);
+            `SELECT f.filename, f.data,
+                    (EXISTS (SELECT 1 FROM pending_orders o
+                              LEFT JOIN agent_runs ar ON ar.id = o.run_id
+                             WHERE o.is_deleted = false AND (o.created_by_id = $2::int OR o.content LIKE '[이벤트그림]%')
+                               AND ((f.run_id IS NOT NULL AND o.run_id = f.run_id)
+                                    OR COALESCE(o.result->'files', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('file_id', f.id))
+                                    OR o.result->>'file_id' = f.id::text OR ar.result->>'file_id' = f.id::text))) AS mine
+             FROM report_files f WHERE f.id = $1 AND f.is_deleted = false AND f.purged_at IS NULL`, [req.params.id, req.user.id]);
+        // #1184 A1: 대표 = 전부 · 직원 = 내 지시(실행 기록·답 첨부·최종발주 기록 그림)에 붙은 파일만 · 「[이벤트그림]」 후보는 이벤트 관리 화면이 같이 봄
+        if (r.rows.length && !isOwnerUser(req.user) && !r.rows[0].mine) throw { status: 403, message: '내 지시에 붙은 파일만 받을 수 있습니다' };
         if (r.rows.length === 0) {
             let days = DB_RET_DEFAULT.report_days;   // #906 글 속 기간 = 지금 보관 설정(못 읽으면 기본값)
             try { days = dbRetentionCfg(await naverCfgGet('db_retention')).report_days; } catch (_) { }

@@ -5210,3 +5210,83 @@ button.rv-num:focus-visible, .rv-chip:focus-visible, .rv-link:focus-visible { ou
 .noti-hist-item.unread.nh-alert { background: #FEF3F2; box-shadow: inset 4px 0 0 var(--danger, #F04438); }
 .noti-hist-item.unread.nh-alert:hover { background: #FEE4E2; }
 .noti-hist-item.unread.nh-alert .nh-time { color: #B42318; }
+
+/* ============================================================
+   #1185(대표 11/17 「고」 · #1183-B 총 점검에서 찾은 화면 줄 틀어짐) — 모양·색은 기존 그대로, 줄바꿈·칸 폭·누름 자리만
+   ============================================================ */
+/* ①2 박스재고 › 전체 입출고 표: 날짜·박스·구분·수량은 한 줄(app.js nowrap) · 비고 칸이 너무 좁아지지 않게(폰은 표가 옆으로 밀림) */
+.bh-table .bh-note { min-width: 280px; }
+/* ①6 정산현황 맨 아래: 카드비용은 위 「합 계」에 이미 빠진 값 → 회색 참고 줄(숫자·계산 무변경) */
+.ss-tbl .ss-ref-row th { font-weight: 500; }
+.ss-tbl .ss-ref-row .ss-ref-note { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--card-bg, #fff); border: 1px solid var(--border, #ECEDF1); color: var(--text-mid, #667085); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ss-cmp.ss-ref { color: var(--text-mid, #667085); font-weight: 600; }
+/* ② 문의 관리 › 응대 현황 아래 「수정 이력」 카드와의 간격(다른 카드 사이와 같은 24px) */
+#inquiry-tab-overview { margin-bottom: 24px; }
+/* ② 계산서 발행현황(넓은 PC): 공급자 이름 + 「면세」가 한 줄에 들게 → 시온·효돈 두 표 줄 높이 같게 */
+@media (min-width: 1280px) { #settlement-invoice .si-sup { max-width: 290px; } }
+#settlement-invoice .si-kind { white-space: nowrap; }
+/* ② 지출결의서 [선택 승인]·[선택 삭제] 같은 크기 */
+#expense-pending-batch-delete, #expense-history-batch-delete { padding: 8px 20px; font-size: 14px; border-radius: 8px; min-height: 38px; }
+#expense-pending-batch-approve, #expense-history-batch-approve { min-height: 38px; font-size: 14px; }
+
+@media (max-width: 860px) {
+    /* ①1 알림 발송 이력 머리 줄: 제목·설명 한 줄씩 → 아래에 고르기 칸·새로고침(종전 = 좁은 칸에서 글자 몇 개씩 꺾임) */
+    .nlog-head { flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+    .nlog-head h2 { flex: 1 1 100%; min-width: 0; }
+    .nlog-head h2 .text-muted { display: block; margin-top: 4px; line-height: 1.5; }
+    .nlog-head > div { flex: 1 1 100%; flex-wrap: wrap; }
+    .nlog-head > div select { flex: 1 1 120px; min-height: 40px; }
+    .nlog-head > div .btn-outline { white-space: nowrap; min-height: 40px; }
+    /* 표는 옆으로 밀리는 그대로 · 머리글과 짧은 칸(구매자·발송안내 등)은 한 줄 — 종전 = 43px 로 눌려 「구/매/자」·줄 높이 115px */
+    #notify-log-list .data-table th, #notify-log-list .data-table td { white-space: nowrap; }
+    #notify-log-list .data-table td:nth-child(5) { white-space: normal; min-width: 200px; }
+    /* ①4 판매현황·가격 머리 줄 · 표 */
+    .bp-head { flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+    .bp-head h2 { flex: 1 1 100%; min-width: 0; }
+    .bp-head h2 .text-muted { display: block; margin-top: 4px; line-height: 1.5; }
+    #btn-botprod-add-toggle { white-space: nowrap; }
+}
+@media (max-width: 768px) {
+    /* ①3 지출결의서 작성 › 지출 항목 줄(폰): [항목][금액][×] / 세부내용 / 비고 — 머리글은 칸 안 글(placeholder)로 대신 */
+    .expense-items-header { display: none; }
+    .expense-item-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; grid-template-areas: "cat amt rm" "det det det" "note note note"; }
+    .expense-item-row .expense-item-category { grid-area: cat; }
+    .expense-item-row .expense-item-amount { grid-area: amt; }
+    .expense-item-row .expense-item-remove { grid-area: rm; }
+    .expense-item-row .expense-item-detail { grid-area: det; }
+    .expense-item-row .expense-item-note { grid-area: note; }
+    /* ①4 판매현황 표(폰): 상태 단추 3개를 세로로 · 가격 칸 좁게 → 품목명·상태·가격이 한 화면에 */
+    #botprod-list td:first-child { min-width: 120px; }
+    #botprod-list td.bp-st { white-space: normal !important; min-width: 74px; font-size: 0; }   /* 상태 단추 4개 = 세로 한 줄(품목명 칸 높이 안에 들어감 · 단추 사이 공백 글자 폭 0) */
+    #botprod-list td.bp-st > button { display: block; width: 100%; min-height: 36px; margin: 0 0 4px; white-space: nowrap; padding-left: 4px; padding-right: 4px; font-size: 12px; }
+    #botprod-list td.bp-price input { width: 88px !important; }
+    /* ①9 업무일지 오늘 칸: 「업무일지 작성」 → 「작성」(다른 날과 같은 꼴 · 화면 읽기 프로그램은 aria-label 로 전체) */
+    .worklog-write-btn .wl-long { display: none; }
+    /* ② 일정 머리 줄: 새로고침은 제목 옆 · [오늘]은 ‹ › 옆으로 */
+    #page-schedule .calendar-title-group { justify-content: flex-start; }
+    #page-schedule .calendar-title-group .refresh-time { margin-left: auto; }
+    #page-schedule .sch-head-controls .sch-today-btn { margin-left: auto; }
+    /* ② 마이 플래너 안내 상자(폰): 글은 상자 전체 폭 · 단추는 아래 */
+    #planner-welcome .pw-row { flex-direction: column; gap: 12px; }
+    #planner-welcome .pw-acts { margin-left: 0 !important; }
+    /* ③ 문의 관리 첫 화면(폰): 미리보기에 대화가 없을 땐 낮게(질문을 넣으면 종전대로 화면 한 장) */
+    .rv-right.rv-talk:not(:has(.rv-msg)) { height: auto; }
+    .rv-right.rv-talk:not(:has(.rv-msg)) .rv-log { min-height: 140px; }
+}
+/* ② 폰·터치 누름 자리 44px(보이는 모양은 그대로 · #703 방식) */
+@media (max-width: 960px), (pointer: coarse) {
+    .sch-flt-btn { min-height: 34px; margin-bottom: 10px; }
+    .sch-flt-btn::before { inset: -6px -3px; }
+    .ss-tbl .ss-ni { min-height: 40px; }
+    .side-theme { position: relative; }
+    .side-theme::before { content: ''; position: absolute; inset: -6px; }
+}
+/* #1185-2 휴가 「차감될 연차 n일」 미리 보기 한 줄(신청·수정 창) */
+.doc-deduct-preview { margin: -4px 0 14px; font-size: 14px; font-weight: 600; color: var(--primary); }
+
+/* #1185-2 정산관리: 입금 표시한 때 금액과 지금 단가표 금액이 다를 때(작은 주황 글 · 금액 칸 글자는 그대로) */
+.settle-paid-diff { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: #FFF4E5; color: #B45309; font-size: 11.5px; font-weight: 600; white-space: nowrap; vertical-align: 1px; }
+.settle-paid-diff-row { margin: -2px 0 0 12px; }
+.settle-paid-diff-row .settle-paid-diff { margin-left: 0; }
+/* #1185-2 응대 현황 「아직 안 답함」 밑 「14일 안 n건」(손님 연락 창과 같은 기준) */
+.rv-num .rv-open14 { display: block; font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--primary); margin-top: 2px; white-space: nowrap; font-variant-numeric: tabular-nums; }

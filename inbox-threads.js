@@ -40,6 +40,9 @@ const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const iso = c => `to_char(${c}, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;   // 칸이 전부 timestamp(시간대 없음 · UTC 값)이라 글자로 받아 Z 를 붙인다(JS Date 로 받으면 9시간 어긋남)
 const like = q => '%' + String(q).replace(/[\\%_]/g, m => '\\' + m) + '%';
+// #1184 A12(점검 #1183): 최근 대화순 정렬 = 시각을 숫자로(Date.parse) 견준다 — 답한 글은 'Z'(UTC) 글자, 안 답한 글은 '+09:00' 원문이라 글자 비교로는 최대 9시간 어긋났다 · 못 읽는 값은 맨 뒤
+const atNum = v => { const n = Date.parse(String(v || '')); return Number.isFinite(n) ? n : -Infinity; };
+const byLastAt = (a, b) => { const x = atNum(b.last_at), y = atNum(a.last_at); return x === y ? 0 : (x > y ? 1 : -1); };
 
 module.exports = function mountInboxThreads(app, deps) {
     const { pool, authMiddleware, writeAudit } = deps;
@@ -372,7 +375,7 @@ module.exports = function mountInboxThreads(app, deps) {
             if (ql && !(s.question + '\n' + s.ans + '\n' + (s.draft || '') + '\n' + s.thread.title + '\n' + s.thread.id).toLowerCase().includes(ql)) continue;
             out.push(s.thread);
         }
-        return out.sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || '')));
+        return out.sort(byLastAt);   // #1184 A12 시각 숫자로 정렬(종전 = 글자 비교라 'Z' 시각과 '+09:00' 시각이 최대 9시간 어긋남)
     }
     async function postRow(c, id) {
         const P = POST[c]; if (!P.okId(String(id || ''))) throw bad(400, '어느 문의인지 알 수 없어요');
@@ -445,7 +448,7 @@ module.exports = function mountInboxThreads(app, deps) {
     // #661 「확인 필요 문의」 칸 = 이 창의 전체 목록(scope=all)을 간단히(대표 10/12 — 네이버 톡톡상담관리 꼴): 최근 대화순 · 채널당 CARD_MAX 줄(대기 줄은 빠짐없이 먼저 담는다) ·
     //   줄마다 needs_reply(= 대기 · 칩 숫자가 세는 것)·done·last_* 를 단다. 숫자(counts.open)는 이 창의 「답 안 한 것」과 같은 값. more = 카드에 못 실은 줄 수(창에서 봄)
     const CARD_MAX = 30;
-    const cardPick = l => { const w = l.filter(x => x.needs_reply), r = l.filter(x => !x.needs_reply); return w.concat(r.slice(0, Math.max(0, CARD_MAX - w.length))).sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || ''))); };
+    const cardPick = l => { const w = l.filter(x => x.needs_reply), r = l.filter(x => !x.needs_reply); return w.concat(r.slice(0, Math.max(0, CARD_MAX - w.length))).sort(byLastAt); };
     async function cardData() {
         const one = async fn => { try { const l = await fn(); const p = cardPick(l); return { n: l.filter(x => x.needs_reply).length, more: l.length - p.length,
             items: p.map(x => Object.assign({}, x._card, { seen: !!x.done, done: !!x.done, needs_reply: !!x.needs_reply, unread: x.unread, title: x.title, sub: x.sub, sub_ch: x.sub_ch, last_dir: x.last_dir, last_text: x.last_text, last_at: x.last_at, can_send: x.can_send })) }; } catch (e) { log.error('[문의 창] 카드 줄 실패:', e.message); return null; } };
