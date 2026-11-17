@@ -2084,13 +2084,11 @@
     const smExBox = oid => (OM.list || []).find(o => o.kind === 'line' && o.state === 'open' && isBoxRow(o) && o.checked && String(o.checked.pno || '') === String(oid) && Array.isArray(o.boxes) && o.boxes.length) || null;
     const smMis = (r, oid) => { const ex = smExBox(oid), o = ceOrders(r).find(x => x.id === String(oid)); return !!(ex && o && ex.boxes.length !== Math.max(1, Math.min(o.qty || 1, BOX_MAX))); };
     const smSame = (a, b) => smText({ note: a }) === smText({ note: b });
-    function smFill(r, oid) {   // 고른 주문 판에 한 번만 · 저장된 박스별 줄 값은 그대로 깔고(덮어 지우지 않게) · 배송메세지는 빈 칸에만 · 이미 글이 있거나 박스마다 주소가 다르면 안 넣고 안내만
+    function smFill(r, oid) {   // 고른 주문 판에 한 번만 · 저장된 박스별 줄 값(받는 분·주소 등)은 그대로 깔고(덮어 지우지 않게) · 배송메세지는 넘어온 글로 채움(저장해 둔 글이 있어도 바꿈 = 대표 11/18 「입력 시 우리가 입력한 걸로」) · 박스마다 주소가 다르면 안 넣고 안내만
         const c = OM.card, F = c && c.smFrom, xo = r._xo && r._xo[oid], bx = xo && xo.bx; if (!F || !bx || bx._smSeen) return;
         bx._smSeen = true; F.st = F.st || {};
         const ex = smExBox(oid);
         if (ex && ex.boxes.length === bx.arr.length) bx.arr.forEach((b, i) => BOX_K.forEach(k => { if (!b[k] && ex.boxes[i] && ex.boxes[i][k]) b[k] = String(ex.boxes[i][k]); }));
-        const had = bx.arr.map(b => String(b.m || '').trim()).filter(Boolean);
-        if (had.length) { F.st[oid] = had.some(h => smSame(h, F.text)) ? 'same' : 'had'; F.had = had[0]; return; }
         const live = bx.arr.filter(b => !b.s), as = [...new Set(live.map(b => String(b.a || '').trim()))];
         if (bx.arr.length > 1 && as.length > 1) { F.st[oid] = 'addr'; return; }
         live.forEach(b => { b.m = F.text.slice(0, 300); }); F.st[oid] = 'filled';
@@ -2109,8 +2107,6 @@
         const keep = F.id != null ? '닫으면 보통 줄로 남아요' : '닫으면 이 글은 저장되지 않아요';
         const st = Object.values(F.st || {}), nF = st.filter(v => v === 'filled').length, out = [];
         if (nF) out.push(`배송메세지 칸에 ${q}를 넣어 뒀어요${nF > 1 ? `(주문 ${nF}건)` : ''} · 확인하고 [저장]을 눌러 주세요${F.id != null ? ' · 저장하면 메모함의 옛 보통 줄은 지워요(「비운 것」에서 되살릴 수 있어요)' : ''}`);
-        if (st.includes('had')) out.push(`이미 배송메세지가 있어요: 「${esc(cut1(F.had, 40))}」 · 바꾸려면 직접 고쳐 주세요(넣으려던 글 ${q})`);
-        if (st.includes('same')) out.push(`이 주문엔 같은 배송메세지가 이미 들어 있어요`);
         if (st.includes('addr')) out.push(`박스마다 주소가 달라요 · 넣을 박스에 직접 넣어 주세요(넣을 글 ${q})`);
         if (st.includes('mis')) out.push('이 주문엔 박스 수가 다른 박스별 줄이 저장돼 있어요 · 메모함 목록에서 그 줄을 열어 고쳐 주세요');
         if (out.length) return P(out.join('<br>') + ' · ' + keep);

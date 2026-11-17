@@ -1,6 +1,6 @@
 // #1188 검증 — 발주 메모함 ⓐ 1박스 박스별 줄 목록 글(바뀐 것 중심) ⓑ 기사님 전달 글뿐인 보통 줄 = 「배송메세지 아님」 알약 + 줄 카드 안내 띠([배송메세지로 넣기][이대로 저장])
 //   🔴 실DB·서버(server.js)·네트워크 0 — verify-900-2b.js 의 가짜 서버·자료(verify-1148-back.js 와 같은 덧댐) · 쓰기 꼴 요청은 가짜 서버 안에서만 기록
-//   기준 = HEAD(?v=old) 와 지금 파일(?v=new)을 같은 가짜 자료로 띄워 견줌(달라져야 할 줄만 달라졌나)
+//   기준 = #1188 직전 커밋 c7f90f3(?v=old · BASE1188 로 바꿈) 과 지금 파일(?v=new)을 같은 가짜 자료로 띄워 견줌(달라져야 할 줄만 달라졌나)
 //   실행: node scripts/verify-1188-memo.js   (PORT1188 로 포트 · 기본 3462)
 'use strict';
 const path = require('path'), http = require('http'), fs = require('fs'), { execSync } = require('child_process');
@@ -12,6 +12,9 @@ const ok = (c, name, extra) => { if (c) { pass++; console.log('  ✅', name); } 
 
 let B = fs.readFileSync(path.join(__dirname, 'verify-900-2b.js'), 'utf8').split('\r\n').join('\n');
 B = B.slice(B.indexOf('const SRC = {'), B.indexOf('(async () => {'));
+const BASE = process.env.BASE1188 || 'c7f90f3';   // 견줄 기준 = #1188 이 들어가기 직전 커밋(v5.9.826) — HEAD 는 #1188 배포 뒤라 지금 파일과 같음
+if (B.split('git show HEAD:').length !== 3) throw new Error('기준 커밋 자리 못 찾음');
+B = B.split('git show HEAD:').join('git show ' + BASE + ':');
 const patch = (a, b) => { if (B.split(a).length !== 2) throw new Error('덧댐 자리 못 찾음: ' + a.slice(0, 60)); B = B.replace(a, () => b); };
 patch('function pxList() {', 'function pxList() { const L = pxList0(); return S.mut ? S.mut(L) : L; }\nfunction pxList0() {');
 patch('try { S.puts.push(JSON.parse(b)); } catch (e) { }', 'try { const j = JSON.parse(b); j._id = Number(u.pathname.split(\'/\').pop()); S.puts.push(j); } catch (e) { }');
@@ -165,15 +168,15 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         await openEdit(p, '518'); await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(600);
         await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
         let pu = S.puts.find(x => x._id === 502);
-        ok(S.saves.length === 0 && !!pu && pu.boxes[0].m === '문 앞에 놔주세요' && pu.boxes[0].n === '김받는' && pu.boxes[0].a === LONG_ADDR && pu.checked.pno === PNO(502) && S.deleted.size === 0, '점검 1) 이미 배송메세지가 있는 박스별 줄(502) = 그 글 안 덮음 · 받는 분·주소 그대로 PUT · 넘긴 글이 안 들어갔으니 옛 보통 줄 안 지움', { pu, del: [...S.deleted] });
+        ok(S.saves.length === 0 && !!pu && pu.boxes[0].m === '공동현관 #1234' && pu.boxes[0].n === '김받는' && pu.boxes[0].a === LONG_ADDR && pu.checked.pno === PNO(502) && S.deleted.has(518) && S.deleted.size === 1, '이미 배송메세지가 저장된 박스별 줄(502) = 넘어온 새 글로 바뀜(PUT m = 새 글) · 받는 분·주소 그대로 · 저장된 뒤 옛 보통 줄 지움', { pu, del: [...S.deleted] });
         await X.cx.close();
         reset(); S.extra = Ln => [Ln(518, '공동현관 #1234', { key: K(502), line: K(502) + ' 공동현관 #1234 네이버' })]; X = await newPage('new'); p = X.p;
         await openEdit(p, '518'); await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(600);
         st = await p.evaluate(() => ({ note: document.querySelector('#om-card .om-smb-n').textContent, m: [...document.querySelectorAll('#om-card [data-cact="bxf"][data-k="m"]')].map(i => i.value) }));
-        ok(st.m.join() === '문 앞에 놔주세요' && /이미 배송메세지가 있어요: 「문 앞에 놔주세요」 · 바꾸려면 직접 고쳐 주세요/.test(st.note), '점검 1) 판 머리 = 「이미 배송메세지가 있어요: 「…」 · 바꾸려면 직접 고쳐 주세요」 · 칸은 옛 글 그대로', st);
+        ok(st.m.join() === '공동현관 #1234' && !/이미 배송메세지가 있어요/.test(st.note) && /넣어 뒀어요/.test(st.note), '판 = 칸에 새 글이 들어 있음 · 「이미 배송메세지가 있어요」 안내 줄 없음', st);
         await p.fill('#om-card [data-cact="bxf"][data-k="m"]', '공동현관 #1234'); await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
         pu = S.puts.find(x => x._id === 502);
-        ok(!!pu && pu.boxes[0].m === '공동현관 #1234' && pu.boxes[0].n === '김받는' && S.deleted.has(518) && S.deleted.size === 1, '점검 1)·3) 사람이 직접 그 글로 고쳐 저장 = PUT 에 새 글 · 받는 분 그대로 · 그때 옛 보통 줄 지움', { pu, del: [...S.deleted] });
+        ok(!!pu && pu.boxes[0].m === '공동현관 #1234' && pu.boxes[0].n === '김받는' && S.deleted.has(518) && S.deleted.size === 1, '칸을 같은 글로 다시 적어 저장해도 = PUT m 새 글 · 받는 분 그대로 · 옛 보통 줄 지움', { pu, del: [...S.deleted] });
         await X.cx.close();
         // 이미 박스별 줄이 있는데 배송메세지는 비어 있음 = 빈 칸에만 넣음(받는 분 그대로)
         reset(); S.extra = (Ln, Bx) => [Bx(520, [Object.assign(B0(), { n: '기존받는' })], '박스별 1박스 · 박스1=그대로(받는 분 바꿈)'), Ln(521, '문 앞에 놔주세요', { key: K(520), line: K(520) + ' 문 앞에 놔주세요 네이버' })]; S.lookup[dg(K(520))] = [ord(520)]; X = await newPage('new'); p = X.p;
