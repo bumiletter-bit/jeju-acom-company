@@ -21,19 +21,20 @@ const days = []; for (let t = Date.UTC(2026, 0, 1); t <= Date.UTC(2028, 11, 31);
 for (const f of ['final-order-core.js', 'invoice-v2.js']) {
     console.log('\n■ ' + f);
     const O = load(oldSrc(f)), N = load(newSrc(f));
-    let cells = 0, same = 0; const kinds = { wrap: 0, ghost: 0, other: [] };
+    let cells = 0, same = 0; const kinds = { wrap: 0, ghost: 0, kg: 0, other: [] };
     for (const today of days) {
         const ty = +today.slice(0, 4), tm = +today.slice(5, 7), td = +today.slice(8, 10);
         const forms = [];
         for (let d = 1; d <= 31; d++) forms.push([d + '일', 'n', 0, d], [d + ' 일 오전', 'n', 0, d]);
         for (let m = 1; m <= 12; m++) for (const d of [1, 15, 28, 29, 30, 31]) forms.push([m + '/' + d, 'md', m, d], [m + '.' + d, 'md', m, d], [m + '-' + d, 'md', m, d], [m + '월 ' + d + '일', 'md', m, d], [ty + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0'), 'ymd', m, d], [m + '/' + d + '/' + String(ty + 1).slice(2), 'mdy', m, d]);
-        forms.push(['오늘', 'w'], ['내일', 'w'], ['', 'w'], ['2.5kg', 'w'], ['13/5', 'w'], ['0/5', 'w'], ['5/0', 'w'], ['5/32', 'w']);
+        forms.push(['오늘', 'w'], ['내일', 'w'], ['', 'w'], ['2.5kg', 'kg'], ['13/5', 'w'], ['0/5', 'w'], ['5/0', 'w'], ['5/32', 'w']);
         for (const [s, kind, m, d] of forms) {
             cells++; const a = O(s, today), b = N(s, today);
             if (a === b) { same++; continue; }
+            if (kind === 'kg' && b === null) { kinds.kg++; continue; }   // ③ #1187 「2.5kg」 = 무게(날짜 아님) · 전수는 verify-1187-date.js
             if (kind === 'n' && a === null && tm === 12 && td >= 17 && d < td - 15 && b === (ty + 1) + '-01-' + String(d).padStart(2, '0')) { kinds.wrap++; continue; }   // ① 12월 하순의 「n일」 → 다음 해 1월
             // ② 없는 날: 종전은 다음 달로 넘어간 날 · 지금은 null
-            if (b === null && a !== null) {
+            if (b === null && a !== null && kind !== 'w') {
                 const yy = kind === 'ymd' ? ty : kind === 'mdy' ? ty + 1 : null, mm = kind === 'n' ? (d < td - 15 ? tm + 1 : tm) : m;
                 const ys = yy != null ? [yy] : [ty, ty + 1];
                 if (ys.every(y => !real(y, mm > 12 ? mm - 12 : mm, d)) || (kind !== 'ymd' && kind !== 'mdy' && !real(+a.slice(0, 4), mm > 12 ? mm - 12 : mm, d) && a.slice(5) !== String(mm).padStart(2, '0') + '-' + String(d).padStart(2, '0'))) { kinds.ghost++; continue; }
@@ -42,7 +43,7 @@ for (const f of ['final-order-core.js', 'invoice-v2.js']) {
             else kinds.other.push(0);
         }
     }
-    console.log(`  기준일 ${days.length}일 · 칸 ${cells} · 같음 ${same} · ① 12월 하순 n일 → 1월 ${kinds.wrap} · ② 없는 날 → 못 읽음 ${kinds.ghost} · 그 밖 ${kinds.other.length}`);
+    console.log(`  기준일 ${days.length}일 · 칸 ${cells} · 같음 ${same} · ① 12월 하순 n일 → 1월 ${kinds.wrap} · ② 없는 날 → 못 읽음 ${kinds.ghost} · ③ 2.5kg(#1187) ${kinds.kg} · 그 밖 ${kinds.other.length}`);
     ok('달라진 칸 = ①② 뿐(그 밖 0)', kinds.other.length === 0, kinds.other.filter(Boolean));
     ok('① 이 실제로 있음(12/17~31 × 3해)', kinds.wrap > 0, kinds.wrap);
     ok('② 가 실제로 있음', kinds.ghost > 0, kinds.ghost);
@@ -56,7 +57,7 @@ for (const f of ['final-order-core.js', 'invoice-v2.js']) {
     ok('없는 날 11/31 · 2/30 · 4/31 = 못 읽음', N('11/31', '2026-11-17') === null && N('2/30', '2026-11-17') === null && N('4월 31일', '2026-03-01') === null, [N('11/31', '2026-11-17'), N('2/30', '2026-11-17')]);
     ok('11/20 「31일」(11월은 30일까지) = 못 읽음', N('31일', '2026-11-20') === null, N('31일', '2026-11-20'));
     ok('2/29 = 윤년(2028)만 읽음', N('2028-02-29', '2028-02-01') === '2028-02-29' && N('2027-02-29', '2027-02-01') === null);
-    ok('「2.5kg」 = 종전과 같음(이 함수는 안 바꿈)', N('2.5kg', '2026-11-17') === O('2.5kg', '2026-11-17'));
+    ok('「2.5kg」 = 못 읽음(#1187 에서 고침 · 종전 2/5) · 그 칸 수 = 기준일 수', N('2.5kg', '2026-11-17') === null && kinds.kg === days.length, kinds.kg);
 }
 // 두 파일의 고친 두 줄이 글자까지 같은지
 const line = (src, mark) => { const l = src.replace(/\r\n/g, '\n').split('\n').find(x => x.includes(mark)); return l ? l.trim() : null; };

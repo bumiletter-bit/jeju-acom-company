@@ -31,7 +31,7 @@
         if (/^내일$/.test(s)) return new Date(Date.parse(today) + 86400e3).toISOString().slice(0, 10);
         let m, y = null, mo = null, d = null;
         if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
-        else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }
+        else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { if (/^\d{1,2}\.\d(?!\d)\s*(?:[kK][gG]|㎏|키로|킬로)/.test(s)) return null; mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }   /* #1187 「2.5kg」 = 무게 · 날짜 아님 */
         else if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) { mo = +m[1]; d = +m[2]; }
         else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; if (mo > 12) { mo = 1; y = ty + 1; } } }
         else return null;
@@ -47,6 +47,7 @@
     //   이런 줄을 「날짜 없음」으로 넘기면 입력삭제 줄이 기준 발송일로 찍혀 오늘 나간다(과발송) → 호출 쪽이 「없는 날짜」로 따로 걸러 사람이 고치게 한다
     function ghostDate(s, today) {
         s = String(s || '').trim(); if (!s || parseDate(s, today)) return null;
+        if (/^\d{1,2}\.\d(?!\d)\s*(?:[kK][gG]|㎏|키로|킬로)/.test(s)) return null;   /* #1187 「2.5kg」 = 무게(소수 한 자리 + 바로 단위만) */
         const tm = +today.slice(5, 7), td = +today.slice(8, 10); let m, mo = null, d = null;
         if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { mo = +m[2]; d = +m[3]; }
         else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; }
@@ -66,7 +67,7 @@
     const chOfText = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;
     const HEADER_LINE = /^요청일자|전화번호 또는 상품주문번호|^플[렛랫]폼/;
     const EXAMPLE_LINE = /(?:^|["\t])\s*ex\)/i;   // 정리 파일 머리말의 예시 줄(「ex) 10박스 중 2박스 …」)이 딸려 와도 손대지 않는다
-    const NOTE_DATE = /\d{1,2}\s*[\/.월]\s*\d{1,2}\s*일?|\d{1,2}\s*일|오늘|내일/;
+    const NOTE_DATE = /\d{1,2}\s*[\/월]\s*\d{1,2}\s*일?|\d{1,2}\s*\.\s*(?!\d(?!\d)\s*(?:[kK][gG]|㎏|키로|킬로))\d{1,2}\s*일?|\d{1,2}\s*일|오늘|내일/;   /* #1187 비고 안 「2.5kg」 은 날짜로 안 집음(점 꼴만 · 「/」·「월」 꼴 무변) */
     const WEEKDAY = /([월화수목금토일])\s*요일|([월화수목금토일])욜/g;
     const WD_IDX = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
     const hasKey = tok => { const d = dg(tok); return !!tok && (d.length >= 8 || /\d{8,}/.test(tok)); };

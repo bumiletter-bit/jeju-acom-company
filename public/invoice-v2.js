@@ -80,7 +80,7 @@
         if (/^내일$/.test(s)) return new Date(Date.parse(today) + 86400e3).toISOString().slice(0, 10);
         let m, y = null, mo = null, d = null;
         if ((m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
-        else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }
+        else if ((m = s.match(/^(\d{1,2})[-./](\d{1,2})(?:[-./](\d{2,4}))?/))) { if (/^\d{1,2}\.\d(?!\d)\s*(?:[kK][gG]|㎏|키로|킬로)/.test(s)) return null; mo = +m[1]; d = +m[2]; if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }   /* #1187 「2.5kg」 = 무게 · 날짜 아님 */
         else if ((m = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/))) { mo = +m[1]; d = +m[2]; }
         else if ((m = s.match(/^(\d{1,2})\s*일/))) { d = +m[1]; mo = tm; if (d < td - 15) { mo = tm + 1; if (mo > 12) { mo = 1; y = ty + 1; } } }
         else return null;
@@ -108,7 +108,7 @@
             } else {
                 const t = line.split(/\s+/);
                 if (parseDate(t[0], today)) { date = parseDate(t[0], today); key = t[1] || ''; note = t.slice(2).join(' '); }
-                else { key = t[0]; note = t.slice(1).join(' '); if (!date) { const dm = note.match(/\d{1,2}\s*[\/.월]\s*\d{1,2}\s*일?|\d{1,2}\s*일|오늘|내일/); if (dm) date = parseDate(dm[0], today); } }
+                else { key = t[0]; note = t.slice(1).join(' '); if (!date) { const dm = note.match(/\d{1,2}\s*[\/월]\s*\d{1,2}\s*일?|\d{1,2}\s*\.\s*(?!\d(?!\d)\s*(?:[kK][gG]|㎏|키로|킬로))\d{1,2}\s*일?|\d{1,2}\s*일|오늘|내일/); if (dm) date = parseDate(dm[0], today); } }
             }
             const digits = key.replace(/\D/g, '');
             if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) { out.push({ line, bad: true, boxCh, srcLine }); continue; }

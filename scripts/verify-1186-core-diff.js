@@ -65,6 +65,6 @@ ok(`③ 날짜와 무관한 함수 구/신 같음`, !T.length, T.slice(0, 3));
 // ④ 소스 차이 줄
 const a = fs.readFileSync(oldPath, 'utf8').replace(/\r\n/g, '\n').split('\n'), b = fs.readFileSync(newPath, 'utf8').replace(/\r\n/g, '\n').split('\n');
 const sa = new Set(a), sb = new Set(b), gone = a.filter(l => !sb.has(l)), came = b.filter(l => !sa.has(l));
-const GONE = ['const isoOf = (y, m, d)', '일/))) { d = +m[1]; mo = tm;', 'let iso = isoOf(y, mo, d); if (!iso) return null;', 'Date.parse(iso) < Date.parse(today) - 300', 'if (indivNoDate && shipDate) { date = shipDate;', 'else if (indivNoDate) notes.push({ srcLine, raw: line, type:', 'parseDate, fmtPhone, readSender, DEFAULT_MEMO'];
-ok('④ 소스 차이 = 사라진 줄 7(날짜 읽기 4 · 없는 날짜 처리로 조건이 붙은 2 · 내보내기 1)뿐 · 새 줄 ' + came.length + '(전부 날짜 읽기·없는 날짜 구간)', gone.length === 7 && GONE.every(g => gone.some(l => l.includes(g))) && came.length === 27, { gone: gone.map(l => l.trim().slice(0, 60)), came: came.length });
+const GONE = ['const isoOf = (y, m, d)', '일/))) { d = +m[1]; mo = tm;', 'let iso = isoOf(y, mo, d); if (!iso) return null;', 'Date.parse(iso) < Date.parse(today) - 300', 'if (indivNoDate && shipDate) { date = shipDate;', 'else if (indivNoDate) notes.push({ srcLine, raw: line, type:', 'parseDate, fmtPhone, readSender, DEFAULT_MEMO', '))?/))) { mo = +m[1]; d = +m[2]; if (m[3]) y =', '.월]'];   // 끝 2줄 = #1187(「2.5kg」 무게 · 날짜 아님)
+ok('④ 소스 차이 = 사라진 줄 9(날짜 읽기 4 · 없는 날짜 처리로 조건이 붙은 2 · 내보내기 1 · #1187 kg 2)뿐 · 새 줄 ' + came.length + '(전부 날짜 읽기·없는 날짜 구간)', gone.length === 9 && GONE.every(g => gone.some(l => l.includes(g))) && came.length === 30, { gone: gone.map(l => l.trim().slice(0, 60)), came: came.length });
 console.log(`\n합계 ✅ ${pass} · ❌ ${fail}`); process.exit(fail ? 1 : 0);
