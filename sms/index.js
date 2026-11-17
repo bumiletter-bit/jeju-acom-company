@@ -1585,6 +1585,24 @@ module.exports = function mountSms(app, deps) {
             if (priorOut) { try { ans = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); } if (!ans) return res.json(Object.assign({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }, invNote)); }
             else try { ans = await makeAnswer(t, msg, cDraft, {},{ bodyText: String(msg.body || ''), images: imgs, aiOpts: { noAi: false, aiUsed: false, manual: true } }); }
             catch (e) { log.error('[문자] 초안 만들기(누름) 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
+            // #1181(대표 11/17) 누름 초안에서만 = 주문이 여러 건이라 「받는 분 성함」 되묻기(kind ask · why many)가 나오면 되묻기 대신 손님 글에 답하는 초안
+            //   불만 글 = 주문 하나일 때와 같은 대표 확정 첫 불만 글(#1065·#1077 rules.claimText · 30일 안 보낸 불만 답이 있으면 맥락 초안) · 그 밖 = 맥락 초안(contextDraft) · 실패·빈 값 = 종전 no_draft
+            //   자동 답·자동 초안 길(수집 때 makeAnswer · #650 ④ 자동 되묻기)은 무변경
+            if (ans && ans.kind === 'ask' && ans.why === 'many') {
+                let alt = null;
+                if (msg.bucket === 'claim' && rulesMod && typeof rulesMod.claimText === 'function') {
+                    const ct = rulesMod.claimText({ text: String(msg.body || '') });
+                    let sentClaim = true;
+                    try { sentClaim = (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND rule_kind = 'claim' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '30 days' LIMIT 1`, [t.id])).rowCount > 0; } catch (e) { sentClaim = true; }
+                    if (ct && !sentClaim) alt = { text: smsSafe(ct), kind: 'rule', rule_kind: 'claim', why: 'many_manual_claim' };
+                }
+                if (!alt) {
+                    try { alt = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }
+                    if (!alt) return res.json(Object.assign({ ok: false, code: 'no_draft', error: '초안을 만들지 못했어요 — 직접 적어 주세요' }, invNote));
+                    alt.why = 'many_manual';
+                }
+                ans = alt;
+            }
             if (!ans || ans.toStaff || !ans.text) {   // #1109 ② 엔진이 사람 몫(불만 재발·보상/반품 요구·요청·전화·계좌·AI 넘김 등)으로 넘기면 = 톡톡 초안 엔진으로 맥락 초안
                 let ctxAns = null;
                 try { ctxAns = await contextDraft(t); } catch (e) { log.error('[문자] 맥락 초안 실패:', e.message); return res.status(502).json({ ok: false, error: '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요', code: 'ai_error' }); }

@@ -1,3 +1,12 @@
+## v5.9.823 (2026-11-17) — #1181 문자 [초안 만들기] = 주문이 여러 건이어도 되묻지 않고 내용 초안
+
+- 발단 = CS 팀장 「초안 만들기를 누르니 주문 여러 건 확인이 먼저 나온다」(대화 12397 · 11/16 박스 젖음·일부 썩음 글 · audit 26204 why many) → 대표 11/17 「방향 변경 진행해」
+- sms/index.js POST /api/sms/threads/:id/draft = makeAnswer 가 되묻기(kind ask · why many)를 돌려주면 누름 초안에서만 바꿈 · 불만 글 = 대표 확정 첫 불만 글(rules.claimText · 30일 안 불만 답이 있으면 맥락 초안 · why many_manual_claim) · 그 밖 = 맥락 초안(contextDraft · why many_manual) · 빈 값 = 종전 no_draft
+- 봇 자동 답·자동 초안의 되묻기(#650 ④ · followup)는 무변경
+- 워커1 시공(가짜 pool 실장착 10/10 · 읽기 전용 기동 200) · 워커2 읽기 점검(배포 막을 것 0)
+- 후보 = 불만 30일 조회를 composeAnswer 와 한 함수로 묶기 · 손님이 사진을 이미 보낸 경우 확정 글 끝줄 「사진을 찍어 보내 주시면」 빼기(대표 결정 대기)
+- 미확인 = 실서버 화면에서 눌러 보기(첫 실건)
+
 ## v5.9.822 (2026-11-16) — #1179 네이버 품절 상품 「품절 유지 저장(재고 0)」
 
 - 발단 = 대표 「미리 다 세팅해 놓으면 편한 거 아니야」(산하홍 #1177) · 품절 상품은 바디 statusType OUTOFSTOCK 이라 PUT 400(시험용 한라봉 실측 11/16 · invalid_fields originProduct.statusType)
