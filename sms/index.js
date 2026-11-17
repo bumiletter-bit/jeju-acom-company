@@ -493,6 +493,16 @@ module.exports = function mountSms(app, deps) {
     function aiAsserts(text) {   // 한 문장이라도 「조건 없이」 발송·도착을 단정하면 true
         return String(text || '').split(/(?<=[.!?。])\s+|\n+/).some(sen => { const s = sen.trim(); if (!s) return false; if (/말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)/.test(s)) return true; if (AI_COND_RE.test(s)) return false; return AI_PAST_RE.test(s) || AI_DATE_RE.test(s); });
     }
+    // #1182(대표 11/17) 최근 24시간 안 이 대화에 손님 사진(사진 달린 받은 글 · bucket photo)이 있는가 — 조회 실패 = 없음(종전 글)
+    async function photoRecent(threadId) {
+        try { return (await pool.query(`SELECT 1 FROM sms_messages m WHERE m.thread_id = $1 AND m.direction = 'in' AND m.created_at > now() - interval '24 hours' AND (m.bucket = 'photo' OR EXISTS (SELECT 1 FROM sms_images i WHERE i.message_id = m.id)) LIMIT 1`, [threadId])).rowCount > 0; }
+        catch (e) { return false; }
+    }
+    // 30일 안 이 대화에 보낸 불만 답(rule_kind claim)이 있는가 — 불만 답은 한 번만 · 조회 실패 = 있음(사람 몫 · 종전 그대로) · #1182 composeAnswer 와 누름 초안(#1181)이 같이 씀
+    async function claimSentRecent(threadId) {
+        try { return (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND rule_kind = 'claim' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '30 days' LIMIT 1`, [threadId])).rowCount > 0; }
+        catch (e) { return true; }
+    }
     async function composeAnswer(thread, inMsg, c, lookup, opts) {
         const text = String(inMsg.body || '');
         const bucket = inMsg.bucket || 'other';
@@ -508,10 +518,9 @@ module.exports = function mountSms(app, deps) {
             if (!(rulesMod && typeof rulesMod.claimText === 'function')) return { text: null, kind: null, toStaff: true, why: 'claim' };
             if (lookup && lookup.match === 'many') return { text: askName(), kind: 'ask', toStaff: false, why: 'many', staff_flag: 'claim', auto_ok: true };
             if (!(lookup && lookup.match === 'one')) return { text: notFound({ claim: true, text }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'claim' };
-            const ct = rulesMod.claimText({ text });
+            const ct = rulesMod.claimText({ text, hasPhoto: await photoRecent(thread.id) });   // #1182 사진이 이미 온 대화 = 사진 부탁 줄만 뺌
             if (!ct) return { text: null, kind: null, toStaff: true, why: 'claim' };
-            let sentBefore = true;
-            try { sentBefore = (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND rule_kind = 'claim' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '30 days' LIMIT 1`, [thread.id])).rowCount > 0; } catch (e) { sentBefore = true; }
+            const sentBefore = await claimSentRecent(thread.id);
             if (sentBefore) return { text: null, kind: null, toStaff: true, why: 'claim' };   // 불만 답은 한 번만 — 이어지는 불만 글은 사람이 받는다
             return { text: smsSafe(ct), kind: 'rule', rule_kind: 'claim', toStaff: false, why: 'claim_reply', staff_flag: 'claim', auto_ok: (typeof rulesMod.claimAuto === 'function') ? rulesMod.claimAuto({ text }) : false };   // #650 ③ 상태 낱말이 있고 물음이 아닐 때만 자동 · 「환불·반품·교환」만 있는 글·물음 꼴은 초안
         }
@@ -1591,9 +1600,8 @@ module.exports = function mountSms(app, deps) {
             if (ans && ans.kind === 'ask' && ans.why === 'many') {
                 let alt = null;
                 if (msg.bucket === 'claim' && rulesMod && typeof rulesMod.claimText === 'function') {
-                    const ct = rulesMod.claimText({ text: String(msg.body || '') });
-                    let sentClaim = true;
-                    try { sentClaim = (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND rule_kind = 'claim' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '30 days' LIMIT 1`, [t.id])).rowCount > 0; } catch (e) { sentClaim = true; }
+                    const ct = rulesMod.claimText({ text: String(msg.body || ''), hasPhoto: await photoRecent(t.id) });   // #1182
+                    const sentClaim = await claimSentRecent(t.id);
                     if (ct && !sentClaim) alt = { text: smsSafe(ct), kind: 'rule', rule_kind: 'claim', why: 'many_manual_claim' };
                 }
                 if (!alt) {
