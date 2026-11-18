@@ -1093,7 +1093,8 @@ html[data-ao-theme="dark"] .om-calb em { color: #FCD34D; background: rgba(245, 1
     .om-card-h:has(.om-calb-card) .om-reset svg { width: 18px; height: 18px; }
 }
 /* #1186 누름 자리 44 — 폴드 펼침(721 이상 · 손가락)에서 목록 줄 글(30)·배지(28)·줄 카드 「이 줄 빼기」(36)가 낮았다 · 마우스 PC(960 초과 · 가는 포인터)는 그대로 */
-@media (max-width: 960px), (pointer: coarse) { #desk-om .om-ml .om-ml-t { min-height: 44px; } #desk-om .om-ml .om-badge { min-height: 44px; } #desk-om .om-x.sm { width: 44px; height: 44px; } }
+@media (max-width: 960px), (pointer: coarse) { #desk-om .om-ml .om-ml-t { min-height: 44px; } #desk-om .om-x.sm { width: 44px; height: 44px; } }
+/* #1191(대표 11/18 폰 「입력삭제 동그라미 갑자기 왜 커진 거야」) 위 #1186 줄에 있던 「#desk-om .om-ml .om-badge 44」 조각을 뺌 = 눌리는 배지의 보이는 높이까지 44 로 키웠던 것 → #1023-b 종전 값 그대로(보이는 28 · 누르는 곳 44 = ::before 위아래 8 · 머리 줄 여백 8 · 위 .om-ml-h 줄) · 배지 누름 자리는 ::before 까지 셈 */
 /* #1188 ⓑ 기사님 전달 글뿐인 보통 줄 = 목록 알약 「배송메세지 아님」(옅은 호박색 · .om-indiv.warn 과 같은 값) + 줄 카드 안내 띠([배송메세지로 넣기][이대로 저장]) + 고객정보수정 판 안내 한 줄 */
 .om-pill.k-nosm { background: #FFFAEB; color: #93370D; box-shadow: inset 0 0 0 1px #FEDF89; }
 html[data-ao-theme="dark"] .om-pill.k-nosm { background: rgba(251, 191, 74, .1); color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .4); }
