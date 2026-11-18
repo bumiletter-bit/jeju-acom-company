@@ -625,6 +625,14 @@ html[data-ao-theme="dark"] .om-jump.ok { background: var(--d-soft); color: var(-
     .om-ct td.x { align-self: start; }
     .om-ct td.tel:not(:empty)::before { content: "· "; }
 }
+/* #1193 시험(대표 폰 앱 = 현금 줄 표를 올렸다 내리면 줄 2개가 안 그려짐 · 건드리면 다시 나옴) — 표식 html[data-om1193] 이 있을 때만(주소 ?om1193=1 · 2 · 끔 = 0) · 표식 없으면 종전 그대로
+   1 = 칸 테두리를 칸이 직접 그림(separate · 모양 같음) / 2 = 1 + 표를 따로 그리는 층으로 */
+@media (min-width: 721px) {
+    html[data-om1193] .om-ct { border-collapse: separate; border-spacing: 0; }
+    html[data-om1193="2"] .om-ct { will-change: transform; }
+}
+html[data-om1193="1"] #om-prev-d::after { content: " · 시험 1"; }   /* 표식이 먹었는지 눈으로 보는 글(판 머리 줄 끝 · 표식 없으면 안 뜸) */
+html[data-om1193="2"] #om-prev-d::after { content: " · 시험 2"; }
 @media (min-width: 961px) and (pointer: fine) { .om-ct .om-x.sm { width: 36px; height: 36px; } }   /* 마우스 PC × = 체크 칸과 같은 36(종전 32) · 손가락 화면 44 는 위 규칙 그대로 */
 /* #909-b PC(≥1101) = 왼쪽 붙여 넣기 칸 400 고정 · 오른쪽 현금 칸이 남는 폭 전부(1280 = 약 720) · 그 밖 폭은 종전 그대로 */
 @media (min-width: 900px) and (max-width: 1100px) { .om-cols { grid-template-columns: 360px minmax(0, 1fr); } }   /* #909-d 900~1100 = 왼쪽 360 */

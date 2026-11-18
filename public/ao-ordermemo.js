@@ -8,6 +8,7 @@
 //   입구 = [+] 메뉴(ao-desk.js) · 최종발주 메모 칸 위 링크(final-order.js) · 문자 대화 [발주 메모로 보내기](AkmOrderMemo.fromText).
 (function () {
     'use strict';
+    try { const m = /[?&]om1193=(\d)/.exec(location.search); if (m) { if (m[1] === '0') localStorage.removeItem('om1193'); else localStorage.setItem('om1193', m[1]); } const t = localStorage.getItem('om1193'); if (t) document.documentElement.setAttribute('data-om1193', t); } catch (e) { /* #1193 시험 표식 = 주소 ?om1193=1(또는 2) 로 한 번 열면 이 기기에 남음 · ?om1193=0 = 끔 · 표식 없으면 아무것도 안 바뀜 */ }
     const $ = id => document.getElementById(id);
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const p2 = n => String(n).padStart(2, '0');
