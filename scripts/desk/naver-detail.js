@@ -20,6 +20,7 @@
 //                                                                              #723 신규 등록(3차) — 기본 손님에게 안 보임(판매중지·전시중지·쇼핑 미노출) · 재고 기본 99999 · --dry = 카드만(보내지 않음)
 //   길 = 요청 줄 agent_office_config 'naver_product_write_request' → 실서버 20초 틱 → 'naver_product_write_result'(계약 docs/720-write-contract.md).
 //        이 도구는 토큰도 네이버 주소도 모른다 — 요청 줄 INSERT 와 결과 읽기, 보관본(naver_product_backups) 읽기뿐.
+//   #1195 apply … --owner-now = 대표가 발주 끝을 확인하고 「지금」 지시했을 때만 총괄·워커가 씀(창구 X) · 그 멈춤을 건너뛰고 audit_logs 'owner_now' 에 지시 id 기록
 //   🔴 평일 08:30~10:30(발송 직전)엔 apply·revert 를 하지 않는다(plan 은 됨). 밖 = 옵션 추가·옵션 그룹(3차)·신규 등록·즉시할인·대표 이미지 · 상세는 서버 잠금(#720-D).
 //   전/후 카드 끝 두 줄 고정 = 「건들기 전 판매 정상 ✓/⚠」(보관본) · 「건든 뒤 판매 정상 ✓/⚠」(서버 재조회 sale_ok · 계약 4절 #721-B 1·3)
 const path = require('path'), fs = require('fs'), os = require('os');
@@ -66,6 +67,7 @@ function parseOpts(args) {
             (o.opt = o.opt || []).push(one);
         }
         else if (a === '--force') o.force = true;
+        else if (a === '--owner-now') o.ownerNow = true;                       // #1195 대표가 발주 끝을 확인하고 「지금 진행」 지시했을 때만(apply 의 08:30~10:30 멈춤을 건너뜀 · 기록 남김)
         else if (a === '--no-preview') o.noPreview = true;
         else if (a === '--place') o.place = args[++i];
         else if (a === '--ref') o.ref = args[++i];
@@ -692,7 +694,8 @@ async function main(argv, deps) {
         if (row.applied_at) throw new Error('이미 적용한 보관본이에요 — show 로 새로 보관한 뒤 plan → apply');
         if (P.stops.length) return out({ ok: false, stopped: true, stops: P.stops, note: '멈췄어요 — 보낸 것 없음' });
         if (!P.rows.length) return out({ ok: true, changed: false, note: '지금 값과 같아요 — 보낸 것 없음' });
-        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
+        if (busyWindow(deps.now()) && !o.ownerNow) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
+        if (busyWindow(deps.now())) await deps.pool.query(`INSERT INTO audit_logs (action, target_type, target_id, changes, source) VALUES ('owner_now', 'naver_product', $1, $2, 'naver-detail')`, [row.id, JSON.stringify({ note: 'owner-now · 대표가 발주 끝 확인 · 지시 ' + orderId, product_no: String(row.product_no), backup_id: row.id, order_id: orderId })]);   // #1195 발송 직전 멈춤을 건너뛴 기록
         const res = await R.send({ op: 'apply', order_id: orderId, backup_id: row.id, product_no: row.product_no, patch, ...(o.cardFix ? { card_fix: true } : {}), created_by: await R.orderBy(orderId) });
         if (!res.ok) {
             if (/통째 수정은/.test(String(res.error || ''))) return out({ ok: false, stopped: true, locked: true, error: res.error,
