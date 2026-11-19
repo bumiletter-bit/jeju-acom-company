@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-24.1'; // #838 자동 송장 등록 = 네이버 발송처리에 CJ대한통운 택배 송장(DELIVERY · CJGLS · 숫자 10~12자리) 허용 + 쿠팡 송장업로드(POST v4 orders/invoices · 바디 검사 coupangInvoiceBodyOk) · 종전 2026-10-20.1 = #782 발송처리 POST product-orders/dispatch = 「배송 없음(NOTHING)」 바디만(체험) · 종전 2026-10-18.3 = #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-11-19.1'; // #1197 사업자몰 직영몰 = /naver 본문 store 'biz' → NAVER2_* 열쇠·토큰 캐시 따로(store 없음·'main' = 종전 · biz 열쇠 없으면 오류 · 그 밖 값 400 · 허용 경로 무변 · /health biz_keys_set·biz_token_test) · 종전 2026-10-24.1 = #838 자동 송장 등록 = 네이버 발송처리에 CJ대한통운 택배 송장(DELIVERY · CJGLS · 숫자 10~12자리) 허용 + 쿠팡 송장업로드(POST v4 orders/invoices · 바디 검사 coupangInvoiceBodyOk) · 종전 2026-10-20.1 = #782 발송처리 POST product-orders/dispatch = 「배송 없음(NOTHING)」 바디만(체험) · 종전 2026-10-18.3 = #732 쿠팡 브랜드 찾기(POST brands/search · 읽기 · 바디 brandName·countPerPage·page 만) · 종전 2026-10-18.2 = #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -43,22 +43,36 @@ function log(...a) { console.log(new Date().toISOString(), ...a.map(x => (typeof
 
 // ── 네이버 인증 토큰 발급 + 캐싱 ──
 // 서명: bcrypt(`clientId_timestamp`, salt=client_secret) → base64. (네이버 표준)
-let tokenCache = { value: null, exp: 0 };
-async function getAccessToken() {
+// #1197 스토어별 열쇠·토큰 캐시 — 'main' = 스마트스토어 제주아꼼이네(NAVER_* · 종전 그대로) · 'biz' = 사업자몰 제주아꼼이네 직영몰(NAVER2_* · 커머스API 애플리케이션이 스토어마다 따로)
+//   요청에 store 가 없거나 'main' 이면 종전과 한 글자도 다르지 않게 main 열쇠 · 'biz' 인데 NAVER2_* 가 없으면 오류(main 열쇠로 넘어가지 않음) · 그 밖 값은 400
+const NAVER_STORES = {
+    main: { id: NAVER_CLIENT_ID, secret: NAVER_CLIENT_SECRET, type: NAVER_TYPE, tag: '' },
+    biz: { id: process.env.NAVER2_CLIENT_ID, secret: process.env.NAVER2_CLIENT_SECRET, type: process.env.NAVER2_TYPE || 'SELF', tag: '(직영몰) ' },
+};
+const tokenCaches = { main: { value: null, exp: 0 }, biz: { value: null, exp: 0 } };
+function naverStoreKey(store) {   // 없음·'main' → 'main' · 'biz' → 'biz' · 그 밖 → null(400)
+    if (store === undefined || store === null || store === '' || store === 'main') return 'main';
+    if (store === 'biz') return 'biz';
+    return null;
+}
+async function getAccessToken(storeKey = 'main') {
+    const st = NAVER_STORES[storeKey];
+    if (!st) { const e = new Error('bad_store'); e.status = 400; throw e; }
+    const tokenCache = tokenCaches[storeKey];
     const now = Date.now();
     if (tokenCache.value && now < tokenCache.exp - 60_000) return tokenCache.value; // 만료 1분 전까지 재사용
-    if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
-        const e = new Error('네이버 자격증명(.env) 미설정'); e.status = 500; throw e;
+    if (!st.id || !st.secret) {
+        const e = new Error(storeKey === 'main' ? '네이버 자격증명(.env) 미설정' : '네이버 직영몰 자격증명(.env NAVER2_*) 미설정'); e.status = 500; throw e;
     }
     const ts = now; // 밀리초
-    const hashed = bcrypt.hashSync(`${NAVER_CLIENT_ID}_${ts}`, NAVER_CLIENT_SECRET);
+    const hashed = bcrypt.hashSync(`${st.id}_${ts}`, st.secret);
     const sign = Buffer.from(hashed, 'utf-8').toString('base64');
     const form = new URLSearchParams({
-        client_id: NAVER_CLIENT_ID,
+        client_id: st.id,
         timestamp: String(ts),
         grant_type: 'client_credentials',
         client_secret_sign: sign,
-        type: NAVER_TYPE,
+        type: st.type,
     });
     const res = await fetch(`${NAVER_API_BASE}/external/v1/oauth2/token`, {
         method: 'POST',
@@ -68,12 +82,12 @@ async function getAccessToken() {
     const text = await res.text();
     let data; try { data = JSON.parse(text); } catch { data = {}; }
     if (!res.ok || !data.access_token) {
-        log('토큰 발급 실패', res.status, mask(text)); // 알림은 회사프로그램이 응답 보고 발송
+        log(st.tag + '토큰 발급 실패', res.status, mask(text)); // 알림은 회사프로그램이 응답 보고 발송
         const e = new Error('token_issue_failed'); e.status = res.status; e.body = data; throw e;
     }
-    tokenCache = { value: data.access_token, exp: now + (Number(data.expires_in) || 10800) * 1000 };
-    log('네이버 토큰 발급 성공 · 만료(초)=', data.expires_in);
-    return tokenCache.value;
+    tokenCaches[storeKey] = { value: data.access_token, exp: now + (Number(data.expires_in) || 10800) * 1000 };
+    log(st.tag + '네이버 토큰 발급 성공 · 만료(초)=', data.expires_in);
+    return tokenCaches[storeKey].value;
 }
 
 // ── 허용 경로 (1차: 읽기 전용. 쓰기 전면 차단) ──
@@ -164,12 +178,17 @@ app.use(express.json({ limit: '25mb' }));   // 지시 #100: 알림톡 이미지(
 // 헬스체크 (인증 불필요) — 토큰 발급까지 시험하려면 ?token=1
 app.get('/health', async (req, res) => {
     const base = {
-        ok: true, version: RELAY_VERSION, time: new Date().toISOString(), token_cached: !!tokenCache.value,
+        ok: true, version: RELAY_VERSION, time: new Date().toISOString(), token_cached: !!tokenCaches.main.value,
         coupang_keys_set: !!(COUPANG_ACCESS_KEY && COUPANG_SECRET_KEY && COUPANG_VENDOR_ID), // 값 노출 없음
+        biz_keys_set: !!(NAVER_STORES.biz.id && NAVER_STORES.biz.secret), biz_token_cached: !!tokenCaches.biz.value,   // #1197 직영몰(값 노출 없음)
     };
     if (req.query.token === '1') {
         try { await getAccessToken(); base.token_test = 'success'; }
         catch (e) { base.token_test = 'fail'; base.token_error = e.status || e.message; }
+        if (base.biz_keys_set) {   // #1197 직영몰 열쇠가 있을 때만 시험(없으면 칸 없음)
+            try { await getAccessToken('biz'); base.biz_token_test = 'success'; }
+            catch (e) { base.biz_token_test = 'fail'; base.biz_token_error = e.status || e.message; }
+        }
     }
     res.json(base);
 });
@@ -190,6 +209,11 @@ app.post('/naver', async (req, res) => {
     const path = String((req.body && req.body.path) || '');
     const query = (req.body && req.body.query) || null;
     const body = (req.body && req.body.body) || null;
+    const storeKey = naverStoreKey(req.body ? req.body.store : undefined);   // #1197 없음·'main' = 스마트스토어(종전) · 'biz' = 직영몰
+    if (!storeKey) {
+        log('차단(store 값)', method, path);
+        return res.status(400).json({ error: 'bad_store', method, path });
+    }
     if (!allowed(method, path)) {
         log('차단(허용목록 외)', method, path);
         return res.status(403).json({ error: 'path_not_allowed', method, path });
@@ -215,7 +239,7 @@ app.post('/naver', async (req, res) => {
     }
     try {
         const qs = query && typeof query === 'object' ? '?' + new URLSearchParams(query).toString() : '';
-        const token = await getAccessToken();
+        const token = await getAccessToken(storeKey);
         const opt = {
             method,
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -225,10 +249,10 @@ app.post('/naver', async (req, res) => {
         const nres = await fetch(`${NAVER_API_BASE}${path}${qs}`, opt);
         const text = await nres.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
-        if (!nres.ok) log('네이버 응답 오류', method, path, nres.status); // 알림은 회사프로그램이 담당
+        if (!nres.ok) log(NAVER_STORES[storeKey].tag + '네이버 응답 오류', method, path, nres.status); // 알림은 회사프로그램이 담당
         res.status(nres.status).json(json);
     } catch (e) {
-        log('중계 예외', method, path, e.message);
+        log(NAVER_STORES[storeKey].tag + '중계 예외', method, path, e.message);
         res.status(e.status || 500).json({ error: 'relay_error', message: e.message, body: e.body });
     }
 });

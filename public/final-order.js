@@ -61,6 +61,9 @@
         return ['msg-naver', 'msg-cafe24', 'msg-coupang', 'res-all', 'msg-dl'].some(id => { const el = d.getElementById(id); return !!(el && /로그인 필요/.test(el.textContent || '')); });
     };
     const rawRow = e => { const s = S(); return (e.ch === 'naver' ? (s.naver && s.naver.rows[e.i]) : (s[e.ch] || [])[e.i]) || null; };
+    // #1197 네이버 직영몰(두 번째 네이버 스토어) = 서버가 주문 행에 _store:'biz' · 채널 키는 'naver' 그대로 · 사람이 보는 판매처 글만 가름(메모 줄에 써 넣는 글은 「네이버」 그대로 = 줄 읽기 무변)
+    const isBiz = e => { const r = e && e.ch === 'naver' ? rawRow(e) : null; return !!(r && r._store === 'biz'); };
+    const chLab = e => isBiz(e) ? '네이버 직영몰' : CH_LABEL[e.ch];
     const rawOf = e => rawRow(e) || {};
     // 주문 키 = 원본 행 객체에 붙인 고유값. `채널:순번`으로 하면 v2의 쿠팡 취소 재확인이 순번을 당길 때 카드 결정이 다른 주문에 걸린다(워커2 재현 B).
     const UID = new WeakMap(); let uidSeq = 0;
@@ -589,7 +592,7 @@
         const msg = (doc.getElementById('msg-' + ch).textContent || '').trim();
         if (sessionLost()) throw new Error('로그인이 풀렸어요.');
         const n = ch === 'naver' ? (S().naver ? S().naver.rows.length : 0) : (S()[ch] || []).length;
-        st.chState[ch] = /^⚠/.test(msg) || !msg ? { fail: true, t: msg ? msg.replace(/^⚠️?\s*/, '') : '응답이 없었어요' } : { done: true, t: `${n}건` };
+        st.chState[ch] = /^⚠/.test(msg) || !msg ? { fail: true, t: msg ? msg.replace(/^⚠️?\s*/, '') : '응답이 없었어요' } : { done: true, t: `${n}건${ch === 'naver' && S().naver ? (k => k ? `(직영몰 ${k}건)` : '')(S().naver.rows.filter(r => r && r._store === 'biz').length) : ''}` };
         drawProgress();
     }
     async function loadChannels(list) { for (const ch of list) await clickLoad(ch); }   // 하나씩(동시에 누르면 v2 재판정이 겹친다)
@@ -993,7 +996,7 @@
     //   우선순위 = 카드(st.patch.boxes) > 카드 꼬리 하나(st.patch.tail) > 메모함 박스별(omBoxes) > 메모 줄 글(st.sizeBoxes) — boxesOf 참조 · 입력삭제 주문엔 안 넣음(현금파일 줄이 나감) · 값 없으면 이 함수는 아무것도 안 함
     function boxPlan(cards, info) {
         st.omBoxes = new Map(); st.boxMarks = []; const s = S(), list = OMF.removed ? [] : OMF.boxRows; if (!list.length) return;
-        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, who = e => `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
+        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, who = e => `${chLab(e)} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
         list.forEach(m => {
             const key = String(m.key || '').trim(), d = digitsOf(key), phone = /^0\d{8,11}$/.test(d) && !/^\d{8}-\d{7}$/.test(key), ch = CH[m.plat] || null;
             const pno = String((m.checked && m.checked.pno) || '').trim(), line = String(m.line || key);
@@ -1015,7 +1018,7 @@
     // #955 메모함 배송메모 줄(for-ship ship_memos) → 주문별 후보 · 주문번호 키 = 그 주문 · 전화번호 키 2건↑ = 카드로 묻기 · 같은 주문에 글 둘 = 카드로 고르기 · 값 없으면 이 함수는 아무것도 안 함
     function shipMemoPlan(cards, info) {
         st.smPlan = new Map(); st.smRows = []; const s = S(), list = OMF.removed ? [] : OMF.shipMemos; if (!list.length) return;
-        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, who = e => `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
+        const CH = { '네이버': 'naver', '쿠팡': 'coupang', '자사몰': 'cafe24' }, who = e => `${chLab(e)} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
         list.forEach(m => {
             const key = String(m.key || '').trim(), d = digitsOf(key), phone = /^0\d{8,11}$/.test(d) && !/^\d{8}-\d{7}$/.test(key), ch = CH[m.plat] || null;
             const pno = String((m.checked && m.checked.pno) || '').trim();   // #958 번호 키 + 고른 주문 = 그 주문에만(취소·발송돼 없으면 같은 번호 다른 주문으로 안 옮김)
@@ -1052,7 +1055,7 @@
     function shipMemoInfo() {   // 참고 줄(파일 값과 같은 함수) · 값 없으면 빈 배열
         const out = []; if (!st.smPlan || !st.smPlan.size) return out;
         st.smPlan.forEach((p, k) => {
-            const e = p.e, who = `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`, orig = String(e.conv['배송메세지'] || '').trim(), o = shipOutcome(k), texts = [...new Set(p.opts.map(x => x.text))].join(' / ');
+            const e = p.e, who = `${chLab(e)} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`, orig = String(e.conv['배송메세지'] || '').trim(), o = shipOutcome(k), texts = [...new Set(p.opts.map(x => x.text))].join(' / ');
             const ln = (p.opts[0] && p.opts[0].line) || who, shipLine = p.opts[0] ? p.opts[0].id : undefined;
             if (!goingOut(e)) out.push({ t: `메모 줄 ⚠ 오늘 안 나감(양식에 안 들어가요): ${ln} → 「${texts}」 · ${who}`, keys: [k], shipLine });
             else if (!o) out.push({ t: `메모 줄 ✕ 안 넣음: ${ln} → 「${texts}」 · ${who}`, keys: [k], shipLine });
@@ -1109,9 +1112,9 @@
     }
     function buildCards() {
         const c = core(), s = S(), cards = [], info = [];
-        const orderLine = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
+        const orderLine = e => `${chLab(e)} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
         // #583-i(대표 실물 10/8): 카드 머리는 「지금 나갈 옵션」(고친 옵션명·꼬리 반영)으로 — 고쳐도 머리가 옛 꼬리(「S사이즈로!」)로 남아 안 바뀐 것처럼 보였다. 참고 줄 글은 종전대로 주문 원문.
-        const orderLineNow = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxSkipN(boxesOf(e)) ? ` 중 ${Number(e.conv['수량']) - boxSkipN(boxesOf(e))}박스만` : ''}${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
+        const orderLineNow = e => `${chLab(e)} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxSkipN(boxesOf(e)) ? ` 중 ${Number(e.conv['수량']) - boxSkipN(boxesOf(e))}박스만` : ''}${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
         const memoOf = e => String(e.conv['배송메세지'] || '').trim();
         const sm = senderMap();
         // ① 주문 확인(v2 확인필요)
@@ -1355,7 +1358,7 @@
             const bn = String(buyer || '').replace(/\s+/g, ''), nmA = a => String(a || '').replace(/[!！]/g, '').replace(/\(제주아꼼이네\)/g, '').replace(/\s*(?:드림|올림)\s*$/, '').replace(/\s+/g, '');
             const pair = cbxPairCand(d), mineC = cashLive().filter(r => r.bang && !r.service && (digitsOf(r.cells[10]) === d || digitsOf(r.cells[1]) === d || (bn.length >= 2 && nmA(r.cells[0]) === bn)));
             const orders = es.map(e => { const ad = normAddr(addrOf(e)), dup = cashLive().filter(r => r.bang && !r.service && normAddr(r.addr) === ad).length;
-                return { key: keyOf(e), qty: qtyOf(e), it: ik(optOf(e)), lab: `${CH_LABEL[e.ch]} ${(idsOf(e)[0] || '').slice(-6)} · ${optLab(optOf(e))} ${qtyOf(e)}박스 · ${short3(addrOf(e))}`, block: dup ? `같은 주소 현금 줄(「!」) ${dup}줄이 이미 나가요 — 일반발송이면 그 집에 또 가요` : (mineC.length ? '이 구매자 현금 줄(「!」)이 따로 있어요 — 짝 안 된 주소 줄이면 아래 [바꾸기]' : null) }; });
+                return { key: keyOf(e), qty: qtyOf(e), it: ik(optOf(e)), lab: `${chLab(e)} ${(idsOf(e)[0] || '').slice(-6)} · ${optLab(optOf(e))} ${qtyOf(e)}박스 · ${short3(addrOf(e))}`, block: dup ? `같은 주소 현금 줄(「!」) ${dup}줄이 이미 나가요 — 일반발송이면 그 집에 또 가요` : (mineC.length ? '이 구매자 현금 줄(「!」)이 따로 있어요 — 짝 안 된 주소 줄이면 아래 [바꾸기]' : null) }; });
             const rows = crow.map(r => ({ id: r.om && r.omId != null ? r.omId : null, qty: Number(r.qty) || 0, it: ik(r.opt), lab: `${r.cells[3] || ''} · ${optLab(r.opt)} ${r.qty}박스 · ${short3(r.addr)}` }));
             const id = cbxId(d, oq, cq, table);
             const v = st.dec.get(id), normKeys = typeof v === 'string' && v.startsWith('norm:') ? v.slice(5).split(',').filter(Boolean) : [];
@@ -1440,7 +1443,7 @@
     function omNormInfo() {
         const out = [], off = st.omNormOff || new Set();
         omNormHits().forEach(h => { if (!h.es.length) { out.push({ t: `메모 줄 ✕ 주문 없음: ${h.m.line} (일반발송 주문 ${h.id}) → 취소·이미 발송인지 확인해 주세요` }); return; }
-            h.es.forEach(e => { const k = keyOf(e), who = `${CH_LABEL[e.ch]} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`; out.push(off.has(String(h.id)) ? { t: `메모 줄 ⚠ 일반발송을 사람이 되돌림: ${h.m.line} → 「입력삭제로 처리」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: false } } : { t: `메모 줄로 일반발송: ${h.m.line} → 「주문 ${String(h.id).slice(-6)} 스토어 주소로」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: true } }); }); });
+            h.es.forEach(e => { const k = keyOf(e), who = `${chLab(e)} · ${buyerName(e)} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`; out.push(off.has(String(h.id)) ? { t: `메모 줄 ⚠ 일반발송을 사람이 되돌림: ${h.m.line} → 「입력삭제로 처리」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: false } } : { t: `메모 줄로 일반발송: ${h.m.line} → 「주문 ${String(h.id).slice(-6)} 스토어 주소로」 · ${who}`, keys: [k], omNorm: { k: String(h.id), on: true } }); }); });
         return out;
     }
     function applyOrderDecisions() {   // 카드 결정 → v2 상태(제외 체크). 판정(saveLines) 뒤마다 다시 건다
@@ -1634,7 +1637,7 @@
         const ws = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).map(w => ({ t: findSq(w), d: /^[\d\-]+$/.test(w) ? w.replace(/\D/g, '') : '' })).filter(w => w.t || w.d);
         if (!ws.length) return [];
         return S().merged.filter(e => {
-            const hay = findSq([buyerName(e), e.conv['수취인명'], optOf(e), CH_LABEL[e.ch]].join(' ')), nums = [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean), ids = idsOf(e).map(digitsOf).filter(Boolean);
+            const hay = findSq([buyerName(e), e.conv['수취인명'], optOf(e), chLab(e)].join(' ')), nums = [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean), ids = idsOf(e).map(digitsOf).filter(Boolean);
             return ws.every(w => (w.d && w.d.length >= 3 ? nums.some(n => n.endsWith(w.d) || (w.d.length >= 7 && n.includes(w.d))) || ids.some(n => n === w.d || (w.d.length >= 6 && n.endsWith(w.d))) : false) || (!!w.t && hay.includes(w.t)));
         });
     }
@@ -2347,7 +2350,9 @@
             files.push({ kind: 'partner', short: p.short, name: `제주아꼼이네송장(${p.short})${dot}.xlsx`, wb: pw, partner: p, png: `수량(${p.short}) ${dot}.png` });
         });
         const store = wb.Sheets['발주발송관리'];
-        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(store), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
+        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(store), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded && !isBiz(e)).length }); }
+        const bizStore = wb.Sheets['직영몰 발주발송관리'];   // #1197 직영몰 행이 있을 때만 v2 가 만드는 시트(같은 양식) → 파일·정산예정을 따로
+        if (bizStore) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, bizStore, '발주발송관리'); const rg = w.XLSX.utils.decode_range(bizStore['!ref']); files.push({ kind: 'store', biz: true, name: `네이버 직영몰 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), settle: storeSettle(bizStore), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded && isBiz(e)).length }); }
         try {   // #894 F2 입력삭제 주문 열쇠(invoice-auto normOrders 와 같은 꼴 · 주문번호뿐 · 손님 정보 0)
             const ik = e => { const r = rawOf(e); return e.ch === 'naver' ? String(r._pid || '') : e.ch === 'coupang' ? String(r._shipmentBoxId || r._orderId || '') + '|' + String(r._vendorItemId || '') : String(r._orderId || '') + '|' + String(r._itemCode || ''); };
             const mkKeys = f => S().merged.filter(f).map(e => e.ch + ':' + ik(e)).filter(k => !/:\|?$/.test(k)), mkI = mkKeys(e => e.individual && !e.excluded), mkH = mkKeys(e => e.excluded);
@@ -2366,13 +2371,13 @@
         const cvs = new Map(); st.qtyBlob = new Map();
         const qtyFig = f => { const p = f.partner, cv = qtyCanvas(f); cvs.set(f.short, cv); return `<figure class="fo-qfig" data-fo-qfig="${esc(f.short)}"><figcaption><span class="fo-qcap">수량 ${p.qty.length}종 · 합계 ${p.total}박스</span><span class="fo-qacts"><button type="button" class="fo-btn sm" data-fo-copy="${esc(f.short)}">그림 복사</button><button type="button" class="fo-btn sm" data-fo-png="${esc(f.short)}">내려받기</button></span></figcaption><div class="fo-qimg"><img src="${cv.toDataURL('image/png')}" width="${cv.width / 2}" height="${cv.height / 2}" alt="${esc(f.short)} 수량 표 ${p.qty.length}종 합계 ${p.total}박스"></div></figure>`; };
         const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyFig(f)}${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
-        const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
+        const store = f => `<article class="fo-file store"><header><h4>${f.biz ? '네이버 직영몰' : '스마트스토어'}</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">${f.biz ? '직영몰 양식 저장' : '스토어 양식 저장'}</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
         const pl = patchItems(), jejuN = [...jejuCount().values()].reduce((a, n) => a + n, 0);   // #840 제주 0건이면 카드를 옅게
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all" title="엑셀 파일만 받아요. 수량 이미지는 엑셀의 수량 시트에도 있고, 아래 버튼으로 따로 받을 수 있어요">파일 ${st.files.length}개 전부 저장</button></div>
             <div class="fo-notes">
             <p class="fo-jeju fo-note sea${jejuN ? '' : ' is-empty'}" id="fo-jeju-result"><span class="fo-note-k">제주도 배송:</span> <b>${esc(jejuText())}</b></p>
-            ${settleText() ? `<p class="fo-jeju fo-note ink" id="fo-settle-result"><span class="fo-note-k">스토어 정산예정:</span> <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}
+            ${settleText() ? `<p class="fo-jeju fo-note ink" id="fo-settle-result"><span class="fo-note-k">스토어 정산예정:</span> <b>${esc(settleText())}</b> <span class="fo-settle-note">네이버 스토어 양식 기준</span></p>` : ''}${bizSettleText() ? `<p class="fo-jeju fo-note ink" id="fo-settle-biz"><span class="fo-note-k">직영몰 정산예정:</span> <b>${esc(bizSettleText())}</b> <span class="fo-settle-note">네이버 직영몰 양식 기준 · 위 스토어 합계와 따로</span></p>` : ''}
             ${pl.length ? `<div class="fo-patched fo-note warn" id="fo-patched"><span class="fo-note-k">특이사항:</span> <b>${patchHead(pl)}</b> <span class="fo-settle-note">(바뀐 칸은 연보라색)</span><ul>${pl.map(x => `<li>${srcTag(pl, x)}${esc(x.screen)}</li>`).join('')}</ul></div>` : `<p class="fo-note warn is-empty" id="fo-patched-none"><span class="fo-note-k">특이사항:</span> 없음</p>`}
             </div>
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
@@ -2694,7 +2699,8 @@
         }
         out.sum = Math.round(out.sum); return out;
     }
-    function settleText() { const f = (st.files || []).find(x => x.kind === 'store'); if (!f || !f.settle) return ''; const x = f.settle; return `${x.sum.toLocaleString('ko-KR')}원 · ${x.n}건${x.none ? ` (값 없음 ${x.none}건)` : ''}`; }
+    function bizSettleText() { const f = (st.files || []).find(x => x.kind === 'store' && x.biz); if (!f || !f.settle) return ''; const x = f.settle; return `${x.sum.toLocaleString('ko-KR')}원 · ${x.n}건${x.none ? ` (값 없음 ${x.none}건)` : ''}`; }   // #1197 직영몰 정산예정 = 따로 한 줄(0건이면 안 보임)
+    function settleText() { const f = (st.files || []).find(x => x.kind === 'store' && !x.biz); if (!f || !f.settle) return ''; const x = f.settle; return `${x.sum.toLocaleString('ko-KR')}원 · ${x.n}건${x.none ? ` (값 없음 ${x.none}건)` : ''}`; }
     // #1059(대표 11/9) 고친 칸마다 출처 — st.patchSrc: 주문 key → Map(칸 → 'chat' 대화 | 'card' 카드 [적용]·발송일 뒤집기) · 표식 없는 칸 = 종전 「말로」
     function markSrc(k, fields, src) { if (!st.patchSrc) st.patchSrc = new Map(); const m = st.patchSrc.get(k) || new Map(); fields.forEach(f => m.set(f, src)); st.patchSrc.set(k, m); }
     function srcOf(k, f) { const m = st.patchSrc && st.patchSrc.get(k); return m && m.get(f) === 'card' ? 'card' : 'chat'; }
@@ -2974,7 +2980,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         // #526: 「미매칭」 = 옵션 글자가 「[미매칭]」으로 시작(단가표에 없는 이름) 또는 거래처 미정. 카드에서 거래처를 골랐어도 이름은 여전히 미매칭이다(실사용에서 0건으로 세어 AI가 못 찾았다고 답함)
         const unAll = going.filter(e => /^\[미매칭\]/.test(optOf(e)) || !partnerShort(optOf(e))), un = unAll.length, unPicked = unAll.filter(e => !!partnerShort(optOf(e))).length;
         return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? cashLive().length : 0}행`,
-            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, settleText() ? `스토어 정산예정(네이버): ${settleText()}` : '', `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · ${patchHead(patchItems()) || '말로 바꾼 것 0건'}`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, settleText() ? `스토어 정산예정(네이버): ${settleText()}` : '', bizSettleText() ? `직영몰 정산예정(네이버 직영몰 · 따로): ${bizSettleText()}` : '', `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · ${patchHead(patchItems()) || '말로 바꾼 것 0건'}`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
     }
     // #570(대표 10/7): 줄 끝·맨 아래의 「변경해줘」「다 해줘」 같은 시키는 말만 있는 것은 위 정리 줄들을 가리키는 말 — 그 줄들은 화면이 처리하므로 클코에게 보내지 않는다
     const CMD_TAIL = /\s+(?:다\s*|전부\s*|모두\s*|싹\s*)?(?:변경|수정|적용|반영|표시|처리)?\s*(?:해\s*줘요?|해\s*주세요|해\s*줄래|해\s*주라|부탁해요?|부탁드려요?|부탁)\s*[!.~]*$/;
@@ -3176,6 +3182,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         L.push(out.partners.map(p => `${p.short} ${p.rows.length}건(${p.total}박스)`).join(' · ') || '택배사 양식 0건');
         L.push(`제주도 배송: ${jejuText()}`);
         if (settleText()) L.push(`스토어 정산예정(네이버): ${settleText()}`);
+        if (bizSettleText()) L.push(`직영몰 정산예정(네이버 직영몰): ${bizSettleText()}`);
         L.push(`현금파일 ${st.cash && st.cash.ok ? cashLive().length : 0}행 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건`);
         { const sv = (st.cash && st.cash.ok ? cashLive() : []).filter(r => r.service), by = new Map(); sv.forEach(r => { const k = core().stripTail(String(r.opt || ''), inCatalog).split(':').pop().trim(); by.set(k, (by.get(k) || 0) + (Number(r.qty) || 0)); });   // #900 서비스·일반발송
           if (sv.length) L.push(`서비스 ${sv.reduce((n, r) => n + (Number(r.qty) || 0), 0)}박스(${[...by].map(([k, n]) => k + ' ' + n).join(' · ')})`);

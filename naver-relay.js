@@ -54,25 +54,29 @@ async function relayHealth(withToken = false) {
 
 // 네이버 API 호출 (중계서버 경유). 실패 시 notify(text)로 알림 후 예외.
 async function callNaver(opts, notify) {
-    const { method = 'GET', path, query = null, body = null, timeoutMs = 20000 } = opts || {};   // #720: 그림 올리기만 60초(기본 20초 그대로)
+    const { method = 'GET', path, query = null, body = null, timeoutMs = 20000, store } = opts || {};   // #720: 그림 올리기만 60초(기본 20초 그대로)
     if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
     if (!path) throw new Error('path 필요');
+    // #1197 store = 없음·'main'(스마트스토어 · 본문에 안 실음 = 종전 바이트 그대로 · 구판 relay 와도 호환) · 'biz'(사업자몰 직영몰 · 본문 store:'biz') · 그 밖 값은 보내기 전에 거절
+    if (!(store === undefined || store === null || store === '' || store === 'main' || store === 'biz')) throw new Error('store 값 오류: ' + store);
+    const isBiz = store === 'biz';
+    const tag = isBiz ? '(직영몰) ' : '';
     const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
     let r;
     try {
         r = await rawRequest(relayBase() + '/naver', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
-            body: JSON.stringify({ method, path, query, body }),
+            body: JSON.stringify(isBiz ? { method, path, query, body, store: 'biz' } : { method, path, query, body }),
             timeoutMs,
         });
     } catch (e) {
-        await notifySafe(`🛰️ 네이버 중계서버 연결 실패 — ${method} ${path}\n${e.message}`);
+        await notifySafe(`🛰️ ${tag}네이버 중계서버 연결 실패 — ${method} ${path}\n${e.message}`);
         const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
     }
     let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
     if (r.status < 200 || r.status >= 300) {
-        await notifySafe(`🛰️ 네이버 API 오류 ${r.status} — ${method} ${path}\n${JSON.stringify(data).slice(0, 300)}`);
+        await notifySafe(`🛰️ ${tag}네이버 API 오류 ${r.status} — ${method} ${path}\n${JSON.stringify(data).slice(0, 300)}`);
         const err = new Error('naver_relay_error_' + r.status); err.status = r.status; err.data = data; throw err;
     }
     return data;

@@ -54,6 +54,10 @@
     // ids: { ln: 붙여넣기 칸 1개, save: 저장 버튼, res: 결과 표, review, preview|null, stats } · allowIndiv: 입력삭제 → 개별발송 분류 여부(중간발주는 false = 실물량 포함)
     const makeCtx = (ids, allowIndiv) => ({ ids, allowIndiv, naver: null, cafe24: [], coupang: [], merged: [], today: null, shipDate: null, calendar: null, fetchedOn: null, lines: { naver: [], cafe24: [], coupang: [] } });
     const rawOf = (ctx, e) => e.ch === 'naver' ? ctx.naver.rows[e.i] : ctx[e.ch][e.i];
+    // #1197 네이버 직영몰(두 번째 네이버 스토어) 주문 = 서버가 행에 _store:'biz' 를 실음 · 채널 키는 'naver' 그대로(매칭·집계·양식 무변) · 사람이 보는 판매처 글만 가름
+    const isBiz = (ctx, e) => { const r = e && e.ch === 'naver' && ctx && ctx.naver && ctx.naver.rows ? ctx.naver.rows[e.i] : null; return !!(r && r._store === 'biz'); };
+    const chLab = (ctx, e) => isBiz(ctx, e) ? '🛒 네이버 직영몰' : CH_LABEL[e.ch];
+    const bizNote = rows => { const n = (rows || []).filter(x => x && x._store === 'biz').length; return n ? `(직영몰 ${n}건 포함)` : ''; };
     const telOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, ''); };
     const idsOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return [raw._orderId, raw._pid, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId, raw._x && raw._x.productOrderId].filter(Boolean).map(String); };
     const matchKey = (ctx, e, digits, key) => (digits.length >= 8 && !PLACEHOLDER.has(digits) && telOf(ctx, e) === digits) || (key && idsOf(ctx, e).includes(key));
@@ -245,7 +249,7 @@
         });
     }
     // 저장 결과 표(알림 발송 이력 표와 같은 짜임: 플랫폼 · 요청날짜 · 구매자 · 품목 · 수량 · 수신 · 판정 · 처리) — 주문 1건당 1행, 주문 없는 줄은 1행
-    const chPill = ch => { const m = { cafe24: ['🏠 자사몰', '#EEF2FF', '#4F46E5'], coupang: ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'], naver: ['🛒 네이버', '#E8F8EF', '#1E8E4E'] }[ch] || ['?', '#F2F4F7', '#667085']; return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`; };
+    const chPill = (ch, biz) => { const m = biz ? ['🛒 네이버 직영몰', '#E8F8EF', '#1E8E4E'] : { cafe24: ['🏠 자사몰', '#EEF2FF', '#4F46E5'], coupang: ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'], naver: ['🛒 네이버', '#E8F8EF', '#1E8E4E'] }[ch] || ['?', '#F2F4F7', '#667085']; return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`; };
     const WD = ['일', '월', '화', '수', '목', '금', '토'];
     const dateLabel = iso => iso ? `${mdLabel(iso)} (${WD[new Date(iso + 'T00:00:00Z').getUTCDay()]})` : '—';
     const pillOk = '<span class="pill pill-ok">✅ 확인완료</span>', pillNone = '<span class="pill pill-off">❌ 주문 없음</span>', pillWarn = '<span class="pill pill-wait">⚠️ 확인필요</span>';
@@ -328,7 +332,7 @@
             l.hitRows.forEach((e, j) => {
                 const { p, a } = actOf(e, l, ctx); const raw = rawOf(ctx, e) || {};
                 const buyer = e.conv['구매자명'] || raw['구매자명'] || raw['주문자명'] || raw['구매자'] || '—'; const rcv = e.conv['수취인명'] || '';
-                rows.push(`<tr data-k="${k}"><td>${chPill(e.ch)}</td><td>${dateLabel(l.date)}</td><td>${aoEsc(buyer)}${rcv && rcv !== buyer ? `<span class="sub">→ ${aoEsc(rcv)}</span>` : ''}</td><td class="item" title="${aoEsc(e.conv['옵션정보'])}">${aoEsc(e.conv['옵션정보'])}${l.note ? `<span class="note">📋 ${aoEsc(l.note)}</span>` : ''}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(fmtTel(l.key))}</td><td>${p}${j === 0 ? warn : ''}</td><td>${a}</td></tr>`);
+                rows.push(`<tr data-k="${k}"><td>${chPill(e.ch, isBiz(ctx, e))}</td><td>${dateLabel(l.date)}</td><td>${aoEsc(buyer)}${rcv && rcv !== buyer ? `<span class="sub">→ ${aoEsc(rcv)}</span>` : ''}</td><td class="item" title="${aoEsc(e.conv['옵션정보'])}">${aoEsc(e.conv['옵션정보'])}${l.note ? `<span class="note">📋 ${aoEsc(l.note)}</span>` : ''}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(fmtTel(l.key))}</td><td>${p}${j === 0 ? warn : ''}</td><td>${a}</td></tr>`);
             });
         });
         const okL = all.filter(l => !l.bad && l.hits && l.hitRows.every(e => e.req !== l || !['past', 'nodate', 'partial'].includes(e.reqKind))).length;
@@ -385,10 +389,10 @@
         const revRows = f === 'all' ? all : all.filter(({ e }) => ctx.reviewFilterKeys.has(key(e)));
         const cnt = { all: all.length, excl: all.filter(x => x.e.excluded).length, review: all.filter(x => !x.e.excluded && x.e.flag === 'review').length };
         const fl = $(ctx.ids.filter); if (fl) { fl.innerHTML = FILTERS.map(([v, t]) => `<button type="button" class="btn-sm btn-outline${f === v ? ' active' : ''}" data-f="${v}">${t} <b>${cnt[v]}</b></button>`).join(''); fl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ctx.reviewFilter = b.dataset.f; ctx.reviewFilterKeys = null; render(ctx, onChange); })); }
-        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('')
+        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${chLab(ctx, e)}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('')
             : `<tr><td colspan="8" style="color:#6B7280;">${f === 'all' ? '검토할 배송메모가 없습니다.' : '이 조건에 해당하는 건이 없습니다.'}</td></tr>`;
         if (ctx.ids.preview) {
-            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}${senderNote(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('');
+            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${chLab(ctx, e)}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}${senderNote(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('');
         }
         const n = ctx.merged.length, indiv = ctx.merged.filter(e => e.individual).length, excl = ctx.merged.filter(e => !e.individual && e.excluded).length, review = ctx.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $(ctx.ids.stats).innerHTML = ctx.ids.preview
@@ -453,8 +457,8 @@
             await P.aoLoadInvoicePricing();   // #440 동일: 클릭마다 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜)
             const r = await fetchChannel('naver', d); stop();
             if (!r.ok) { setMsg('naver', '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
-            C.naver = { src: 'api', rows: r.rows || [] }; markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건`);
-            setMsg('naver', `✅ 배송준비 <b>${r.count}건</b> 불러왔습니다.${r.partial_adjusted ? ` · 부분취소 수량 반영 ${r.partial_adjusted}건` : ''}`);
+            C.naver = { src: 'api', rows: r.rows || [] }; markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건${bizNote(r.rows)}`);
+            setMsg('naver', `✅ 배송준비 <b>${r.count}건</b>${bizNote(r.rows)} 불러왔습니다.${r.partial_adjusted ? ` · 부분취소 수량 반영 ${r.partial_adjusted}건` : ''}`);
             await refreshC('naver');
         } finally { stop(); btn.disabled = false; }
     }
@@ -530,13 +534,14 @@
             dCell(x.paymentDate), sCell(x.productId), sCell(x.productName), nCell(x.expectedSettlementAmount, WON_Z), dCell(x.orderDate), dCell(x.shippingDueDate),
             sCell(maskId(x.ordererId)), sCell(''), sCell(''), sCell(x.inflowPath)];
     }
-    function buildSheet2(list) {
+    function buildSheet2(list, biz) {   // #1197 biz = true 면 네이버 직영몰 행만 · 아니면 직영몰 행을 뺀 스마트스토어 행만(직영몰 0건 = 종전과 같은 시트)
         const ws = {}; const put = (r, c, cell) => { ws[XLSX.utils.encode_cell({ r, c })] = cell; };
         const wrap = { alignment: { wrapText: true, vertical: 'top' }, fill: { fgColor: { rgb: 'FFFFCC' } } };
         put(0, 0, { t: 's', v: INSTR_A, s: wrap }); put(0, 3, { t: 's', v: INSTR_D, s: wrap });
         HDR.forEach((h, c) => put(1, c, { t: 's', v: h, s: { font: { bold: true }, fill: { fgColor: { rgb: 'DDEBF7' } }, alignment: { horizontal: 'center' } } }));
-        const ordered = list.filter(e => e.ch === 'naver').map(e => ({ i: e.i, indiv: false }));
-        const indiv = C.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).map(e => ({ i: e.i, indiv: true }));
+        const mine = e => e.ch === 'naver' && isBiz(C, e) === !!biz;
+        const ordered = list.filter(mine).map(e => ({ i: e.i, indiv: false }));
+        const indiv = C.merged.filter(e => mine(e) && e.individual && !e.excluded).map(e => ({ i: e.i, indiv: true }));
         let r = 2;
         for (const { i, indiv: yellow } of ordered.concat(indiv)) { rowCells(i).forEach((cell, c) => { if (yellow) cell.s = { ...(cell.s || {}), fill: { fgColor: { rgb: 'FFF2CC' } } }; put(r, c, cell); }); r++; }
         ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(r - 1, 1), c: 26 } });
@@ -578,11 +583,11 @@
         try { P.exportInvoiceExcel(list.map(e => senderOut(e, clearMemo(e) ? { ...e.conv, '배송메세지': '' } : e.conv))); } finally { XLSX.writeFile = origWrite; }
         if (!captured) throw new Error('시트1 생성 실패');
         const marked = markSheet1(captured.wb.Sheets['Sheet1'], list);
-        let s2 = null;
-        if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
+        let s2 = null, sb = null;
+        if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); sb = buildSheet2(list, true); if (sb.count + sb.indiv) XLSX.utils.book_append_sheet(captured.wb, sb.ws, '직영몰 발주발송관리'); else sb = null; }   // #1197 직영몰 행이 있을 때만 같은 양식 시트 하나 더
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${window.IvtSender ? '' : ' · ⚠️ 보내는이 판정기를 불러오지 못해 보내는이 변경 0건 — 새로고침 후 다시 받아 주세요'}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.amb ? ` · ✉ 보내는이 확인 ${marked.amb}건(연노랑 — 자동 변경 안 함)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${window.IvtSender ? '' : ' · ⚠️ 보내는이 판정기를 불러오지 못해 보내는이 변경 0건 — 새로고침 후 다시 받아 주세요'}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.amb ? ` · ✉ 보내는이 확인 ${marked.amb}건(연노랑 — 자동 변경 안 함)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${sb ? ` · 직영몰 시트 ${sb.count + sb.indiv}건` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
         return captured.wb;
     }
 

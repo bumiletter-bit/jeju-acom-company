@@ -6976,7 +6976,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
                 created_at=NOW(), resend_count=COALESCE(lms_guide_log.resend_count,0)+1`,
             [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
              kakaoNotify.maskPhone((out && out.recvTel) || od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
-        await guideLogMeta(orderKey, { opt: `${po.productName || ''} ${po.productOption || ''}`, pno: po.productId || po.originalProductId || '', pid: out.matched ? out.matched.id : null });   // #642
+        await guideLogMeta(orderKey, { opt: `${po.productName || ''} ${po.productOption || ''}`, pno: (await naverBizIdsMap()).has(String(orderKey)) ? '' : (po.productId || po.originalProductId || ''), pid: out.matched ? out.matched.id : null });   // #642 · #1197-B 직영몰 번호면 구매 단추 번호 안 적음(자동 길과 같게)
         await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
             changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
         res.json({ ok: true, mode: out.res.mode, status: out.res.status });
@@ -7874,7 +7874,30 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
 //   문자 수집 자신은 아래 Core 를 바로 불러 세지 않는다(장착 줄). 바깥 이름·인자·결과는 종전 그대로.
 let _ordersBusy = 0;
 async function naverFetchInvoiceOrders(days, opts) { _ordersBusy++; try { return await _naverFetchInvoiceOrdersCore(days, opts); } finally { _ordersBusy--; } }
+// #1197-B 네이버 직영몰(N+ 사업자몰 · 두 번째 스토어 · 열쇠 따로) — 스위치 agent_office_config 'naver_biz_store' {enabled:true} 일 때만 스마트스토어 다음에 store:'biz' 로 한 번 더
+//   스위치 없음·꺼짐 = 아래 One(main) 결과 그대로(한 글자도 안 바뀜) · 직영몰 쪽 실패는 bizError 만 달고 스마트스토어 결과는 그대로
+//   직영몰 행 = _store:'biz' · _storeName:'네이버 직영몰'(스마트스토어 행은 무변) · 스마트스토어에 이미 있는 상품주문번호는 버림(중계서버가 store 를 아직 모를 때 같은 주문이 두 번 오지 않게 · 그때는 등록부에도 안 넣음)
 async function _naverFetchInvoiceOrdersCore(days, opts) {
+    const main = await _naverFetchInvoiceOrdersOne(days, opts, null);
+    const biz = await naverBizCfg();
+    if (!biz.on) return main;
+    try {
+        await new Promise(r => setTimeout(r, 350));
+        const b = await _naverFetchInvoiceOrdersOne(Math.min(days, biz.maxDays || days), opts, 'biz');
+        const seenMain = new Set(main.rows.map(r => r._pid));
+        const add = b.rows.filter(r => !seenMain.has(r._pid));
+        await naverBizRemember(add.map(r => r._pid));
+        main.rows = main.rows.concat(add);
+        main.fetched += b.fetched; main.partialAdjusted += (b.partialAdjusted || 0);
+        if (b.experienceSkipped) main.experienceSkipped = (main.experienceSkipped || 0) + b.experienceSkipped;
+        main.biz = { fetched: b.fetched, count: add.length, dup: b.rows.length - add.length };
+    } catch (e) {
+        main.bizError = String((e && e.message) || e).slice(0, 200);
+        console.error('[#1197-B] 직영몰 주문 수집 실패(스마트스토어 결과는 그대로):', main.bizError);
+    }
+    return main;
+}
+async function _naverFetchInvoiceOrdersOne(days, opts, store) {
     opts = opts || {};   // #452: { extended: true } = 네이버 원본 양식(시트2) 재료 _x 동봉 — 기존 호출(미지정)은 종전 출력과 동일
     // #667: { placeStatuses: ['OK','NOT_YET'] } = 발주확인 전(NOT_YET) 주문도 — 문자 봇의 발송 전 주문 수집에서만 켠다(송장변환·중간발주·최종발주는 미지정 = 종전 그대로 OK 한 번).
     //   공식 문서(조건형 상품 주문 상세 내역 조회): placeOrderStatusType = NOT_YET·OK·CANCEL 중 한 값 · 「생략 = 전부」라는 글이 없어 값마다 따로 조회한다(호출 수 = 값 개수배 · 간격·재시도 동일).
@@ -7892,10 +7915,11 @@ async function _naverFetchInvoiceOrdersCore(days, opts) {
         for (let attempt = 0; ; attempt++) {
             try {
                 // 재시도 중엔 알림 없이(스팸 방지) — 최종 실패 때만 아래서 1번 알림
-                return await naverRelay.callNaver(req, null);
+                return await naverRelay.callNaver(store ? { ...req, store } : req, null);   // #1197-B store 없으면 종전 요청 그대로
             } catch (e) {
                 if (e && e.status === 429 && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
-                try { await notifyTelegram(`🛰️ 네이버 주문 수집 실패 — ${e.status || ''} ${e.message || e}`); } catch (_) {}
+                if (store === 'biz') await naverBizAlert(`🛰️ 네이버 직영몰 주문 수집 실패 — ${e.status || ''} ${e.message || e}`);   // #1197-B 직영몰은 30분에 1통
+                else { try { await notifyTelegram(`🛰️ 네이버 주문 수집 실패 — ${e.status || ''} ${e.message || e}`); } catch (_) {} }
                 throw e;
             }
         }
@@ -7973,6 +7997,7 @@ async function _naverFetchInvoiceOrdersCore(days, opts) {
                 ...(placeTag ? { placeOrderStatus: String(po.placeOrderStatus || askedPlace) } : {}),   // #667: 응답 값이 먼저 · 없으면 조회에 쓴 값
             } } : {}),
             ...(placeTag && !opts.extended ? { _place: String(po.placeOrderStatus || askedPlace) } : {}),
+            ...(store === 'biz' ? { _store: 'biz', _storeName: NAVER_BIZ_LABEL } : {}),   // #1197-B 직영몰 행 표식(스마트스토어 행은 칸 자체가 없음)
         });
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
@@ -8008,7 +8033,8 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
             source: 'naver-api', actor: adminActor(req),
         });
         res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, sample: r.sample,
-            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted });
+            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted,
+            ...(r.biz ? { biz_count: r.biz.count } : {}), ...(r.bizError ? { biz_error: r.bizError } : {}) });   // #1197-B 직영몰 켜졌을 때만 칸이 생김
     } catch (err) {
         res.json(naverFriendlyError(err));
     }
@@ -8022,7 +8048,8 @@ app.get('/api/agent-office/naver/invoice-orders-v2', authMiddleware, async (req,
         const r = await naverFetchInvoiceOrders(days, { extended: true });
         await writeAudit({ action: 'naver_invoice_fetch_v2', targetType: 'naver_order', targetId: null,
             changes: { after: { days, fetched: r.fetched, count: r.rows.length } }, source: 'naver-api', actor: adminActor(req) });
-        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted });
+        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted,
+            ...(r.biz ? { biz_count: r.biz.count } : {}), ...(r.bizError ? { biz_error: r.bizError } : {}) });   // #1197-B
     } catch (err) { res.json(naverFriendlyError(err)); }
 });
 // #452: 배송메모 해석 — 송장변환에서 「오늘 발송 아님」 후보를 미리 체크하기 위한 재료. 기준일 = 오늘(KST) 07:00 주문으로 계산해
@@ -8061,7 +8088,113 @@ const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반�
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
+// #1197-B 상품주문번호로 부르는 쓰기·상세조회(POST query · confirm · dispatch)는 번호를 보고 판매처 열쇠를 고른다
+//   직영몰 번호 등록부 = agent_office_config 'naver_biz_order_ids' {상품주문번호: 'YYYY-MM-DD'}(직영몰 수집·안내 수집기가 본 번호만 · 120일 지나면 지움)
+//   등록부에 없는 번호 = 스마트스토어(종전 그대로) · 직영몰 번호만 = store:'biz' 한 번 · 섞이면 판매처마다 따로 불러 응답을 합침(한 요청에 두 판매처 번호가 같이 실리는 일 없음)
+//   store 를 직접 단 요청(store:'biz')에 등록부 밖 번호가 있으면 부르지 않고 오류 · 등록부를 못 읽으면 종전 그대로(스마트스토어 열쇠 · 남의 스토어 주문은 네이버가 실패로 돌려줌)
+const NAVER_BIZ_LABEL = '네이버 직영몰';
+let _naverBizCfg = { at: 0, v: { on: false, maxDays: 0 } };
+async function naverBizCfg() {
+    if (Date.now() - _naverBizCfg.at < 60 * 1000) return _naverBizCfg.v;
+    let v = { on: false, maxDays: 0 };
+    try { const c = await naverCfgGet('naver_biz_store'); if (c && typeof c === 'object' && c.enabled === true) v = { on: true, maxDays: Math.max(0, parseInt(c.max_days, 10) || 0) }; } catch (_) { v = { on: false, maxDays: 0 }; }
+    if (v.on && !(await naverBizRelayReady())) v = { on: false, maxDays: v.maxDays, relayNotReady: true };   // 구판 중계서버 = store 무시 → 스마트스토어 주문이 직영몰로 한 번 더 잡힘 → 건너뜀
+    _naverBizCfg = { at: Date.now(), v };
+    return v;
+}
+// 중계서버가 직영몰 열쇠를 가졌는지(/health biz_keys_set === true) · 맞으면 5분 · 아니거나 실패면 1분 기억
+let _naverBizRelay = { at: 0, ok: false, ttl: 0 };
+async function naverBizRelayReady() {
+    if (Date.now() - _naverBizRelay.at < _naverBizRelay.ttl) return _naverBizRelay.ok;
+    let ok = false;
+    try { const h = await naverRelay.relayHealth(false); ok = !!(h && h.biz_keys_set === true); } catch (_) { ok = false; }
+    _naverBizRelay = { at: Date.now(), ok, ttl: ok ? 5 * 60 * 1000 : 60 * 1000 };
+    if (!ok) console.error('[#1197-B] 중계서버 직영몰 열쇠 확인 안 됨(biz_keys_set) — 직영몰 호출 건너뜀');
+    return ok;
+}
+let _naverBizIds = null;
+async function naverBizIdsMap() {
+    if (_naverBizIds) return _naverBizIds;
+    try { const v = await naverCfgGet('naver_biz_order_ids'); _naverBizIds = new Map(Object.entries((v && typeof v === 'object' && !Array.isArray(v)) ? v : {}).map(([k, d]) => [String(k), String(d)])); }
+    catch (e) { console.error('[#1197-B] 직영몰 번호 등록부 읽기 실패(이번은 종전 그대로):', e.message); return new Map(); }
+    return _naverBizIds;
+}
+async function naverBizRemember(ids) {
+    const m = await naverBizIdsMap();
+    if (m !== _naverBizIds) return 0;   // 읽기 실패 = 다음에
+    const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    let n = 0;
+    for (const id of (ids || []).map(String)) if (/^\d{10,}$/.test(id) && !m.has(id)) { m.set(id, today); n++; }
+    if (!n) return 0;
+    const cut = new Date(Date.now() + 9 * 3600 * 1000 - 120 * 86400000).toISOString().slice(0, 10);
+    for (const [k, d] of m) if (d < cut) m.delete(k);
+    try { await naverCfgSet('naver_biz_order_ids', Object.fromEntries(m)); } catch (e) { console.error('[#1197-B] 직영몰 번호 등록부 저장 실패(메모리에는 있음):', e.message); }
+    return n;
+}
+function naverReqIds(reqObj) {
+    const b = reqObj && reqObj.body;
+    if (!reqObj || String(reqObj.method || '').toUpperCase() !== 'POST' || !b || typeof b !== 'object') return null;
+    if (Array.isArray(b.productOrderIds)) return { kind: 'ids', list: b.productOrderIds.map(String) };
+    if (Array.isArray(b.dispatchProductOrders)) return { kind: 'dispatch', list: b.dispatchProductOrders.map(x => String((x && x.productOrderId) || '')) };
+    return null;
+}
+// 직영몰 쪽 실패 텔레그램 = 30분에 1통(스마트스토어 알림은 종전 그대로)
+let _naverBizAlertAt = 0;
+async function naverBizAlert(text) {
+    if (Date.now() - _naverBizAlertAt < 30 * 60 * 1000) { console.error('[#1197-B] 직영몰 알림 30분 안 재발 — 로그만:', String(text).slice(0, 200)); return false; }
+    _naverBizAlertAt = Date.now();
+    try { await notifyTelegram(text); } catch (_) { /* 알림 실패 무시 */ }
+    return true;
+}
+// 확실히 안 보낸(부르지 않았거나 채널·중계서버가 4xx 로 거절한) 쪽 = 쓰기 요청이면 실패 목록으로(자동 송장 「실패 · 다시 보낼 수 있음」) · 읽기(query)면 빈 목록
+const naverIs4xx = e => !!(e && e.status >= 400 && e.status < 500);
+function naverFailResp(reqObj, ids, e) {
+    if (!/\/(confirm|dispatch)$/.test(String(reqObj.path || ''))) return { data: [] };
+    const msg = String((e && ((e.data && (e.data.error || e.data.message)) || e.message)) || e || '').slice(0, 180);
+    return { data: { failProductOrderInfos: ids.map(id => ({ productOrderId: id, code: String((e && (e.code || e.status)) || ''), message: msg })) } };
+}
+function naverMergeResp(a, b) {
+    if (Array.isArray(a) && Array.isArray(b)) return a.concat(b);
+    if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+        const o = { ...a };
+        for (const k of Object.keys(b)) o[k] = (k in a) ? naverMergeResp(a[k], b[k]) : b[k];
+        return o;
+    }
+    return a == null ? b : a;
+}
 async function naverCallWithRetry(reqObj) {
+    const ids = naverReqIds(reqObj);
+    if (!ids || !ids.list.length) return naverCallWithRetryRaw(reqObj);
+    const m = await naverBizIdsMap();
+    if (reqObj.store === 'biz') {
+        const off = ids.list.filter(id => !m.has(id));
+        if (off.length) { const err = new Error('store_mismatch: 직영몰 열쇠 요청에 직영몰이 아닌 주문 ' + off.length + '건 — 부르지 않음'); err.code = 'store_mismatch'; err.status = 409; throw err; }
+        return naverCallWithRetryRaw(reqObj);
+    }
+    if (reqObj.store != null || !m.size) return naverCallWithRetryRaw(reqObj);
+    const bizSet = new Set(ids.list.filter(id => m.has(id)));
+    if (!bizSet.size) return naverCallWithRetryRaw(reqObj);
+    const part = (wantBiz) => {
+        const b = reqObj.body;
+        const body = ids.kind === 'ids' ? { ...b, productOrderIds: b.productOrderIds.filter(id => bizSet.has(String(id)) === wantBiz) }
+            : { ...b, dispatchProductOrders: b.dispatchProductOrders.filter(x => bizSet.has(String((x && x.productOrderId) || '')) === wantBiz) };
+        return wantBiz ? { ...reqObj, body, store: 'biz' } : { ...reqObj, body };
+    };
+    if (bizSet.size === ids.list.length) return naverCallWithRetryRaw(part(true));
+    let rMain, eMain, rBiz, eBiz;
+    try { rMain = await naverCallWithRetryRaw(part(false)); } catch (e) { eMain = e; }
+    await new Promise(r => setTimeout(r, 350));
+    try { rBiz = await naverCallWithRetryRaw(part(true)); } catch (e) { eBiz = e; }
+    if (eMain || eBiz) console.error('[#1197-B] 판매처 나눠 부르기 실패:', String((eMain && eMain.message) || '') + ' / ' + String((eBiz && eBiz.message) || ''));
+    // 4xx(부르지 않음 포함) = 확실히 안 보냄 → 그쪽 번호는 실패 목록 · 5xx·끊김 = 보냈는지 모름 → 응답에 넣지 않음(자동 송장 「모름」) · 양쪽 다 모름이면 종전처럼 던짐
+    if (eMain && eBiz && !naverIs4xx(eMain) && !naverIs4xx(eBiz)) throw eMain;
+    const mainIds = ids.list.filter(id => !bizSet.has(id)), bizIds = ids.list.filter(id => bizSet.has(id));
+    const a = eMain ? (naverIs4xx(eMain) ? naverFailResp(reqObj, mainIds, eMain) : null) : rMain;
+    const b = eBiz ? (naverIs4xx(eBiz) ? naverFailResp(reqObj, bizIds, eBiz) : null) : rBiz;
+    return a && b ? naverMergeResp(a, b) : (a || b);
+}
+async function naverCallWithRetryRaw(reqObj) {
+    if (reqObj && reqObj.store === 'biz' && !(await naverBizRelayReady())) { const err = new Error('store_not_ready: 중계서버에 직영몰 열쇠가 없어 부르지 않음'); err.code = 'store_not_ready'; err.status = 409; throw err; }
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     for (let attempt = 0; ; attempt++) {
         try { return await naverRelay.callNaver(reqObj, null); }
@@ -8195,7 +8328,7 @@ async function naverCfgSet(key, value) {
 
 // 변경분 조회 (PII 없음) — 항목 배열 반환. 24시간 제약 대비 시작 시각 클램프는 호출부에서.
 //   응답이 1회 상한(약 300건)을 넘으면 more.moreFrom/moreSequence로 이어받음(공식 배치 가이드 discussion #9) — 주문 몰린 날 누락 방지.
-async function naverFetchChanges(fromIso, toIso) {
+async function naverFetchChanges(fromIso, toIso, store) {   // #1197-B store 'biz' = 직영몰 변경분(없으면 종전 요청 그대로)
     const out = [];
     let from = fromIso, moreSeq = null;
     for (let page = 0; page < 10; page++) {
@@ -8204,7 +8337,7 @@ async function naverFetchChanges(fromIso, toIso) {
         if (moreSeq != null) query.moreSequence = moreSeq;
         const r = await naverCallWithRetry({
             method: 'GET', path: '/external/v1/pay-order/seller/product-orders/last-changed-statuses',
-            query,
+            query, ...(store === 'biz' ? { store: 'biz' } : {}),
         });
         const body = (r && r.data) ? r.data : r;
         const inner = body?.data || body;
@@ -8826,16 +8959,39 @@ async function kakaoStallCheck() {
     if (Number(r.paid) > 0 && Number(r.sent) === 0) return kakaoBrokenAlert('stall', `최근 90분 결제 주문 ${r.paid}건 · 알림톡 발송 0건`, { daily: true });
     return 'ok';
 }
+// #1197-B 바깥 이름·결과 글은 종전 그대로 · 직영몰 스위치(+중계서버 열쇠) 켜짐이면 스마트스토어 다음에 직영몰을 같은 길로 한 번 더(체크포인트 따로 · 문구·템플릿·발주확인 규칙 같음)
+//   직영몰 발주확인은 naverCallWithRetry 가 상품주문번호 등록부로 직영몰 열쇠에 보냄 · 같은 틱 스마트스토어 변경분에 있던 번호는 직영몰 쪽에서 뺌(구판 중계서버 이중 안전)
 async function collectKakaoNotify() {
+    const ctx = {};
+    let main, mainErr = null;
+    try { main = await collectKakaoNotifyStore(null, ctx); } catch (e) { mainErr = e; }
+    if ((await naverBizCfg()).on) {
+        let biz;
+        try { biz = await collectKakaoNotifyStore('biz', { mainIds: ctx.ids || new Set() }); }
+        catch (e) { biz = '실패 ' + String((e && e.message) || e).slice(0, 120); await naverBizAlert(`🛰️ 네이버 직영몰 주문안내 수집 실패 — ${String((e && e.message) || e).slice(0, 150)}`); }
+        if (mainErr) throw mainErr;
+        return main + ' · 직영몰 ' + biz;
+    }
+    if (mainErr) throw mainErr;
+    return main;
+}
+async function collectKakaoNotifyStore(store, ctx) {
+    ctx = ctx || {};
     const now = Date.now();
-    const cp = await naverCfgGet('kakao_notify_checkpoint');
+    const cpKey = store === 'biz' ? 'kakao_notify_checkpoint_biz' : 'kakao_notify_checkpoint';
+    const cp = await naverCfgGet(cpKey);
     // 지시 #177: 네이버 변경분이 뒤늦게 노출되는 건(실측 누락 1건 — 8/3 11:24 결제)을 잡기 위해 체크포인트에서 15분 되감아 조회.
     //   중복분은 아래 seen(order_key) 필터에서 제거되므로 재발송 위험 없음.
     // #430(대표 9/8): 되감기 15분→60분 — 14:12 결제(PAYED·정상) 건이 네이버 변경목록에 15분 넘게 늦게 노출돼 통째로 누락(천소미 건 실측·#177 유형 재발).
     //   중복 방지 = 아래 seen(order_key)·UNIQUE 그대로라 재발송 위험 0. 호출 수 동일(구간만 확장·페이지네이션 10p×300건 상한 내).
     const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 60 * 60 * 1000, now - 23.5 * 3600 * 1000);
-    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
-    await naverCfgSet('kakao_notify_checkpoint', new Date(now).toISOString());
+    let list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now), store);
+    await naverCfgSet(cpKey, new Date(now).toISOString());
+    if (store === 'biz') {
+        const mi = ctx.mainIds || new Set();
+        list = list.filter(x => !mi.has(String(x.productOrderId || '')));
+        await naverBizRemember(list.map(x => String(x.productOrderId || '')));
+    } else ctx.ids = new Set(list.map(x => String(x.productOrderId || '')).filter(Boolean));
     const paidIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
         .map(x => String(x.productOrderId || '')).filter(Boolean))];
     if (paidIds.length === 0) return '신규 결제 0건 — 알림톡 대상 없음';
@@ -9083,15 +9239,37 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     });
     return { skip: false, matched, noGuide: !hasGuide, message: res.messageText || lmsMessage, res, recvTel: guideRecvTel };   /* #193: 기록부가 재조회 결과를 쓰도록 반환 */
 }
+// #1197-B 발송안내도 주문안내와 같은 구도(스마트스토어 → 직영몰 · 체크포인트 lms_guide_checkpoint_biz · 상세조회는 등록부로 직영몰 열쇠)
 async function collectLmsGuide() {
+    const ctx = {};
+    let main, mainErr = null;
+    try { main = await collectLmsGuideStore(null, ctx); } catch (e) { mainErr = e; }
+    if ((await naverBizCfg()).on) {
+        let biz;
+        try { biz = await collectLmsGuideStore('biz', { mainIds: ctx.ids || new Set() }); }
+        catch (e) { biz = '실패 ' + String((e && e.message) || e).slice(0, 120); await naverBizAlert(`🛰️ 네이버 직영몰 발송안내 수집 실패 — ${String((e && e.message) || e).slice(0, 150)}`); }
+        if (mainErr) throw mainErr;
+        return main + ' · 직영몰 ' + biz;
+    }
+    if (mainErr) throw mainErr;
+    return main;
+}
+async function collectLmsGuideStore(store, ctx) {
+    ctx = ctx || {};
     const now = Date.now();
-    const cp = await naverCfgGet('lms_guide_checkpoint');
+    const cpKey = store === 'biz' ? 'lms_guide_checkpoint_biz' : 'lms_guide_checkpoint';
+    const cp = await naverCfgGet(cpKey);
     // 지시 #177: 발송처리 변경분도 동일 취약점 — 15분 되감기(중복은 lms_guide_log.order_key UNIQUE·seen 필터로 제거)
     // #430(대표 9/8): 되감기 15분→60분 — 14:12 결제(PAYED·정상) 건이 네이버 변경목록에 15분 넘게 늦게 노출돼 통째로 누락(천소미 건 실측·#177 유형 재발).
     //   중복 방지 = 아래 seen(order_key)·UNIQUE 그대로라 재발송 위험 0. 호출 수 동일(구간만 확장·페이지네이션 10p×300건 상한 내).
     const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 60 * 60 * 1000, now - 23.5 * 3600 * 1000);
-    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
-    await naverCfgSet('lms_guide_checkpoint', new Date(now).toISOString());
+    let list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now), store);
+    await naverCfgSet(cpKey, new Date(now).toISOString());
+    if (store === 'biz') {
+        const mi = ctx.mainIds || new Set();
+        list = list.filter(x => !mi.has(String(x.productOrderId || '')));
+        await naverBizRemember(list.map(x => String(x.productOrderId || '')));
+    } else ctx.ids = new Set(list.map(x => String(x.productOrderId || '')).filter(Boolean));
     const shippedIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'DISPATCHED')
         .map(x => String(x.productOrderId || '')).filter(Boolean))];
     if (shippedIds.length === 0) return '발송처리 0건 — 안내 문자 대상 없음';
@@ -9152,7 +9330,7 @@ async function collectLmsGuide() {
             } finally {
                 // #401-e: 일시(주문) = 결제 시각 기록 (주문안내와 동일 — 표시 전용)
                 { const _gOpt = `${po.productName || ''} ${po.productOption || ''}`; let _gM = gMatched; if (_gM === undefined) { try { _gM = kakaoNotify.matchNotifyProduct(_gOpt, bp); } catch (_) { _gM = null; } }
-                  await guideLogMeta(orderKey, { opt: _gOpt, pno: po.productId || po.originalProductId || '', pid: _gM ? _gM.id : null }); }   // #642(기록 INSERT 뒤 · 실패해도 흐름 무관)
+                  await guideLogMeta(orderKey, { opt: _gOpt, pno: store === 'biz' ? '' : (po.productId || po.originalProductId || ''), pid: _gM ? _gM.id : null }); }   // #642(기록 INSERT 뒤 · 실패해도 흐름 무관) · #1197-B 직영몰 상품번호는 스마트스토어 주소로 열면 없는 상품 → 안 적음(구매 단추 = 판매현황 행 번호)
                 try {
                     const _oa = Date.parse(od.paymentDate || od.orderDate || '');
                     if (_oa) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(_oa)]);
