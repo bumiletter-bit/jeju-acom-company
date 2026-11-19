@@ -341,7 +341,7 @@ module.exports = function mountInboxThreads(app, deps) {
                 WHERE $3::int = 0 OR agent_office_config.value->>'day' IS DISTINCT FROM $2::text OR COALESCE((agent_office_config.value->>'n')::int, 0) < $3::int
                 RETURNING (value->>'n')::int AS n`, [CFG_KEY + '_state', day, cap]);
             if (!up.rows.length) throw bad(429, `오늘 초안 만들기 상한(${cap}번)을 다 썼어요 — 직접 적어 주세요`, { code: 'draft_cap' });
-            let g = null; try { g = c === 'qna' ? await gen0(String(raw.question || ''), String(raw.product_name || '')) : await gen0(raw); } catch (e) { log.error('[문의 창] ' + P.name + ' 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
+            let g = null; try { g = c === 'qna' ? await gen0(String(raw.question || ''), String(raw.product_name || ''), String(x.id)) : await gen0(raw, String(x.id)); } catch (e) { log.error('[문의 창] ' + P.name + ' 초안 만들기 실패:', e.message); throw bad(502, '초안을 만들지 못했어요(AI 오류) — 직접 적어 주세요'); }
             const body = g && String(g.answer || '').trim();
             if (!body) return Object.assign({ ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' }, invNote);
             const w = await pool.query(`UPDATE ${P.table()} SET ai_draft = $2, ai_scenarios = $3 WHERE ${P.id}::text = $1 AND NOT COALESCE(answered, false) AND posted_at IS NULL RETURNING ${P.id}`, [String(x.id), body, JSON.stringify(Array.isArray(g.used) ? g.used : [])]);
@@ -357,13 +357,14 @@ module.exports = function mountInboxThreads(app, deps) {
         qna: { table: () => T.qnas, id: 'question_id', okId: v => /^\d{1,15}$/.test(v), at: raw => raw.create_date, q: raw => clip(raw.question, 2000), a: raw => raw.answer, sub: () => '', why: () => '', fn: () => deps.postQna, arg: v => Number(v), opts: undefined, name: '상품문의' },
         inquiry: { table: () => T.inquiries, id: 'inquiry_id', okId: v => /^\d{1,30}$/.test(v), at: raw => raw.registered_at, q: raw => clip([raw.title, raw.content].filter(Boolean).join('\n'), 2000), a: raw => raw.answer_content, sub: raw => clip(raw.product_option, 60), why: raw => clip(raw.category, 20), fn: () => deps.postInquiry, arg: v => String(v), opts: { skipPhone: true }, name: '주문문의' },   // ⑤ 주문문의는 비공개라 전화번호 검사만 뺀다(대표 10/11)
     };
-    const POST_COLS = c => `${POST[c].id}::text AS id, raw, answered, ai_status, ai_draft, posted_by, post_error, reviewed_by, ${iso('posted_at')} AS posted_at, ${iso('reviewed_at')} AS reviewed_at, ${iso('collected_at')} AS collected_at`;
+    const POST_COLS = c => `${POST[c].id}::text AS id, raw, answered, ai_status, ai_draft, posted_by, post_error, reviewed_by, ${iso('posted_at')} AS posted_at, ${iso('reviewed_at')} AS reviewed_at, ${iso('collected_at')} AS collected_at, to_jsonb(${POST[c].table()}) ->> 'store' AS store`;   // #1202 store 'biz' = 직영몰 문의(칸이 없어도 null)
     function postShape(c, x, mk) {
         const P = POST[c], raw = x.raw || {}; const done = !!(x.answered || x.posted_at); const auto = done && x.posted_by === 'auto';
         const ans = done ? String(P.a(raw) || x.ai_draft || '') : ''; const draft = !done && x.ai_draft ? String(x.ai_draft) : null;
         const at = P.at(raw) || x.collected_at; const question = P.q(raw);
         const thread = { ch: c, id: String(x.id), title: clip(raw.product_name, 60) || P.name, sub: P.sub(raw), last_text: clip(done ? (ans || '답변함') : question, 120), last_at: done ? (x.posted_at || at) : at, last_dir: done ? 'out' : 'in',
             unread: ((mk && mk.forced) || (!mk && !x.reviewed_at && (!done || auto) && fresh(done ? 'ai' : 'open', ageOf(at)))) ? 1 : 0, needs_reply: !done && !x.reviewed_at && ageOf(at) <= OPEN_DAYS, done: !!x.reviewed_at, state: !done ? 'open' : auto ? 'ai' : 'done', why: done ? '' : (x.post_error ? '자동 등록 실패' : x.ai_status === 'claim' ? '반품·교환·환불 분류' : x.ai_status === 'skip' ? '봇이 넘긴 글' : x.ai_status === 'staff' ? '직원 답 필요' : (P.why(raw) || '')), has_draft: !!draft, can_send: !done };
+        if (x.store === 'biz') thread.store = 'biz';   // #1202 직영몰 문의만 · 아니면 칸 없음(톡톡 #1201 과 같은 칸 → 화면 「직영몰」 알약)
         Object.defineProperty(thread, '_card', { value: { kind: c, id: String(x.id), at, item: clip(raw.product_name, 60), state: !done ? 'open' : auto ? 'ai' : 'staff', why: P.why(raw), question: clip(question, 600), answer: clip(ans, 1200), draft: clip(draft || '', 1200), seen_by: x.reviewed_by || '' } });
         return { thread, raw, done, auto, ans, draft, at, question };
     }

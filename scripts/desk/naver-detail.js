@@ -73,6 +73,8 @@ function parseOpts(args) {
         else if (a === '--ref') o.ref = args[++i];
         else if (a === '--img') (o.parts = o.parts || []).push({ img: args[++i] });   // #736 재료는 적은 순서 그대로
         else if (a === '--text') (o.parts = o.parts || []).push({ text: args[++i] });
+        else if (a === '--as-guide') o.asGuide = args[++i];                     // #1203-2 A/S 안내 글(detailAttribute.afterServiceInfo.afterServiceGuideContent · 줄바꿈 = 글자 \n)
+        else if (a === '--store') o.store = args[++i];                          // #1203-2 'biz' = 사업자몰 직영몰(중계서버 NAVER2_* 열쇠) · 없으면 스마트스토어(종전)
         else if (a === '--link') { const p = (o.parts || []).slice(-1)[0]; if (!p || !p.img) o.linkErr = '--link 는 바로 앞 --img 에 붙어요'; else p.link = args[++i]; }
         else rest.push(a);
     }
@@ -164,6 +166,10 @@ function buildPatch(o) {
         const list = [];
         for (const raw of o.customName) { const m = /^\s*(\d+)\s*=([\s\S]*)$/.exec(String(raw == null ? '' : raw)); const nm = m ? m[2].trim() : ''; if (!m || !nm) errs.push(`--custom-name 「${raw}」: "<id>=<새 이름>" 꼴로(id 는 show 의 입력형 옵션 표)`); else if (nm.length > 50) errs.push(`입력형 옵션 이름은 50자까지예요(${nm.length}자)`); else list.push({ id: Number(m[1]), name: nm }); }
         if (list.length) patch.custom_options = list;
+    }
+    if (o.asGuide != null) {   // #1203-2 A/S 안내 글만(전화 칸 afterServiceTelephoneNumber 는 안 건드림) · 러너 patch 이름 after_service_guide(워커1 server.js)
+        const t = String(o.asGuide).replace(/\\n/g, '\n').replace(/\r/g, '').trim();
+        if (!t) errs.push('--as-guide 가 비었어요'); else if (t.length > 200) errs.push(`A/S 안내 글은 200자까지예요(${t.length}자)`); else patch.after_service_guide = t;
     }
     if (o.pageTitle != null || o.tags != null) {   // #842 검색 설정 — 페이지 제목 · 태그 통째(지금 태그를 다 적어야 남음)
         const seo = {};
@@ -390,6 +396,10 @@ function planRows(before, patch) {
             if (patch.status === 'OUTOFSTOCK') warns.push(`품절로 바꾸면 네이버가 재고를 0 으로 만들어요${oc.length ? ` — 옵션 ${oc.length}개 재고가 전부 0 · 원래 재고로 돌리는 길은 revert(보관본 재고로 되돌림)` : ''}`);
         }
     }
+    if ('after_service_guide' in patch) {   // #1203-2 A/S 안내 — 전/후
+        const cur = ((op.detailAttribute || {}).afterServiceInfo || {}).afterServiceGuideContent || '';
+        if (cur === patch.after_service_guide) stops.push('A/S 안내 글이 이미 그 글이에요'); else rows.push({ field: 'A/S 안내', before: cur || '(없음)', after: patch.after_service_guide });
+    }
     if ('seo' in patch) {   // #842 검색 설정 — 전/후
         const cur = (op.detailAttribute || {}).seoInfo, so = patch.seo, tl = ts => (ts || []).map(t => t.text + (t.code != null ? '#' + t.code : '')).join(', ');
         if (!cur) stops.push('이 상품엔 검색 설정(seoInfo)이 없어요 — 스마트스토어센터에서');
@@ -420,7 +430,7 @@ function planRows(before, patch) {
     return { rows: stops.length ? [] : rows, warns, stops };
 }
 // 통째 PUT 을 타는 patch(서버 usesPut 과 같음) — 설정 'naver_product_write'.put_enabled 가 true 일 때만 서버가 받음(#721-B · 판매중지·재개는 늘 열림)
-const PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];   // 서버 NPW_PUT_KEYS 와 같게(#773 · #842)
+const PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo', 'after_service_guide'];   // 서버 NPW_PUT_KEYS 와 같게(#773 · #842)
 const PUT_LOCK_TEXT = '통째 수정은 대표 확정 대기 — 지금은 판매중지/재개만';
 function usesPut(before, patch) {
     const st = (((before || {}).originProduct) || {}).statusType;
@@ -614,8 +624,8 @@ function makeRunner(deps) {
         const s = String(arg || '').replace(/\D/g, '');
         if (!s) throw new Error('backup_id 또는 상품번호가 필요해요');
         const q = s.length <= 9
-            ? await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at FROM naver_product_backups WHERE id = $1`, [parseInt(s, 10)])
-            : await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at FROM naver_product_backups WHERE product_no = $1 AND applied_at IS NULL AND COALESCE(result_json->>'op', '') <> 'create_failed' ORDER BY id DESC LIMIT 1`, [s]);
+            ? await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at, to_jsonb(b) ->> 'store' AS store FROM naver_product_backups b WHERE id = $1`, [parseInt(s, 10)])
+            : await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at, to_jsonb(b) ->> 'store' AS store FROM naver_product_backups b WHERE product_no = $1 AND applied_at IS NULL AND COALESCE(result_json->>'op', '') <> 'create_failed' ORDER BY id DESC LIMIT 1`, [s]);
         const r = q.rows[0];
         if (!r) throw new Error(s.length <= 9 ? `보관본 ${s} 를 못 찾았어요` : `상품 ${s} 의 아직 적용 안 한 보관본이 없어요 — 먼저 show`);
         return Object.assign(r, { before_json: typeof r.before_json === 'string' ? JSON.parse(r.before_json) : r.before_json });
@@ -633,11 +643,15 @@ async function main(argv, deps) {
     const R = makeRunner(deps);
     const cmd = argv[0], { o, rest } = parseOpts(argv.slice(1));
     const oid = n => { const v = parseInt(n, 10); if (!(v > 0)) throw new Error('지시 id 가 필요해요(누가 시켰는지 기록)'); return v; };
+    // #1203-2 직영몰(store 'biz') — 요청 줄 맨 위에 store:'biz' 한 칸(없으면 종전 꼴 그대로 · 워커1 server.js 러너와 약속) · show 는 인자로 정하고 plan·apply·revert 는 보관본의 store 를 따른다(다른 값을 주면 멈춤)
+    if (o.store !== undefined && o.store !== 'biz') throw new Error('--store 는 biz(직영몰)만 써요 — 스마트스토어는 --store 없이');
+    if (o.store === 'biz' && !['show', 'plan', 'apply', 'revert'].includes(cmd)) throw new Error('--store biz 는 show · plan · apply · revert 에서만 써요');
+    const stOf = row => { const rs = row && row.store === 'biz' ? 'biz' : null; if (o.store === 'biz' && rs !== 'biz') throw new Error('이 보관본은 직영몰 것이 아니에요(--store biz 를 빼거나 직영몰 보관본 번호로)'); return rs ? { store: 'biz' } : {}; };
 
     if (cmd === 'show') {
         const pno = String(rest[0] || '').replace(/\D/g, ''); if (!/^\d{6,}$/.test(pno)) throw new Error('네이버 상품번호를 주세요(스마트스토어 상품 주소 끝 숫자)');
         const orderId = oid(rest[1]);
-        const res = await R.send({ op: 'backup', order_id: orderId, product_no: pno, created_by: await R.orderBy(orderId) });
+        const res = await R.send({ ...(o.store === 'biz' ? { store: 'biz' } : {}), op: 'backup', order_id: orderId, product_no: pno, created_by: await R.orderBy(orderId) });
         if (!res.ok) return out({ ok: false, error: res.error || '보관 실패', code: res.code || null, note: '바꾼 것 없음' });
         const row = await R.backupRow(res.backup_id);
         const op = row.before_json.originProduct || {};
@@ -645,7 +659,8 @@ async function main(argv, deps) {
         const file = path.join(TMP, `detail_${pno}_b${res.backup_id}.html`);
         fs.writeFileSync(file, String(op.detailContent || ''), 'utf8');
         const options = optionTable(row.before_json), disc = discountOf(row.before_json);
-        return out({ ok: true, product_no: pno, backup_id: res.backup_id, summary: res.summary, detail_file: file,
+        if (o.store === 'biz' && row.store !== 'biz') return out({ ok: false, error: '직영몰로 보관을 요청했는데 보관본에 직영몰 표시가 없어요(서버가 아직 store 를 모름 · 배포 확인) — plan·apply 하지 말고 총괄에게', backup_id: res.backup_id });
+        return out({ ok: true, product_no: pno, ...(row.store === 'biz' ? { store: 'biz', store_name: '사업자몰 제주아꼼이네 직영몰' } : {}), backup_id: res.backup_id, summary: res.summary, detail_file: file,
             sale_price: op.salePrice, discount: disc.unitType ? disc : null, options,
             group_names: (((op.detailAttribute || {}).optionInfo || {}).optionCombinationGroupNames) || null,   // #773 묶음 이름(--group-name1~3)
             custom_options: ((((op.detailAttribute || {}).optionInfo || {}).optionCustom) || []).map(c => ({ id: c.id, name: c.groupName, usable: c.usable !== false })),   // #773 입력형 옵션(--custom-name <id>=…)
@@ -660,6 +675,7 @@ async function main(argv, deps) {
         const { patch, errs } = buildPatch(o);
         if (errs.length) throw new Error(errs.join(' · '));
         const op = row.before_json.originProduct || {};
+        const stTag = stOf(row);   // #1203-2 직영몰 보관본이면 { store: 'biz' }(plan 에서도 같은 검사)
         const P = planRows(row.before_json, patch);
         const locked = usesPut(row.before_json, patch) && (await R.writeCfg()).put_enabled !== true;
         if (locked) P.warns.unshift(PUT_LOCK_TEXT + '(apply 가 거절해요 · 옵션·가격·상품명·품절·상세는 스마트스토어센터에서)');
@@ -682,7 +698,7 @@ async function main(argv, deps) {
             if (row.applied_at) P.warns.unshift('이 보관본은 이미 적용했어요 — 다시 바꾸려면 show 로 새로 보관');
             const blocked = busyWindow(deps.now());
             const pv = ('detail_html' in patch && !o.noPreview) ? await makePreview(deps, op.detailContent, patch.detail_html, `naver-${row.product_no}-${row.id}`) : null;
-            return out({ ok: true, product_no: row.product_no, backup_id: row.id, changes: P.rows, warnings: P.warns, can_apply: P.rows.length > 0 && !row.applied_at,
+            return out({ ok: true, product_no: row.product_no, ...(stTag.store ? { store: 'biz', store_name: '사업자몰 제주아꼼이네 직영몰' } : {}), backup_id: row.id, changes: P.rows, warnings: P.warns, can_apply: P.rows.length > 0 && !row.applied_at,
                 ...(pv ? { preview: pv.files || undefined, preview_error: pv.error || undefined } : {}),
                 time_block: blocked ? '지금은 평일 08:30~10:30(발송 직전)이라 apply 는 10:30 뒤에' : null,
                 sale_ok_before: saleOkSelf(row.before_json),
@@ -696,7 +712,7 @@ async function main(argv, deps) {
         if (!P.rows.length) return out({ ok: true, changed: false, note: '지금 값과 같아요 — 보낸 것 없음' });
         if (busyWindow(deps.now()) && !o.ownerNow) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
         if (busyWindow(deps.now())) await deps.pool.query(`INSERT INTO audit_logs (action, target_type, target_id, changes, source) VALUES ('owner_now', 'naver_product', $1, $2, 'naver-detail')`, [row.id, JSON.stringify({ note: 'owner-now · 대표가 발주 끝 확인 · 지시 ' + orderId, product_no: String(row.product_no), backup_id: row.id, order_id: orderId })]);   // #1195 발송 직전 멈춤을 건너뛴 기록
-        const res = await R.send({ op: 'apply', order_id: orderId, backup_id: row.id, product_no: row.product_no, patch, ...(o.cardFix ? { card_fix: true } : {}), created_by: await R.orderBy(orderId) });
+        const res = await R.send({ ...stOf(row), op: 'apply', order_id: orderId, backup_id: row.id, product_no: row.product_no, patch, ...(o.cardFix ? { card_fix: true } : {}), created_by: await R.orderBy(orderId) });
         if (!res.ok) {
             if (/통째 수정은/.test(String(res.error || ''))) return out({ ok: false, stopped: true, locked: true, error: res.error,
                 card: card('수정 안 함 — 잠김', row.product_no, op.name, P.rows, ['🔒 ' + PUT_LOCK_TEXT, '옵션·가격·상품명·품절·상세는 스마트스토어센터에서 직접 해 주세요']),
@@ -742,7 +758,7 @@ async function main(argv, deps) {
         if (!row.applied_at) throw new Error('아직 적용하지 않은 보관본이에요 — 되돌릴 것이 없어요');
         if (row.reverted_at) throw new Error('이미 되돌린 보관본이에요');
         if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 급하면 총괄에게', note: '보낸 것 없음' });
-        const res = await R.send({ op: 'revert', order_id: orderId, backup_id: row.id, product_no: row.product_no, force: o.force === true, ...(o.cardFix ? { card_fix: true } : {}), created_by: await R.orderBy(orderId) });
+        const res = await R.send({ ...stOf(row), op: 'revert', order_id: orderId, backup_id: row.id, product_no: row.product_no, force: o.force === true, ...(o.cardFix ? { card_fix: true } : {}), created_by: await R.orderBy(orderId) });
         if (!res.ok) return out({ ok: false, error: res.error || '되돌리기 실패', drift_paths: res.drift_paths || undefined, steps_done: res.steps_done || undefined,
             status_now: res.status_now || undefined, stock_restored: res.stock_restored == null ? undefined : res.stock_restored, attempts: res.attempts || undefined,
             note: halfSale(res) || (res.drift_paths ? '적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 그 칸(drift_paths)을 요청자에게 보여 주고(되묻기 1회) 「그래도 되돌려」면 --force' : '되돌리지 못했어요 — 총괄에게') });

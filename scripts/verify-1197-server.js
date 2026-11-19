@@ -1,13 +1,13 @@
 // #1197-B 검증 — server.js 직영몰(store:'biz') 붙이기 · 실코드를 떼어 가짜 중계서버·가짜 DB 로 실행
 //   🔴 실DB·실네이버·실중계서버·실발송·실발주확인·실송장등록 호출 0 · server.js 를 띄우지 않음 · 포트 안 씀
-//   비교 기준 = `git show HEAD:server.js` 의 같은 함수(스위치 꺼짐 = 고치기 전과 같은 결과·같은 호출)
+//   비교 기준 = #1197 직전 커밋(e60b20c · 환경변수 BASE_REF 로 바꿀 수 있음)의 server.js 같은 함수 · #1197 배포 뒤 HEAD 와 비교하면 HEAD 에 이미 새 함수가 있어 못 씀(스위치 꺼짐 = 고치기 전과 같은 결과·같은 호출)
 //   node scripts/verify-1197-server.js
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const NEW_SRC = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-const HEAD_SRC = execFileSync('git', ['show', 'HEAD:server.js'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const HEAD_SRC = execFileSync('git', ['show', (process.env.BASE_REF || 'e60b20c') + ':server.js'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => { if (cond) pass++; else fail++; console.log((cond ? '✅ ' : '❌ ') + name + (!cond && extra !== undefined ? '  → ' + JSON.stringify(extra).slice(0, 600) : '')); };
 

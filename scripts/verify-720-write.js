@@ -41,6 +41,13 @@ function fakePool(orders, cfg = { detail_enabled: true, put_enabled: true }) {  
             if (/SET result_json = \$2::jsonb WHERE id = \$1/.test(sql)) { const r = find(p[0]); r.result_json = JSON.parse(p[1]); return { rows: [] }; }
             if (/SET result_json = COALESCE\(result_json, '\{\}'::jsonb\) \|\| \$2::jsonb WHERE id = \$1/.test(sql)) { const r = find(p[0]); r.result_json = { ...(r.result_json || {}), ...JSON.parse(p[1]) }; return { rows: [] }; }
             if (/SET reverted_at = NOW\(\)/.test(sql)) { const r = find(p[0]); r.reverted_at = new Date(); r.result_json = { ...(r.result_json || {}), ...JSON.parse(p[1]) }; return { rows: [] }; }
+            // #1203-2 앞 보관본 스토어 조회 · 직영몰 보관본 넣기(store 'biz')
+            if (/SELECT to_jsonb\(b\) ->> 'store' AS store FROM naver_product_backups b WHERE product_no = \$1 ORDER BY id DESC LIMIT 1/.test(sql)) { const r = backups.filter(x => x.product_no === p[0]).slice(-1)[0]; return { rows: r ? [{ store: r.store || null }] : [] }; }
+            if (/^\s*INSERT INTO naver_product_backups \(product_no, origin_product_no, order_id, before_json, created_by(, result_json)?, store\)/.test(sql)) {
+                const hasRes = /created_by, result_json, store/.test(sql);
+                const r = { id: ++seq, product_no: p[0], origin_product_no: p[1], order_id: p[2], before_json: JSON.parse(p[3]), created_by: p[4], patch_json: null, after_json: null, applied_at: null, reverted_at: null, result_json: hasRes ? JSON.parse(p[5]) : null, store: 'biz' };
+                backups.push(r); return { rows: [{ id: r.id }] };
+            }
             throw new Error('가짜 pool 이 모르는 SQL: ' + sql.slice(0, 120));
         },
     };

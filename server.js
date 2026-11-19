@@ -1267,6 +1267,9 @@ async function initDB() {
     for (const col of ['ai_status VARCHAR(10)', 'ai_scenarios JSONB', 'ai_draft TEXT', 'posted_at TIMESTAMP', 'posted_by VARCHAR(50)', 'post_error TEXT']) {
         await pool.query(`ALTER TABLE naver_inquiries ADD COLUMN IF NOT EXISTS ${col}`);
     }
+    // #1202 직영몰(사업자몰) 문의 = store 'biz'(답 등록을 그 스토어 열쇠로) · 빈 칸 = 스마트스토어(종전 줄 전부)
+    await pool.query(`ALTER TABLE naver_inquiries ADD COLUMN IF NOT EXISTS store VARCHAR(10)`);
+    await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS store VARCHAR(10)`);
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_post', '"off"'::jsonb)
         ON CONFLICT (key) DO NOTHING`);
     // 자동 게시 스위치 (대표 전용 토글, 기본 ON — OFF면 승인 모드: 초안 대기)
@@ -1584,6 +1587,7 @@ async function initDB() {
         )
     `);
     await pool.query(`ALTER TABLE naver_product_backups ADD COLUMN IF NOT EXISTS origin_product_no VARCHAR(30)`);
+    await pool.query(`ALTER TABLE naver_product_backups ADD COLUMN IF NOT EXISTS store VARCHAR(10)`);   // #1203-2 'biz' = 직영몰 상품 보관본(되돌리기도 그 열쇠로) · 빈 칸 = 스마트스토어
     await pool.query(`CREATE INDEX IF NOT EXISTS naver_product_backups_pno_idx ON naver_product_backups (product_no, id DESC)`);
     // #728: 쿠팡 옵션(vendorItem) 쓰기 — 바꾸기 전 그 옵션 값 보관(되돌리기 원본) · 바꾼 뒤 재조회 · 되돌린 시각
     await pool.query(`
@@ -7162,13 +7166,14 @@ async function tgSendBlocks(blocks) {
     }
     return res;
 }
-function qnaDoneBlock(kind, product, question, answer) {   // kind = '상품문의' | '고객문의'
+function qnaDoneBlock(kind, product, question, answer, biz) {   // kind = '상품문의' | '고객문의' · #1202 biz = 직영몰(머리에 「직영몰」 · 안 넘기면 종전 바이트)
     // #1108-E 문의 글이 메모 거리(needsMemo)·주소 변경이면 머리 「답변완료 (*메모 필요*)」 + 톡톡 🟧 와 같은 꼬리 · 해당 없으면 종전 바이트
     const q = String(question || ''), memo = needsMemo(q), addr = ADDR_CHANGE_RE.test(q) && !CLAIM_WORD_RE.test(q), inv = invoiceReq(q);   // #1112 inv = 송장번호 요청
     const fields = [['상품', product || '-'], ['문의', question], ['답변', answer]];
-    if (!memo && !addr && !inv) return tgBlock(kind === '상품문의' ? '🟩 상품문의 · 답변완료' : '🟦 고객문의(주문문의) · 답변완료', fields);   // 손댈 것 없음 = 종전 바이트
+    const bz = biz ? '직영몰 ' : '';
+    if (!memo && !addr && !inv) return tgBlock(kind === '상품문의' ? '🟩 ' + bz + '상품문의 · 답변완료' : '🟦 ' + bz + '고객문의(주문문의) · 답변완료', fields);   // 손댈 것 없음 = 종전 바이트
     const tail = [addr ? '→ 배송지 수정' : '', inv ? '→ 송장번호 보내 드리기' : '', memo ? '→ 에이전트 오피스 › 발주 메모함에 넣기' : ''].filter(Boolean).join('\n');
-    return tgBlock(redHead('메모 필요', (kind === '상품문의' ? '상품문의' : '고객문의') + ' 답변완료'), fields, tail);
+    return tgBlock(redHead('메모 필요', bz + (kind === '상품문의' ? '상품문의' : '고객문의') + ' 답변완료'), fields, tail);
 }
 // #1108-E(대표 11/11 「봐야 되는 건은 빨강 · 낱말 통일」) 사람이 손대야 하는 문의 알림 머리 = 「🟥 <b>메모 필요|확인 필요</b> · 무엇」(텔레그램은 글자 색이 없어 🟥 + 굵게) · 손댈 것 없는 🟩🟦 는 종전 그대로
 function redHead(word, what) { return { html: `🟥 <b>${tgEsc(word)}</b> · ${tgEsc(what)}` }; }
@@ -7479,7 +7484,7 @@ app.put('/api/agent-office/naver/auto-collect-all', authMiddleware, adminOnly, a
 app.get('/api/agent-office/naver/qnas', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT question_id, raw, answered, ai_status, ai_scenario_id, ai_scenarios, ai_draft, posted_at, posted_by, post_error, collected_at
+            `SELECT question_id, raw, answered, ai_status, ai_scenario_id, ai_scenarios, ai_draft, posted_at, posted_by, post_error, collected_at, to_jsonb(naver_qnas) ->> 'store' AS store
              FROM naver_qnas ORDER BY (raw->>'create_date') DESC NULLS LAST, question_id DESC LIMIT 300`);
         const auto = (await naverCfgGet('qna_auto_post')) !== 'off';
         const scen = await pool.query(`SELECT id, name FROM inquiry_scenarios`);   // 구버전 기록(ai_scenario_id) 표기용
@@ -7512,7 +7517,7 @@ app.post('/api/agent-office/naver/qnas/:id/answer', authMiddleware, async (req, 
 app.get('/api/agent-office/naver/inquiries', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT inquiry_id, raw, answered, ai_status, ai_scenarios, ai_draft, posted_at, posted_by, post_error, collected_at
+            `SELECT inquiry_id, raw, answered, ai_status, ai_scenarios, ai_draft, posted_at, posted_by, post_error, collected_at, to_jsonb(naver_inquiries) ->> 'store' AS store
              FROM naver_inquiries ORDER BY (raw->>'registered_at') DESC NULLS LAST, inquiry_id DESC LIMIT 300`);
         const auto = (await naverCfgGet('inquiry_auto_post')) === 'on';
         res.json({ ok: true, auto_post: auto, rows: r.rows.map(x => ({ ...x,
@@ -7774,9 +7779,9 @@ app.get('/api/agent-office/naver/product-backups', authMiddleware, adminOnly, as
     try {
         const pno = String(req.query.product_no || '').replace(/\D/g, '');
         const r = await pool.query(
-            `SELECT id, product_no, order_id, before_json, after_json, patch_json, applied_at, reverted_at, result_json, created_by, created_at
+            `SELECT id, product_no, order_id, before_json, after_json, patch_json, applied_at, reverted_at, result_json, created_by, created_at, to_jsonb(naver_product_backups) ->> 'store' AS store
                FROM naver_product_backups ${pno ? 'WHERE product_no = $1' : ''} ORDER BY id DESC LIMIT 20`, pno ? [pno] : []);
-        res.json({ items: r.rows.map(x => ({ id: x.id, product_no: x.product_no, order_id: x.order_id, created_by: x.created_by, created_at: x.created_at,
+        res.json({ items: r.rows.map(x => ({ id: x.id, product_no: x.product_no, order_id: x.order_id, created_by: x.created_by, created_at: x.created_at, store: x.store || null,   /* #1203-2 */
             applied_at: x.applied_at, reverted_at: x.reverted_at, patch_keys: x.patch_json ? Object.keys(x.patch_json) : [],
             before_summary: npwSummary(x.before_json), after_summary: npwSummary(x.after_json), result: x.result_json })) });
     } catch (err) { console.error('product-backups:', err.message); res.status(500).json({ error: '보관본을 불러오지 못했어요' }); }
@@ -9358,18 +9363,36 @@ function naverMaskContact(s) {
 // 고객문의 수집 (공식문서 확정 2026-07-26: GET /v1/pay-user/inquiries — startSearchDate/endSearchDate 필수 yyyy-MM-dd,
 //   page 1~, size 10~200, 최대 365일. 응답 content[].inquiryNo가 고유키)
 //   A안: 최소 필드만 저장(유형·제목·내용[마스킹]·상품정보·등록일·답변여부) — customerId/customerName은 저장하지 않음.
+// #1202 바깥 이름·결과 글은 종전 그대로 · 직영몰 스위치(naver_biz_store + 중계서버 열쇠) 켜짐이면 스마트스토어 다음에 직영몰을 같은 길로 한 번 더
+//   직영몰 = store 'biz' 로 조회 · 저장 줄 store 'biz' · 답 등록은 naverPostInquiryAnswer 가 줄의 store 로 · 켠 뒤 들어온 미답변만 자동 응대 · 금액 재료 없음 · 실패 알림 30분 1통
 async function collectInquiry() {
+    let main, mainErr = null;
+    try { main = await collectInquiryStore(null); } catch (e) { mainErr = e; }
+    if ((await naverBizCfg()).on) {
+        let biz;
+        try { biz = await collectInquiryStore('biz'); }
+        catch (e) { biz = '실패 ' + String((e && e.message) || e).slice(0, 120); await naverBizAlert(`🛰️ 네이버 직영몰 고객문의 수집 실패 — ${String((e && e.message) || e).slice(0, 150)}`); }
+        if (mainErr) throw mainErr;
+        return main + ' · 직영몰 ' + biz;
+    }
+    if (mainErr) throw mainErr;
+    return main;
+}
+async function collectInquiryStore(store) {
+    const isBiz = store === 'biz';
     const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
     const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
     const startSearchDate = d(-2), endSearchDate = d(0);   // 최근 3일 창 (30분 주기라 충분한 겹침)
     let added = 0, updatedCnt = 0, total = 0;
     const newUnanswered = [];                              // 대표 7/26: 알림은 '미답변 신규'만 (저장은 전체 유지)
     const freshItems = [];                                 // 대표 7/27: 신규 미답변 → 자동답변 처리 대상
+    const bizStart = isBiz ? await bizInqStartMs('inquiry') : null;   // #1202 직영몰 = 켠 시각 뒤 문의만 자동 응대
     for (let page = 1; page <= 5; page++) {
         if (page > 1) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
             method: 'GET', path: '/external/v1/pay-user/inquiries',
             query: { startSearchDate, endSearchDate, page, size: 200 },
+            ...(isBiz ? { store: 'biz' } : {}),
         });
         const body = (r && r.data) ? r.data : r;
         const list = Array.isArray(body?.content) ? body.content : [];
@@ -9387,13 +9410,19 @@ async function collectInquiry() {
                 // 대표 7/28: 판매자센터·자동 게시 답변 본문 — 조회 응답 content[].answerContent (개발자포럼 #3161 확정). 마스킹 동일 적용
                 answer_content: naverMaskContact(q.answerContent || ''),
             };
-            const res = await pool.query(
+            const res = isBiz
+                ? await pool.query(   // #1202 직영몰 줄 = store 'biz'(새 줄일 때만 적음 · 갱신은 raw·answered 만 = 종전과 같은 칸)
+                    `INSERT INTO naver_inquiries (inquiry_id, raw, answered, store) VALUES ($1, $2, $3, 'biz')
+                     ON CONFLICT (inquiry_id) DO UPDATE SET raw = EXCLUDED.raw, answered = EXCLUDED.answered
+                     RETURNING (xmax = 0) AS inserted, store`, [id, JSON.stringify(item), !!q.answered])
+                : await pool.query(
                 `INSERT INTO naver_inquiries (inquiry_id, raw, answered) VALUES ($1, $2, $3)
                  ON CONFLICT (inquiry_id) DO UPDATE SET raw = EXCLUDED.raw, answered = EXCLUDED.answered
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
             if (res.rows[0] && res.rows[0].inserted) {
                 added++;
-                if (!q.answered) { newUnanswered.push(item.category || '기타'); freshItems.push({ id, item }); }
+                // #1202 직영몰 = 켠 시각(bizStart) 뒤에 들어온 미답변만 자동 응대 · 첫 실행·시각 못 읽음 = 저장만
+                if (!q.answered && (!isBiz || (!bizStart.first && bizRegMs(item.registered_at) >= bizStart.ms))) { newUnanswered.push(item.category || '기타'); freshItems.push({ id, item }); }
             } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
@@ -9403,30 +9432,41 @@ async function collectInquiry() {
     let inqPosted = 0, inqStaff = 0, inqFailed = 0;
     const inqDone = [];   // #1069 답변완료 건마다 텔레그램 한 통(상품·문의·답 전체)
     const inqStaffBlocks = [], inqMeta = f => ({ id: f.id, at: tgMd(f.item.registered_at), product: f.item.product_name }), inqQ = f => [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n');   // #1128 사람 몫 건마다 한 통(🟥)
+    const KIND = isBiz ? '직영몰 고객문의' : '고객문의';   // #1202 🟥 알림 머리(직영몰만 앞에 「직영몰」)
     if (freshItems.length) {
         const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
         const claimStaffOn = (await naverCfgGet('qna_claim_staff')) !== 'off';   // #1129 미설정 = 켬(상품문의와 같은 칸)
+        const bz = isBiz ? await bizInqCfg() : null, bzScen = isBiz ? await qnaScenarios().catch(() => []) : null;   // #1202 직영몰 판정 재료
         for (const f of freshItems) {
             if (/반품|교환|환불/.test(String(f.item.category || ''))) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='claim' WHERE inquiry_id=$1`, [f.id]);
-                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', '반품·교환·환불 = 직원 몫'));
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock(KIND, inqMeta(f), inqQ(f), '', '반품·교환·환불 = 직원 몫'));
                 continue;
             }
             // #1129·#1130 사람 몫이 미리 정해지는 글 = AI 부르기 전에 가름(생성 0 · ai_status 'staff' = 새 값 · 목록은 「✍️ 직원 답변 필요」 · 초안은 손님 연락에서 요청 시) · 🟥 알림은 「봇 초안」 줄 없이
             //   (a) 글 내용(배송·상품 카테고리에 적힌 받은 상품 불만·교환/반품 요청 · 카테고리 반품·교환·환불은 위 claim 갈래 종전) (b) 자동 등록 꺼짐(inquiry_auto_post 기본값) · 그대로 = 켜진 정상 건(생성 → 자동 게시 🟦) · 생성 실패 skip · 등록 실패(초안 남음 · 🟥)
             const qcs = claimStaffOn ? qnaClaimStaff(inqQ(f)) : '';
-            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
+            const miss = isBiz ? bizInqMissing(inqQ(f), bz.missing_words) : [];   // #1202 직영몰에 없는 품목 = 직원 몫(톡톡과 같게)
+            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : miss.length ? ['직영몰 · 없는 상품 문의', miss.join(', ') + ' — 직영몰에 없는 품목이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
             if (pre) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='staff' WHERE inquiry_id=$1`, [f.id]);
-                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', pre[0], pre[1]));
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock(KIND, inqMeta(f), inqQ(f), '', pre[0], pre[1]));
                 continue;
             }
             let gen = null;
-            try { gen = await inquiryGenerate(f.item); }
-            catch (e) { console.error('[고객문의] 생성 오류(SKIP):', e.message); }
+            if (isBiz && bizInqIsPrice(inqQ(f)) && !bizInqOtherScenario(inqQ(f), bzScen)) gen = { answer: '안녕하세요 고객님, 제주아꼼이네입니다 🍊\n' + bz.price_reply + '\n\n' + QNA_TAIL, used: ['직영몰 가격 안내'] };   // #1202 가격 질문 = 고정 안내(AI 0 · 금액 0)
+            else {
+                try { gen = await inquiryGenerate(f.item, isBiz ? { biz: true } : undefined); }
+                catch (e) { console.error('[고객문의] 생성 오류(SKIP):', e.message); }
+            }
             if (!gen) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='skip' WHERE inquiry_id=$1`, [f.id]);
-                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), '', '봇 답 못함'));
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock(KIND, inqMeta(f), inqQ(f), '', '봇 답 못함'));
+                continue;
+            }
+            if (isBiz && bizInqHasMoney(gen.answer)) {   // #1202 직영몰 답에 금액 꼴 = 등록 안 함(스마트스토어 가격일 수 있음) · 초안도 남기지 않음 · 직원 몫
+                await pool.query(`UPDATE naver_inquiries SET ai_status='skip' WHERE inquiry_id=$1`, [f.id]);
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock(KIND, inqMeta(f), inqQ(f), '', '직영몰 · 봇 답에 금액', '직영몰은 단가가 달라 금액이 든 봇 답을 등록하지 않았어요'));
                 continue;
             }
             await pool.query(`UPDATE naver_inquiries SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE inquiry_id=$1`,
@@ -9434,10 +9474,10 @@ async function collectInquiry() {
             try {
                 await naverPostInquiryAnswer(f.id, gen.answer, { name: 'auto' });
                 inqPosted++;
-                inqDone.push(qnaDoneBlock('고객문의', f.item.product_name, [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n'), gen.answer));
+                inqDone.push(qnaDoneBlock('고객문의', f.item.product_name, [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n'), gen.answer, isBiz || undefined));
             } catch (e) {
                 inqFailed++;
-                inqStaff++; inqStaffBlocks.push(qnaStaffBlock('고객문의', inqMeta(f), inqQ(f), gen.answer, '등록 실패', String((e && e.message) || e).slice(0, 300)));
+                inqStaff++; inqStaffBlocks.push(qnaStaffBlock(KIND, inqMeta(f), inqQ(f), gen.answer, '등록 실패', String((e && e.message) || e).slice(0, 300)));
                 await pool.query(`UPDATE naver_inquiries SET post_error=$2 WHERE inquiry_id=$1`,
                     [f.id, String((e && e.message) || e).slice(0, 300)]);
             }
@@ -9448,10 +9488,10 @@ async function collectInquiry() {
             if (inqPosted > 0 && await alertEnabled('autodone')) tgSendBlocks(inqDone).catch(() => {});   // #1069 건수 한 줄 → 건마다 한 통(🟦 · 끝나길 안 기다림 = 수집 시간 종전)
             if (inqStaffBlocks.length && await alertEnabled('staffneed')) tgSendBlocks(inqStaffBlocks).catch(() => {});   // #1128 건수 한 줄 → 건마다 한 통(🟥)
         }
-        if (inqFailed) notifyTelegram(`⚠️ 고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
+        if (inqFailed) notifyTelegram(`⚠️ ${isBiz ? '직영몰 ' : ''}고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
     }
-    // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음)
-    await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
+    // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음) · #1202 스마트스토어 차례에서만(한 번)
+    if (!isBiz) await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
     // 대표 7/27 알림 개선: 구 '미답변 신규' 통합 알림 은퇴 — 위의 답변완료/직접필요 분리 알림이 대체 (0건=무알림 유지)
     return `문의 신규 ${added}(미답변 ${newUnanswered.length}·자동답변 ${inqPosted}·직원필요 ${inqStaff})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
@@ -9479,6 +9519,82 @@ function qnaPiiCheck(text, opts) {
         if (m) return { ok: false, reason: `개인정보 의심(${why}: "${m[0]}") — 공개 게시판에 게시할 수 없습니다. 해당 부분을 지우고 다시 시도해주세요.` };
     }
     return { ok: true };
+}
+
+// ===== #1202 직영몰(사업자몰) 상품문의·고객문의 판정 — 톡톡봇 「★제주아꼼이네 톡톡봇/biz-store.js」(#1198 · 워커3 교차 점검 11/19)를 그대로 옮김 =====
+//   🔴 낱말·규칙(가격 질문 좁힘 · 금액 꼴 · 없는 품목)이 어긋나지 않게: 톡톡봇 쪽을 고치면 여기도 같이 고친다(톡톡봇 저장소는 이 서버가 안 읽음)
+//   설정 = agent_office_config 'bot_biz_store'(톡톡봇과 같은 줄 · price_reply · missing_words) · 1분 기억 · 이 서버는 그 줄에 쓰지 않음
+const BIZ_INQ_DEFAULTS = Object.freeze({
+    price_reply: '가격은 상품 화면의 옵션에서 모두 확인하실 수 있어요.',
+    missing_words: ['한라봉', '천혜향', '레드향', '카라향', '자몽', '청귤', '풋귤', '하귤', '블러드', '오렌지', '밤호박', '단호박', '미니밤호박', '옥수수',
+        '산하홍', '홍귤', '브로콜리', '양배추', '부지갱이', '취나물', '레드키위', '키위', '참다래', '홍다래', '레몬 못난이'],
+});
+const BIZ_PRICE_CORE_RE = /가격|단가|견적|도매가|원가|최저가|몇\s*원|얼마(?!\s*(?:나|전|든지|든|안|간|동안|쯤\s*걸|만큼\s*걸))/;
+const BIZ_PRICE_EXCLUDES = ['파손', '불량', '깨', '터졌', '터져', '썩', '곰팡이', '상했', '상해', '물러',
+    '환불', '반품', '교환', '취소', '배송비', '택배비', '배달비', '쿠폰', '행사', '세일', '안왔', '안 왔', '늦',
+    '결제', '잘못', '다르게', '달라', '차액', '영수증', '계산서', '입금'];
+const BIZ_MONEY_RE = /\d[\d,.]*\s*(?:만\s*|천\s*)?원(?!하|해|할|했|함|합)/;
+function bizInqHasMoney(text) { return BIZ_MONEY_RE.test(String(text || '')); }
+function bizInqIsPrice(text) {
+    const t = String(text || '').trim();
+    if (!t || t.length > 60) return false;
+    if (!BIZ_PRICE_CORE_RE.test(t)) return false;
+    return !BIZ_PRICE_EXCLUDES.some(k => t.includes(k));
+}
+function bizInqMissing(text, words) {
+    const t = String(text || ''), tn = t.replace(/\s/g, ''), nz = w => String(w).replace(/\s/g, '');
+    const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const has = w => /\s/.test(w) ? tn.includes(nz(w)) : new RegExp(escRe(w) + '(?!\\s*(?:색|빛|컬러))').test(t);
+    const hit = [...new Set((words || []).filter(has))];
+    return hit.filter(w => !hit.some(o => o !== w && nz(o).includes(nz(w))));
+}
+// 톡톡봇 ai-handler.js matchesOtherScenario 와 같음 = 「가격 문의」 말고 다른 시나리오 낱말이 같이 걸리면 고정 안내 대신 AI(금액 재료 뺀 판)
+function bizInqOtherScenario(text, scenarios) {
+    const n = String(text || '').toLowerCase().replace(/\s/g, '');
+    for (const s of (scenarios || [])) {
+        if (s.name === '가격 문의') continue;
+        for (const k of (s.keywords || [])) { const kk = String(k || '').toLowerCase().replace(/\s/g, ''); if (kk && n.includes(kk)) return true; }
+    }
+    return false;
+}
+let _bizInqCfg = { at: 0, v: null };
+async function bizInqCfg() {
+    if (_bizInqCfg.v && Date.now() - _bizInqCfg.at < 60000) return _bizInqCfg.v;
+    let o = {};
+    try { const v = await naverCfgGet('bot_biz_store'); if (v && typeof v === 'object' && !Array.isArray(v)) o = v; } catch (_) { o = {}; }
+    const v = {
+        price_reply: typeof o.price_reply === 'string' && o.price_reply.trim() && !bizInqHasMoney(o.price_reply) ? o.price_reply.trim().slice(0, 300) : BIZ_INQ_DEFAULTS.price_reply,
+        missing_words: Array.isArray(o.missing_words) ? o.missing_words.map(w => String(w || '').trim()).filter(Boolean).slice(0, 100) : BIZ_INQ_DEFAULTS.missing_words.slice(),
+    };
+    _bizInqCfg = { at: Date.now(), v };
+    return v;
+}
+// 직영몰 판 판매현황 = 「- 이름: 판매중 (가격)」 괄호를 지움(톡톡봇 ai-handler.js bizStore 와 같은 꼴) · {{가격표}} = 고정 안내 한 줄(금액 0)
+async function qnaStoreDataBiz() {
+    const d = await qnaStoreData(), c = await bizInqCfg();
+    const strip = t => String(t || '').split('\n').map(l => l.replace(/^(- .+?: 판매중) \(.*\)\s*$/, '$1')).join('\n');
+    return { statusText: strip(d.statusText), sellingText: strip(d.sellingText), priceText: c.price_reply };
+}
+const BIZ_INQ_SYSTEM_NOTE = '## 직영몰(사업자몰) 문의\n- 이 문의는 「제주아꼼이네 직영몰」에 온 글입니다. 이 대화에는 금액 정보가 없습니다. 가격·금액·할인·숫자 금액은 쓰지 마세요. 금액이 꼭 필요한 문의는 SKIP 하세요.';
+// 손님 연락 창 [초안 만들기](inbox-threads.js 가 문의 번호를 넘김)용 = 그 줄이 직영몰인지 · 번호 없음·못 읽음 = false(종전 = 스마트스토어 판)
+async function inqRowBiz(kind, id) {
+    if (id == null || id === '') return false;
+    try {
+        const r = kind === 'qna'
+            ? await pool.query(`SELECT to_jsonb(naver_qnas) ->> 'store' AS store FROM naver_qnas WHERE question_id::text = $1`, [String(id)])
+            : await pool.query(`SELECT to_jsonb(naver_inquiries) ->> 'store' AS store FROM naver_inquiries WHERE inquiry_id = $1`, [String(id)]);
+        return !!(r.rows[0] && r.rows[0].store === 'biz');
+    } catch (_) { return false; }
+}
+// 직영몰 문의 등록 시각 → ms(시간대 없는 글 = KST) · 못 읽으면 NaN
+function bizRegMs(v) { const t = String(v || '').trim(); if (!t) return NaN; return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(t) ? t : t.replace(' ', 'T') + '+09:00'); }
+// 직영몰 문의 수집을 켠 시각(종류별 · 처음 도는 날 적고 그 뒤로는 그 시각 뒤에 들어온 미답변만 자동 응대 = 켜기 전 문의에 답이 한꺼번에 나가지 않게)
+async function bizInqStartMs(kind) {
+    const key = 'naver_biz_' + kind + '_start';
+    const v = await naverCfgGet(key);
+    if (v && !isNaN(Date.parse(v))) return { ms: Date.parse(v), first: false };
+    const now = new Date().toISOString(); await naverCfgSet(key, now);
+    return { ms: Date.parse(now), first: true };
 }
 
 // 판매현황·가격표 데이터 (톡톡봇 products-store.js와 동일 규칙 — 그룹·용량순, 준비중 미노출)
@@ -9594,9 +9710,9 @@ function qnaFilterStoreLines(text, message) {
 }
 // {{가격표}}/{{판매현황}} 치환 — 공개 게시판은 글이 계속 남으므로 "N/N 기준" 날짜를 붙여 시점을 명시
 //   filterText(질문+상품명)가 있으면 문의한 품목 라인만 골라 표시 (봇과 동일 규칙)
-async function qnaRenderPlaceholders(text, filterText) {
+async function qnaRenderPlaceholders(text, filterText, opts) {   // #1202 opts.biz = 직영몰(가격 없는 판 · {{가격표}} = 고정 안내) · 안 넘기면 종전
     if (!/\{\{(가격표|판매현황)\}\}/.test(String(text || ''))) return text;
-    const { priceText, sellingText } = await qnaStoreData();   // #432: {{판매현황}}은 판매중만(품절·시즌종료 나열 금지 — 대표 9/11)
+    const { priceText, sellingText } = (opts && opts.biz) ? await qnaStoreDataBiz() : await qnaStoreData();   // #432: {{판매현황}}은 판매중만(품절·시즌종료 나열 금지 — 대표 9/11)
     const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const stamp = `(${kst.getUTCMonth() + 1}/${kst.getUTCDate()} 기준)`;
     // #1114 f) 거른 결과가 빈 글(말한 품목이 시즌 끝·판매 줄 0) = 「N/N 기준」 머리도 붙이지 않고 그 자리를 비움(답 본문이 시즌 종료를 말함)
@@ -9967,7 +10083,8 @@ function qnaBuildSystem(scenarios) {
 ## 회사 확정 답변자료 (시나리오)
 ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
-async function qnaGenerate(question, productName, simDate, channel) {   // simDate = 지시 #108 재현 테스트 전용(날짜 시뮬레이션 — 실운영 호출은 2인자) · channel = #565 'mall'(자사몰 챗)일 때만 넘김 — 안 넘기면 종전과 같다
+async function qnaGenerate(question, productName, simDate, channel, opts) {   // simDate = 지시 #108 재현 테스트 전용(날짜 시뮬레이션 — 실운영 호출은 2인자) · channel = #565 'mall'(자사몰 챗)일 때만 넘김 — 안 넘기면 종전과 같다 · #1202 opts.biz = 직영몰 상품문의(금액 재료 뺌)
+    const biz = !!(opts && opts.biz);
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
@@ -9979,7 +10096,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
         : [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
-        const { statusText } = await qnaStoreData();
+        const { statusText } = biz ? await qnaStoreDataBiz() : await qnaStoreData();   // #1202 직영몰 = 가격 괄호 지운 판
         if (statusText) storeBlock = `## 현재 스토어 판매현황\n${statusText}\n\n- 품절/시즌종료 상품 구매 문의 → 품절·재입고 관련 재료로 답하세요.\n- 판매현황과 재료에 없는 상품 문의 → SKIP 하세요.`;
     } catch (_) { /* 조회 실패 → 보수적 안내 유지 */ }
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -9996,6 +10113,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
             ...(isSms ? [{ type: 'text', text: require('./sms/ai-note.js').SMS_SYSTEM_NOTE }] : []),   // #610: 문자일 때만(공용 블록 글자는 무변경 · 캐시 유지)
             ...(isTalkDraft ? [{ type: 'text', text: require('./inbox-talk-draft-note.js').TALK_DRAFT_NOTE }] : []),   // #1107-D: 톡톡 초안일 때만
             ...(!channel ? [{ type: 'text', text: require('./qna-memo-note.js').QNA_MEMO_NOTE }] : []),   // #1108-E: 상품문의(채널 없음)일 때만 = 메모로 처리하는 요청 확답
+            ...(biz ? [{ type: 'text', text: BIZ_INQ_SYSTEM_NOTE }] : []),   // #1202 직영몰만
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -10024,7 +10142,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
     if (isMall) answer = mallPostAnswer(answer);   // #565: 자사몰 챗 — 네이버 스토어 주소 제거·「톡톡」 → 「카카오톡 채널」
     // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
     const filterText = (String(question || '') + ' ' + String(productName || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
-    answer = await qnaRenderPlaceholders(answer, filterText);
+    answer = await qnaRenderPlaceholders(answer, filterText, biz ? { biz: true } : undefined);
     return { answer, used };
 }
 
@@ -10032,15 +10150,17 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
 async function naverPostQnaAnswer(questionId, content, actor) {
     let text = String(content || '').trim();
     if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
-    text = await qnaRenderPlaceholders(text, text);   // 직원 작성분의 {{가격표}}/{{판매현황}}도 치환 (이미 치환된 초안은 무변화)
+    // #1202 그 문의가 온 스토어 = 저장 줄의 store('biz' = 직영몰 열쇠 · 빈 칸 = 스마트스토어 = 종전 요청 그대로) · 칸이 아직 없어도 to_jsonb 로 null
+    const cur = await pool.query(`SELECT answered, posted_at, to_jsonb(naver_qnas) ->> 'store' AS store FROM naver_qnas WHERE question_id=$1`, [questionId]);
+    const biz = !!(cur.rows[0] && cur.rows[0].store === 'biz');
+    text = await qnaRenderPlaceholders(text, text, biz ? { biz: true } : undefined);   // 직원 작성분의 {{가격표}}/{{판매현황}}도 치환 (이미 치환된 초안은 무변화) · 직영몰 = 가격 없는 판
     if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
     const pii = qnaPiiCheck(text);
     if (!pii.ok) throw { status: 403, message: pii.reason };
-    const cur = await pool.query('SELECT answered, posted_at FROM naver_qnas WHERE question_id=$1', [questionId]);
     if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
     if (cur.rows[0].answered || cur.rows[0].posted_at) throw { status: 409, message: '이미 답변된 문의입니다 — 수정은 판매자센터에서 해주세요' };
     try {
-        await naverCallWithRetry({ method: 'PUT', path: `/external/v1/contents/qnas/${questionId}`, body: { commentContent: text } });
+        await naverCallWithRetry({ method: 'PUT', path: `/external/v1/contents/qnas/${questionId}`, body: { commentContent: text }, ...(biz ? { store: 'biz' } : {}) });
     } catch (e) {
         // 네이버 거절 사유(응답 본문·invalidInputs)를 메시지에 포함 — post_error 저장·화면 표시용 (7/27 400 조사 후속)
         const detail = (e && e.data) ? ' — ' + JSON.stringify(e.data).slice(0, 200) : '';
@@ -10061,17 +10181,34 @@ async function naverPostQnaAnswer(questionId, content, actor) {
 }
 
 // qna 수집기 — 최근 3일 창(30분 주기, 충분한 겹침). 배정·자동 게시는 '신규 미답변' 건에 1회만.
+// #1202 상품문의도 고객문의와 같은 구도(스마트스토어 → 직영몰 · 직영몰 줄 store 'biz' · 답 등록은 naverPostQnaAnswer 가 줄의 store 로 · 켠 뒤 문의만 · 금액 재료 없음)
 async function collectQna() {
+    let main, mainErr = null;
+    try { main = await collectQnaStore(null); } catch (e) { mainErr = e; }
+    if ((await naverBizCfg()).on) {
+        let biz;
+        try { biz = await collectQnaStore('biz'); }
+        catch (e) { biz = '실패 ' + String((e && e.message) || e).slice(0, 120); await naverBizAlert(`🛰️ 네이버 직영몰 상품문의 수집 실패 — ${String((e && e.message) || e).slice(0, 150)}`); }
+        if (mainErr) throw mainErr;
+        return main + ' · 직영몰 ' + biz;
+    }
+    if (mainErr) throw mainErr;
+    return main;
+}
+async function collectQnaStore(store) {
+    const isBiz = store === 'biz';
     const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
     const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
     const fromDate = d(-2) + 'T00:00:00.000+09:00', toDate = d(0) + 'T23:59:59.999+09:00';
     let added = 0, updatedCnt = 0, total = 0;
     const fresh = [];
+    const bizStart = isBiz ? await bizInqStartMs('qna') : null;   // #1202 직영몰 = 켠 시각 뒤 문의만 자동 응대
     for (let page = 1; page <= 10; page++) {
         if (page > 1) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
             method: 'GET', path: '/external/v1/contents/qnas',
             query: { fromDate, toDate, page, size: 100 },
+            ...(isBiz ? { store: 'biz' } : {}),
         });
         const body = (r && r.data) ? r.data : r;
         const list = Array.isArray(body?.contents) ? body.contents : [];
@@ -10084,14 +10221,21 @@ async function collectQna() {
                 question: naverMaskContact(q.question), answer: q.answer ? naverMaskContact(q.answer) : '',
                 masked_writer_id: q.maskedWriterId || '', create_date: q.createDate || '',
             };
-            const res = await pool.query(
+            const res = isBiz
+                ? await pool.query(   // #1202 직영몰 줄 = store 'biz'(새 줄일 때만 · 갱신 칸은 종전과 같음)
+                    `INSERT INTO naver_qnas (question_id, raw, answered, store) VALUES ($1, $2, $3, 'biz')
+                     ON CONFLICT (question_id) DO UPDATE SET raw = EXCLUDED.raw,
+                         answered = naver_qnas.answered OR EXCLUDED.answered
+                     RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered])
+                : await pool.query(
                 `INSERT INTO naver_qnas (question_id, raw, answered) VALUES ($1, $2, $3)
                  ON CONFLICT (question_id) DO UPDATE SET raw = EXCLUDED.raw,
                      answered = naver_qnas.answered OR EXCLUDED.answered
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
             if (res.rows[0] && res.rows[0].inserted) {
                 added++;
-                if (!q.answered) fresh.push({ id, question: item.question, product: item.product_name, at: tgMd(item.create_date) });   // #1128 at = 알림 「M/D HH:MM」
+                // #1202 직영몰 = 켠 시각 뒤 미답변만 자동 응대 · 첫 실행·시각 못 읽음 = 저장만
+                if (!q.answered && (!isBiz || (!bizStart.first && bizRegMs(item.create_date) >= bizStart.ms))) fresh.push({ id, question: item.question, product: item.product_name, at: tgMd(item.create_date) });   // #1128 at = 알림 「M/D HH:MM」
             } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
@@ -10101,25 +10245,36 @@ async function collectQna() {
     let posted = 0, needStaff = 0, failed = 0;
     const qnaDone = [];   // #1069 답변완료 건마다 텔레그램 한 통
     const qnaStaff = [];   // #1128 사람 몫 건마다 텔레그램 한 통(🟥 확인 필요)
+    const KIND = isBiz ? '직영몰 상품문의' : '상품문의';   // #1202 🟥 알림 머리(직영몰만 앞에 「직영몰」)
     if (fresh.length) {
         const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
         const claimStaffOn = (await naverCfgGet('qna_claim_staff')) !== 'off';   // #1129 미설정 = 켬
+        const bz = isBiz ? await bizInqCfg() : null, bzScen = isBiz ? await qnaScenarios().catch(() => []) : null;   // #1202 직영몰 판정 재료
         for (const q of fresh) {
             // #1129·#1130 사람 몫이 미리 정해지는 글 = AI 부르기 전에 가름(생성 0 · ai_status 'staff' = 새 값 · 목록은 「✍️ 직원 답변 필요」 · 초안은 손님 연락에서 요청 시) · 🟥 알림은 「봇 초안」 줄 없이
             //   (a) 받은 상품 불만·교환/반품 요청(qnaClaimStaff · 끄기 qna_claim_staff off) (b) 자동 등록 꺼짐(qna_auto_post off) · 그대로 = 켜진 정상 건(생성 → 자동 게시 🟩) · 생성 실패 skip · 게시 실패(초안 남음 · 🟥 등록 실패)
             const qcs = claimStaffOn ? qnaClaimStaff(q.question) : '';
-            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
+            const miss = isBiz ? bizInqMissing(q.question, bz.missing_words) : [];   // #1202 직영몰에 없는 품목 = 직원 몫
+            const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : miss.length ? ['직영몰 · 없는 상품 문의', miss.join(', ') + ' — 직영몰에 없는 품목이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
             if (pre) {
                 await pool.query(`UPDATE naver_qnas SET ai_status='staff' WHERE question_id=$1`, [q.id]);
-                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, '', pre[0], pre[1]));
+                needStaff++; qnaStaff.push(qnaStaffBlock(KIND, { id: q.id, at: q.at, product: q.product }, q.question, '', pre[0], pre[1]));
                 continue;
             }
             let gen = null;
-            try { gen = await qnaGenerate(q.question, q.product); }
-            catch (e) { console.error('[상품문의] 생성 오류(SKIP):', e.message); }
+            if (isBiz && bizInqIsPrice(q.question) && !bizInqOtherScenario(q.question, bzScen)) gen = { answer: '안녕하세요 고객님, 제주아꼼이네입니다 🍊\n' + bz.price_reply + '\n\n' + QNA_TAIL, used: ['직영몰 가격 안내'] };   // #1202 가격 질문 = 고정 안내(AI 0 · 금액 0)
+            else {
+                try { gen = await qnaGenerate(q.question, q.product, undefined, undefined, isBiz ? { biz: true } : undefined); }
+                catch (e) { console.error('[상품문의] 생성 오류(SKIP):', e.message); }
+            }
             if (!gen) {
                 await pool.query(`UPDATE naver_qnas SET ai_status='skip' WHERE question_id=$1`, [q.id]);
-                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, '', '봇 답 못함'));
+                needStaff++; qnaStaff.push(qnaStaffBlock(KIND, { id: q.id, at: q.at, product: q.product }, q.question, '', '봇 답 못함'));
+                continue;
+            }
+            if (isBiz && bizInqHasMoney(gen.answer)) {   // #1202 직영몰 답에 금액 꼴 = 게시 안 함 · 초안도 안 남김 · 직원 몫
+                await pool.query(`UPDATE naver_qnas SET ai_status='skip' WHERE question_id=$1`, [q.id]);
+                needStaff++; qnaStaff.push(qnaStaffBlock(KIND, { id: q.id, at: q.at, product: q.product }, q.question, '', '직영몰 · 봇 답에 금액', '직영몰은 단가가 달라 금액이 든 봇 답을 게시하지 않았어요'));
                 continue;
             }
             const draft = gen.answer;
@@ -10128,24 +10283,24 @@ async function collectQna() {
             try {
                 await naverPostQnaAnswer(q.id, draft, { name: 'auto' });
                 posted++;
-                qnaDone.push(qnaDoneBlock('상품문의', q.product, q.question, draft));
+                qnaDone.push(qnaDoneBlock('상품문의', q.product, q.question, draft, isBiz || undefined));
             } catch (e) {
                 failed++;
-                needStaff++; qnaStaff.push(qnaStaffBlock('상품문의', { id: q.id, at: q.at, product: q.product }, q.question, draft, '등록 실패', String((e && e.message) || e).slice(0, 300)));
+                needStaff++; qnaStaff.push(qnaStaffBlock(KIND, { id: q.id, at: q.at, product: q.product }, q.question, draft, '등록 실패', String((e && e.message) || e).slice(0, 300)));
                 await pool.query(`UPDATE naver_qnas SET post_error=$2 WHERE question_id=$1`,
                     [q.id, String((e && e.message) || e).slice(0, 300)]);
             }
             await new Promise(r => setTimeout(r, 350));           // 쓰기 호출 간격 (rate limit)
         }
     }
-    // 90일 경과분 물리 정리 (원본은 네이버에 있음 — 고객문의와 동일 정책)
-    await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
+    // 90일 경과분 물리 정리 (원본은 네이버에 있음 — 고객문의와 동일 정책) · #1202 스마트스토어 차례에서만
+    if (!isBiz) await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
     // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상) · #1103 night_pass 에 qna 있으면 밤에도 바로
     if (!(await alertQuietFor('qna'))) {
         if (posted > 0 && await alertEnabled('autodone')) tgSendBlocks(qnaDone).catch(() => {});   // #1069 건마다 한 통(🟩)
         if (qnaStaff.length && await alertEnabled('staffneed')) tgSendBlocks(qnaStaff).catch(() => {});   // #1128 건수 한 줄 → 건마다 한 통(🟥 · 종전 staffneed 켜짐 조건 그대로)
     }
-    if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
+    if (failed) notifyTelegram(`⚠️ ${isBiz ? '직영몰 ' : ''}상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
     return `상품문의 신규 ${added}(자동게시 ${posted}·직원필요 ${needStaff})·갱신 ${updatedCnt} (창 내 총 ${total}건)`;
 }
 
@@ -10202,14 +10357,15 @@ ${require('./qna-memo-note.js').INQUIRY_MEMO_BLOCK}
 ## 회사 확정 답변자료 (시나리오)
 ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
-async function inquiryGenerate(item) {
+async function inquiryGenerate(item, opts) {   // #1202 opts.biz = 직영몰 고객문의(금액 재료 뺌) · 안 넘기면 종전
+    const biz = !!(opts && opts.biz);
     if (!process.env.ANTHROPIC_API_KEY) return null;
     const baseScenarios = await qnaScenarios();                   // 재료 공용: 채널 상품문의·공통
     if (!baseScenarios.length) return null;
     const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday()), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
-        const { statusText } = await qnaStoreData();
+        const { statusText } = biz ? await qnaStoreDataBiz() : await qnaStoreData();
         if (statusText) storeBlock = `## 현재 스토어 판매현황\n${statusText}\n\n- 품절/시즌종료 상품 구매 문의 → 품절·재입고 관련 재료로 답하세요.\n- 판매현황과 재료에 없는 상품 문의 → SKIP 하세요.`;
     } catch (_) { /* 조회 실패 → 보수적 안내 유지 */ }
     const question = [item.title, item.content].filter(Boolean).join('\n');
@@ -10219,6 +10375,7 @@ async function inquiryGenerate(item) {
         model: QNA_MODEL, max_tokens: 4000,   // 대표 8/11: 2048 → 4000 (qnaGenerate와 같은 사유 — 위 주석 참조)
         system: [
             { type: 'text', text: inquiryBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
+            ...(biz ? [{ type: 'text', text: BIZ_INQ_SYSTEM_NOTE }] : []),   // #1202 직영몰만
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -10243,7 +10400,7 @@ async function inquiryGenerate(item) {
     used = used.filter(n => scenarios.some(s => s.name === n));
     if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;
     const filterText = (question + ' ' + String(item.product_name || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
-    answer = await qnaRenderPlaceholders(answer, filterText);
+    answer = await qnaRenderPlaceholders(answer, filterText, biz ? { biz: true } : undefined);
     return { answer, used };
 }
 
@@ -10251,15 +10408,17 @@ async function inquiryGenerate(item) {
 async function naverPostInquiryAnswer(inquiryNo, content, actor, opts) {   // opts.skipPhone = #658(문의 대화 창 · 비공개 게시판이라 전화번호 검사만 제외)
     let text = String(content || '').trim();
     if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
-    text = await qnaRenderPlaceholders(text, text);
+    // #1202 그 문의가 온 스토어 = 저장 줄의 store('biz' = 직영몰 열쇠 · 빈 칸 = 스마트스토어 = 종전 요청 그대로)
+    const cur = await pool.query(`SELECT answered, posted_at, to_jsonb(naver_inquiries) ->> 'store' AS store FROM naver_inquiries WHERE inquiry_id=$1`, [String(inquiryNo)]);
+    const biz = !!(cur.rows[0] && cur.rows[0].store === 'biz');
+    text = await qnaRenderPlaceholders(text, text, biz ? { biz: true } : undefined);
     if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
     const pii = qnaPiiCheck(text, opts);
     if (!pii.ok) throw { status: 403, message: pii.reason };
-    const cur = await pool.query('SELECT answered, posted_at FROM naver_inquiries WHERE inquiry_id=$1', [String(inquiryNo)]);
     if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
     if (cur.rows[0].answered || cur.rows[0].posted_at) throw { status: 409, message: '이미 답변된 문의입니다 — 수정은 판매자센터에서 해주세요' };
     try {
-        await naverCallWithRetry({ method: 'POST', path: `/external/v1/pay-merchant/inquiries/${Number(inquiryNo)}/answer`, body: { answerComment: text } });
+        await naverCallWithRetry({ method: 'POST', path: `/external/v1/pay-merchant/inquiries/${Number(inquiryNo)}/answer`, body: { answerComment: text }, ...(biz ? { store: 'biz' } : {}) });
     } catch (e) {
         const detail = (e && e.data) ? ' — ' + JSON.stringify(e.data).slice(0, 200) : '';
         throw { status: (e && e.status) || 500, message: String((e && e.message) || e) + detail };
@@ -17997,6 +18156,8 @@ const NPW_UCAP_PATH = ['originProduct', 'detailAttribute', 'unitCapacity'];
 // #842 검색 설정(seoInfo) — 페이지 제목(pageTitle) · 판매자 태그(sellerTags ≤10 · { text, code? } · code 없으면 직접 입력 태그 = 황금향 「제주도과일」 실값 꼴)
 const NPW_SEO_PATH = ['originProduct', 'detailAttribute', 'seoInfo'];
 const NPW_MAX_TAGS = 10, NPW_MAX_PAGE_TITLE = 100, NPW_MAX_TAG = 30;
+// #1203-2 A/S 안내 글 한 칸(patch.after_service_guide) = afterServiceInfo.afterServiceGuideContent 만 · 전화 칸(afterServiceTelephoneNumber)은 안 건드림 · 200자(보수적 · 네이버 상한 미확인)
+const NPW_AS_PATH = ['originProduct', 'detailAttribute', 'afterServiceInfo'], NPW_MAX_AS_GUIDE = 200;
 const npwTagsSame = (a, b) => JSON.stringify((a || []).map(t => [t.text, t.code == null ? null : t.code])) === JSON.stringify((b || []).map(t => [t.text, t.code == null ? null : t.code]));
 const npwKgAttrIdx = (j) => { const a = npwGet(j, NPW_ATTR_PATH); if (!Array.isArray(a)) return -1; const ix = a.map((x, i) => x && x.attributeRealValueUnitCode === 'A02002' && x.attributeRealValue != null ? i : -1).filter(i => i >= 0); return ix.length === 1 ? ix[0] : -1; };
 const npwCustoms = (j) => { const a = npwGet(j, NPW_CUSTOM_PATH); return Array.isArray(a) ? a : []; };
@@ -18042,7 +18203,7 @@ function npwFixCards(html) {
     }
     return { ok: true, html: s, n, cards: cards.map(c => ({ kind: c.kind, title: c.title, link: c.link, broken: c.broken })) };
 }
-const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
+const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo', 'after_service_guide'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -18176,6 +18337,7 @@ function npwApplyPatch(j, patch) {
             if ('seller_tags' in patch.seo) so.sellerTags = patch.seo.seller_tags.map(t => (t.code != null ? { code: t.code, text: t.text } : { text: t.text }));
         }
     }
+    if ('after_service_guide' in patch) { const as = npwGet(j, NPW_AS_PATH); if (as && typeof as === 'object') as.afterServiceGuideContent = patch.after_service_guide; }   // #1203-2 그 한 칸만
     return j;
 }
 // 결제가 = 판매가 − 즉시할인 + 옵션 추가금 · 즉시할인 PERCENT = floor(판매가 × 값 / 100) · 그 밖 = 값(원) — PERCENT 끝자리는 실조회로 확정 예정(문서 2차-2)
@@ -18212,7 +18374,13 @@ function npwCheckPatch(patch, before) {
     const keys = Object.keys(patch);
     if (!keys.length) return 'patch 가 비었어요';
     if (keys.includes('stock')) return NPW_STOCK_MSG;
-    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'options_order', 'group_names', 'discount', 'custom_options', 'weight', 'seo'];
+    const allowed = [...Object.keys(NPW_FIELDS), 'options', 'options_add', 'options_order', 'group_names', 'discount', 'custom_options', 'weight', 'seo', 'after_service_guide'];
+    if ('after_service_guide' in patch) {   // #1203-2 A/S 안내 글 — 지금 afterServiceInfo 가 있는 상품만 · 1~200자 · 앞뒤 빈칸 없이 · 지금과 같으면 거절
+        const v = patch.after_service_guide, cur = npwGet(before, NPW_AS_PATH);
+        if (typeof v !== 'string' || !v.trim() || v !== v.trim() || v.length > NPW_MAX_AS_GUIDE) return `A/S 안내 글은 앞뒤 빈칸 없는 1~${NPW_MAX_AS_GUIDE}자 글`;
+        if (!cur || typeof cur !== 'object') return '이 상품엔 A/S 정보(afterServiceInfo)가 없어요 — 스마트스토어센터에서';
+        if (cur.afterServiceGuideContent === v) return 'A/S 안내 글이 지금과 같아요';
+    }
     const bad = keys.filter(k => !allowed.includes(k));
     if (bad.length) return '허용되지 않은 칸: ' + bad.join(', ') + ' (허용 = ' + allowed.join(', ') + ')';
     if ('group_names' in patch) {   // #773 옵션 묶음 이름 — 지금 있는 묶음만 · 1~50자
@@ -18413,6 +18581,7 @@ function npwExpected(patch, base, allStock) {
     // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름(base 의 자리 번호로)
     for (const k of Object.keys((patch.group_names && typeof patch.group_names === 'object') ? patch.group_names : {})) exp.push(npwPathStr(NPW_GROUP_PATH) + '.optionGroupName' + k.slice(4));
     if ('discount' in patch) exp.push(npwPathStr(NPW_DISC_PATH));
+    if ('after_service_guide' in patch) exp.push(npwPathStr(NPW_AS_PATH) + '.afterServiceGuideContent');   // #1203-2
     if (patch.seo && typeof patch.seo === 'object') { if ('page_title' in patch.seo) exp.push(npwPathStr(NPW_SEO_PATH) + '.pageTitle'); if ('seller_tags' in patch.seo) exp.push(npwPathStr(NPW_SEO_PATH) + '.sellerTags'); }   // #842
     if ('weight' in patch) { const i = npwKgAttrIdx(base || {}); if (i >= 0) exp.push(`${npwPathStr(NPW_ATTR_PATH)}[${i}]`); exp.push(npwPathStr(NPW_UCAP_PATH) + '.totalCapacityValue'); }   // #842
     const cu = npwCustoms(base || {});
@@ -18433,10 +18602,15 @@ async function naverProductWriteRun(req, deps) {
     // 네이버 호출 사이 간격(기존 러너 400ms 꼴 · 429 방어) — 검증은 deps.gapMs 0
     const gap = deps.gapMs != null ? deps.gapMs : 400;
     let lastAt = 0;
-    const callG = async (r) => { const w = lastAt + gap - Date.now(); if (w > 0) await new Promise(res => setTimeout(res, w)); try { return await call(r); } finally { lastAt = Date.now(); } };
+    // #1203-2 요청 줄 store:'biz' = 직영몰(사업자몰) 상품 — 이 요청 안 네이버 호출 전부 store 'biz'(직영몰 열쇠) · 없음 = 종전 요청 그대로 · 그 밖 값 = 실행 안 함
+    const isBiz = !!(req && req.store === 'biz');
+    const callG = async (r) => { const w = lastAt + gap - Date.now(); if (w > 0) await new Promise(res => setTimeout(res, w)); try { return await call(isBiz ? { ...r, store: 'biz' } : r); } finally { lastAt = Date.now(); } };
     const op = req && req.op;
-    const fail = (error, extra) => ({ ok: false, op, error, ...(extra || {}) });
+    const fail0 = (error, extra) => ({ ok: false, op, error, ...(extra || {}) });
+    const fail = isBiz ? (error, extra) => ({ ...fail0(error, extra), store: 'biz' }) : fail0;
     const orderId = parseInt(req && req.order_id, 10);
+    if (req && req.store != null && req.store !== 'biz') return fail("store 는 'biz' 만(없으면 스마트스토어)");
+    if (isBiz && typeof deps.bizReady === 'function' && !(await deps.bizReady())) return fail('직영몰 열쇠 준비 안 됨(중계서버 biz_keys_set 아님) — 호출하지 않았어요');
     if (!['backup', 'apply', 'revert', 'upload_image', 'create'].includes(op)) return fail('op 는 backup·apply·revert·upload_image·create 중 하나');
     if (!(orderId > 0)) return fail('order_id 가 필요해요');
     const ord = (await db.query(`SELECT o.id, o.status, o.is_deleted, o.created_by_id, o.result->>'approved_at' AS approved_at, u.role, u.position
@@ -18583,7 +18757,7 @@ async function naverProductWriteRun(req, deps) {
             try { res = await callG({ method: 'POST', path: NPW_CREATE_PATH, body }); }
             catch (e) {
                 const invalid_fields = npwInvalidFields(e);
-                await db.query(`INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`,
+                await db.query((isBiz ? `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json, store) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, 'biz') RETURNING id` : `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`),
                     [from, null, orderId, JSON.stringify(src), by, JSON.stringify({ op: 'create_failed', from_product_no: from, code: (e && e.status) || null, invalid_fields, strip, rep_image: newRep })]);
                 await auditW('naver_product_create', { from_product_no: from, order_id: orderId, ok: false, code: (e && e.status) || null, invalid_fields });
                 return naverErr(e, '상품 등록', { invalid_fields });
@@ -18608,7 +18782,7 @@ async function naverProductWriteRun(req, deps) {
             }
             if (!newNo) {
                 // 등록됐을 수 있음 → op 'create_unknown' 행을 남겨 상한에 셈(중복 등록 방지 · 이 행으로 apply 안 됨)
-                await db.query(`INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`,
+                await db.query((isBiz ? `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json, store) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, 'biz') RETURNING id` : `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`),
                     [from, newOrigin || null, orderId, JSON.stringify(src), by, JSON.stringify({ op: 'create_unknown', from_product_no: from, note: 'no_channel_no', strip, rep_image: newRep })]);
                 await auditW('naver_product_create', { from_product_no: from, order_id: orderId, ok: false, note: 'no_channel_no', origin_product_no: newOrigin || null }); return fail('등록은 됐을 수 있지만 새 상품 번호를 못 찾았어요 — 센터에서 확인', { origin_product_no: newOrigin || null }); }
             // 판매 대기(WAIT) → 판매 중지(SUSPENSION) — 실패하면 WAIT 로 남음(창구 apply status SUSPENSION 으로 풂)
@@ -18624,7 +18798,7 @@ async function naverProductWriteRun(req, deps) {
             const shopping = now ? npwGet(now, ['smartstoreChannelProduct', 'naverShoppingRegistration']) ?? null : null;
             const hiddenOk = hidden ? NPW_HIDDEN_AFTER.every(([p, v]) => now && JSON.stringify(npwGet(now, p)) === JSON.stringify(v)) : null;
             // 재조회 실패 = 등록은 됐을 수 있음 → op 'create_unknown' 행(before_json = 본뜬 상품 · 이 행으로 apply 안 됨)을 남겨 상한에 셈(중복 등록 방지)
-            const ins = await db.query(`INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`,
+            const ins = await db.query((isBiz ? `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json, store) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, 'biz') RETURNING id` : `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, result_json) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb) RETURNING id`),
                 [newNo, newOrigin || null, orderId, JSON.stringify(now || src), by, JSON.stringify({ op: now ? 'create' : 'create_unknown', from_product_no: from, hidden, hidden_ok: hiddenOk, status_step, found_by, strip, rep_image: newRep, links_converted })]);
             const backup_id = now ? ins.rows[0].id : null, summary = npwSummary(now);
             await auditW('naver_product_create', { product_no: newNo, origin_product_no: newOrigin || null, from_product_no: from, order_id: orderId, backup_id, hidden, hidden_ok: hiddenOk, status_now, display, shopping, summary });
@@ -18645,9 +18819,14 @@ async function naverProductWriteRun(req, deps) {
         if (!row) return fail('보관본을 찾지 못했어요');
         if (row.result_json && ['create_failed', 'create_unknown'].includes(row.result_json.op)) return fail('등록 실패·불명 기록이라 이 행으로는 쓸 수 없어요');
         if (pno && pno !== row.product_no) return fail('보관본의 상품 번호와 요청 상품 번호가 달라요');
+        if ((row.store === 'biz') !== isBiz) return fail('보관본 스토어와 요청 스토어가 달라요(직영몰 ↔ 스마트스토어) — 호출하지 않았어요');   // #1203-2
         pno = row.product_no;
     }
     if (!pno) return fail('product_no 가 필요해요');
+    if (op === 'backup') {   // #1203-2 같은 상품 번호의 앞 보관본이 다른 스토어 = 번호를 다른 스토어 것으로 착각 → 호출 0
+        const prev = (await db.query(`SELECT to_jsonb(b) ->> 'store' AS store FROM naver_product_backups b WHERE product_no = $1 ORDER BY id DESC LIMIT 1`, [pno])).rows[0];
+        if (prev && (prev.store === 'biz') !== isBiz) return fail('이 상품 번호의 앞 보관본은 ' + (prev.store === 'biz' ? '직영몰' : '스마트스토어') + ' 상품이에요 — 스토어를 확인해 주세요(호출하지 않았어요)');
+    }
     if (npwInFlight.has(pno)) return fail('같은 상품에 다른 작업이 진행 중이에요');
     npwInFlight.add(pno);
     try {
@@ -18735,7 +18914,7 @@ async function naverProductWriteRun(req, deps) {
             // 원상품 번호(판매 상태 변경용) — 못 풀어도 보관은 한다(상세 수정은 채널 번호로 됨 · 상태 변경만 거절)
             let on = '';
             try { on = await originNo(); } catch (e) { console.error('[#720 상품 쓰기] 원상품 번호 찾기 실패:', e && e.message); }
-            const ins = await db.query(`INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by) VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING id`,
+            const ins = await db.query((isBiz ? `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by, store) VALUES ($1, $2, $3, $4::jsonb, $5, 'biz') RETURNING id` : `INSERT INTO naver_product_backups (product_no, origin_product_no, order_id, before_json, created_by) VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING id`),
                 [pno, on || null, orderId, JSON.stringify(before), by]);
             const backup_id = ins.rows[0].id, summary = npwSummary(before), sale_ok = npwSaleCheck(before, before);   // 건들기 전 판매 상태
             await auditW('naver_product_backup', { product_no: pno, origin_product_no: on || null, order_id: orderId, backup_id, summary, sale_ok });
@@ -18857,6 +19036,7 @@ async function naverProductWriteRun(req, deps) {
             if (patch.seo) { const so = npwGet(after, NPW_SEO_PATH) || {};   // #842 태그는 글자·순서로(네이버가 직접 입력 태그에 code 를 붙여 돌려줄 수 있어 code 는 안 봄)
                 if ('page_title' in patch.seo && so.pageTitle !== patch.seo.page_title) not_applied.push('seo.page_title');
                 if ('seller_tags' in patch.seo && JSON.stringify((so.sellerTags || []).map(t => t.text)) !== JSON.stringify(patch.seo.seller_tags.map(t => t.text))) not_applied.push('seo.seller_tags'); }
+            if ('after_service_guide' in patch && (npwGet(after, NPW_AS_PATH) || {}).afterServiceGuideContent !== patch.after_service_guide) not_applied.push('after_service_guide');   // #1203-2
             if (patch.weight) { const i = npwKgAttrIdx(after), a = i >= 0 ? npwGet(after, NPW_ATTR_PATH)[i] : null, u = npwGet(after, NPW_UCAP_PATH) || {};   // #842
                 if (!a || String(a.attributeRealValue) !== patch.weight.value || a.attributeValueSeq !== patch.weight.value_seq) not_applied.push('weight.value'); if (u.totalCapacityValue !== patch.weight.total) not_applied.push('weight.total'); }
             for (const p of (Array.isArray(patch.custom_options) ? patch.custom_options : [])) { const c = npwCustoms(after).find(x => String(x.id) === String(p.id)); if (!c || c.groupName !== p.name) not_applied.push('custom_options.' + p.id); }
@@ -18916,6 +19096,7 @@ async function naverProductWriteRun(req, deps) {
             if (g && typeof g === 'object') for (const k of Object.keys(patch.group_names)) { g['optionGroupName' + k.slice(4)] = bg['optionGroupName' + k.slice(4)]; needPut = true; }
         }
         if (patch.discount) { const d = npwGet(body, NPW_DISC_PATH), bd = npwGet(before, NPW_DISC_PATH); if (d && bd) { d.value = bd.value; d.unitType = bd.unitType; needPut = true; } }
+        if ('after_service_guide' in patch) { const as = npwGet(body, NPW_AS_PATH), bas = npwGet(before, NPW_AS_PATH); if (as && bas) { as.afterServiceGuideContent = bas.afterServiceGuideContent; needPut = true; } }   // #1203-2 A/S 안내 글 = 보관본 값으로
         if (patch.seo) {   // #842 검색 설정 = 준 칸만 보관본 값으로
             const so = npwGet(body, NPW_SEO_PATH), bs = npwGet(before, NPW_SEO_PATH);
             if (so && bs) { if ('page_title' in patch.seo) { so.pageTitle = bs.pageTitle; needPut = true; } if ('seller_tags' in patch.seo) { so.sellerTags = npwClone(bs.sellerTags || []); needPut = true; } }
@@ -19039,9 +19220,9 @@ setInterval(async () => {
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = $1`, [NPW_REQ_KEY]);   // 선제거 — 반복 실행 방지
         let out;
-        try { out = await naverProductWriteRun(req, { pool, call: naverCallWithRetry, audit: writeAudit, convertImageLinks: require('./naver-detail-links.js').convertImageLinks, fetchImage: npwFetchImage }); }
+        try { out = await naverProductWriteRun(req, { pool, call: naverCallWithRetry, audit: writeAudit, convertImageLinks: require('./naver-detail-links.js').convertImageLinks, fetchImage: npwFetchImage, bizReady: naverBizRelayReady }); }
         catch (e) { console.error('[#720 상품 쓰기] 러너 오류:', e && e.message); out = { ok: false, op: req && req.op, error: '러너 오류' }; }
-        await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), order_id: req && req.order_id || null, ...out });
+        await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), order_id: req && req.order_id || null, ...out, ...(req && req.store === 'biz' ? { store: 'biz' } : {}) });   // #1203-2 직영몰 요청이면 결과에도 store
     } catch (e) {
         try { await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), ok: false, error: '러너 오류' }); } catch (_) { /* 다음 주기 */ }
     }
@@ -20549,7 +20730,7 @@ require('./order-memo.js').mount(app, { pool, authMiddleware, writeAudit, adminA
 const MAIL_RUNNER = require('./naver-mail.js').mountMailRunner({ pool, writeAudit, noTimers: !process.env.RENDER });   // #811 collectIndex = 수집기 naver_mail_index
 require('./response-head.js')(app, { pool, authMiddleware, qnaGenerate, inquiryGenerate, isOwner: isOwnerUser });   // #1110-4 응대 현황(숫자 · 미리보기 생성만)
 // #1130 genQna·genInquiry = 손님 연락 [초안 만들기](사람 몫 문의 · 수집기와 같은 채널 = 공개 게시판·고객문의 꼴 · 결과 { answer, used } 그대로)
-const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), genQna: (question, product) => qnaGenerate(question, product), genInquiry: item => inquiryGenerate(item), invoiceReq: t => invoiceReq(t), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
+const inboxThreads = require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'talk_draft'), genQna: async (question, product, id) => qnaGenerate(question, product, undefined, undefined, (await inqRowBiz('qna', id)) ? { biz: true } : undefined), genInquiry: async (item, id) => inquiryGenerate(item, (await inqRowBiz('inquiry', id)) ? { biz: true } : undefined), invoiceReq: t => invoiceReq(t), kick: process.env.RENDER ? deskInbox.deliver : null });   // #1111-B 반환값 = 직원 알림(묵은 미답변)이 같은 판정을 씀
 // ── #1111-B 직원 알림 6종(staff-alerts.js · 대표 11/11) — 1분 틱 · 실서버(RENDER)만 · 스위치 = 설정 staff_alerts.enabled(기본 꺼짐 = 아무것도 안 함) · 받는 사람 = notify_routes
 //   순위 문제·3채널 가격 어긋남(민주) · 묵은 미답변·답변 재료 점검(지현·승협) · 클레임 요약(지현) · 정산 자동 수집 실패(가영) · 받는 사람마다 그 사람 근무일에만(workdays.js)
 //   가격 = /api/price-check 와 같은 build(쿠팡 포함) · 실패해도 다른 일은 돎 · 한 번에 하나(busy)
