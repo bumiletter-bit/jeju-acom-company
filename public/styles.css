@@ -4442,6 +4442,7 @@ textarea.form-input {
 .pill-ch-talk { background: #E7F7EE; color: #03A65A; }      /* 네이버톡톡 — 네이버 그린 계열 */
 .pill-ch-kakao { background: #FEF6C8; color: #8A6D00; }     /* 카카오채널 — 카카오 옐로 계열 */
 .pill-ch-mall { background: var(--primary-light, #EEF0FF); color: var(--primary, #4F46E5); }   /* 자사몰 — 회사프로그램 주색상(인디고) */
+.pill-ch-biz { background: #E3F2F0; color: #0B6E5F; }       /* #1198 직영몰 톡톡(사업자몰) — 톡톡 그린과 가르는 청록 */
 
 /* #283(대표 실물): 문의 표 「일시」가 잘려 분이 안 보이던 문제 —
    기본 셀 패딩(좌우 16px)이 좁은 열에서 글자 자리를 잡아먹는다. 일시·채널 열만 패딩을 줄이고

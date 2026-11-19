@@ -1319,6 +1319,7 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS scenario_name TEXT`);
     await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS response_source TEXT`);
+    await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS talk_store TEXT`);   // #1198 톡톡봇이 직영몰(사업자몰) 손님 줄에만 'biz' 를 적음(없음 = 스마트스토어 · 톡톡 계정은 하나)
     // 판매현황 탭 이전 (2026-07-25 설계): bot_products(톡톡봇 가격표·판매현황, 같은 DB 공유)에 관리 컬럼 추가
     //   테이블 자체는 톡톡봇 products-store.js가 생성 — 없을 수도 있으므로 동일 DDL로 보장 후 ALTER
     await pool.query(`
@@ -5817,8 +5818,9 @@ app.get('/api/agent-office/inquiry-messages', authMiddleware, async (req, res) =
         else if (answered === '0') conditions.push(`answered = false`);
         const where = 'WHERE ' + conditions.join(' AND ');
         const rows = (await pool.query(
-            `SELECT id, user_id, item, message, answered, bot_response, staff_response, scenario_name, scenario_nos, response_source, received_at
-             FROM message_logs ${where} ORDER BY received_at DESC LIMIT 500`, params)).rows;
+            `SELECT id, user_id, item, message, answered, bot_response, staff_response, scenario_name, scenario_nos, response_source, received_at,
+                    to_jsonb(message_logs) ->> 'talk_store' AS talk_store
+             FROM message_logs ${where} ORDER BY received_at DESC LIMIT 500`, params)).rows;   // #1198 talk_store = 칸이 아직 없어도 null(to_jsonb 로 읽어 칸 없음 오류 0)
         const [wk, top, items] = await Promise.all([
             pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE answered)::int AS answered,
                 COUNT(*) FILTER (WHERE bot_response = '[SKIP-무응답]')::int AS skipped
@@ -6782,6 +6784,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             }
         }
         sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0); sum.bad_tel = badTelCnt;
+        // #1198-㉮-3(대표 「직영은 직영으로 따로 알림 발송 이력에도」): 직영몰 번호 등록부에 있는 주문 줄만 store 'biz' 칸(없으면 칸 없음 = 종전 응답 그대로 · 등록부 못 읽으면 전부 칸 없음 · 120일 뒤 등록부에서 지워진 옛 줄은 「네이버」)
+        try { const bizIds = await naverBizIdsMap(); if (bizIds.size) for (const r of rows) if (r && r.order_key != null && bizIds.has(String(r.order_key))) r.store = 'biz'; } catch (_) { /* 표시 보조 — 실패 = 종전 */ }
         res.json({ rows, summary: sum, total, offset, limit, default_days: defaultDays });   // #579: default_days = 날짜를 안 골라 최근 N일만 본 경우(0 = 기간 제한 없음) · #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -7078,7 +7082,7 @@ async function inquiryStaffPending() {   /* #1137 [처리함](reviewed_at) 누�
 //    기존 식은 "취소해주세요/부탁"류만 잡고 "취소 가능할까요·취소 되나요·취소 하려면"을 놓쳤다. 어미 확장.
 const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소|옵션|연락처)|주문[\s\S]{0,20}취소|취소[\s\S]{0,20}(해\s*주|부탁|요청|하고\s*싶|가능|되나|되요|될까|하려|할래|하고싶)|(반품|환불|교환)[\s\S]{0,20}(해\s*주|부탁|요청|가능|되나|될까|하려)/;
 // 채널 표기 — message_logs.user_id 프리픽스(톡톡=없음·카카오=kakao:·자사몰=mall:)
-const chLabel = (uid) => { const u = String(uid || ''); return u.startsWith('kakao:') ? '카카오' : (u.startsWith('mall:') ? '자사몰' : '톡톡'); };
+const chLabel = (uid, store) => { const u = String(uid || ''); return u.startsWith('kakao:') ? '카카오' : (u.startsWith('mall:') ? '자사몰' : (store === 'biz' ? '직영몰 톡톡' : '톡톡')); };   // #1198 store = message_logs.talk_store('biz' = 사업자몰 직영몰 손님 · 없으면 종전 글자)
 /* 🔴 #298-b: 봇 미답변(SKIP)이라고 전부 알리면 **인사·덕담까지 폰이 울린다**
    (실측 최근 SKIP = "감사합니다 시원하고 행복한날되세요~", "…좋은 귤 기대해봅니다").
    → 미답변 중에서도 **직원 답변이 필요한 신호**(질문·요청·불만)가 있는 것만 알린다. */
@@ -7227,7 +7231,7 @@ setInterval(async () => {
             return;
         }
         const r = await pool.query(
-            `SELECT id, user_id, message, bot_response, staff_response, staff_at, item, response_source, scenario_name, to_char(received_at + interval '9 hours', 'FMMM/FMDD HH24:MI') AS at_kst FROM message_logs
+            `SELECT id, user_id, message, bot_response, staff_response, staff_at, item, response_source, scenario_name, to_char(received_at + interval '9 hours', 'FMMM/FMDD HH24:MI') AS at_kst, to_jsonb(message_logs) ->> 'talk_store' AS talk_store FROM message_logs
              WHERE id > $1 AND bot_response IS NOT NULL AND bot_response NOT IN ('[직원응답]','[직원 직접답변]')
              ORDER BY id ASC LIMIT 50`, [st.last_id]);
         if (!r.rows.length) { /* 신규 없음 — 야간 보류분 방출만 검사 */ }
@@ -7248,7 +7252,7 @@ setInterval(async () => {
             // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
             // #522(대표 10/5 「톡톡은 내용이 얼추 나오게 · 봇 답변도 보이게 · 편하게」): 라벨 한 줄 + 손님 글 150자 + 봇이 답한 건은 봇 답변 첫머리 80자. 매번 붙던 설명 4줄은 뺐다.
             // #1069(대표 11/9): 자르지 않음(4,000자 넘을 때만 「…」) · 건마다 한 통 · 색 머리(🟨 답 못함 · 🟧 답했지만 확인필요) · HTML 굵게 → 큐에는 다 만든 글 { h } 로
-            queue.push(Object.assign({ h: talkBlock(chLabel(h.user_id), pick, h.message, h.bot_response, { id: h.id, at: h.at_kst, item: h.item }), id: h.id, uid: h.user_id == null ? null : String(h.user_id) },   // #1074 id·uid = 보내기 직전 직원 답 확인용
+            queue.push(Object.assign({ h: talkBlock(chLabel(h.user_id, h.talk_store), pick, h.message, h.bot_response, { id: h.id, at: h.at_kst, item: h.item }), id: h.id, uid: h.user_id == null ? null : String(h.user_id) },   // #1074 id·uid = 보내기 직전 직원 답 확인용
                 h.response_source === 'invoice_ask' ? { ask: 1, due: Date.now() + TT_INV_ASK_WAIT_MS } : {}));   // #1154 되묻기 줄 = 30분 뒤에(그 사이 목록·못 찾음 줄이 오면 버림)
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;

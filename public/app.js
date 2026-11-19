@@ -13895,7 +13895,7 @@ async function renderNotifyLogs(opts) {
     const chCell = (row) => {
         const k = String(row.order_key || '');
         const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#FDF2F8', '#BE185D']
-            : /^coupon(-exp)?:/.test(k) ? ['🎡 룰렛', '#FFF7E6', '#B45309'] : ['🛒 네이버', '#E8F8EF', '#1E8E4E'];   /* #467 */
+            : /^coupon(-exp)?:/.test(k) ? ['🎡 룰렛', '#FFF7E6', '#B45309'] : row.store === 'biz' ? ['🛒 네이버 직영몰', '#E8F8EF', '#1E8E4E'] : ['🛒 네이버', '#E8F8EF', '#1E8E4E'];   /* #467 · #1198 직영몰 = 서버가 등록부로 붙인 store 'biz'(글로만 구분 · 필터는 「네이버」에 같이) */
         return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`;
     };
     /* 지시 #405(대표): [발주확인] 컬럼 폐지 — 주문안내 발송 성공 = 발주확인 완료가 원칙이라 정상 건 표기는 불요.
@@ -15235,10 +15235,11 @@ async function renderUnansweredLogs() {
     const fmtDtS = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 */
     // #275(대표): 3채널(네이버톡톡·카카오채널·자사몰)이 한 표에 모이므로 **채널 열**로 출처 표시 — user_id 프리픽스로 판별
     //   디자인 가이드의 .pill 컴포넌트 계승(인디고 테마 — 자사몰=주색상 인디고, 카카오=옐로, 톡톡=그린)
-    const chanCell = (uid) => {
+    const chanCell = (uid, store) => {
         const u = String(uid || '');
         if (u.startsWith('kakao:')) return `<td class="cell-ch"><span class="pill pill-ch pill-ch-kakao">카카오채널</span></td>`;
         if (u.startsWith('mall:')) return `<td class="cell-ch"><span class="pill pill-ch pill-ch-mall">자사몰</span></td>`;
+        if (store === 'biz') return `<td class="cell-ch"><span class="pill pill-ch pill-ch-biz">직영몰 톡톡</span></td>`;   /* #1198 같은 톡톡 계정 · 사업자몰 직영몰 상품에서 들어온 손님(봇이 talk_store 'biz') */
         return `<td class="cell-ch"><span class="pill pill-ch pill-ch-talk">네이버톡톡</span></td>`;
     };
     const answeredRows = unansRows.filter(r => r.answered);
@@ -15253,7 +15254,7 @@ async function renderUnansweredLogs() {
     const ansThead = '<thead><tr><th class="cell-dt">일시</th><th class="cell-ch">채널</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
             <td class="cell-dt">${fmtDtS(r.received_at)}</td>
-            ${chanCell(r.user_id)}
+            ${chanCell(r.user_id, r.talk_store)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td style="overflow:hidden;">${qnaClipHtml(r.bot_response || '')}</td>
@@ -15264,7 +15265,7 @@ async function renderUnansweredLogs() {
     const pendThead = '<thead><tr><th class="cell-dt">일시</th><th class="cell-ch">채널</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
             <td class="cell-dt">${fmtDtS(r.received_at)}</td>
-            ${chanCell(r.user_id)}
+            ${chanCell(r.user_id, r.talk_store)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td><span style="color:#c0392b; font-size:12px;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
