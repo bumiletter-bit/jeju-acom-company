@@ -1691,7 +1691,8 @@
     const smsLastDir = x => (x.last_dir === 'in' || x.last_dir === 'out') ? x.last_dir : (x.last_out_at && (!x.last_in_at || tms(x.last_out_at) > tms(x.last_in_at)) ? 'out' : 'in');
     const smsOld = x => typeof x.unread !== 'number';
     const smsWhy = x => (x.needs_staff || (smsOld(x) && x.status === 'staff_needed')) ? (x.staff_why_label || '직원 확인') : '';
-    const smsHeadBadge = t => { const w = smsWhy(t); return w ? `<span class="desk-badge" data-k="ask">${esc(w)}</span>` : smsBadge(t.status); };
+    const SMS_BIZ_PILL = ' <span class="pill pill-ch pill-ch-biz inb-biz">직영몰 주문</span>';   // #1201 상대 번호 = 직영몰(사업자몰) 발송 전 주문의 구매자·받는 분(서버 biz_order · 아니면 칸 없음)
+    const smsHeadBadge = t => { const w = smsWhy(t); return (t && t.biz_order ? SMS_BIZ_PILL.trim() + ' ' : '') + (w ? `<span class="desk-badge" data-k="ask">${esc(w)}</span>` : smsBadge(t.status)); };
     function smsRowHtml(x) {
         const open = SMS.open === x.id, out = smsLastDir(x) === 'out', old = smsOld(x), un = (open && SMS.readAt >= SMS.itemsAt) ? 0 : (Number(x.unread) || 0);
         const at = x.last_at || (out ? x.last_out_at : x.last_in_at), why = smsWhy(x);
@@ -1700,7 +1701,7 @@
         const typ = TYP.off ? '' : typNames(TYP.others[x.id]).join('·');   // #683 누가 답을 쓰는 중인지(나는 빼고)
         return `<li class="sms-item${open ? ' open' : ''}${un > 0 ? ' unread' : ''}" data-id="${x.id}" data-st="${esc(x.status || '')}" data-un="${un}">`
             + `<button type="button" class="sms-row" aria-expanded="${String(open)}" aria-controls="sms-thread">`
-            + `<span class="sms-tail">${esc(smsNo(x))}</span>`
+            + `<span class="sms-tail">${esc(smsNo(x))}${x.biz_order ? SMS_BIZ_PILL : ''}</span>`
             + `<span class="sms-hint${x.customer_hint ? '' : ' none'}">${esc(x.customer_hint || '주문을 찾지 못한 번호')}</span>`
             + (un > 0 ? `<i class="sms-n sms-un" aria-label="안 읽은 글 ${un}개">${un > 99 ? '99+' : un}</i>` : old ? smsBadge(x.status) : '')
             + `<time class="sms-time">${esc(smsWhen(at))}</time>`

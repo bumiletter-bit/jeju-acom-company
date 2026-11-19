@@ -84,6 +84,7 @@
             + `</div><div class="sms-pane" id="inb-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>`
             + `<div class="sms-view" id="inb-view" role="dialog" aria-modal="true" aria-label="사진 크게 보기" hidden><button type="button" class="desk-btn sm sms-view-x" id="inb-view-x">닫기</button><img id="inb-view-img" alt="손님이 보낸 사진" referrerpolicy="no-referrer"></div>`;
     }
+    const BIZ_PILL = ' <span class="pill pill-ch pill-ch-biz inb-biz">직영몰</span>';   // #1201 사업자몰 직영몰 톡톡 손님(문의 표 #1198 알약과 같은 색)
     function rowHtml(x) {
         const k = key(x.ch || I.ch, x.id), open = I.open === k, out = x.last_dir === 'out';
         const un = (open && I.readAt >= I.itemsAt) ? 0 : (Number(x.unread) || 0);
@@ -91,7 +92,7 @@
         const needs = needsOf(x), why = conf ? '' : (x.why || (needs ? '답 필요' : ''));
         return `<li class="sms-item${open ? ' open' : ''}${un > 0 ? ' unread' : ''}${needs ? ' needs' : ''}" data-id="${esc(x.id)}" data-un="${un}">`
             + `<button type="button" class="sms-row" aria-expanded="${String(open)}" aria-controls="inb-thread">`
-            + `<span class="sms-tail inb-title">${needs ? '<i class="inb-need" aria-hidden="true"></i>' : ''}${esc(x.title || '(이름 없음)')}</span>`
+            + `<span class="sms-tail inb-title">${needs ? '<i class="inb-need" aria-hidden="true"></i>' : ''}${esc(x.title || '(이름 없음)')}${x.store === 'biz' ? BIZ_PILL : ''}</span>`
             + (un > 0 ? `<i class="sms-n sms-un" aria-label="안 읽은 글 ${un}개">${un > 99 ? '99+' : un}</i>` : conf ? '<span class="desk-badge inb-conf" data-k="mute">확인함</span>' : done ? '<span class="desk-badge" data-k="done">답함</span>' : ai ? '<span class="desk-badge" data-k="mute">봇 답</span>' : '')
             + `<time class="sms-time">${esc(when(x.last_at))}</time>`
             + (x.sub ? `<span class="sms-hint">${esc(x.sub)}</span>` : '')
@@ -257,7 +258,8 @@
         const bottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40, firstPaint = !I.tsig;
         I.tsig = sig;
         const t = d.thread;
-        $('inb-th-title').textContent = t.title || CH[ch].label;
+        if (t.store === 'biz') $('inb-th-title').innerHTML = esc(t.title || CH[ch].label) + BIZ_PILL;   // #1201 직영몰 손님(서버가 store 'biz' 일 때만 줌)
+        else $('inb-th-title').textContent = t.title || CH[ch].label;
         $('inb-th-badge').innerHTML = needsOf(t) ? `<i class="sms-why${t.why ? '' : ' inb-gen'}">${esc(t.why || '답 필요')}</i>` : isDone(d) ? '<span class="desk-badge" data-k="done">답함</span>' : '';
         doneSync();
         { const m = $('inb-meta'), rows = [t.sub, t.product, t.order_text].filter(Boolean); m.hidden = !rows.length; m.innerHTML = rows.map(x => `<span>${esc(x)}</span>`).join(''); }

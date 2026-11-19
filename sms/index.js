@@ -1309,6 +1309,27 @@ module.exports = function mountSms(app, deps) {
         const counts = {}; for (const row of (await pool.query(`SELECT status, count(*)::int AS n FROM sms_threads WHERE TRUE ${TEST_HIDE} GROUP BY status`)).rows) counts[row.status] = row.n;   // 숫자 칸(워커1 계약 제안 1)
         res.json(Object.assign({ enabled: c.enabled, mode: c.mode, counts }, r, { gateway: { last_ping_at: st.last_ping_at || null, alive: !!lastPing && Date.now() - lastPing < c.ping_alert_hours * 3600e3 } }));
     }));
+    // #1201 「직영몰 주문」 표시(직원 화면 전용 · 손님 글·봇 판정·알림 무접촉) — 상대 번호가 직영몰(사업자몰) 발송 전 주문의 구매자 또는 받는 분 번호와 같을 때만
+    //   근거 = 등록부 agent_office_config 'naver_biz_order_ids'(#1197 수집 때 store 'biz' 로 받은 주문번호) × order_memo_preorders(naver · 발송 전 주문) · 한 번에 두 조회 · 30초 기억
+    //   등록부 비었음 = 조회 0 · 어느 조회든 실패 = 표시 없음(종전 응답 그대로) · 발송이 끝나 발송 전 표에서 빠진 주문은 표시가 사라짐(알고 둠)
+    let _bizDigits = null;
+    async function bizDigitSet() {
+        if (_bizDigits && Date.now() - _bizDigits.at < 30000) return _bizDigits.v;
+        let v = new Set();
+        try {
+            const r = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'naver_biz_order_ids'`)).rows[0];
+            const ids = Object.keys((r && r.value && typeof r.value === 'object' && !Array.isArray(r.value)) ? r.value : {}).map(String).filter(Boolean);
+            if (ids.length) {
+                const q = await pool.query(`SELECT buyer_digits, recv_digits FROM order_memo_preorders WHERE channel = 'naver' AND (product_order_no = ANY($1::text[]) OR order_key = ANY($1::text[]))`, [ids]);
+                for (const x of q.rows) for (const d of [x.buyer_digits, x.recv_digits]) { const s = String(d || '').replace(/\D/g, ''); if (s.length >= 9) v.add(s); }
+            }
+        } catch (e) { log.error('[문자] 직영몰 주문 번호 읽기 실패(표시 없이):', e.message); v = new Set(); }
+        _bizDigits = { at: Date.now(), v }; return v;
+    }
+    async function markBiz(items, rows) {   // items[i] = pub(rows[i]) · 맞는 줄에만 biz_order: true(아니면 칸 없음)
+        try { const set = await bizDigitSet(); if (!set.size) return items; rows.forEach((t, i) => { if (set.has(String(t.phone_digits || '').replace(/\D/g, ''))) items[i].biz_order = true; }); } catch (_) { /* 표시 보조 */ }
+        return items;
+    }
     app.get('/api/sms/threads', authMiddleware, wrap(async (req, res) => {
         // #635: scope=active(기본 · 안 읽은 글이 있는 대화) | all(전부 · 끝난 대화·무시 포함) · q 가 있으면 scope 와 무관하게 전체에서 찾는다 · 종전 status= 는 그대로(옛 화면·검증)
         const hasStatus = req.query.status !== undefined && req.query.status !== '';
@@ -1335,7 +1356,7 @@ module.exports = function mountSms(app, deps) {
         const got = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE ${where.join(' AND ')} ORDER BY COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT $${limI} OFFSET $${args.length}`, args)).rows;
         const more = got.length > limit, rows = more ? got.slice(0, limit) : got;
         await fillHints(rows);   // #672 「주문을 찾지 못한 번호」가 낡았으면 구매이력으로 고쳐 보여 준다
-        res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: rows.map(pub), offset, more });
+        res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: await markBiz(rows.map(pub), rows), offset, more });   // #1201 biz_order
     }));
     app.get('/api/sms/threads/:id', authMiddleware, wrap(async (req, res) => {
         const id = parseInt(req.params.id, 10); if (!id) return res.status(400).json({ ok: false, error: 'id' });
@@ -1352,7 +1373,8 @@ module.exports = function mountSms(app, deps) {
         const pHist = pms(pt1), pt2 = process.hrtime.bigint();
         if (!t.order_hint) await saveHint(t, hist);   // #672 받은 뒤에 주문이 생긴 번호 — 여는 순간 목록 줄 글도 고친다
         try { res.set('Server-Timing', `db;dur=${pDb.toFixed(1)}, hist;dur=${pHist.toFixed(1)}, hint;dur=${pms(pt2).toFixed(1)}, total;dur=${pms(pt0).toFixed(1)}`); } catch (_) { /* 머리 못 붙여도 응답은 그대로 */ }
-        res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
+        const pubT = (await markBiz([pub(t)], [t]))[0];   // #1201 biz_order(직영몰 주문 번호일 때만)
+        res.json({ thread: pubT, messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
     }));
     // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 60건(#657 · 종전 20).
     //   🔴 봇의 자동 답 판정용 주문 찾기(lookup_days 14일)와는 따로다 · CJ 재조회 없음(저장된 상태만) · 손님에게 나가는 글·알림·한 줄 요약에는 쓰지 않는다

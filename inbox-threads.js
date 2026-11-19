@@ -119,7 +119,8 @@ module.exports = function mountInboxThreads(app, deps) {
     const chOfUser = uid => { const u = String(uid || ''); return u.startsWith('kakao:') ? 'kakao' : u.startsWith('mall:') ? 'mall' : 'talk'; };
     const CH_NAME = { talk: '톡톡', kakao: '카카오', mall: '자사몰' };
     const staffParts = s => String(s || '').split(' | ').map(x => x.trim()).filter(Boolean).map(x => { const m = x.match(/^\[에이전트오피스(?:·([^\]]{1,20}))?\]\s*/); return m ? { body: x.slice(m[0].length), by: m[1] || '', via: 'office' } : { body: x, by: '', via: 'center' }; });
-    const botSilent = b => { const s = String(b || ''); return /^\[쿨다운/.test(s) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[1회응대/.test(s) ? '이미 응대한 대화 · 봇이 답하지 않음' :/^\[AI에러/.test(s) ? '봇이 답을 만들지 못함' : /^\[이미지/.test(s) ? '사진(봇이 답하지 않음)' : /^\[직원응답/.test(s) ? '직원이 먼저 답함' : '봇이 넘긴 글'; };
+    const BIZ_SILENT = /^\[직영몰-(?:없는상품|금액거름)-무응답\]/;   // #1201 톡톡봇 직영몰 무응답 표식(#1198)
+    const botSilent = b => { const s = String(b || ''); if (/^\[직영몰-없는상품/.test(s)) return '직영몰 · 없는 상품 문의'; if (/^\[직영몰-금액거름/.test(s)) return '직영몰 · 봇 답에 금액'; return /^\[쿨다운/.test(s) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[1회응대/.test(s) ? '이미 응대한 대화 · 봇이 답하지 않음' :/^\[AI에러/.test(s) ? '봇이 답을 만들지 못함' : /^\[이미지/.test(s) ? '사진(봇이 답하지 않음)' : /^\[직원응답/.test(s) ? '직원이 먼저 답함' : '봇이 넘긴 글'; };
     function talkCannot(uid, lastAgeDays) {
         const c = chOfUser(uid);
         if (c === 'kakao') return '카카오 손님에게는 여기서 보낼 수 없어요(카카오 채널 관리자센터에서 답해 주세요)';
@@ -147,12 +148,12 @@ module.exports = function mountInboxThreads(app, deps) {
         const params = [SALT, String(DAYS)]; let qsql = '';
         if (q) { params.push(like(q)); qsql = `WHERE l.user_id IN (SELECT user_id FROM w WHERE message ILIKE $3 OR (answered AND bot_response ILIKE $3) OR staff_response ILIKE $3 OR ${KEY} ILIKE $3)`; }
         const r = await pool.query(`
-            WITH w AS (SELECT id, user_id, item, message, answered, bot_response, staff_response, received_at, reviewed_at, reviewed_by, scenario_name, ${SAT('')} AS sat FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL),
+            WITH w AS (SELECT id, user_id, item, message, answered, bot_response, staff_response, received_at, reviewed_at, reviewed_by, scenario_name, ${SAT('')} AS sat, to_jsonb(${T.logs}) ->> 'talk_store' AS ts FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL),
                  r AS (SELECT user_id, COALESCE(max(id) FILTER (WHERE reviewed_at IS NOT NULL), 0) AS rid FROM w GROUP BY user_id),
                  u AS (SELECT w.user_id, array_agg(${iso('w.received_at')}) AS cand FROM w JOIN r USING (user_id) WHERE w.id > r.rid AND w.reviewed_at IS NULL AND btrim(COALESCE(w.message, '')) NOT IN ('', '${STAFF_ONLY}', '${ENTRY}', '${ENTRY2}') GROUP BY w.user_id),
                  l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, (btrim(COALESCE(message, '')) IN ('${ENTRY}', '${ENTRY2}') AND btrim(COALESCE(staff_response, '')) = '') ASC, received_at DESC, id DESC),
                  s AS (SELECT user_id, max(received_at) AS last_in FROM w GROUP BY user_id)
-            SELECT l.id, l.user_id, l.item, l.message, l.answered, l.bot_response, l.staff_response, l.reviewed_by, l.scenario_name, COALESCE(r.rid, 0) AS rid, ${iso('l.received_at')} AS at, ${iso('GREATEST(l.received_at, l.sat)')} AS lat, u.cand,
+            SELECT l.id, l.user_id, l.item, l.message, l.answered, l.bot_response, l.staff_response, l.reviewed_by, l.scenario_name, l.ts, COALESCE(r.rid, 0) AS rid, ${iso('l.received_at')} AS at, ${iso('GREATEST(l.received_at, l.sat)')} AS lat, u.cand,
                    ${KEY.replace('user_id', 'l.user_id')} AS tkey, EXTRACT(EPOCH FROM (NOW() - l.received_at)) / 86400 AS age,
                    EXTRACT(EPOCH FROM (NOW() - s.last_in)) / 86400 AS sage
             FROM l LEFT JOIN u USING (user_id) LEFT JOIN r USING (user_id) LEFT JOIN s USING (user_id) ${qsql} ORDER BY GREATEST(l.received_at, l.sat) DESC LIMIT 200`, params);   // #662 최근 대화순 = 손님 글·직원 답 중 늦은 시각 · #702 sage = s 조인(상관 하위 쿼리 제거)
@@ -175,6 +176,7 @@ module.exports = function mountInboxThreads(app, deps) {
                 last_text: clip(staff.length ? staff[staff.length - 1].body : (bot || (msg === PHOTO_ONLY ? '사진' : msg)), 120), last_at: staff.length ? (x.lat || x.at) : x.at, last_dir: (staff.length || bot) ? 'out' : 'in',
                 unread: ad ? 0 : x.unread, state: handled ? 'staff' : x.answered ? 'ai' : 'open', why: (x.answered || staff.length) ? '' : entry ? '상품 페이지에서 들어온 자동 글' : botSilent(x.bot_response),
                 needs_reply: needs, done, has_draft: dk.has(x.tkey), can_send: !talkCannot(x.user_id, Number(x.sage) || age) };
+            if (c === 'talk' && x.ts === 'biz') th.store = 'biz';   // #1201 직영몰(사업자몰) 손님 = 판정 줄(l)의 talk_store(톡톡봇이 적음) · 아니면 칸 없음 = 종전 응답 그대로
             // 「확인 필요 문의」 칸이 쓰는 줄(응답 JSON 에는 안 실림 — 셀 수 없는 칸)
             Object.defineProperty(th, '_bot', { value: { b: String(x.bot_response || ''), msg } });   // #676 봇 실패 판정 재료(응답 JSON 에는 안 실림)
             Object.defineProperty(th, '_card', { value: { kind: 'talk', id: x.id, tkey: x.tkey, at: x.at, item: th.sub, state: th.state, why: th.why, question: clip(msg === PHOTO_ONLY ? '사진' : msg, 600), answer: clip(bot, 1200), staff: clip(String(x.staff_response || '').trim(), 1200), scenario: x.scenario_name || '', seen_by: x.reviewed_by || '' } });
@@ -184,7 +186,7 @@ module.exports = function mountInboxThreads(app, deps) {
     }
     async function talkRows(tkey) {
         if (!/^[0-9a-f]{16}$/.test(String(tkey || ''))) return [];
-        const r = await pool.query(`SELECT id, user_id, item, message, answered, bot_response, staff_response, image_url, reviewed_at, ${iso('received_at')} AS at, ${iso(SAT(''))} AS sat, EXTRACT(EPOCH FROM (NOW() - received_at)) / 86400 AS age
+        const r = await pool.query(`SELECT id, user_id, item, message, answered, bot_response, staff_response, image_url, reviewed_at, ${iso('received_at')} AS at, ${iso(SAT(''))} AS sat, EXTRACT(EPOCH FROM (NOW() - received_at)) / 86400 AS age, to_jsonb(${T.logs}) ->> 'talk_store' AS ts
             FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL AND ${KEY} = $3 ORDER BY received_at DESC, id DESC LIMIT 300`, [SALT, String(DAYS), tkey]);
         return r.rows.reverse();
     }
@@ -213,7 +215,8 @@ module.exports = function mountInboxThreads(app, deps) {
         if (mk && mk.forced) unread = Math.max(1, unread);
         const needs = !lq.answered && !staffN && !entry && !done && c === 'talk' && !!lqMsg && lqMsg !== STAFF_ONLY && !AD_RE.test(lqMsg) && lqAge <= OPEN_DAYS;
         return { rows, last, lq,
-            thread: { ch: 'talk', id: tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + tkey.slice(-4), sub: last.item && last.item !== '기타' ? clip(last.item, 40) : '', state: staffN ? 'staff' : lq.answered ? 'ai' : 'open', unread, needs_reply: needs, done, last_at: (lq.sat && lq.sat > lq.at && staffParts(lq.staff_response).length) ? lq.sat : lq.at },
+            thread: { ch: 'talk', id: tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + tkey.slice(-4), sub: last.item && last.item !== '기타' ? clip(last.item, 40) : '', state: staffN ? 'staff' : lq.answered ? 'ai' : 'open', unread, needs_reply: needs, done, last_at: (lq.sat && lq.sat > lq.at && staffParts(lq.staff_response).length) ? lq.sat : lq.at,
+                ...(c === 'talk' && lq.ts === 'biz' ? { store: 'biz' } : {}) },   // #1201 직영몰 손님(목록과 같은 판정 줄 lq) · 아니면 칸 없음
             messages, draft: await talkDraft(tkey, rows), can_send: !cannot, cannot_why: cannot, can_draft: !cannot, limits: { max_chars: TALK_MAX, confirm: false, time_note: '봇 답과 시각이 없는 옛 직원 답은 손님 글 시각으로 보여요' } };
     }
     async function talkRead(tkey, name, undo) {
@@ -435,8 +438,8 @@ module.exports = function mountInboxThreads(app, deps) {
     async function botFails(opts) {
         const needsRe = opts && opts.needsRe instanceof RegExp ? opts.needsRe : null; let talk = [], sms = [];
         try {
-            talk = (await talkThreads({ scope: 'open' })).filter(th => { const o = th._bot || {}; return /^\[AI에러/.test(o.b) || (o.b === '[SKIP-무응답]' && (!needsRe || needsRe.test(o.msg || ''))); })
-                .map(th => ({ ch: 'talk', id: th.id, why: /^\[AI에러/.test(th._bot.b) ? '봇이 답을 만들지 못함' : '봇이 답하지 않고 넘긴 글', at: th.last_at, who: th.title }));
+            talk = (await talkThreads({ scope: 'open' })).filter(th => { const o = th._bot || {}; return /^\[AI에러/.test(o.b) || (o.b === '[SKIP-무응답]' && (!needsRe || needsRe.test(o.msg || ''))) || BIZ_SILENT.test(o.b); })   // #1201 직영몰 무응답 두 표식 = 직원 몫 확정(낱말표 없이 늘)
+                .map(th => ({ ch: 'talk', id: th.id, why: /^\[AI에러/.test(th._bot.b) ? '봇이 답을 만들지 못함' : BIZ_SILENT.test(th._bot.b) ? botSilent(th._bot.b) : '봇이 답하지 않고 넘긴 글', at: th.last_at, who: th.title }));
         } catch (e) { log.error('[문의 창] 봇 실패(톡톡) 셈 실패:', e.message); }
         const f = hook('botfail_sms');
         if (typeof f === 'function') { try { sms = (await f()) || []; } catch (e) { log.error('[문의 창] 봇 실패(문자) 셈 실패:', e.message); } }

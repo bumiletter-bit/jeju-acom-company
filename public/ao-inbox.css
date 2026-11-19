@@ -75,3 +75,5 @@ html[data-ao-theme="dark"] .inb-lock[data-k="done"] i { background: #3DD68C; }
 @media (max-width: 720px) { .inb-thread .inb-acts { margin-right: 6px; } }
 /* #673 폴드 펼침·터치 기기: 대화 머리 [확인]도 44px(종전 720 이하에만) */
 @media (max-width: 960px), (pointer: coarse) { .inb-thread .inb-done { min-height: 44px; } }
+/* #1201 직영몰(사업자몰) 톡톡 손님 알약 — 색은 styles.css .pill-ch-biz(야간 ao-dark.css) · 여기는 목록·대화 머리 안 크기만 */
+.inb-biz { font-size: 10.5px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; white-space: nowrap; }
