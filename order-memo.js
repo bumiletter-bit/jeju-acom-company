@@ -741,12 +741,17 @@ function mount(app, deps) {
 
     // #936 즉시 조회(대표 「더 좋은 길」) = 입력삭제 줄을 저장했거나 번호 찾기에서 주문이 없을 때, 그 번호 발송 전 주문이 표에 없으면 문자의 즉시 조회(sms refreshPreorders · days 2 · 번호당 10분 · 시간당 20 · 다른 조회 중이면 생략)를 한 번 → 다음 목록부터 배지 숫자
     //   응답을 기다리지 않음(화면은 저장 뒤 6초쯤 한 번 더 목록을 받음) · deps.refreshPreorders 없는 서버(검증·옛 장착) = 아무 일 없음
-    const refreshIfMiss = async keys => {
+    //   #1209(대표 11/21 「한번 더 조회 고」) opt.always = 주문이 이미 있어도 조회(GET lookup 길만 = 주문 찾기·고객정보수정·메모 수정·입력삭제 판·줄 카드 번호 확인 ·같은 번호 수집 사이 두 번째 결제가 30분 수집을 안 기다리게) · 상한(번호당 10분·시간당 20)은 refreshPreorders 그대로 · opt 없는 다른 길 = 종전 그대로
+    //   #1209-b 있어도 조회(always)는 가게 전체 5분에 한 번(_alwaysAt = 실제로 돈 시각 · skip·off 는 기록·로그 0) → 시간당 20 통에서 최대 12 · 문자 봇 몫 8 남김 · 0건 갈래는 무관
+    let _alwaysAt = 0; const ALWAYS_GAP_MS = 5 * 60 * 1000;
+    const refreshIfMiss = async (keys, opt) => {
         if (typeof deps.refreshPreorders !== 'function') return;
+        const always = !!(opt && opt.always === true);
         for (const d of [...new Set((keys || []).map(dg).filter(k => /^0\d{8,11}$/.test(k)))]) {
-            let have = 0; try { have = (await pool.query('SELECT 1 FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 LIMIT 1', [d])).rowCount; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
+            let have = 0; if (!always) try { have = (await pool.query('SELECT 1 FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 LIMIT 1', [d])).rowCount; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
             if (have) continue;
-            try { const how = await deps.refreshPreorders(d); console.log('[발주 메모함] 즉시 주문 조회 ' + d.slice(-4) + ' → ' + how); } catch (e) { console.error('[발주 메모함] 즉시 주문 조회 실패(무시):', e.message); }
+            if (always && Date.now() - _alwaysAt < ALWAYS_GAP_MS) return;   /* #1209 있어도 조회 = 가게 전체 5분에 한 번(그 조회가 최근 2일 주문을 다 받아 옴 · 시간당 20 통에서 최대 12 · 문자 봇 몫 남김) */
+            try { const how = await deps.refreshPreorders(d); const skipped = /^(skip|off)/.test(String(how)); if (always && !skipped) _alwaysAt = Date.now(); if (!(always && skipped)) console.log('[발주 메모함] 즉시 주문 조회 ' + d.slice(-4) + ' → ' + how); } catch (e) { console.error('[발주 메모함] 즉시 주문 조회 실패(무시):', e.message); }   /* #1209 시각 = 실제로 돈 때(done·timeout·error)만 · always 의 skip·off 줄은 안 찍음 */
         }
     };
     app.post('/api/order-memo', authMiddleware, wrap(async (req, res) => {
@@ -1079,6 +1084,7 @@ function mount(app, deps) {
             } catch (e) { if (!/sms_preorders/.test(String(e.message))) throw e; }   // 표가 없는 서버(문자 기능 꺼짐) = 못 찾음
         }
         if (phone && !matches.length) refreshIfMiss([d]).catch(() => {});   // #936 [넣기]·카드 번호 찾기에서 주문 없음 = 즉시 조회(응답은 종전 그대로 · 다음 조회·목록부터)
+        else if (phone) refreshIfMiss([d], { always: true }).catch(() => {});   // #1209 주문이 이미 있어도 한 번(수집 사이에 같은 번호로 결제한 주문 · 다음 [주문 찾기]부터 보임 · 응답은 안 기다림 · 상한은 refreshPreorders 그대로)
         const days = 7;
         res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches, total: tot.n, total_qty: tot.q, limit: LK_LIMIT, cut: tot.n > shown, ...(tot.n > shown ? { shown } : {}),   // #1101·#1102 cut = 최근 LK_LIMIT 주문(묶음)만 보냄 · shown = 실제 보낸 주문 수(잘렸을 때만 칸) · total = 화면 머리와 같은 주문 묶음 수(상품주문번호 또는 order_key 앞 토막) · total_qty = qty 없으면 1
             message: matches.length ? '' : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
