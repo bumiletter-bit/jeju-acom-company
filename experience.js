@@ -264,7 +264,9 @@ function autoCheck(row, body) {
     const p = autoPickPhone(body);
     if (!p) return no('phone', '번호 꼴이 아니에요(010 으로 시작하는 10~11자리)');
     if (body.phone != null && String(body.phone).replace(/\D/g, '') && String(body.phone).replace(/\D/g, '') !== p.phone) return no('phone_pick', '보낸 번호가 고르기 규칙(이용고객 먼저)과 달라요');
-    return { ok: true, phone: p.phone, picked: p.picked, name: String(body.name_seen || '').trim().replace(/\s+/g, ' ').replace(/님$/, '') };   // #1106-b 저장값 = 띄어쓰기 살림(외국 이름) · 대조는 autoNameNorm 그대로
+    const nm = s => String(s || '').trim().replace(/\s+/g, ' ').replace(/님$/, '');
+    const vn = nm(body.visitor_name_seen);   // #1211 대리예약 = 방문자 번호를 고를 때만 방문자 이름으로 저장(* 품거나 30자 넘으면 예약자 이름 · 대조는 계속 name_seen)
+    return { ok: true, phone: p.phone, picked: p.picked, name: p.picked === 'visitor_phone' && vn && !/\*/.test(vn) && vn.length <= 30 ? vn : nm(body.name_seen) };   // #1106-b 저장값 = 띄어쓰기 살림(외국 이름) · 대조는 autoNameNorm 그대로
 }
 // 시간 창 = hours [시작,끝) KST 시 · skip [HH:MM, HH:MM) 은 건너뜀(키워드 순위 09:30 어사이드) · k = kstNow() 꼴(UTC 칸에 KST)
 function autoInWindow(c, k) {

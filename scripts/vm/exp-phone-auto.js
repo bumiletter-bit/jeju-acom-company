@@ -24,7 +24,7 @@ const BIZ = '1258756';
 const LIST_URL = no => `https://partner.booking.naver.com/bizes/${BIZ}/booking-list-view?keyword=${encodeURIComponent(no)}`;
 const PAGE_WAIT_MS = 6000;           // #997 실측 = 6초 뒤 목록이 그려짐
 const TICK_BUDGET_MS = 6 * 60000;    // 작업 도구가 8분에 끔 → 6분 넘으면 남은 줄은 다음 틱
-const LOCAL_WINDOW = { hours: [8, 21], skip: null };   // #1088 09:25~09:45 건너뛰기 없앰(키워드 순위와 겹침 = 잠금 줄 세우기 · 잠금 잡혀 있으면 그 틱 건너뜀 종전 그대로)   // 서버 설정이 정본 · 서버에 묻기 전에 걸러 헛호출을 줄임
+const LOCAL_WINDOW = { hours: [0, 24], skip: null };   // #1212(대표 11/21 「설정 시간 없이 바로」) 08~21 → 하루 전부(inWindow 는 h < 24)   // #1088 09:25~09:45 건너뛰기 없앰(키워드 순위와 겹침 = 잠금 줄 세우기 · 잠금 잡혀 있으면 그 틱 건너뜀 종전 그대로)   // 서버 설정이 정본 · 서버에 묻기 전에 걸러 헛호출을 줄임
 const LOCK = path.join(os.homedir(), '.akkome', 'exp-phone-auto.lock');
 const LOCK_STALE_MS = 15 * 60000;
 // 화면 칸 이름(머리글 · 같은 줄 안 글자) — 이용고객(방문자) vs 예약자 · 🔴 실화면 미확인(11/6) → 첫 --dry 결과로 맞춤
@@ -75,7 +75,11 @@ const JS_READ = no => `(() => {
     const table = row.closest('table, [role="table"], [role="grid"]');
     const hs = table ? [...table.querySelectorAll('th, [role="columnheader"]')].map(x => (x.innerText || '').trim()) : [];
     const cs = [...row.querySelectorAll(':scope > td, :scope > [role="cell"], :scope > [role="gridcell"]')].map(x => (x.innerText || '').trim());
-    rows.push({ text: (row.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600), cells: cs.map((t, i) => ({ h: hs[i] || '', t: t.replace(/\\s+/g, ' ').slice(0, 200) })) });
+    // #1211(대표 11/21) 대리예약 줄 = 이름 칸 [예약자(name-ellipsis) · 「대리예약」(label) · 「방문자: 이름」(sub-text)] / 번호 칸 [예약자 번호(첫 칸) · 방문자 번호(sub-phone)] 를 칸별로 따로(실화면 11/21 #1210 · 보통 줄은 sub-* 가 없음)
+    const q = s => row.querySelector(s), tx = e => e ? (e.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120) : '';
+    const pc = q('[class*="__phone__"]');
+    const parts = { booker: tx(q('[class*="name-ellipsis"]')), label: tx(q('[class*="__label__"]')), sub: tx(q('[class*="sub-text"]')), bphone: pc ? tx([...pc.children].find(c => !/sub-phone/.test(String(c.className || '')))) : '', vphone: tx(q('[class*="sub-phone"]')) };
+    rows.push({ text: (row.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600), cells: cs.map((t, i) => ({ h: hs[i] || '', t: t.replace(/\\s+/g, ' ').slice(0, 200) })), parts });
   }
   return { blocked: '', rows, body_hit: body.indexOf(NO) >= 0 };
 })()`;
@@ -104,6 +108,17 @@ function parseRow(row, no) {
         if (new RegExp('^' + FOREIGN_NAME + '$').test(c) && /\s/.test(c)) return c;   // #1106 칸 글자가 외국 이름 낱말 여럿뿐이면 통째로
         const t = c.split(/\s+/).filter(x => /^[가-힣A-Za-z]{2,10}$/.test(x) && !STATUS_RE.test(x)); return t[0] || null;
     };
+    // #1211 대리예약 = 칸별로 읽은 값만 씀 · 메일 대조 이름 = 예약자(name_seen) · 저장 이름 후보 = 방문자(visitor_name_seen · 서버가 방문자 번호를 고를 때만 씀) · 방문자 번호 = sub-phone 칸에서만
+    const P = row.parts || null;
+    if (P && (/대리\s*예약/.test(P.label || '') || /^방문자\s*[:：]/.test(P.sub || ''))) {
+        out.how = 'proxy';
+        out.name_seen = nameIn(P.booker);
+        out.visitor_name_seen = nameIn(String(P.sub || '').replace(/^방문자\s*[:：]\s*/, '')) || null;
+        out.booker_phone = phoneIn(P.bphone);
+        out.visitor_phone = phoneIn(P.vphone);
+        if (!out.name_seen || !out.booker_phone) out.how = '';   // 예약자 칸을 못 읽음 = 멈춤(miss 「꼴 모름」)
+        return out;
+    }
     const cells = Array.isArray(row.cells) ? row.cells : [];
     const vc = cells.find(c => VISITOR_RE.test(c.h)), bc = cells.find(c => BOOKER_RE.test(c.h));
     if (vc || bc) {
@@ -114,6 +129,8 @@ function parseRow(row, no) {
         const sc = cells.find(c => /상태/.test(c.h)); if (sc) { const s = STATUS_RE.exec(sc.t); if (s) out.status_seen = s[1]; }
         return out;
     }
+    // #1211 대리예약 글자는 있는데 칸으로 못 나눔(화면 바뀜) = 멈춤 · 아래 labels 꼴은 「방문자: 이름」 바로 뒤의 예약자 번호를 방문자 번호로 잡음(#1210 실화면)
+    { const at = text.indexOf(String(no)); if (/대리\s*예약|방문자\s*[:：]/.test(at >= 0 ? text.slice(0, at) : text)) return out; }   // 예약번호 앞(상태·이름·번호 자리)만 봄 = 요청사항·메모의 같은 글자는 안 걸림(워커3 점검 · 실화면 순서 = 이름·번호가 예약번호 앞)
     const lv = new RegExp('(?:' + VISITOR_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10}|' + FOREIGN_NAME + ')\\s*(' + PHONE_RE.source + ')').exec(text);
     const lb = new RegExp('(?:' + BOOKER_RE.source + ')\\s*[:：]?\\s*([가-힣A-Za-z]{0,10}|' + FOREIGN_NAME + ')\\s*(' + PHONE_RE.source + ')').exec(text);
     if (lv || lb) {
@@ -195,10 +212,10 @@ console.log(JSON.stringify(out)); }`);
             const rows = got.rows || [];
             if (rows.length !== 1) { log(`${tag} · 그 예약번호 줄 ${rows.length}개`); await miss(it.id, rows.length ? `같은 예약번호 줄 ${rows.length}개` : '예약자관리에서 못 찾음'); bad++; continue; }
             const p = parseRow(rows[0], it.order_no);
-            log(`${tag} · 읽음(${p.how || '꼴 모름'}) 상태 ${p.status_seen} · ${p.visit_seen.date} ${p.visit_seen.time} · ${maskName(p.name_seen)} · 이용고객 ${tail4(p.visitor_phone)} · 예약자 ${tail4(p.booker_phone)}`);
+            log(`${tag} · 읽음(${p.how || '꼴 모름'}) 상태 ${p.status_seen} · ${p.visit_seen.date} ${p.visit_seen.time} · ${maskName(p.name_seen)}${p.how === 'proxy' ? ' (대리예약 · 방문자 ' + maskName(p.visitor_name_seen) + ')' : ''} · 이용고객 ${tail4(p.visitor_phone)} · 예약자 ${tail4(p.booker_phone)}`);
             if (!p.how) { await miss(it.id, '화면 줄 꼴 모름(예약자관리 화면이 바뀌었을 수 있음)'); bad++; continue; }
             if (DRY) continue;
-            const body = { order_no_seen: String(it.order_no), status_seen: p.status_seen, visit_seen: p.visit_seen, name_seen: p.name_seen, visitor_phone: p.visitor_phone, booker_phone: p.booker_phone };
+            const body = { order_no_seen: String(it.order_no), status_seen: p.status_seen, visit_seen: p.visit_seen, name_seen: p.name_seen, ...(p.visitor_name_seen ? { visitor_name_seen: p.visitor_name_seen } : {}), visitor_phone: p.visitor_phone, booker_phone: p.booker_phone };
             const r = await api('PUT', `/api/experience/auto/${it.id}`, body);
             if (r.s === 200) { saved++; log(`  저장 ✓ (${r.j.picked}) 알림 ${r.j.sent || '-'}${r.j.dup_ids && r.j.dup_ids.length ? ' · 같은 번호 다른 예약 ' + r.j.dup_ids.join(',') : ''}`); }
             else if (r.s === 409 || r.s === 429) log(`  건너뜀 ${r.s} ${r.j.error || ''}`);
