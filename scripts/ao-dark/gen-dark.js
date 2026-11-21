@@ -73,12 +73,20 @@ function darkOf(rgba, g) {
 }
 const grp = p => /^background/.test(p) ? 'bg' : /^(border|outline)/.test(p) ? 'bd' : /shadow/.test(p) ? 'sh' : 'fg';
 
+// #1218 의미색 단계 이름(theme.css :root 의 --danger-bg 등)은 값으로 펼친 뒤 계산 — 직접 색이던 때와 야간 값이 한 글자도 같게
+const SEM = {};
+{ const root = (fs.readFileSync(path.join(ROOT, 'public', 'theme.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').match(/:root\s*\{[^}]*\}/) || [''])[0];
+  root.replace(/(--(?:danger|success|warn)-(?:bg|line|ink)|--primary-(?:line|ink))\s*:\s*(#[0-9a-fA-F]{3,8})\s*;/g, (m, k, v) => { SEM[k] = v; return m; }); }
+// 막이: 이름이 11개가 아니면(이름이 늘었거나 값이 # 꼴이 아니면) 펼치지 못한 var() 가 야간에 낮 색으로 남는다 → 멈춘다
+if (Object.keys(SEM).length !== 11) throw new Error('#1218 의미색 이름을 11개 찾아야 하는데 ' + Object.keys(SEM).length + '개 — theme.css :root 의 --danger-bg 등 값(# 색)을 확인하세요: ' + Object.keys(SEM).join(' '));
+const semExpand = v => v.replace(/var\((--(?:danger|success|warn)-(?:bg|line|ink)|--primary-(?:line|ink))\)/g, (m, k) => SEM[k] || m);
+
 const stats = {};
 function mapValue(prop, value, sel) {
     const g = grp(prop);
     const key = sel + ' { ' + prop + ' }';
     if (OV.bySelector && OV.bySelector[key] !== undefined) return OV.bySelector[key];
-    let v = value;
+    let v = semExpand(value);
     // 테마 토큰: 「채운 바탕 + 흰 글자」로 쓰인 곳은 흰 글자가 읽히는 진한 값으로
     if (g === 'bg') v = v.replace(/var\(--(primary|accent-blue)\)/g, 'var(--d-accent-fill)').replace(/var\(--primary-dark(,[^)]*)?\)/g, 'var(--d-accent-hover)').replace(/var\(--danger\)/g, 'var(--k-danger-fill)').replace(/var\(--success\)/g, 'var(--k-success-fill)');
     const hold = []; v = v.replace(/var\([^()]*\)/g, x => { hold.push(x); return '\u0001' + (hold.length - 1) + '\u0002'; }).replace(/url\([^)]*\)/g, x => { hold.push(x); return '\u0001' + (hold.length - 1) + '\u0002'; });
@@ -227,5 +235,7 @@ const head = [
     fs.readFileSync(path.join(__dirname, 'hand-dark.css'), 'utf8').replace(/\r\n/g, '\n').replace(/\s+$/, '').replace('/*@@GEN@@*/', () => parts.join('\n')),
     '',
 ].join('\n');
+// 막이: 만든 결과에 의미색 이름 var() 가 남아 있으면 야간에 낮 색이 나온다 → 쓰지 않고 멈춘다
+{ const left = head.match(/var\(--(?:(?:danger|success|warn)-(?:bg|line|ink)|primary-(?:line|ink))\)/g); if (left) throw new Error('#1218 야간 결과에 펼치지 못한 의미색 이름 ' + left.length + '곳: ' + [...new Set(left)].join(' ')); }
 fs.writeFileSync(OUT, head);
 console.log('ao-dark.css:', Buffer.byteLength(head), 'bytes ·', nRules, '규칙 · keyframes', Object.keys(kfAll).length, '· 색 종류', Object.keys(stats).length);

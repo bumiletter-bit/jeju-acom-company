@@ -41,6 +41,14 @@
     --danger: #F04438;
     --success: #12B76A;
 
+    /* #1218 의미색 단계(바탕 · 테두리 · 글자) — 값은 화면에 이미 가장 많이 쓰던 값 그대로(흰 바탕 글자 대비 = ink 5.4~7.5:1)
+       · 역할대로만 쓴다: -bg = 바탕 · -line = 테두리 · -ink = 글자(밝은 --danger·--success 는 점·아이콘·채운 바탕용)
+       · 야간: gen-dark.js 가 이 이름을 값으로 펼쳐 계산(야간에 따로 정의하지 않음) */
+    --danger-bg: #FEF3F2;  --danger-line: #FDA29B;  --danger-ink: #B42318;
+    --success-bg: #ECFDF3; --success-line: #ABEFC6; --success-ink: #067647;
+    --warn-bg: #FFFAEB;    --warn-line: #FEDF89;    --warn-ink: #B54708;
+    --primary-line: #C7CBFF; --primary-ink: #3730A3;
+
     --radius: 14px;
     --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
     --shadow-md: 0 4px 16px -6px rgba(16, 24, 40, 0.12);
@@ -333,9 +341,11 @@ input:focus, textarea:focus, select:focus {
 /* 원본(styles.css)은 그대로 두고 색·그림자만 덮어씀 — 원복은 이 블록 삭제만 하면 됨. 기능 무관. */
 
 /* 헤더 바 */
-.ss-header { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
-.ss-logo { background: #fff; color: var(--primary); }
-.ss-header-title b { color: #fff; }
+/* #1218 그라데이션 판 → 흰 판(머리 띠 · 날짜 띠 · 총 합계) · 강조는 큰 숫자와 글자색으로 */
+.ss-header { background: var(--card-bg); box-shadow: none; border-bottom: 1px solid var(--border); }
+.ss-logo { background: var(--primary); color: #fff; }
+.ss-header-title { color: var(--text-dark); }
+.ss-header-title b { color: var(--text-dark); }
 
 /* 달력 */
 .ss-cal-wrap { border-bottom: 1px solid var(--border); }
@@ -345,31 +355,36 @@ input:focus, textarea:focus, select:focus {
 .ss-cal-cell:hover { background: var(--primary-light); border-color: #C9CDFF; }
 .ss-cal-cell.ss-cal-has { border-color: var(--border); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
 .ss-cal-cell.ss-cal-has:hover { border-color: var(--primary); box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
-.ss-cal-cell.ss-cal-sel { background: var(--primary) !important; border-color: var(--primary) !important; box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-cal-cell.ss-cal-sel { background: var(--primary) !important; border-color: var(--primary) !important; box-shadow: none; }
 .ss-cal-cell.ss-cal-sel .ss-cal-amt { color: #fff !important; }
 .ss-cal-cell.ss-cal-has::after { background: var(--primary); }
-.ss-cal-amt-pos { color: var(--success); }
-.ss-cal-amt-neg { color: var(--danger); }
+.ss-cal-amt-pos { color: var(--success-ink); }   /* #1218 밝은 --success·--danger 글자는 흰 바탕 2.5·3.6:1 → 진한 단 */
+.ss-cal-amt-neg { color: var(--danger-ink); }
 
-/* 날짜 배너 (히어로 — C-1 정산 히어로 카드와 동일 톤) */
-.ss-date-banner { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
-.ss-date-banner::before { background: rgba(255, 255, 255, 0.08); }
-.ss-date-banner-title span { color: #C9CDFF; }
-.ss-date-banner-badge { background: #fff; color: var(--primary); }
+/* 날짜 배너 — #1218 흰 판(한 줄 제목) */
+.ss-date-banner { background: var(--card-bg); box-shadow: none; border: 1px solid var(--card-border); }
+.ss-date-banner::before { display: none; }
+.ss-date-banner-co, .ss-date-banner-day { color: var(--text-mid); }
+.ss-date-banner-title { color: var(--text-dark); }
+.ss-date-banner-title span { color: var(--primary-ink); }
+.ss-date-banner-badge { background: var(--primary-light); color: var(--primary-ink); }
 
-/* 요약 카드 */
-.ss-sc { border-top-color: var(--primary); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
+/* 요약 카드 — #1218 위 색 띠 = 옅은 선 하나(색은 숫자가 말함) · 총 합계 = 흰 판 큰 숫자 */
+.ss-sc { border-top-color: var(--card-border); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
 .ss-sc:hover { box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
-.ss-sc.y { border-top-color: #F59E0B; }
-.ss-sc.g { border-top-color: var(--success); }
-.ss-sc.r { border-top-color: var(--danger); }
-.ss-sc-val { color: var(--text-dark); }
-.ss-sc-val.g { color: var(--success); }
-.ss-sc-val.r { color: var(--danger); }
-.ss-sc.total { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
-.ss-sc.total .ss-sc-lbl { color: #E0E2FF; }
-.ss-sc.total .ss-sc-sub { color: #C9CDFF; }
-.ss-sc.total .ss-sc-val-total.r { color: #FFB4B4; }
+.ss-sc.y, .ss-sc.g, .ss-sc.r { border-top-color: var(--card-border); }
+.ss-sc-val { color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.ss-sc-val.g { color: var(--success-ink); }
+.ss-sc-val.r { color: var(--danger-ink); }
+.ss-sc.total { background: var(--card-bg); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); border: 1px solid var(--card-border); }
+.ss-sc.total .ss-sc-lbl { color: var(--text-dark); font-size: 14px; font-weight: 800; }
+.ss-sc.total .ss-sc-sub { color: var(--text-mid); }
+.ss-sc.total .ss-sc-val-total { color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.ss-sc.total .ss-sc-val-total.r { color: var(--danger-ink); }
+/* 네이버 대조 「차이 큼·미입금」 = 빨강은 차이 숫자·경고 한 줄·왼쪽 3px 막대만(자리는 그대로) */
+#ss-recon-card:has(.ss-recon-badge.warn) { box-shadow: inset 3px 0 0 var(--danger-ink), 0 1px 3px rgba(16, 24, 40, 0.06); }
+.ss-recon-badge.warn { background: var(--danger-bg); color: var(--danger-ink); box-shadow: inset 0 0 0 1px var(--danger-line); }
+.ss-recon-neg { color: var(--danger-ink); font-weight: 700; }
 
 /* 섹션 라벨·카드·카드 헤더 */
 .ss-slbl { color: var(--primary); }
@@ -383,7 +398,8 @@ input:focus, textarea:focus, select:focus {
 .ss-tbl tr:hover td, .ss-tbl tr:hover th { background: #F8F9FC; }
 .ss-tbl .ss-hl th { background: var(--primary-light); color: var(--primary); }
 .ss-tbl .ss-hl td { background: #F5F6FF; }
-.ss-tbl .ss-tr th { background: var(--primary); color: #fff; }
+.ss-tbl .ss-tr th { background: var(--primary-light); color: var(--primary-ink); }   /* #1218 채움은 맨 아래 총 합계 줄 하나만 */
+.ss-tbl td { font-variant-numeric: tabular-nums; }
 .ss-tbl .ss-tr td { background: var(--primary-light); }
 .ss-tbl .ss-total-final th { background: var(--primary-dark); }
 .ss-tbl .ss-total-final td { background: var(--primary-dark); }
@@ -392,10 +408,10 @@ input:focus, textarea:focus, select:focus {
 /* 입력·계산값·뱃지 */
 .ss-ni { color: var(--text-dark); }
 .ss-ni:focus { background: var(--primary-light); }
-.ss-pos { color: var(--success); }
-.ss-neg { color: var(--danger); }
-.ss-badge-plus { background: #E6F7EE; color: var(--success); }
-.ss-badge-minus { background: #FEE4E2; color: var(--danger); }
+.ss-pos { color: var(--success-ink); }   /* #1218 진한 단(흰 바탕 7.3:1 · 6.5:1) */
+.ss-neg { color: var(--danger-ink); }
+.ss-badge-plus { background: #E6F7EE; color: var(--success-ink); }
+.ss-badge-minus { background: #FEE4E2; color: var(--danger-ink); }
 .ss-memo:focus { background: var(--primary-light); }
 
 /* 버튼 */
@@ -403,8 +419,8 @@ input:focus, textarea:focus, select:focus {
 .ss-bn:hover { background: var(--primary-dark); }
 .ss-by { background: var(--primary); color: #fff; box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
 .ss-by:hover { background: var(--primary-dark); }
-.ss-bg { background: var(--success); }
-.ss-bg:hover { background: #0E9F5C; }
+.ss-bg { background: var(--card-bg); color: var(--primary-ink); border: 1px solid var(--primary-line); }   /* #1218 CSV 내보내기 = 보조 단추(흰 판 + 테두리 · 가이드 버튼 위계) */
+.ss-bg:hover { background: var(--primary-light); }
 .ss-br { background: #FEE4E2; color: var(--danger); }
 .ss-br:hover { background: #FDD8D6; }
 .ss-bh { background: var(--card-bg); color: var(--text-mid); border: 1px solid var(--border); }
@@ -494,3 +510,35 @@ input:focus, textarea:focus, select:focus {
     font-size: 16px;
 }
 #invoice-qty-capture tr.cap-total td.cap-name::before { content: '합계'; letter-spacing: 2px; }
+
+/* ================= #1218 강조·어긋남 정돈(대표 「지금 구도로 · 강조 부분과 일정하지 않은 부분만」) =================
+   구도·단추 자리·기능 그대로 · 강조 = 굵은 글 · 큰 숫자 · 옅은 바탕 · 가는 테두리 · 빨강은 문제에만
+   :has 를 못 읽는 옛 브라우저는 그 줄만 종전 모양(기능 무관) */
+
+/* 일정 — 오늘 칸 = 옅은 인디고 바탕 + 2px 테두리 · 오늘 일정 굵게 · 오늘 앞 지난날 = 흐리게 */
+.calendar-table td.today { background: #F4F5FF; box-shadow: inset 0 0 0 2px var(--primary); }
+.calendar-table td.today .day-number { box-shadow: none; }
+.calendar-table td.today .day-schedule-item:not(.schedule-completed) { font-weight: 700; }
+/*   지난날 = 투명도 대신 「날짜 보조 글자색 + 일정 흑백」(투명도 0.62 는 일요일 날짜 2.35:1 로 미달 → 대비 유지하며 조용히) · 일요일 빨강은 의미색이라 진한 단으로 남김 */
+#schedule-calendar-body tr:has(~ tr td.today) td:not(.sun) .day-number, #schedule-calendar-body td:has(~ td.today):not(.sun) .day-number { color: var(--text-mid); }
+#schedule-calendar-body tr:has(~ tr td.today) td.sun .day-number, #schedule-calendar-body td.sun:has(~ td.today) .day-number { color: var(--danger-ink); }
+#schedule-calendar-body tr:has(~ tr td.today) .day-schedules, #schedule-calendar-body td:has(~ td.today) .day-schedules { filter: grayscale(1); }
+.sch-b-chip { box-shadow: none; }
+
+/* 일정 거르기 단추 — 옛 남색·골드 → 인디고(행사·상품·당직 의미색은 그대로) */
+.sch-flt-btn { border-color: var(--card-border); color: var(--text-mid); }
+.sch-flt-btn:hover { border-color: var(--primary); }
+.sch-flt-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.sch-flt-btn.sch-flt-rank { background: var(--primary-light); border-color: var(--primary-line); color: var(--primary-ink); }
+.sch-flt-btn.sch-flt-rank:hover { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* 품목별 금액 — 박스 옵션 「고른 것」 옛 파랑(#0066CC) → 인디고 */
+.pricing-row.pricing-row-v2 .pricing-box-opt:hover { background: var(--primary-light); border-color: var(--primary); }
+.pricing-row.pricing-row-v2 .pricing-box-opt input[type="radio"]:checked + span { color: var(--primary-ink); }
+.pricing-row.pricing-row-v2 .pricing-box-opt:has(input[type="radio"]:checked) { background: var(--primary-light); border-color: var(--primary); }
+
+/* 문의 관리 › 응대 현황 — 미답 = 옅은 인디고 바탕 + 테두리 + 큰 숫자(자리 그대로) */
+.rv-num.is-open { background: var(--primary-light); border-color: var(--primary-line); box-shadow: inset 3px 0 0 var(--primary); }
+.rv-num.is-open b { font-size: 28px; color: var(--primary-ink); }
+.rv-num.is-open span { color: var(--text-dark); font-weight: 700; }
+.rv-num.is-open small { color: var(--primary-ink); }   /* 옅은 인디고 바탕 위 보조 글 = 진한 인디고(종전 --text-mid 4.4:1) */

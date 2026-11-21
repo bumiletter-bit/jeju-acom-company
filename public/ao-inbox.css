@@ -50,7 +50,7 @@
 /* 보낼 수 없는 대화 — 등록된 문의(초록 점) · 카카오·자사몰 대화(회색 점) */
 .inb-lock { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 10px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
 .inb-lock i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--d-dim); }
-.inb-lock[data-k="done"] { background: #E7F8EF; box-shadow: inset 0 0 0 1px #ABEFC6; color: #067647; }
+.inb-lock[data-k="done"] { background: #E7F8EF; box-shadow: inset 0 0 0 1px #ABEFC6; color: var(--success-ink); }
 .inb-lock[data-k="done"] i { background: #12B76A; }
 .inb-lock span { min-width: 0; overflow-wrap: anywhere; }
 

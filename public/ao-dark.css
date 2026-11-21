@@ -435,20 +435,20 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
     :where(html[data-ao-theme="dark"]) .day-header { border-bottom: none; }
     :where(html[data-ao-theme="dark"]) .schedule-checkmark { border-width: 1px; }
 }
-:where(html[data-ao-theme="dark"]) .expense-approval-line { background: var(--d-soft); border: 1px solid rgba(121, 148, 185, 0.4); }
-:where(html[data-ao-theme="dark"]) .expense-approval-step { background: var(--d-card); border: 1px solid rgba(121, 148, 185, 0.4); }
-:where(html[data-ao-theme="dark"]) .expense-approval-step .step-label { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .expense-approval-line { background: var(--bg); border: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .expense-approval-step { background: var(--d-card); border: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .expense-approval-step .step-label { color: var(--text-mid); }
 :where(html[data-ao-theme="dark"]) .expense-approval-step .step-name { color: var(--text-dark); }
-:where(html[data-ao-theme="dark"]) .expense-approval-step .step-position { color: var(--d-sub); }
-:where(html[data-ao-theme="dark"]) .expense-approval-arrow { color: var(--d-sub); }
-:where(html[data-ao-theme="dark"]) .expense-items-header { color: var(--d-sub); border-bottom: 2px solid rgba(121, 148, 185, 0.4); background: var(--d-soft); }
-:where(html[data-ao-theme="dark"]) .expense-item-row { background: var(--d-card); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .expense-approval-step .step-position { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .expense-approval-arrow { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .expense-items-header { color: var(--text-mid); border-bottom: 2px solid var(--border); background: var(--bg); }
+:where(html[data-ao-theme="dark"]) .expense-item-row { background: var(--card-bg); border: 1px solid var(--border-soft); }
 :where(html[data-ao-theme="dark"]) .expense-item-row:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.31); }
-:where(html[data-ao-theme="dark"]) .expense-item-row input { border: 1px solid var(--d-line); }
-:where(html[data-ao-theme="dark"]) .expense-item-row select { border: 1px solid var(--primary); color: #9CB3C9; background: rgba(230, 194, 76, 0.14); }
+:where(html[data-ao-theme="dark"]) .expense-item-row input { border: 1px solid var(--card-border); }
+:where(html[data-ao-theme="dark"]) .expense-item-row select { border: 1px solid var(--primary); color: var(--text-dark); background: rgba(230, 194, 76, 0.14); }
 :where(html[data-ao-theme="dark"]) .expense-item-row input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-ring); }
 :where(html[data-ao-theme="dark"]) .expense-item-row select:focus { outline: none; border-color: var(--primary-dark); box-shadow: 0 0 0 2px var(--primary-ring); }
-:where(html[data-ao-theme="dark"]) .expense-item-detail { color: var(--d-sub); background: var(--d-soft); border: 1px solid rgba(121, 148, 185, 0.4); }
+:where(html[data-ao-theme="dark"]) .expense-item-detail { color: var(--text-mid); background: var(--bg); border: 1px solid var(--border); }
 :where(html[data-ao-theme="dark"]) .expense-item-remove { border: none; background: rgba(230, 76, 76, 0.14); color: #EE9696; }
 :where(html[data-ao-theme="dark"]) .expense-item-remove:hover { background: rgba(235, 71, 71, 0.2); }
 :where(html[data-ao-theme="dark"]) .expense-total-display { color: var(--primary); }
@@ -1083,7 +1083,7 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .settle-paid-diff { background: rgba(230, 165, 76, 0.14); color: #F79E5A; }
 :where(html[data-ao-theme="dark"]) .rv-num .rv-open14 { color: var(--primary); }
 
-/* ── theme.css 에서 옮긴 것 (160규칙) ── */
+/* ── theme.css 에서 옮긴 것 (181규칙) ── */
 :where(html[data-ao-theme="dark"]) .main-content { background: var(--page-bg); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); border-right: 1px solid var(--border); box-shadow: none; }
 :where(html[data-ao-theme="dark"]) .sidebar-header { border-bottom: 1px solid var(--border-soft); }
@@ -1162,9 +1162,10 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .ao-flow-base { fill: none; stroke: #BEA0EE; }
 :where(html[data-ao-theme="dark"]) .ao-flow-pulse { fill: none; stroke: #D6BCFA; }
 :where(html[data-ao-theme="dark"]) .ao-agent.st-running .ao-nametag { color: #BEA0EE; }
-:where(html[data-ao-theme="dark"]) .ss-header { background: linear-gradient(135deg, #4338CA, #4F46E5); box-shadow: 0 6px 16px -6px rgba(85, 76, 230, 0.63); }
-:where(html[data-ao-theme="dark"]) .ss-logo { background: var(--d-card); color: var(--primary); }
-:where(html[data-ao-theme="dark"]) .ss-header-title b { color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .ss-header { background: var(--card-bg); box-shadow: none; border-bottom: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .ss-logo { background: var(--d-accent-fill); color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .ss-header-title { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ss-header-title b { color: var(--text-dark); }
 :where(html[data-ao-theme="dark"]) .ss-cal-wrap { border-bottom: 1px solid var(--border); }
 :where(html[data-ao-theme="dark"]) .ss-cal-title { color: var(--text-dark); }
 :where(html[data-ao-theme="dark"]) .ss-cal-nav { background: var(--card-bg); border: 1px solid var(--border); color: var(--text-mid); }
@@ -1172,27 +1173,30 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .ss-cal-cell:hover { background: var(--primary-light); border-color: rgba(82, 92, 224, 0.4); }
 :where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-has { border-color: var(--border); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); }
 :where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-has:hover { border-color: var(--primary); box-shadow: 0 4px 16px -6px rgba(0, 0, 0, 0.37); }
-:where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-sel { background: var(--d-accent-fill) !important; border-color: var(--primary) !important; box-shadow: 0 6px 16px -6px rgba(85, 76, 230, 0.63); }
+:where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-sel { background: var(--d-accent-fill) !important; border-color: var(--primary) !important; box-shadow: none; }
 :where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-sel .ss-cal-amt { color: #FFFFFF !important; }
 :where(html[data-ao-theme="dark"]) .ss-cal-cell.ss-cal-has::after { background: var(--d-accent-fill); }
-:where(html[data-ao-theme="dark"]) .ss-cal-amt-pos { color: var(--success); }
-:where(html[data-ao-theme="dark"]) .ss-cal-amt-neg { color: var(--danger); }
-:where(html[data-ao-theme="dark"]) .ss-date-banner { background: linear-gradient(135deg, #4338CA, #4F46E5); box-shadow: 0 6px 16px -6px rgba(85, 76, 230, 0.63); }
-:where(html[data-ao-theme="dark"]) .ss-date-banner::before { background: rgba(233, 235, 245, 0.01); }
-:where(html[data-ao-theme="dark"]) .ss-date-banner-title span { color: #E6E8FF; }
-:where(html[data-ao-theme="dark"]) .ss-date-banner-badge { background: var(--d-card); color: var(--primary); }
-:where(html[data-ao-theme="dark"]) .ss-sc { border-top-color: var(--primary); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); }
+:where(html[data-ao-theme="dark"]) .ss-cal-amt-pos { color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ss-cal-amt-neg { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .ss-date-banner { background: var(--card-bg); box-shadow: none; border: 1px solid var(--card-border); }
+:where(html[data-ao-theme="dark"]) .ss-date-banner-co, :where(html[data-ao-theme="dark"]) .ss-date-banner-day { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .ss-date-banner-title { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ss-date-banner-title span { color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .ss-date-banner-badge { background: var(--primary-light); color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .ss-sc { border-top-color: var(--card-border); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); }
 :where(html[data-ao-theme="dark"]) .ss-sc:hover { box-shadow: 0 4px 16px -6px rgba(0, 0, 0, 0.37); }
-:where(html[data-ao-theme="dark"]) .ss-sc.y { border-top-color: #F59E0B; }
-:where(html[data-ao-theme="dark"]) .ss-sc.g { border-top-color: var(--success); }
-:where(html[data-ao-theme="dark"]) .ss-sc.r { border-top-color: var(--danger); }
+:where(html[data-ao-theme="dark"]) .ss-sc.y, :where(html[data-ao-theme="dark"]) .ss-sc.g, :where(html[data-ao-theme="dark"]) .ss-sc.r { border-top-color: var(--card-border); }
 :where(html[data-ao-theme="dark"]) .ss-sc-val { color: var(--text-dark); }
-:where(html[data-ao-theme="dark"]) .ss-sc-val.g { color: var(--success); }
-:where(html[data-ao-theme="dark"]) .ss-sc-val.r { color: var(--danger); }
-:where(html[data-ao-theme="dark"]) .ss-sc.total { background: linear-gradient(135deg, #4338CA, #4F46E5); box-shadow: 0 6px 16px -6px rgba(85, 76, 230, 0.63); }
-:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-lbl { color: #E1E3FE; }
-:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-sub { color: #E6E8FF; }
-:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-val-total.r { color: #FDB6B6; }
+:where(html[data-ao-theme="dark"]) .ss-sc-val.g { color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ss-sc-val.r { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .ss-sc.total { background: var(--card-bg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); border: 1px solid var(--card-border); }
+:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-lbl { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-sub { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-val-total { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ss-sc.total .ss-sc-val-total.r { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) #ss-recon-card:has(.ss-recon-badge.warn) { box-shadow: inset 3px 0 0 rgba(231, 86, 75, 0.9), 0 1px 3px rgba(0, 0, 0, 0.31); }
+:where(html[data-ao-theme="dark"]) .ss-recon-badge.warn { background: var(--d-soft); color: #F19A93; box-shadow: inset 0 0 0 1px rgba(253, 162, 155, 0.9); }
+:where(html[data-ao-theme="dark"]) .ss-recon-neg { color: #F19A93; }
 :where(html[data-ao-theme="dark"]) .ss-slbl { color: var(--primary); }
 :where(html[data-ao-theme="dark"]) .ss-card { border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); }
 :where(html[data-ao-theme="dark"]) .ss-ch { background: linear-gradient(var(--d-card), var(--d-soft)); color: var(--text-dark); border-bottom: 1px solid var(--border); }
@@ -1202,24 +1206,24 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .ss-tbl tr:hover td, :where(html[data-ao-theme="dark"]) .ss-tbl tr:hover th { background: var(--d-soft); }
 :where(html[data-ao-theme="dark"]) .ss-tbl .ss-hl th { background: var(--primary-light); color: var(--primary); }
 :where(html[data-ao-theme="dark"]) .ss-tbl .ss-hl td { background: var(--d-soft); }
-:where(html[data-ao-theme="dark"]) .ss-tbl .ss-tr th { background: var(--d-accent-fill); color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .ss-tbl .ss-tr th { background: var(--primary-light); color: #ACA8E5; }
 :where(html[data-ao-theme="dark"]) .ss-tbl .ss-tr td { background: var(--primary-light); }
 :where(html[data-ao-theme="dark"]) .ss-tbl .ss-total-final th { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .ss-tbl .ss-total-final td { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .ss-cmp.ss-total-yellow { color: #FFFFFF; }
 :where(html[data-ao-theme="dark"]) .ss-ni { color: var(--text-dark); }
 :where(html[data-ao-theme="dark"]) .ss-ni:focus { background: var(--primary-light); }
-:where(html[data-ao-theme="dark"]) .ss-pos { color: var(--success); }
-:where(html[data-ao-theme="dark"]) .ss-neg { color: var(--danger); }
-:where(html[data-ao-theme="dark"]) .ss-badge-plus { background: rgba(100, 206, 150, 0.14); color: var(--success); }
-:where(html[data-ao-theme="dark"]) .ss-badge-minus { background: rgba(230, 87, 76, 0.14); color: var(--danger); }
+:where(html[data-ao-theme="dark"]) .ss-pos { color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ss-neg { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .ss-badge-plus { background: rgba(100, 206, 150, 0.14); color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ss-badge-minus { background: rgba(230, 87, 76, 0.14); color: #F19A93; }
 :where(html[data-ao-theme="dark"]) .ss-memo:focus { background: var(--primary-light); }
 :where(html[data-ao-theme="dark"]) .ss-bn { background: var(--d-accent-fill); }
 :where(html[data-ao-theme="dark"]) .ss-bn:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .ss-by { background: var(--d-accent-fill); color: #FFFFFF; box-shadow: 0 6px 16px -6px rgba(85, 76, 230, 0.63); }
 :where(html[data-ao-theme="dark"]) .ss-by:hover { background: var(--d-accent-hover); }
-:where(html[data-ao-theme="dark"]) .ss-bg { background: var(--k-success-fill); }
-:where(html[data-ao-theme="dark"]) .ss-bg:hover { background: #0E9F5C; }
+:where(html[data-ao-theme="dark"]) .ss-bg { background: var(--card-bg); color: #ACA8E5; border: 1px solid rgba(82, 92, 224, 0.4); }
+:where(html[data-ao-theme="dark"]) .ss-bg:hover { background: var(--primary-light); }
 :where(html[data-ao-theme="dark"]) .ss-br { background: rgba(230, 87, 76, 0.14); color: var(--danger); }
 :where(html[data-ao-theme="dark"]) .ss-br:hover { background: rgba(235, 80, 71, 0.2); }
 :where(html[data-ao-theme="dark"]) .ss-bh { background: var(--card-bg); color: var(--text-mid); border: 1px solid var(--border); }
@@ -1245,6 +1249,23 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .qty-row .qty-num-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); outline: none; }
 :where(html[data-ao-theme="dark"]) .qty-row.unmatched { color: #E79B93; }
 :where(html[data-ao-theme="dark"]) .qty-row.unmatched .qty-name { color: #E79B93; }
+:where(html[data-ao-theme="dark"]) .calendar-table td.today { background: var(--d-soft); box-shadow: inset 0 0 0 2px var(--primary); }
+:where(html[data-ao-theme="dark"]) .calendar-table td.today .day-number { box-shadow: none; }
+:where(html[data-ao-theme="dark"]) #schedule-calendar-body tr:has(~ tr td.today) td:not(.sun) .day-number, :where(html[data-ao-theme="dark"]) #schedule-calendar-body td:has(~ td.today):not(.sun) .day-number { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) #schedule-calendar-body tr:has(~ tr td.today) td.sun .day-number, :where(html[data-ao-theme="dark"]) #schedule-calendar-body td.sun:has(~ td.today) .day-number { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .sch-b-chip { box-shadow: none; }
+:where(html[data-ao-theme="dark"]) .sch-flt-btn { border-color: var(--card-border); color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .sch-flt-btn:hover { border-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .sch-flt-btn.active { background: var(--d-accent-fill); color: #FFFFFF; border-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .sch-flt-btn.sch-flt-rank { background: var(--primary-light); border-color: rgba(82, 92, 224, 0.4); color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .sch-flt-btn.sch-flt-rank:hover { background: var(--d-accent-fill); border-color: var(--primary); color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .pricing-row.pricing-row-v2 .pricing-box-opt:hover { background: var(--primary-light); border-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .pricing-row.pricing-row-v2 .pricing-box-opt input[type="radio"]:checked + span { color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .pricing-row.pricing-row-v2 .pricing-box-opt:has(input[type="radio"]:checked) { background: var(--primary-light); border-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .rv-num.is-open { background: var(--primary-light); border-color: rgba(82, 92, 224, 0.4); box-shadow: inset 3px 0 0 var(--primary); }
+:where(html[data-ao-theme="dark"]) .rv-num.is-open b { color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .rv-num.is-open span { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .rv-num.is-open small { color: #ACA8E5; }
 
 /* ── order-organizer.css 에서 옮긴 것 (66규칙) ── */
 :where(html[data-ao-theme="dark"]) #page-organizer .oo-btn { border: 1px solid var(--border); background: var(--d-card); color: var(--text-dark); box-shadow: var(--shadow-sm); }
