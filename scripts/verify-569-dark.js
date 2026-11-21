@@ -15,7 +15,7 @@ const ALL = ['agent-office', 'schedule', 'rankings', 'worklog', 'planner', 'docu
 const STAFF_NO = ['settlement', 'pricing', 'data'];
 const NAME = { 'agent-office': '에이전트 오피스', schedule: '일정', rankings: '순위관리', worklog: '업무일지', planner: '마이 플래너', document: '기안서류', expense: '지출결의서', settlement: '정산관리', pricing: '품목별 금액', inventory: '박스재고', invoice: '송장변환', organizer: '주문 정리기', inquiry: '문의 관리', data: '데이터관리', myinfo: '내 정보' };
 const MASK = '#side-theme,#desk-theme';
-const known = s => KNOWN.find(k => k.re.test(s));
+const known = (s, kind) => KNOWN.find(k => (!k.kind || k.kind === kind) && k.re.test(s));   // #1220 kind = 'fail'(대비 미달) | 'white'(흰 칸) · 항목에 kind 가 있으면 그 목록에만
 
 (async () => {
     let h = null;
@@ -98,8 +98,8 @@ const known = s => KNOWN.find(k => k.re.test(s));
         const sweep = async (P, page, phone, tag) => {
             const fails = new Map(), whites = new Map(), kn = new Set(); let texts = 0, views = 0, minR = 99, over = false, darkOk = true;
             const take = async label => { const a = await H.audit(P.pg); views++; texts += a.texts; minR = Math.min(minR, a.minR); if (a.overflow) over = true; if (a.dark !== 'dark') darkOk = false;
-                for (const f of a.fails) { const k = known(f); if (k) kn.add(k.why); else if (!fails.has(f)) fails.set(f, label); }
-                for (const f of a.white) { const k = known(f); if (k) kn.add(k.why); else if (!whites.has(f)) whites.set(f, label); } };
+                for (const f of a.fails) { const k = known(f, 'fail'); if (k) kn.add(k.why); else if (!fails.has(f)) fails.set(f, label); }
+                for (const f of a.white) { const k = known(f, 'white'); if (k) kn.add(k.why); else if (!whites.has(f)) whites.set(f, label); } };
             const at = await H.navTo(P.pg, page, phone);
             await take('처음');
             if (SHOT) save(`569-dark-${tag}-${page}`, await P.pg.screenshot({ animations: 'disabled' }));
@@ -131,14 +131,14 @@ const known = s => KNOWN.find(k => k.re.test(s));
             for (let i = 0; i < n; i++) {
                 const id = await P.pg.evaluate(i => { const m = document.querySelector(`[data-probe-modal="${i}"]`); m.dataset.pd = m.style.display; m.style.display = 'flex'; return m.id || m.className; }, i);
                 await P.pg.waitForTimeout(120); const a = await H.audit(P.pg, `[data-probe-modal="${i}"]`); if (a.texts > 0) shown++; texts += a.texts;
-                a.fails.filter(f => !known(f)).forEach(f => fails.push('[' + id + '] ' + f)); a.white.filter(f => !known(f)).forEach(f => whites.push('[' + id + '] ' + f));
+                a.fails.filter(f => !known(f, 'fail')).forEach(f => fails.push('[' + id + '] ' + f)); a.white.filter(f => !known(f, 'white')).forEach(f => whites.push('[' + id + '] ' + f));
                 await P.pg.evaluate(i => { const m = document.querySelector(`[data-probe-modal="${i}"]`); m.style.display = m.dataset.pd || 'none'; }, i);
             }
             ok(`D 모달 ${n}개를 하나씩 열어 측정 — 글자가 든 것 ${shown}개 · ${texts}토막 · 대비 미달 0 · 흰 칸 0`, n >= 10 && shown >= 4 && fails.length === 0 && whites.length === 0, [...new Set(fails)].slice(0, 8).join(' ‖ ') + (whites.length ? ' ‖ 흰 칸: ' + [...new Set(whites)].slice(0, 6).join(' ‖ ') : ''));
             await P.pg.evaluate(() => { const d = document.getElementById('notification-dropdown'); if (d) d.style.display = 'block'; if (typeof showToast === 'function') showToast('저장했어요', 'lime'); });
             await P.pg.waitForTimeout(350);
             const a = await H.audit(P.pg, '#notification-dropdown, .toast-message');
-            ok(`D 알림 종 목록 · 알림 띠 — 대비 미달 0 · 흰 칸 0 (글자 ${a.texts}토막)`, a.texts > 0 && a.fails.filter(f => !known(f)).length === 0 && a.white.filter(f => !known(f)).length === 0, a.fails.concat(a.white).slice(0, 6).join(' ‖ '));
+            ok(`D 알림 종 목록 · 알림 띠 — 대비 미달 0 · 흰 칸 0 (글자 ${a.texts}토막)`, a.texts > 0 && a.fails.filter(f => !known(f, 'fail')).length === 0 && a.white.filter(f => !known(f, 'white')).length === 0, a.fails.concat(a.white).slice(0, 6).join(' ‖ '));
             // ══ E. 화면을 찍어 만드는 결과물 — 야간이어도 찍힌 그림은 밝은 화면과 같다 ═══════════════════════
             const Lt = await h.open(users.대표, PC, { page: first, pages: pagesOpt });
             await H.navTo(Lt.pg, first, false);

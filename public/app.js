@@ -866,7 +866,7 @@ window.openScheduleModal = function(dateStr) {
         <div class="modal">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             <h3>${dateStr} 일정</h3>
-            <div id="modal-schedule-list" style="margin-bottom:16px;"><p style="color:#999;">로딩 중...</p></div>
+            <div id="modal-schedule-list" style="margin-bottom:16px;"><p style="color:var(--text-mid);">로딩 중...</p></div>
             <hr style="margin:16px 0;border:none;border-top:1px solid #e2e8f0;">
             <h4>새 일정 추가</h4>
             <div class="form-group">
@@ -936,7 +936,7 @@ async function loadDaySchedules(dateStr, overlay) {
 
         const listEl = overlay.querySelector('#modal-schedule-list');
         if (daySchedules.length === 0) {
-            listEl.innerHTML = '<p style="color:#999;">등록된 일정이 없습니다.</p>';
+            listEl.innerHTML = '<p style="color:var(--text-mid);">등록된 일정이 없습니다.</p>';
         } else {
             listEl.innerHTML = daySchedules.map(s => {
                 const typeLabel = s.type === 'vacation' ? ' (휴가)' : s.type === 'attendance' ? ' (근태)' : s.type === 'duty' ? ' (당직)' : '';
@@ -6794,12 +6794,12 @@ function aoProgressBarTicker(el, estSec, label, extraFn) {
     const render = () => {
         const s = Math.round((Date.now() - t0) / 1000);
         const pct = Math.min(95, Math.round((s / Math.max(estSec, 3)) * 100));
-        el.innerHTML = `<div style="font-size:13px;color:#e67700;font-weight:600;">⏳ ${label} <strong>${pct}%</strong> <span style="color:#999;font-weight:400;">(${s}초 경과)</span></div>
+        el.innerHTML = `<div style="font-size:13px;color:#e67700;font-weight:600;">⏳ ${label} <strong>${pct}%</strong> <span style="color:var(--text-mid);font-weight:400;">(${s}초 경과)</span></div>
             <div style="height:10px;background:#eee;border-radius:6px;overflow:hidden;margin-top:4px;">
               <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#F5C800,#e67700);transition:width .5s ease;"></div>
             </div>`
             + (extraFn ? `<div style="font-size:12px;color:var(--text-mid,#667085);margin-top:4px;">${extraFn(s)}</div>` : '')
-            + `<div style="font-size:11px;color:#999;margin-top:2px;">잠시만요 — 완료되면 여기 바로 표시됩니다 (나가지 않으셔도 돼요)</div>`;
+            + `<div style="font-size:11px;color:var(--text-mid);margin-top:2px;">잠시만요 — 완료되면 여기 바로 표시됩니다 (나가지 않으셔도 돼요)</div>`;
     };
     render();
     const iv = setInterval(render, 1000);
@@ -10851,7 +10851,7 @@ function aoShowSettlementConfirm(r) {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">거래처: ${partnerSelect}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
             날짜: <input class="akm-date" type="text" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #4F46E5;background:#EEF0FF;" readonly autocomplete="off" placeholder="날짜 선택">
-            <span style="color:#888;font-size:12px;">틀리면 바꿔주세요</span> · <span style="color:#666;font-size:13px;">총 ${r.box_total}박스</span>
+            <span style="color:var(--text-mid);font-size:12px;">틀리면 바꿔주세요</span> · <span style="color:#666;font-size:13px;">총 ${r.box_total}박스</span>
         </div>
         <div id="ao-settle-body">${aoSettleBodyHtml(r, partner)}</div>
         <div style="display:flex;gap:8px;margin-top:16px;">
@@ -10886,7 +10886,7 @@ window.aoSettlePickItem = function(rowIdx) {
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 4px;">🔗 품목 매칭</h3>
         <div style="color:#666;font-size:13px;margin-bottom:6px;">읽은 품목: <strong>${aoEsc(row.name)}</strong> (${row.qty}박스)</div>
-        <div style="color:#888;font-size:12px;margin-bottom:12px;">아래 품목별 금액 상품 중 맞는 것을 누르세요</div>
+        <div style="color:var(--text-mid);font-size:12px;margin-bottom:12px;">아래 품목별 금액 상품 중 맞는 것을 누르세요</div>
         <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;">${opts}</div>
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -11297,7 +11297,7 @@ window.aoOpenArchiveModal = async function() {
         ? '<div class="ao-run-history">' + files.map(f => {
             const dt = aoKst(f.mtime);
             const kb = Math.round((f.size || 0) / 1024 * 10) / 10;
-            return '<div class="ao-run-item">📄 ' + aoEsc(f.name) + ' <small style="color:#888;">(' + kb + 'KB · ' + dt + ')</small> '
+            return '<div class="ao-run-item">📄 ' + aoEsc(f.name) + ' <small style="color:var(--text-mid);">(' + kb + 'KB · ' + dt + ')</small> '
                 + '<button class="ao-fb-btn" onclick="aoDownloadArchive(\'' + encodeURIComponent(f.name) + '\')">다운로드</button></div>';
         }).join('') + '</div>'
         : '<div class="ao-empty-note">아카이브가 비어 있습니다</div>';
@@ -11305,7 +11305,7 @@ window.aoOpenArchiveModal = async function() {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">📚 통합본 아카이브 <small style="color:#888;">(${files.length}건 · 영구 보관 — 언제든 재다운로드)</small></h3>
+        <h3 style="margin:0 0 8px;">📚 통합본 아카이브 <small style="color:var(--text-mid);">(${files.length}건 · 영구 보관 — 언제든 재다운로드)</small></h3>
         ${body}
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -11483,7 +11483,7 @@ window.aoOpenMisrouteModal = async function() {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">🚧 마루 오배정 카운트 <small style="color:#888;">(최근 ${m.days}일 · 지시 ${m.orders_total}건)</small></h3>
+        <h3 style="margin:0 0 8px;">🚧 마루 오배정 카운트 <small style="color:var(--text-mid);">(최근 ${m.days}일 · 지시 ${m.orders_total}건)</small></h3>
         ${row('오배정 지적', m.misroute_feedback, '마루에게 준 👎/✏️ 피드백 수')}
         ${row('응답 오염 감지', m.pollution_retries, '응답에 태그 파편이 섞여 정화기가 걸러낸 호출 수 (평시 재호출 없이 정화만)')}
         ${row('복창 후 정정', m.confirm_cancels, '확인 질문에 "아니"로 취소한 횟수')}
@@ -11511,7 +11511,7 @@ window.aoOpenTestResultsModal = async function() {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">🧪 역량 테스트 성적표 <small style="color:#888;">(${runs.length}건 · 보고서함과 분리 보관)</small></h3>
+        <h3 style="margin:0 0 8px;">🧪 역량 테스트 성적표 <small style="color:var(--text-mid);">(${runs.length}건 · 보고서함과 분리 보관)</small></h3>
         ${body}
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -12100,7 +12100,7 @@ window.openAoDetail = async function(agentId) {
     const actionHtml = agent.role === 'chief'
         ? `<div class="ao-placeholder-box">
                 <div style="font-weight:600;font-size:13px;">💬 하단 입력바로 지시하면 마루가 즉시 분석·배정합니다 <span class="ao-soon-badge" style="background:#2F9E44;color:#fff;">🤖 AI 연결됨</span></div>
-                <div id="ao-maru-orders" style="font-size:12px;color:#888;margin-top:4px;">대기 지시 확인 중...</div>
+                <div id="ao-maru-orders" style="font-size:12px;color:var(--text-mid);margin-top:4px;">대기 지시 확인 중...</div>
             </div>`
         : `<div class="ao-placeholder-box ao-soon-note">💬 대표가 지시하면 마루가 이 요원에게 배정합니다</div>`;
 
@@ -12115,7 +12115,7 @@ window.openAoDetail = async function(agentId) {
             <div class="ao-detail-head">
                 <div class="ao-detail-avatar" style="background:${color};">${agent.name.charAt(0)}</div>
                 <div>
-                    <h3 style="margin:0;"><span class="ao-ai-badge">🤖AI</span> ${agent.name} <small style="color:#888;">${AO_ROLE_LABEL[agent.role]}${agent.duty ? ' · ' + agent.duty : ''}</small></h3>
+                    <h3 style="margin:0;"><span class="ao-ai-badge">🤖AI</span> ${agent.name} <small style="color:var(--text-mid);">${AO_ROLE_LABEL[agent.role]}${agent.duty ? ' · ' + agent.duty : ''}</small></h3>
                     <div class="ao-detail-meta">${agent.team} · ${agent.workplace} · 상태: <strong class="ao-status-${agent.status}">${AO_STATUS_LABEL[agent.status] || agent.status}</strong>
                     ${agent.last_run_at ? ' · 마지막 실행 ' + aoKst(agent.last_run_at) : ''}</div>
                 </div>
@@ -12230,7 +12230,7 @@ window.aoOpenLessonsModal = async function(weekOnly) {
     overlay.id = 'ao-lessons-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">${weekOnly ? '🌱 이번 주 학습' : '📚 지식 노트 전체'} <small style="color:#888;">(${lessons.length}건)</small></h3>
+        <h3 style="margin:0 0 8px;">${weekOnly ? '🌱 이번 주 학습' : '📚 지식 노트 전체'} <small style="color:var(--text-mid);">(${lessons.length}건)</small></h3>
         ${weekOnly ? '' : `<div class="ao-week-line">🌱 이번 주 +${aoWeekLessons}건</div>`}
         ${bodyHtml}
     </div>`;
@@ -12291,7 +12291,7 @@ window.aoOpenFeedbackModal = async function() {
     overlay.className = 'modal-overlay ao-feedback-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">🧰 실패 수집함 <small style="color:#888;">(${fails.length}건 — 쌓이면 "실패수집함 정리하자"로 함께 학습)</small></h3>
+        <h3 style="margin:0 0 8px;">🧰 실패 수집함 <small style="color:var(--text-mid);">(${fails.length}건 — 쌓이면 "실패수집함 정리하자"로 함께 학습)</small></h3>
         <div style="max-height:64vh;overflow-y:auto;">${body}</div>
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -12306,7 +12306,7 @@ window.aoToggleFailText = function(id, el) {
         el.innerHTML = aoEsc(short) + ' <span style="color:#3b82f6;font-size:12px;">[전체보기]</span>';
         el.dataset.open = '0';
     } else {
-        el.innerHTML = aoEsc(full) + ' <span style="color:#888;font-size:12px;">[접기]</span>';
+        el.innerHTML = aoEsc(full) + ' <span style="color:var(--text-mid);font-size:12px;">[접기]</span>';
         el.dataset.open = '1';
     }
 };
@@ -12547,18 +12547,18 @@ window.aoOpenReport = async function(runId) {
         if (rev.error) return `<div class="ao-review-box ao-review-warn">🔍 ${who} 검수: ${aoEsc(rev.error)}</div>`;
         const pass = rev.verdict === '통과';
         return `<div class="ao-review-box ${pass ? 'ao-review-ok' : 'ao-review-warn'}">
-            <div class="ao-review-head">🔍 ${who} 검수: ${pass ? '✅ 통과' : '⚠️ 보완 의견'} <small style="color:#888;">(최종 판단은 대표님)</small></div>
+            <div class="ao-review-head">🔍 ${who} 검수: ${pass ? '✅ 통과' : '⚠️ 보완 의견'} <small style="color:var(--text-mid);">(최종 판단은 대표님)</small></div>
             ${rev.comment ? `<div class="ao-review-item">💬 ${aoEsc(rev.comment)}</div>` : ''}
             ${(rev.items || []).map(it => `<div class="ao-review-item">${it.ok ? '✅' : '⚠️'} <strong>${aoEsc(it.name)}</strong> — ${aoEsc(it.comment || '')}</div>`).join('')}
             ${(rev.fill_items || []).length ? `<div class="ao-review-item">✏️ <strong>대표가 채울 항목:</strong> ${rev.fill_items.map(aoEsc).join(', ')}</div>` : ''}
-            ${rev.suggestion ? `<div class="ao-review-sug">💡 수정 제안: ${aoEsc(rev.suggestion)}<br><small style="color:#888;">반영하려면 지시 입력바에 "수정 반영해줘"라고 지시해주세요 (1회 재작성)</small></div>` : ''}
+            ${rev.suggestion ? `<div class="ao-review-sug">💡 수정 제안: ${aoEsc(rev.suggestion)}<br><small style="color:var(--text-mid);">반영하려면 지시 입력바에 "수정 반영해줘"라고 지시해주세요 (1회 재작성)</small></div>` : ''}
         </div>`;
     };
     // 지시 #44: 한수 검산 블록 (0원 코드 검산 — 자동 보정 없음, 오차 있는 그대로)
     const aoAuditBlock = ac => {
         if (!ac) return '';
         return `<div class="ao-review-box ${ac.ok ? 'ao-review-ok' : 'ao-review-warn'}">
-            <div class="ao-review-head">🧮 한수 검산: ${ac.ok ? '✅ 일치' : `⚠️ 오차 ${Math.round(ac.diff_won || 0).toLocaleString()}원`} <small style="color:#888;">(순수 코드 재검산 — 자동 보정 없음)</small></div>
+            <div class="ao-review-head">🧮 한수 검산: ${ac.ok ? '✅ 일치' : `⚠️ 오차 ${Math.round(ac.diff_won || 0).toLocaleString()}원`} <small style="color:var(--text-mid);">(순수 코드 재검산 — 자동 보정 없음)</small></div>
             ${(ac.checks || []).map(c => `<div class="ao-review-item">${c.ok ? '✅' : '⚠️'} ${aoEsc(c.name)}${c.note ? ' — ' + aoEsc(c.note) : ''}</div>`).join('')}
         </div>`;
     };
@@ -12577,7 +12577,7 @@ window.aoOpenReport = async function(runId) {
         ${aoReviewBlock(rep.review)}
         ${rep.date_warning ? `<div class="ao-review-box ao-review-warn">${aoEsc(rep.date_warning)}</div>` : ''}
         ${missing.length ? `<div class="ao-missing-box">✏️ <strong>채워야 할 항목:</strong> ${missing.map(aoEsc).join(', ')}
-            <span style="color:#888;font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
+            <span style="color:var(--text-mid);font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
         ${rep.title_error ? `<div class="ao-soon-note" style="margin-bottom:6px;">⚠️ ${aoEsc(rep.title_error)}</div>` : ''}
         <h4 class="ao-sec-title">✍️ ${aoEsc(rep.channel)} 카피${(() => {
             // 지시 #39: 구 저장분(run #60 등) 방어 — 제목에 파편 흔적이 있으면 노출하지 않고 사유 표시
@@ -12597,7 +12597,7 @@ window.aoOpenReport = async function(runId) {
         const t = rep.totals || {};
         const fails = (rep.sections || []).flatMap(s => (s.results || []).filter(r => !r.pass).map(r => ({ agent: s.agent, ...r })));
         body = `
-        <h4 class="ao-sec-title">🧪 요원별 통과율 <small style="color:#888;">(소요 ${rep.duration_s || '-'}초)</small></h4>
+        <h4 class="ao-sec-title">🧪 요원별 통과율 <small style="color:var(--text-mid);">(소요 ${rep.duration_s || '-'}초)</small></h4>
         <div class="ao-report-table-wrap"><table class="ao-report-table">
             <thead><tr><th>요원</th><th>통과</th><th>통과율</th></tr></thead>
             <tbody>
@@ -12614,7 +12614,7 @@ window.aoOpenReport = async function(runId) {
         <h4 class="ao-sec-title">❌ 실패 상세 (${fails.length}건)</h4>
         <div class="ao-report-table-wrap"><table class="ao-report-table">
             <thead><tr><th>요원</th><th>항목</th><th>기대</th><th>실제</th></tr></thead>
-            <tbody>${fails.map(f => `<tr><td>${aoEsc(f.agent)}</td><td>${aoEsc(f.name)}${f.note ? '<br><small style="color:#999;">' + aoEsc(f.note) + '</small>' : ''}</td>
+            <tbody>${fails.map(f => `<tr><td>${aoEsc(f.agent)}</td><td>${aoEsc(f.name)}${f.note ? '<br><small style="color:var(--text-mid);">' + aoEsc(f.note) + '</small>' : ''}</td>
                 <td>${aoEsc(f.expected)}</td><td class="ao-down">${aoEsc(f.actual)}</td></tr>`).join('')}</tbody>
         </table></div>` : '<div class="ao-result-box">✅ 전 항목 통과</div>'}
         <h4 class="ao-sec-title">📋 전체 결과</h4>
@@ -12656,8 +12656,8 @@ window.aoOpenReport = async function(runId) {
         } else {
             const t = st.totals || {};
             const diffCell = st.prev
-                ? `<span class="${st.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${st.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(st.prev.diff)).toLocaleString()}원</span> <small style="color:#888;">(직전 ${aoEsc(st.prev.label || '')} ${won(st.prev.total)})</small>`
-                : '<span style="color:#999;">이전 기록 없음</span>';
+                ? `<span class="${st.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${st.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(st.prev.diff)).toLocaleString()}원</span> <small style="color:var(--text-mid);">(직전 ${aoEsc(st.prev.label || '')} ${won(st.prev.total)})</small>`
+                : '<span style="color:var(--text-mid);">이전 기록 없음</span>';
             stBody = `
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>구분</th><th>금액</th></tr></thead>
@@ -12672,9 +12672,9 @@ window.aoOpenReport = async function(runId) {
             </table></div>`;
         }
         body = `
-        <h4 class="ao-sec-title">📅 ${aoEsc(rep.date_label || rep.date)} 일별 정산 <small style="color:#888;">(정산관리 캘린더 기준)</small></h4>
+        <h4 class="ao-sec-title">📅 ${aoEsc(rep.date_label || rep.date)} 일별 정산 <small style="color:var(--text-mid);">(정산관리 캘린더 기준)</small></h4>
         ${settBody}
-        <h4 class="ao-sec-title">📒 정산현황 기록 <small style="color:#888;">(재무현황 입력 탭 기준)</small></h4>
+        <h4 class="ao-sec-title">📒 정산현황 기록 <small style="color:var(--text-mid);">(재무현황 입력 탭 기준)</small></h4>
         ${stBody}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'semi_status') {
@@ -12688,8 +12688,8 @@ window.aoOpenReport = async function(runId) {
         } else {
             const t = rep.totals || {};
             const diffCell = rep.prev
-                ? `<span class="${rep.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${rep.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(rep.prev.diff)).toLocaleString()}원</span> <small style="color:#888;">(직전 ${aoEsc(rep.prev.label)} ${won(rep.prev.total)})</small>`
-                : '<span style="color:#999;">이전 기록 없음</span>';
+                ? `<span class="${rep.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${rep.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(rep.prev.diff)).toLocaleString()}원</span> <small style="color:var(--text-mid);">(직전 ${aoEsc(rep.prev.label)} ${won(rep.prev.total)})</small>`
+                : '<span style="color:var(--text-mid);">이전 기록 없음</span>';
             body = `
             <h4 class="ao-sec-title">📒 정산현황 ${aoEsc(rep.date_label || rep.date)}</h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
@@ -12723,7 +12723,7 @@ window.aoOpenReport = async function(runId) {
     } else if (rep.type === 'maru_schedule') {
         // 7차: 마루 일정 직접 처리 보고서
         body = `
-        <h4 class="ao-sec-title">📅 일정 ${aoEsc(rep.op || '조회')}${rep.from ? ` <small style="color:#888;">(${rep.from} ~ ${rep.to})</small>` : ''}</h4>
+        <h4 class="ao-sec-title">📅 일정 ${aoEsc(rep.op || '조회')}${rep.from ? ` <small style="color:var(--text-mid);">(${rep.from} ~ ${rep.to})</small>` : ''}</h4>
         ${(rep.items || []).length
             ? `<div class="ao-result-box">${rep.items.map(i => '<div>· ' + aoEsc(i) + '</div>').join('')}</div>`
             : '<div class="ao-empty-note">해당 기간 등록된 일정이 없습니다</div>'}
@@ -12741,7 +12741,7 @@ window.aoOpenReport = async function(runId) {
                          <div style="height:10px;background:#eee;border-radius:6px;overflow:hidden;">
                            <div id="ao-mgfill-${i}" style="height:100%;width:0%;background:linear-gradient(90deg,#F5C800,#e67700);transition:width .5s ease;"></div>
                          </div>
-                         <div style="font-size:11px;color:#999;">${o.media === '영상' ? '영상은 최대 6분 걸려요 — 완료되면 여기 바로 나옵니다 (나가지 않으셔도 돼요)' : '잠시만요 — 완료되면 이미지가 여기 바로 나옵니다 (나가지 않으셔도 돼요)'}</div>
+                         <div style="font-size:11px;color:var(--text-mid);">${o.media === '영상' ? '영상은 최대 6분 걸려요 — 완료되면 여기 바로 나옵니다 (나가지 않으셔도 돼요)' : '잠시만요 — 완료되면 이미지가 여기 바로 나옵니다 (나가지 않으셔도 돼요)'}</div>
                        </div>` : '';
             }
             const c = o.media === '영상' ? { b: '약 1,100원', g: '약 4,400원', ico: '🎬' } : { b: '약 92원', g: '약 185원', ico: '🎨' };
@@ -12756,7 +12756,7 @@ window.aoOpenReport = async function(runId) {
         const files = (rep.media_files || []).map(f =>
             `<div class="ao-gen-file${isImg(f) ? ' ao-gen-file-img' : ''}">
              ${isImg(f) ? `<img id="ao-thumb-${f.file_id}" class="ao-media-thumb" alt="생성 이미지 (탭하면 크게)" onclick="aoPreviewImage(${f.file_id})">` : ''}
-             <span>📎 ${aoEsc(f.file_name)} <small style="color:#888;">(${aoEsc(f.grade)} · 약 ${(f.est_krw || 0).toLocaleString()}원)</small></span>
+             <span>📎 ${aoEsc(f.file_name)} <small style="color:var(--text-mid);">(${aoEsc(f.grade)} · 약 ${(f.est_krw || 0).toLocaleString()}원)</small></span>
              <button class="ao-fb-btn" onclick="aoDownloadFile(${f.file_id})">다운로드</button></div>`).join('');
         // 썸네일은 모달 삽입 직후 인증 fetch로 로드 (blob URL 캐시)
         const imgIds = (rep.media_files || []).filter(isImg).map(f => f.file_id);
@@ -12789,13 +12789,13 @@ window.aoOpenReport = async function(runId) {
         // 4.5단계 ⑤: 기간 비교 보고서
         const won = n => Math.round(n || 0).toLocaleString() + '원';
         const pcell = (diff, pct) => pct === null || pct === undefined
-            ? '<span style="color:#999;">데이터 없음</span>'
+            ? '<span style="color:var(--text-mid);">데이터 없음</span>'
             : `<span class="${diff >= 0 ? 'ao-up' : 'ao-down'}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% (${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString()}원)</span>`;
         if (rep.zero_result) {
             body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.a.label)} · ${aoEsc(rep.b.label)} 모두 정산 데이터가 없습니다</div>`;
         } else {
             body = `
-            <h4 class="ao-sec-title">📊 총액 비교 <small style="color:#888;">(증감 = ${aoEsc(rep.a.label)} 대비 ${aoEsc(rep.b.label)})</small></h4>
+            <h4 class="ao-sec-title">📊 총액 비교 <small style="color:var(--text-mid);">(증감 = ${aoEsc(rep.a.label)} 대비 ${aoEsc(rep.b.label)})</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>구분</th><th>${aoEsc(rep.a.label)}</th><th>${aoEsc(rep.b.label)}</th><th>증감</th></tr></thead>
                 <tbody>
@@ -12812,7 +12812,7 @@ window.aoOpenReport = async function(runId) {
                     `<tr><td>${aoEsc(p.partner)}</td><td>${won(p.a)}</td><td>${won(p.b)}</td><td>${pcell(p.diff, p.pct)}</td></tr>`).join('')}
                 </tbody>
             </table></div>
-            <h4 class="ao-sec-title">📦 품목 TOP ${(rep.items || []).length} <small style="color:#888;">(합집합 ${rep.items_total}종 중)</small></h4>
+            <h4 class="ao-sec-title">📦 품목 TOP ${(rep.items || []).length} <small style="color:var(--text-mid);">(합집합 ${rep.items_total}종 중)</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>품목</th><th>${aoEsc(rep.a.label)}</th><th>${aoEsc(rep.b.label)}</th><th>증감</th></tr></thead>
                 <tbody>${(rep.items || []).map(i =>
@@ -12828,20 +12828,20 @@ window.aoOpenReport = async function(runId) {
             body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.period.label)} 정산 데이터가 없습니다${rep.nearest_month ? ' — 가장 가까운 달: ' + aoEsc(rep.nearest_month) : ''}</div>`;
         } else {
             body = `
-            <h4 class="ao-sec-title">🏆 ${aoEsc(rep.period.label)} 품목 기여 순위 <small style="color:#888;">(${rep.period.from} ~ ${rep.period.to} · 상품 총액 ${won(rep.product_total)})</small></h4>
+            <h4 class="ao-sec-title">🏆 ${aoEsc(rep.period.label)} 품목 기여 순위 <small style="color:var(--text-mid);">(${rep.period.from} ~ ${rep.period.to} · 상품 총액 ${won(rep.product_total)})</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>순위</th><th>품목</th><th>수량</th><th>매출액</th><th>비중</th></tr></thead>
                 <tbody>${(rep.rows || []).map(r =>
                     `<tr><td>${r.rank}</td><td>${aoEsc(r.name)}</td><td>${(r.qty || 0).toLocaleString()}</td><td>${won(r.amount)}</td><td>${r.share}%</td></tr>`).join('')}
-                ${rep.shown_all || (rep.rows || []).length >= rep.rows_total ? '' : `<tr><td colspan="5" style="color:#888;">… 전체 ${rep.rows_total}종 중 TOP ${(rep.rows || []).length} 표시 — "전부"라고 지시하면 전 품목</td></tr>`}
+                ${rep.shown_all || (rep.rows || []).length >= rep.rows_total ? '' : `<tr><td colspan="5" style="color:var(--text-mid);">… 전체 ${rep.rows_total}종 중 TOP ${(rep.rows || []).length} 표시 — "전부"라고 지시하면 전 품목</td></tr>`}
                 </tbody>
             </table></div>
             ${(rep.series || []).length ? `
-            <h4 class="ao-sec-title">🧺 계열 합계 <small style="color:#888;">(규격 2종 이상)</small></h4>
+            <h4 class="ao-sec-title">🧺 계열 합계 <small style="color:var(--text-mid);">(규격 2종 이상)</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>계열</th><th>수량</th><th>매출액</th><th>비중</th></tr></thead>
                 <tbody>${rep.series.map(s =>
-                    `<tr><td>${aoEsc(s.name)} <small style="color:#888;">(${s.members}종)</small></td><td>${(s.qty || 0).toLocaleString()}</td><td>${won(s.amount)}</td><td>${s.share}%</td></tr>`).join('')}
+                    `<tr><td>${aoEsc(s.name)} <small style="color:var(--text-mid);">(${s.members}종)</small></td><td>${(s.qty || 0).toLocaleString()}</td><td>${won(s.amount)}</td><td>${s.share}%</td></tr>`).join('')}
                 </tbody>
             </table></div>` : ''}
             <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
@@ -12875,7 +12875,7 @@ window.aoOpenReport = async function(runId) {
         // 대표 7/22: 예리 인스타 결과물 (아이디·영상방향·대본·문구·분석)
         const kindLabel = { 아이디추천: '📛 계정 아이디 추천', 영상방향: '🎬 영상 방향·컨셉', 대본: '📝 릴스 대본', 게시물문구: '✍️ 게시물 문구', 성과분석: '📊 성과 분석' }[rep.kind] || '📱 인스타';
         body = `
-        <h4 class="ao-sec-title">${kindLabel}${rep.business && rep.business !== '미정' ? ` <small style="color:#888;">(${aoEsc(rep.business)})</small>` : ''}</h4>
+        <h4 class="ao-sec-title">${kindLabel}${rep.business && rep.business !== '미정' ? ` <small style="color:var(--text-mid);">(${aoEsc(rep.business)})</small>` : ''}</h4>
         <pre class="ao-copy-body" id="ao-yeri-${run.id}" style="white-space:pre-wrap;word-break:break-word;">${aoEsc(rep.body || '')}</pre>
         <button class="ao-fb-btn" onclick="aoCopyText('ao-yeri-${run.id}')">📋 복사</button>
         ${rep.hashtags ? `<h4 class="ao-sec-title">🏷 해시태그</h4><div class="ao-result-box" style="word-break:break-word;">${aoEsc(rep.hashtags)}</div>` : ''}
@@ -12895,10 +12895,10 @@ window.aoOpenReport = async function(runId) {
         // 지시 #15: 주차×거래처 정산 (주간 정산 현황 화면과 동일 계산)
         const won = n => Math.round(n || 0).toLocaleString() + '원';
         if (rep.zero_result) {
-            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 기록이 없습니다${rep.hint ? '<br><span style="font-size:11px;color:#999;">' + aoEsc(rep.hint) + '</span>' : ''}</div>`;
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 기록이 없습니다${rep.hint ? '<br><span style="font-size:11px;color:var(--text-mid);">' + aoEsc(rep.hint) + '</span>' : ''}</div>`;
         } else if (rep.cj) {
             body = `
-            <h4 class="ao-sec-title">🚚 ${aoEsc(rep.label)} CJ대한통운 택배비 <small style="color:#888;">(${rep.from} ~ ${rep.to})</small></h4>
+            <h4 class="ao-sec-title">🚚 ${aoEsc(rep.label)} CJ대한통운 택배비 <small style="color:var(--text-mid);">(${rep.from} ~ ${rep.to})</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <tbody>
                 <tr><td>박스 수 (대성·효돈·기타 합산)</td><td>${(rep.boxes || 0).toLocaleString()}개</td></tr>
@@ -12909,7 +12909,7 @@ window.aoOpenReport = async function(runId) {
             <p class="ao-rep-note">ℹ️ 주간 정산 현황 화면과 동일 계산</p>`;
         } else {
             body = `
-            <h4 class="ao-sec-title">📅 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 <small style="color:#888;">(${rep.from} ~ ${rep.to})</small></h4>
+            <h4 class="ao-sec-title">📅 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 <small style="color:var(--text-mid);">(${rep.from} ~ ${rep.to})</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <tbody>
                 <tr><td>정산 건수</td><td>${rep.count || 0}건</td></tr>
@@ -12923,12 +12923,12 @@ window.aoOpenReport = async function(runId) {
         // 대표 7/22: 품목별 결제가(단가) 이력 — 거래처별 · 주(날짜범위)별 단가 그리드 (매출 아님)
         const wonCell = n => (n === null || n === undefined) ? '<span style="color:#bbb;">—</span>' : `${Math.round(n).toLocaleString()}원`;
         if (rep.zero_result) {
-            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.period.label)}${rep.partner ? ' · ' + aoEsc(rep.partner) : ''} 품목별 결제가(단가) 이력이 없습니다${rep.nearest_month ? '<br><span style="font-size:11px;color:#999;">단가가 등록된 가장 가까운 달: ' + aoEsc(rep.nearest_month) + '</span>' : ''}</div>`;
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.period.label)}${rep.partner ? ' · ' + aoEsc(rep.partner) : ''} 품목별 결제가(단가) 이력이 없습니다${rep.nearest_month ? '<br><span style="font-size:11px;color:var(--text-mid);">단가가 등록된 가장 가까운 달: ' + aoEsc(rep.nearest_month) + '</span>' : ''}</div>`;
         } else {
             body = `
             <div class="ao-result-box" style="background:#f0f7ff;border-left:3px solid #4c6ef5;">💰 <strong>결제가(단가) 이력</strong> — 매출액이 아니라 그 시기의 <strong>단가</strong>입니다. 결제가는 주마다 변동돼요.</div>
             ${(rep.partners || []).map(p => `
-                <h4 class="ao-sec-title" style="margin-top:14px;">🏪 ${aoEsc(p.partner)} <small style="color:#888;">(${p.weeks.length}주)</small></h4>
+                <h4 class="ao-sec-title" style="margin-top:14px;">🏪 ${aoEsc(p.partner)} <small style="color:var(--text-mid);">(${p.weeks.length}주)</small></h4>
                 <div class="ao-report-table-wrap"><table class="ao-report-table">
                     <thead><tr><th>품목</th>${p.weeks.map(w => `<th>${aoEsc(w.label)}</th>`).join('')}</tr></thead>
                     <tbody>
@@ -12945,7 +12945,7 @@ window.aoOpenReport = async function(runId) {
             body = `
             <h4 class="ao-sec-title">🔍 ${aoEsc(rep.title)}</h4>
             <div class="ao-placeholder-box ao-soon-note">📭 "${aoEsc(rep.keyword)}" 품목을 찾을 수 없습니다<br>
-            <span style="font-size:11px;color:#999;">(조회 기간: ${rep.period.from} ~ ${rep.period.to})</span></div>
+            <span style="font-size:11px;color:var(--text-mid);">(조회 기간: ${rep.period.from} ~ ${rep.period.to})</span></div>
             ${rep.available_items && rep.available_items.length ? `
             <h4 class="ao-sec-title">📦 해당 기간 등록 품목 (${rep.available_items.length}종)</h4>
             <div class="ao-tool-list">${rep.available_items.map(n => '<span class="ao-knowledge-badge">' + aoEsc(n) + '</span>').join('')}</div>`
@@ -12953,7 +12953,7 @@ window.aoOpenReport = async function(runId) {
             <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
         } else {
             body = `
-            <h4 class="ao-sec-title">🔍 ${aoEsc(rep.title)} <small style="color:#888;">(${rep.period.from} ~ ${rep.period.to})</small></h4>
+            <h4 class="ao-sec-title">🔍 ${aoEsc(rep.title)} <small style="color:var(--text-mid);">(${rep.period.from} ~ ${rep.period.to})</small></h4>
             <div class="ao-report-table-wrap"><table class="ao-report-table">
                 <thead><tr><th>품목 (규격별)</th><th>수량</th><th>금액</th></tr></thead>
                 <tbody>
@@ -12968,7 +12968,7 @@ window.aoOpenReport = async function(runId) {
         }
     } else if (rep.type === 'semi_settlement') {
         const pctCell = (pct, diff) => {
-            if (pct === null || pct === undefined) return '<span style="color:#999;">전년 데이터 없음</span>';
+            if (pct === null || pct === undefined) return '<span style="color:var(--text-mid);">전년 데이터 없음</span>';
             const cls = diff >= 0 ? 'ao-up' : 'ao-down';
             return `<span class="${cls}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% (${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString()}원)</span>`;
         };
@@ -12994,7 +12994,7 @@ window.aoOpenReport = async function(runId) {
                 <tbody>
                     <tr><td>이번 주</td><td>${w.from} ~ ${w.to}</td><td>${won(w.product_total)}</td><td>${won(w.cj_fee)}</td><td><strong>${won(w.payment_total)}</strong></td></tr>
                     <tr><td>이번 달</td><td>${m.from} ~ ${m.to}</td><td>${won(m.product_total)}</td>
-                        <td>${won(cjMonthTotal)}${m.cj_carryover ? `<br><small style="color:#888;">(당월 ${won(m.cj_fee)} + 이월 ${won(m.cj_carryover)})</small>` : ''}</td>
+                        <td>${won(cjMonthTotal)}${m.cj_carryover ? `<br><small style="color:var(--text-mid);">(당월 ${won(m.cj_fee)} + 이월 ${won(m.cj_carryover)})</small>` : ''}</td>
                         <td><strong>${won(m.payment_total)}</strong></td></tr>
                     <tr><td>전년 동기<br><small>(상품 기준)</small></td><td>${rep.prev.from} ~ ${rep.prev.to}</td><td>${won(rep.prev.total)}</td><td>—</td><td>${pctCell(rep.total_pct, rep.total_diff)}</td></tr>
                 </tbody>
@@ -13007,7 +13007,7 @@ window.aoOpenReport = async function(runId) {
                     `<tr class="ao-partner-head"><td colspan="3">🏢 ${aoEsc(p.partner)}</td></tr>` +
                     (p.items.length
                         ? p.items.map(i => `<tr><td>${aoEsc(i.name)}</td><td>${(i.qty || 0).toLocaleString()}</td><td>${won(i.amount)}</td></tr>`).join('')
-                        : '<tr><td colspan="3" style="color:#999;">품목 정보 없음</td></tr>') +
+                        : '<tr><td colspan="3" style="color:var(--text-mid);">품목 정보 없음</td></tr>') +
                     `<tr class="ao-partner-sum"><td><strong>거래처 합계 (${p.count}건)</strong></td><td></td><td><strong>${won(p.total)}</strong></td></tr>`
                 ).join('')}
                 <tr class="ao-partner-head"><td colspan="3">🚚 CJ택배</td></tr>

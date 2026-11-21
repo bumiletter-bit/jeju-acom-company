@@ -17,13 +17,13 @@
     <link rel="stylesheet" href="theme.css?v=16">
     <link rel="stylesheet" href="ao-desk.css?v=93">
     <link rel="stylesheet" href="ao-inbox.css?v=6">
-    <link rel="stylesheet" href="ao-ordermemo.css?v=59">
+    <link rel="stylesheet" href="ao-ordermemo.css?v=60">
     <link rel="stylesheet" href="ao-exp.css?v=17">
     <link rel="stylesheet" href="final-order.css?v=39">
     <link rel="stylesheet" href="order-organizer.css?v=3">
     <link rel="stylesheet" href="noti-history.css?v=3">
     <link rel="stylesheet" href="event-admin.css?v=7">
-    <link rel="stylesheet" href="ao-dark.css?v=12">
+    <link rel="stylesheet" href="ao-dark.css?v=13">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -307,6 +307,10 @@
                     .rank-kw-msg { margin-top: 8px; font-size: 12px; color: #667085; min-height: 1em; }
                     .rank-kw-msg.err { color: #B42318; }
                     .rank-auto-note { margin: -4px 0 12px; font-size: 13px; color: #344054; }
+                    /* #1221 야간 — 이 <style> 은 생성기(gen-dark.js)가 읽지 않고 ao-dark.css 보다 뒤라, 같은 자리에서 점수 높은 선택자로 테마 변수를 줌(밝은 화면 무변경) */
+                    html[data-ao-theme="dark"] #rank-kw-card .rank-kw-sub, html[data-ao-theme="dark"] .rank-kw-empty, html[data-ao-theme="dark"] .rank-kw-msg { color: var(--text-mid); }
+                    html[data-ao-theme="dark"] .rank-kw-msg.err { color: var(--d-err); }
+                    html[data-ao-theme="dark"] .rank-auto-note { color: var(--text-dark); }
                     .rank-auto-badge { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #ECFDF3; color: #067647; font-size: 11px; font-weight: 700; vertical-align: 1px; }
                     @media (max-width: 960px), (pointer: coarse) {
                         .rank-kw-chip { min-height: 44px; }
@@ -2477,7 +2481,7 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=459"></script>
+    <script src="app.js?v=460"></script>
     <script src="ao-desk.js?v=124"></script>
     <script src="ao-inbox.js?v=14"></script>
     <script src="ao-ordermemo.js?v=86"></script>
