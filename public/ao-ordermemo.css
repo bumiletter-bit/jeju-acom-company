@@ -391,6 +391,16 @@ html[data-ao-theme="dark"] .om-link { color: #8C94FF; }
 .om-addr-c small { color: var(--d-sub); font-weight: 600; }
 html[data-ao-theme="dark"] .om-addr[data-k="ok"] { color: #4ADE80; }
 html[data-ao-theme="dark"] .om-addr[data-k="warn"] { color: #FBBF4A; }
+/* #1248 도로명 건물 줄(🏢) = 확인됨 초록 글 아래 보통 글 · 이름 굵게 · 일치·넣었어요 옅게 · 손님이 건물명을 적었으면 [주소에 넣기]는 보조(옅게) · 덤 알약은 경고 색(셈 안 함) */
+.om-bd { display: block; margin-top: 4px; font-weight: 600; color: var(--d-ink); }
+.om-bd-n { font-weight: 800; }
+.om-bd.many .om-bd-i { display: block; padding-left: 1.4em; }   /* 이름 여럿 = 이름마다 한 줄 */
+.om-bd-ok, .om-bd small { color: var(--d-sub); font-weight: 600; }
+.om-link.om-bd-sub { color: var(--d-sub); text-decoration-color: currentColor; }
+.om-pill.k-bdchk { background: var(--warn-bg); color: var(--warn-ink); box-shadow: inset 0 0 0 1px #FEC84B; }
+html[data-ao-theme="dark"] .om-bd { color: #E5E7EB; }
+html[data-ao-theme="dark"] .om-link.om-bd-sub { color: #A5ABC3; }
+html[data-ao-theme="dark"] .om-pill.k-bdchk { background: #4A3A12; color: #FBBF4A; box-shadow: inset 0 0 0 1px rgba(251, 191, 74, .45); }
 /* #850-f 입력 칸 줄마다 × */
 .om-in textarea.has-xs { padding-right: 44px; }
 .om-in-mirror { position: absolute; left: 0; top: 0; width: 100%; visibility: hidden; pointer-events: none; padding: 12px 44px 12px 16px; font: inherit; font-size: 15px; line-height: 26px; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; box-sizing: border-box; }

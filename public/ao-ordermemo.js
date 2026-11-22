@@ -2280,13 +2280,48 @@
     // ── #850-g 현금 줄 주소 확인 = 최종발주 #528 꼴(GET /api/agent-office/juso · 주소 정리기 splitAddr·searchBody·exactMatches) · 1건 = 확인됨 · 여러 건 = 고르기 · 못 찾음 = 확인 필요(빈칸으로 셈 · 「이대로 둘게요」)
     //   상세(동·호수)는 적은 그대로 붙임 · 칸 값은 사람이 [도로명으로 바꾸기]·후보를 눌러야만 바뀜(치는 중에 덮지 않음) · 과호출 = 서버 캐시·상한 그대로
     //   #871 우리 꼴 = 「도로명 본 주소, 세부주소」(세부가 이미 쉼표로 시작해도 한 번만)
-    const addrText = (j, detail) => { const d = String(detail || '').replace(/^[,\s]+/, '').trim(); return String(j.roadAddrPart1 || '').trim() + (d ? ', ' + d : ''); };
+    //   #1248(대표 11/22) 도로명 건물 = 「도로명, 건물명 손님 상세」 · 넣는 것은 도로명과 손님이 안 적은 건물명뿐(손님 상세는 한 글자도 안 바꿈 · 자리 = 쉼표 뒤 · 손님 상세 앞)
+    //     저절로 끼움 = 손님이 건물명을 안 적음(상세가 숫자로 시작하거나 비었음) + 공동주택(bdKdcd 1) + 그 도로명 건물 이름이 하나 · 그 밖(손님이 적음·공동주택 아님·여럿) = 이름만 보여 주고 [주소에 넣기]
+    const addrText = (j, detail, bd) => { const d = String(detail || '').replace(/^[,\s]+/, '').trim(); return String(j.roadAddrPart1 || '').trim() + (bd ? ', ' + bd + (d ? ' ' + d : '') : (d ? ', ' + d : '')); };
+    function bdOf(j, list) {   // #1248 같은 도로명(roadAddrPart1) 줄들의 건물 이름 · 공동주택 여부 · 동 목록
+        const p1 = String(j.roadAddrPart1 || '').trim(), same = (list || [j]).filter(x => String(x.roadAddrPart1 || '').trim() === p1 && String(x.bdNm || '').trim());
+        const names = [...new Set(same.map(x => String(x.bdNm).trim()))];
+        return { p1, names, apt: names.length > 0 && same.every(x => String(x.bdKdcd) === '1') };   /* 동 목록(detBdNmList)은 안 씀(대표 11/22 「없는 동?」 안 함) */
+    }
+    const bdCust = d => { const s = String(d || '').replace(/^[,\s]+/, '').trim(); if (!s || /^[A-Za-z]?\d/.test(s) || /^[A-Za-z]\s*동/.test(s) || /^지하/.test(s)) return ''; const m = /^(.*?)(?=\s*(?:[A-Za-z]?\d+\s*(?:동|호|층)(?![가-힣])|\d+\s*-\s*\d+))/.exec(s); return (m ? m[1] : s).replace(/[,\s]+$/, '').trim(); };   /* #1248 손님이 상세 앞에 적은 건물명(없으면 '') */
+    const bdKey = s => String(s || '').replace(/\s+/g, '').replace(/아파트|APT|apt/g, '');
+    function bdSame(c, n) {   // #1248 손님 이름 ↔ 도로명 건물 이름 = 숫자 묶음 같고 손님 한글(2자↑)이 그 이름 안에 순서대로 다 있을 때만 「일치」(애매하면 일치 아님 · 표시만 달라짐)
+        const a = bdKey(c), b = bdKey(n), dg = s => (s.match(/\d+/g) || []).join(',');
+        if (dg(a) !== dg(b)) return false;
+        const ha = a.replace(/[^가-힣]/g, ''), hb = b.replace(/[^가-힣]/g, ''); if (ha.length < 2) return false;
+        let i = 0; for (const ch of hb) if (ch === ha[i]) i++;
+        return i === ha.length;
+    }
+    function bdIn(d, n) {   // #1248-② 손님 상세 어디에든 그 건물명이 이미 있나(뒤에 적음 「101동 502호 삼성아파트」·숫자로 시작 「2차아이파크 101동」·띄어 씀) = 저절로 끼우지 않음 · 「일치」 표시
+        const k = bdKey(n); if (k && bdKey(d).includes(k)) return true;
+        return String(d || '').split(/[\s,()]+/).some(t => /[가-힣]{2}/.test(t) && bdSame(t.replace(/\d+\s*(?:동|호|층)$/, ''), n));
+    }
+    function bdHoAsk(d, cust) {   // #1248 공동주택 호수 알림(대표 11/22 · 알림만 · 애매하면 안 띄움): 손님 건물명을 뺀 상세에 숫자가 없으면 「동·호수」 · 「N동」 하나뿐이면 「호수」 · 그 밖 숫자(호·층·511-103·B01 등)가 있으면 없음
+        let s = String(d || ''); if (cust && s.startsWith(cust)) s = s.slice(cust.length);
+        if (!/\d/.test(s)) return /[A-Za-z가-힣]\s*동(?![가-힣])/.test(s) ? '호수를 확인해 주세요' : '동·호수를 확인해 주세요';
+        return /\d/.test(s.replace(/\d+\s*동(?![가-힣])/, '')) ? '' : '호수를 확인해 주세요';
+    }
+    function bdHtml(r, ri) {   // #1248 「🏢 도로명 건물: 이름」 줄 + [주소에 넣기]/[주소에서 빼기] · 공동주택 아님·여럿 = (확인 필요) · 공동주택 호수 알림(경고만 · 셈 안 함)
+        const A = r._addr, B = A && A.bd; if (!B || A.state !== 'one' || !B.names.length) return '';
+        const cell = String(r.cells[8] || '').trim(), d = String(A.detail || '').replace(/^[,\s]+/, '').trim();
+        const ins = n => B.p1 + ', ' + n + (d ? ' ' + d : ''), conf = !B.apt || B.names.length > 1;
+        const line = B.names.map((n, i) => { const on = cell === ins(n), same = !on && ((!!B.cust && bdSame(B.cust, n)) || bdIn(d, n));   /* #1248-① 「일치」 = 넣기 단추 없음(같은 이름이 두 번 들어가는 길 막음) */
+            return `<span class="om-bd-i"><b class="om-bd-n">${esc(n)}</b>${same ? '<span class="om-bd-ok"> · 일치</span>' : ''}${on ? '<span class="om-bd-ok"> · 주소에 넣었어요</span>' : ''}${same ? '' : ` <button type="button" class="om-link${B.cust && !on ? ' om-bd-sub' : ''}" data-cact="addrbd" data-ri="${ri}" data-v="${i}">${on ? '주소에서 빼기' : '주소에 넣기'}</button>`}</span>`; }).join('');
+        const pills = [], hq = bdHoAsk(d, B.cust); if (B.apt && hq) pills.push(hq);
+        return `<span class="om-bd${B.names.length > 1 ? ' many' : ''}" data-k="${conf ? 'chk' : ''}">🏢 ${conf ? '이 번지 건물' : '도로명 건물'}${conf ? ' <small>(확인 필요)</small>' : ''}: ${line}${pills.map(p => ` <span class="om-pill k-bdchk">${p}</span>`).join('')}</span>`;
+    }
+    const addrBtnLab = (A, cell) => { const B = A && A.bd, d = String((A && A.detail) || '').replace(/^[,\s]+/, '').trim(); return B && cell === B.p1 + (d ? ', ' + d : '') ? '건물명 넣기' : '도로명으로 바꾸기'; };   /* #1248-③ 도로명은 이미 같고 건물명만 다르면 무엇이 바뀌는지 분명하게(동작은 같음) */
     const addrBad = r => r.kind === 'cash' && !!r._addr && (r._addr.state === 'none' || r._addr.state === 'fail' || r._addr.state === 'multi') && !r._addr.kept && String(r.cells[8] || '').trim() === r._addr.raw;
     function addrKind(r) { const A = r._addr; if (!A) return ''; if (A.state === 'busy') return 'busy'; if (A.state === 'one') return 'ok'; return A.kept ? '' : 'warn'; }
     function addrHtml(r, ri) {
         const A = r._addr; if (!A) return '';
         if (A.state === 'busy') return '주소 확인 중…';
-        if (A.state === 'one') return `확인됨 · 도로명 ${esc(A.road)}${A.road !== String(r.cells[8] || '').trim() ? ` <button type="button" class="om-link" data-cact="addrset" data-ri="${ri}" data-v="one">도로명으로 바꾸기</button>` : ''}`;
+        if (A.state === 'one') return `확인됨 · 도로명 ${esc(A.road)}${A.road !== String(r.cells[8] || '').trim() ? ` <button type="button" class="om-link" data-cact="addrset" data-ri="${ri}" data-v="one">${addrBtnLab(A, String(r.cells[8] || '').trim())}</button>` : ''}${bdHtml(r, ri)}`;
         if (A.state === 'multi') return `주소 후보가 여러 개예요 · 골라 주세요<span class="om-addr-c">${A.cands.map((x, i) => `<button type="button" class="om-btn sm" data-cact="addrset" data-ri="${ri}" data-v="${i}">${esc(x.road)}${x.bd ? ` <small>${esc(x.bd)}</small>` : ''}</button>`).join('')}<button type="button" class="om-link" data-cact="addrkeep" data-ri="${ri}">적은 그대로</button></span>`;
         return A.kept ? '적은 주소 그대로 둬요' : `${A.state === 'fail' ? '주소 검색이 안 돼요' + (A.err ? '(' + esc(A.err) + ')' : '') + ' · ' : ''}주소를 확인해 주세요 <button type="button" class="om-link" data-cact="addrkeep" data-ri="${ri}">이대로 둘게요</button>`;
     }
@@ -2337,8 +2372,9 @@
                 const uniq = [...new Set(list.map(j => j.roadAddrPart1 + '|' + j.zipNo))];
                 const ex = !fallback && uniq.length > 1 ? oo.exactMatches(tries[0], list, A.detail) : [];
                 const one = !fallback && (list.length === 1 || uniq.length === 1) ? list[0] : ex.length === 1 ? ex[0] : null;
-                if (one) { A.state = 'one'; A.road = addrText(one, A.detail); }
-                else { A.state = 'multi'; A.cands = list.slice(0, 7).map(j => ({ road: addrText(j, A.detail), bd: String(j.bdNm || '') })); }
+                const cust = bdCust(A.detail), auto = B => (!cust && B.apt && B.names.length === 1 && !bdIn(A.detail, B.names[0])) ? B.names[0] : '';   // #1248 저절로 끼울 이름(없으면 '' · 상세에 이미 있으면 안 끼움)
+                if (one) { const B = Object.assign(bdOf(one, list), { cust }); A.state = 'one'; A.bd = B; A.road = addrText(one, A.detail, auto(B)); }
+                else { A.state = 'multi'; A.cands = list.slice(0, 7).map(j => { const B = Object.assign(bdOf(j, list), { cust }), an = auto(B); return { road: addrText(j, A.detail, an), bd: an ? '' : String(j.bdNm || ''), bdi: B }; }); }
             }
         } catch (e) { A.state = 'fail'; A.err = (e && e.message) || String(e); }
         return A;
@@ -2518,10 +2554,19 @@
                 }
                 return;
             }
-            const road = b.dataset.v === 'one' ? A.road : (A.cands[Number(b.dataset.v)] || {}).road; if (!road) return;
+            const cand = b.dataset.v === 'one' ? null : (A.cands[Number(b.dataset.v)] || {}), road = cand ? cand.road : A.road; if (!road) return;
+            const bd = cand ? cand.bdi : A.bd;   // #1248 고른 도로명의 건물 정보도 같이 기억(넣기·빼기 단추가 남게)
             setV(r, f, road); const el = $(fid(ri, f)); if (el) el.value = road;
-            acPut(road, { raw: road, state: 'one', road, detail: A.detail });   // #880 바꾼 도로명 = 확인됨으로 기억(다시 안 물음)
-            clearTimeout(r._addrT); r._addr = { state: 'one', raw: road, road, detail: A.detail }; touched(ri, f); clearTimeout(r._addrT); addrPaint(ri); return;
+            acPut(road, { raw: road, state: 'one', road, detail: A.detail, bd });   // #880 바꾼 도로명 = 확인됨으로 기억(다시 안 물음)
+            clearTimeout(r._addrT); r._addr = { state: 'one', raw: road, road, detail: A.detail, bd }; touched(ri, f); clearTimeout(r._addrT); addrPaint(ri); return;
+        }
+        if (a === 'addrbd') {   // #1248 도로명 건물 이름 넣기 ↔ 빼기(쉼표 뒤 · 손님 상세 앞 · 손님 상세는 그대로 · 저장은 종전 [저장])
+            const A = r && r._addr, B = A && A.bd, n = B && B.names[Number(b.dataset.v)]; if (!n) return; const f = CASH_FIELDS.find(x => x.i === 8);
+            const d = String(A.detail || '').replace(/^[,\s]+/, '').trim(), ins = B.p1 + ', ' + n + (d ? ' ' + d : ''), plain = B.p1 + (d ? ', ' + d : '');
+            const road = String(r.cells[8] || '').trim() === ins ? plain : ins;
+            setV(r, f, road); const el = $(fid(ri, f)); if (el) el.value = road;
+            acPut(road, { raw: road, state: 'one', road, detail: A.detail, bd: B });
+            clearTimeout(r._addrT); r._addr = { state: 'one', raw: road, road, detail: A.detail, bd: B }; touched(ri, f); clearTimeout(r._addrT); addrPaint(ri); return;
         }
         if (a === 'dupswap' || a === 'dupkeep') {   // #850-f 바꾸기 = 옛 줄 지우고 새 것 · 취소 = 카드 그대로(고치거나 그 줄 빼고 다시 저장)
             const q = c.dupAsk; if (!q) return; c.dupAsk = null;
