@@ -52,6 +52,10 @@ const KEEP_MS = process.env.VM_CENTER_KEEP_MS != null && process.env.VM_CENTER_K
 const KEEP_STATE = path.join(DIR, 'vm-center-keep.json');
 const KEEP_PHONE_BACKOFF_MS = 3 * 3600e3;   // 2단계·폰 승인 화면을 본 뒤 3시간은 다시 안 누름(텔레그램은 서버가 하루 1통)
 const CENTER_HOME = 'https://sell.smartstore.naver.com/#/home/dashboard';
+// #1242(대표 11/22 「왜 메모리 다 쓴 거야」) VM 메모리(커밋) 감시 = 1시간마다 여유를 재서 로그·heartbeat 에 남기고, 1GB 아래면 텔레그램(하루 1통) · 0 = 끔 · 윈도우 VM 에서만 잼
+const MEM_MS = process.env.VM_MEM_MS != null && process.env.VM_MEM_MS !== '' ? Number(process.env.VM_MEM_MS) : 3600e3;
+const MEM_LOW_MB = Number(process.env.VM_MEM_LOW_MB) || 1024;
+const MEM = { at: 0, free_mb: null, total_mb: null };   // 마지막으로 잰 값(heartbeat 에 같이 실림)
 const ALLOWED = 'mcp__aside__repl,mcp__aside__exec';   // 어사이드만(교차 점검 2 · 파일 읽기 도구는 .env 유출 길이라 막음)
 const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
 // claude 작업 폴더 = 늘 ~/.akkome/vm-out/<지시번호>(리포 밖 = 리포 CLAUDE.md 안 실림 · .env 있는 C:\akm-vm 도 피함 · aside MCP 는 user 설정이라 그대로)
@@ -134,7 +138,7 @@ async function audit(db, action, id, after) {
 async function heartbeat(db, state, orderId) {
     try {
         await db.query(`INSERT INTO agent_office_config (key, value) VALUES ('vm_heartbeat', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-            [JSON.stringify({ at: new Date().toISOString(), state, order_id: orderId || null, host: os.hostname(), pid: process.pid })]);
+            [JSON.stringify({ at: new Date().toISOString(), state, order_id: orderId || null, host: os.hostname(), pid: process.pid, ...(MEM.free_mb != null ? { commit_free_mb: MEM.free_mb, commit_total_mb: MEM.total_mb, mem_at: new Date(MEM.at).toISOString() } : {}) })]);   // #1242 커밋 여유(마지막으로 잰 값)
     } catch (e) { log('heartbeat 실패(무시): ' + e.message); }
 }
 const pidAlive = pid => { try { process.kill(Number(pid), 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); } };
@@ -326,6 +330,7 @@ function promptFor(o, opt) {
             ? `⑤이 일은 캡처·파일 저장·첨부를 하지 않는다(「ATTACH:」 줄 0 · #1105).`
             : `⑤파일(캡처·엑셀 등)을 넘겨야 하면 ${out} 폴더 안에 저장하고 답 맨 끝에 「ATTACH: <전체 경로>」 를 파일마다 한 줄씩 적는다(5개까지 · 10MB 이하).`,
         point || addr ? `⑥이 일은 지시당 ${mins}분 안에 끝내야 한다.` : `⑥이 일은 지시당 10분 안에 끝내야 한다.`,
+        `⑦뒷정리(#1242): 답을 쓰기 직전에 이 지시에서 새로 연 탭·창(톡톡·주문 상세 새 창·로그인 팝업 포함)을 모두 닫는다(closeTab). 지시가 「남겨 두라」고 한 탭과, 사람이 풀어야 해서 남기는 로그인·보안 확인 화면만 남긴다. 탭이 쌓이면 VM 메모리가 바닥난다.`,
         ...(point ? ['', ...POINT_STEPS] : []),
         ...(addr ? ['', ...ADDR_STEPS, `(i) 오늘 최종발주 = ${op.sentToday ? '이미 나감 → 저장했으면 끝 보고에 「⚠ 오늘 발주 나감 → 거래처(효돈/대성)에 주소 변경 연락 필요」 한 줄(저장은 그대로 한다)' : '아직 안 나감(거래처 연락 줄 없음)'}.`] : []),
         ...(op.retry ? ['', ...RETRY_NOTE] : []),
@@ -366,6 +371,7 @@ async function claudeOnce(db, o, model, limitMs, input, cwd) {
     let j = null; try { j = JSON.parse(String(r.out).trim().split(/\r?\n/).filter(Boolean).pop() || ''); } catch (e) { j = null; }
     if (r.code !== 0 || !j || j.is_error || (j.subtype && j.subtype !== 'success') || !String(j.result || '').trim()) {
         const why = (j && (j.result || j.subtype)) || String(r.err || r.out || '').trim().split(/\r?\n/).pop() || ('exit ' + r.code);
+        if (isOomText(String(why) + '\n' + String(r.err || '').slice(-2000))) { try { await tellOnce('oom_told_day', 'VM 에서 Claude 가 메모리 부족으로 죽었어요 — VM 재부팅이 필요해요 · 그 전엔 [VM] 지시가 실패함', 'vm_oom'); await memMaybe(true); } catch (e) { /* 알림 실패는 무시 */ } }   // #1242 지시 카드에만 「오류」로 남아 아무도 모르던 것
         return { ok: false, why: 'claude 실패: ' + clean(why, 300) };
     }
     const a = takeAttach(j.result, o.id);
@@ -434,23 +440,25 @@ function keepWrite(patch) { try { fs.mkdirSync(DIR, { recursive: true }); const 
 const JS_KEEP = `const HOME = ${JSON.stringify(CENTER_HOME)};
 let t = null, opened = false;
 for (const x of tabs) { try { if (/^https:\\/\\/sell\\.smartstore\\.naver\\.com\\/#\\/home\\/dashboard/.test(x.url())) { t = x; break; } } catch (e) {} }
-if (!t) { t = await openTab(HOME); opened = true; }
-else { try { await t.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { try { await t.evaluate(() => location.reload()); } catch (_) {} } }
 const wait = ms => new Promise(r => setTimeout(r, ms));
+const pre0 = new Set(tabs); let retried = false;   /* pre0 = 이 틱이 손대기 전부터 있던 탭(뒷정리 때 건드리지 않음) */
+if (!t) { try { t = await openTab(HOME); } catch (e) { retried = true; await wait(5000); t = await openTab(HOME); } opened = true; }   /* #1242 어사이드가 막 켜지는 중이면 새 탭이 사라짐(재부팅 직후 실례) → 5초 뒤 1번 더 */
+else { try { await t.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { try { await t.evaluate(() => location.reload()); } catch (_) {} } }
 /* #1230 화면 읽기 = 주소 + 머리 글(로그아웃 글자 = 로그인됨 · 「로그인하기」 단추 = 로그인 안 된 첫 화면 · 로그아웃 아래 줄 = 지금 스토어 이름 · VM #3765 실측 꼴) */
 const look = async () => { let u = '', r = null; try { u = t.url(); } catch (e) {} try { r = await t.evaluate(() => { const b = document.body && document.body.innerText || ''; const h = b.slice(0, 3000); const m = /로그아웃\\s*\\n\\s*좌측 내비게이션 펼쳐보기\\s*\\n\\s*([^\\n]{1,40})/.exec(h); return { txt: b.slice(0, 2000), out: /로그아웃/.test(h), first: [...document.querySelectorAll('button, a, [role=button]')].some(e => /^\\s*로그인하기\\s*$/.test(e.innerText || e.textContent || '')), store: m ? m[1].trim() : '' }; }); } catch (e) {} r = r || {}; return { u, txt: r.txt || '', out: !!r.out, first: !!r.first, store: r.store || '' }; };
 const isLogin = s => /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com|\\/login/i.test(s.u);
 const isSell = s => /sell\\.smartstore\\.naver\\.com/.test(s.u);
 const isPhone = s => /2단계|인증번호|본인\\s*확인|보안\\s*확인|기기\\s*등록|새로운\\s*기기|승인\\s*요청|휴대폰으로/.test(s.txt);
-const t0 = t;
-await wait(5000);
+const t0 = t; let tPop = null;   /* tPop = 「로그인하기」를 눌러 새로 뜬 로그인 탭(뒷정리 때 닫음) */
+await wait(7000);   /* #1242 실측 = 새 탭은 5초에야 머리 글이 보임(1·3초 빈 화면) → 5 → 7초 · 다시 보기 4 → 6초 */
 let a = await look(), state = 'ok', clicked = false, first = false;
-if (!isLogin(a) && isSell(a) && !a.out && !a.first) { await wait(4000); a = await look(); }   /* 머리가 아직 안 그려졌으면 한 번 더 */
+if (!isLogin(a) && isSell(a) && !a.out && !a.first) { await wait(6000); a = await look(); }   /* 머리가 아직 안 그려졌으면 한 번 더 */
 if (!isLogin(a) && isSell(a) && !a.out && a.first) {   /* #1230 로그인 안 된 첫 화면(「로그인하기」·「가입하기」) = 그 단추 1회 → 커머스ID 화면 */
+  const pre1 = new Set(tabs);   /* 누르기 전 탭 목록 = 그 뒤 새로 생긴 로그인 탭만 이 틱 것으로 봄(앞선 지시가 사람 몫으로 남긴 로그인·보안 탭은 손대지 않음) */
   try { first = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /^\\s*로그인하기\\s*$/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); } catch (e) { first = false; }
   if (first) {
     await wait(6000); a = await look();
-    if (!isLogin(a)) { for (const x of tabs) { try { if (x !== t0 && /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com/.test(x.url())) { t = x; a = await look(); break; } } catch (e) {} } }   /* 새 탭으로 뜬 때 */
+    if (!isLogin(a)) { for (const x of tabs) { try { if (x !== t0 && !pre1.has(x) && /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com/.test(x.url())) { t = x; tPop = x; a = await look(); break; } } catch (e) {} } }   /* 새 탭으로 뜬 때 */
   }
 }
 if (isLogin(a)) {
@@ -468,7 +476,12 @@ if (isLogin(a)) {
 else if (a.out) state = first ? 'relogin' : 'ok';
 else state = a.first ? 'login_fail' : 'unknown';   /* #1230 주소만 보고 ok 로 치지 않음(로그아웃 글자가 보여야 ok) */
 let where = ''; try { const q = new URL(a.u); where = q.host + q.pathname; } catch (e) {}
-console.log(JSON.stringify({ state, clicked, first, opened, where, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
+/* #1242 뒷정리 = 이 틱이 연 탭은 닫고 나감(30분마다 새 탭이 하나씩 쌓이지 않게 · 로그인은 쿠키라 탭을 닫아도 유지) · 원래 열려 있던 탭·사람이 풀어야 하는 화면(폰 승인·로그인 실패)은 그대로 둠 */
+let closed = 0;
+if (state === 'ok' || state === 'relogin' || state === 'unknown') { const mine = []; if (opened) mine.push(t0); if (tPop) mine.push(tPop);
+  if (retried) { try { for (const x of tabs) { if (x === t0 || x === tPop || pre0.has(x)) continue; let u = ''; try { u = x.url(); } catch (e) {} if (isSell({ u })) mine.push(x); } } catch (e) {} }   /* 첫 열기가 「실패」했는데 탭은 생겨 있던 때 = 이 틱이 만든 센터 탭 여분만(전부터 있던 탭은 pre0 로 가림) */
+  for (const x of mine) { try { await closeTab(x); closed++; } catch (e) {} } }
+console.log(JSON.stringify({ state, clicked, first, opened, closed, where, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
 async function keepCenterOnce() {
     const aside = asideFactory ? asideFactory() : new (require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js')).Aside)(ASIDE_EXE, s => log(s));
     let timer = null;
@@ -486,6 +499,30 @@ async function keepTell(reason, kind) {   // kind = 서버가 갈래마다 하�
         const r = await fetch(API + '/api/experience/auto/0/miss', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, kind: kind || 'center_login' }), signal: AbortSignal.timeout(15000) });
         return r.status === 200;
     } catch (e) { log('센터 유지: 텔레그램 못 보냄 ' + e.message); return false; }
+}
+// ── #1242 VM 메모리(커밋) 감시 · 메모리 부족 알림 ──
+//   텔레그램 길 = keepTell 그대로(서버가 갈래마다 하루 1통 · 머리말 「🖥️ VM 확인 필요」 = experience.js missTgText) · 러너 쪽도 하루 1번만 부름(상태 파일 *_told_day)
+let memReader = null;   // 시험용 갈아끼우기(_setMem)
+const isOomText = s => /OutOfMemory|out of memory|bun\.report/i.test(String(s || ''));
+async function tellOnce(key, reason, kind) { const st = keepRead(); if (st[key] === kstDay()) return false; const told = await keepTell(reason, kind); if (told) keepWrite({ [key]: kstDay() }); return !!told; }
+function memRead() {
+    if (memReader) return memReader();
+    if (process.platform !== 'win32') return null;
+    try {
+        const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$o = Get-CimInstance Win32_OperatingSystem; "$($o.FreeVirtualMemory) $($o.TotalVirtualMemorySize)"'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+        const m = /(\d+)\s+(\d+)/.exec(String(out)); return m ? { free_mb: Math.round(Number(m[1]) / 1024), total_mb: Math.round(Number(m[2]) / 1024) } : null;
+    } catch (e) { return null; }
+}
+async function memMaybe(force) {
+    if (!MEM_MS && !force) return null;
+    if (!force && MEM.at && Date.now() - MEM.at < MEM_MS) return null;
+    let r = null; try { r = memRead(); } catch (e) { r = null; }
+    MEM.at = Date.now();
+    if (!r || !Number.isFinite(r.free_mb)) return null;
+    MEM.free_mb = r.free_mb; MEM.total_mb = r.total_mb;
+    log(`메모리 · 커밋 여유 ${r.free_mb} / ${r.total_mb}MB`);
+    if (r.free_mb < MEM_LOW_MB) await tellOnce('mem_told_day', `VM 메모리(커밋) 여유 ${r.free_mb}MB — VM 재부팅이 필요해요 · 그 전엔 [VM] 지시(포인트·배송지)가 실패할 수 있음`, 'vm_mem');
+    return r;
 }
 async function keepMaybe(force) {
     if (!KEEP_MS && !force) return null;
@@ -505,13 +542,13 @@ async function keepMaybe(force) {
     const wrongStore = !!r && (r.state === 'ok' || r.state === 'relogin') && /직영몰/.test(String(r.store || ''));
     if (wrongStore) r = { ...r, state: 'wrong_store', login: r.state };
     keepWrite({ at, result: r && r.state, error: r && r.error || null, ...(r && r.state === 'need_phone' ? { phone_at: at } : {}) });
-    log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.error ? ' · ' + r.error : ''}`);
+    log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.closed != null ? ' · 탭 닫음 ' + r.closed : ''}${r && r.error ? ' · ' + r.error : ''}`);
     if (r && (r.state === 'ok' || r.state === 'relogin') && !r.store) log('센터 로그인 유지 · 스토어 이름 못 읽음(머리 글 꼴이 바뀌었는지 확인)');
     // #1230-② 판정 못 함(unknown)이 연속 3번(1.5시간) = 진짜 풀림을 삼켰을 수 있음 → 텔레그램 하루 1통(쉼 없음) · 판정이 나오면(ok·relogin·직영몰·로그인 실패·폰 승인) 셈 0 · 어사이드 오류는 셈 그대로
     if (r && r.state === 'unknown') {
         const n = (Number(st.unknown_n) || 0) + 1; keepWrite({ unknown_n: n });
         if (n >= 3 && st.unknown_told_day !== kstDay()) {
-            const told = await keepTell(`VM 센터 로그인 상태를 ${n}번 연속 못 읽음(화면 꼴 다름) — VM 어사이드 센터 탭을 한 번 봐 주세요 · 풀려 있으면 포인트·배송지 [VM] 멈춤`, 'center_unknown');
+            const told = await keepTell(`VM 센터 로그인 상태를 ${n}번 연속 못 읽음 — VM 어사이드에서 스마트스토어센터 첫 화면을 열어 로그인 상태를 봐 주세요 · 풀려 있으면 포인트·배송지 [VM] 멈춤`, 'center_unknown');
             if (told) keepWrite({ unknown_told_day: kstDay() });
         }
     } else if (r && r.state !== 'error' && st.unknown_n) keepWrite({ unknown_n: 0 });
@@ -550,6 +587,7 @@ async function main() {
     let lastBeat = 0;
     for (;;) {
         try {
+            try { await memMaybe(); } catch (e) { /* #1242 메모리 재기 실패는 무시 */ }
             if (Date.now() - lastBeat >= BEAT_MS) { await heartbeat(pool, 'idle'); lastBeat = Date.now(); }
             const r = await pollOnce(pool);
             if (r.did) lastBeat = Date.now();
@@ -562,4 +600,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };

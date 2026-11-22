@@ -53,6 +53,7 @@ const dowOf = ymd => DOW[new Date(ymd + 'T00:00:00Z').getUTCDay()];
 const MISS_CENTER_KINDS = new Set(['center_login', 'center_store', 'center_unknown']);
 function missTgText(row, kind, reason) {
     if (!row && MISS_CENTER_KINDS.has(kind)) return `🖥️ VM 스마트스토어센터 확인 필요 · ${reason}`;
+    if (!row && /^vm_/.test(String(kind || ''))) return `🖥️ VM 확인 필요 · ${reason}`;   /* #1242 VM 자체 알림(vm_mem 메모리 여유 · vm_oom Claude 메모리 부족) = 체험 번호 머리말을 쓰지 않음 */
     const what = row ? `예약 ${row.order_no} · ${row.visit_date ? row.visit_date.slice(5).replace('-', '/') : '?'} ${row.visit_time || ''}` : '어사이드 멈춤';
     return `🍊 체험 번호 자동 입력 못 함 · ${what} · ${reason}${row ? ' — 에이전트 오피스 · 체험 예약 「번호 미입력」에서 직접 넣어 주세요' : ''}`;
 }

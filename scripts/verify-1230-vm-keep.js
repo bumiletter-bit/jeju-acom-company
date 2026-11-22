@@ -44,10 +44,12 @@ function mkTab(start, plan, log, name) {
         } };
     return t;
 }
+const CLOSED = [];   /* #1242 그 실행에서 닫힌 탭 이름 */
 const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
 async function runKeep(tabs, openTab) {
     const out = []; const fakeConsole = { log: s => out.push(s) }; const fastTimeout = (fn) => { Promise.resolve().then(fn); return 0; };
-    await new AsyncFunction('tabs', 'openTab', 'console', 'setTimeout', W.JS_KEEP)(tabs, openTab, fakeConsole, fastTimeout);
+    CLOSED.length = 0; const closeTab = async t => { if (!t || t.closed) throw new Error('이미 닫힌 탭'); t.closed = true; CLOSED.push(t.name); };
+    await new AsyncFunction('tabs', 'openTab', 'console', 'setTimeout', 'closeTab', W.JS_KEEP)(tabs, openTab, fakeConsole, fastTimeout, closeTab);
     return JSON.parse(out[out.length - 1]);
 }
 
@@ -194,6 +196,87 @@ async function runKeep(tabs, openTab) {
     ok('30분 간격 그대로(바로 다시 부르면 안 돎)', k && k.state === 'ok' && k2 === null);
     W._setKeep(null, null);
 
+    console.log('── #1242 뒷정리(이 틱이 연 탭 닫기) · 기다림 · 새 탭 다시 열기');
+    {
+        const noOpen2 = async () => { throw new Error('openTab 불림'); };
+        let lg = [], tb = mkTab('dash', {}, lg, 'A'), rr = await runKeep([tb], noOpen2);
+        ok('원래 열려 있던 센터 탭 = 닫지 않음(closed 0)', rr.state === 'ok' && rr.closed === 0 && !tb.closed && CLOSED.length === 0, JSON.stringify(rr));
+        lg = []; let nt2 = mkTab('dash', {}, lg, 'N'); rr = await runKeep([], async () => nt2);
+        ok('이 틱이 새로 연 탭 = ok 뒤 닫음(closed 1)', rr.state === 'ok' && rr.opened && rr.closed === 1 && nt2.closed && rr.store === '제주아꼼이네', JSON.stringify(rr));
+        lg = []; nt2 = mkTab('first2', { onFirst: x => { x.screen = 'login'; }, onSimple: x => { x.screen = 'dash'; } }, lg, 'N'); rr = await runKeep([], async () => nt2);
+        ok('새로 연 탭에서 다시 로그인(relogin) = 닫음', rr.state === 'relogin' && rr.closed === 1 && nt2.closed, JSON.stringify(rr));
+        lg = []; nt2 = mkTab('blank', {}, lg, 'N'); rr = await runKeep([], async () => nt2);
+        ok('새로 연 탭이 끝내 안 그려짐(unknown) = 닫음(쌓이지 않게)', rr.state === 'unknown' && rr.closed === 1 && nt2.closed, JSON.stringify(rr));
+        lg = []; nt2 = mkTab('phone', {}, lg, 'N'); rr = await runKeep([], async () => nt2);
+        ok('폰 승인 화면(need_phone) = 탭 남김(사람이 풀어야 함)', rr.state === 'need_phone' && rr.closed === 0 && !nt2.closed, JSON.stringify(rr));
+        lg = []; nt2 = mkTab('loginNoBtn', {}, lg, 'N'); rr = await runKeep([], async () => nt2);
+        ok('로그인 실패(login_fail) = 탭 남김', rr.state === 'login_fail' && rr.closed === 0 && !nt2.closed, JSON.stringify(rr));
+        lg = []; const pop2 = mkTab('login', {}, lg, 'P'), tabs2 = []; const a2 = mkTab('first', { onFirst: () => { tabs2.push(pop2); } }, lg, 'A'); tabs2.push(a2);
+        pop2.evaluate = (orig => async fn => { const s2 = String(fn); if (/el\.click\(\)/.test(s2) && /간편/.test(s2)) { a2.screen = 'dash'; return true; } return orig(fn); })(pop2.evaluate);
+        rr = await runKeep(tabs2, noOpen2);
+        ok('원래 탭 + 새로 뜬 로그인 탭 = 로그인 탭만 닫음(원래 탭은 남김)', rr.closed === 1 && pop2.closed && !a2.closed, JSON.stringify(rr) + CLOSED);
+        let tries = 0; lg = []; nt2 = mkTab('dash', {}, lg, 'N'); rr = await runKeep([], async () => { tries++; if (tries === 1) throw new Error('Tab X is no longer available.'); return nt2; });
+        ok('새 탭 열기가 한 번 실패(어사이드 막 켜짐) = 1번 더 열어 ok', rr.state === 'ok' && tries === 2 && rr.opened, JSON.stringify(rr) + ' tries ' + tries);
+        tries = 0; let threw = ''; try { await runKeep([], async () => { tries++; throw new Error('Tab X is no longer available.'); }); } catch (e) { threw = e.message; }
+        ok('두 번 다 실패 = 오류로 끝(다음 30분에 다시) · 더 안 누름', tries === 2 && /no longer available/.test(threw), threw + ' tries ' + tries);
+        /* 점검 반영 ②: 누르기 전부터 있던 로그인 탭(앞선 지시가 사람 몫으로 남긴 것)은 이 틱 것이 아님 */
+        { const lg3 = [], old = mkTab('login', {}, lg3, 'OLD'), tabs3 = [old]; const a3 = mkTab('first', { onFirst: x => { x.screen = 'login'; }, onSimple: x => { x.screen = 'dash'; } }, lg3, 'A'); tabs3.push(a3);
+          const r3 = await runKeep(tabs3, noOpen2);
+          ok('전부터 있던 로그인 탭 = 건드리지 않음(누름·닫기 0) · 내 탭에서 로그인', r3.state === 'relogin' && !old.closed && !lg3.some(x => /^OLD:tap/.test(x)) && r3.closed === 0, JSON.stringify(r3) + lg3); }
+        { const lg3 = [], old = mkTab('phone', {}, lg3, 'OLD'), pop3 = mkTab('login', {}, lg3, 'P'), tabs3 = [old]; const a3 = mkTab('first', { onFirst: () => { tabs3.push(pop3); } }, lg3, 'A'); tabs3.push(a3);
+          pop3.evaluate = (orig => async fn => { const s3 = String(fn); if (/el\.click\(\)/.test(s3) && /간편/.test(s3)) { a3.screen = 'dash'; return true; } return orig(fn); })(pop3.evaluate);
+          const r3 = await runKeep(tabs3, noOpen2);
+          ok('전부터 있던 보안 확인 탭 + 새로 뜬 로그인 탭 = 새 탭만 닫음', r3.state === 'relogin' && r3.closed === 1 && pop3.closed && !old.closed && !a3.closed, JSON.stringify(r3) + CLOSED); }
+        /* 점검 반영 ③: 첫 열기가 「실패」로 돌아왔는데 탭은 생겨 있던 때 = 여분 하나만 닫음 */
+        { const lg3 = [], ghost = mkTab('dash', {}, lg3, 'G'), keepOld = mkTab('other', {}, lg3, 'X'), oldSell = mkTab('biz', {}, lg3, 'S'), real = mkTab('dash', {}, lg3, 'N'), tabs3 = [keepOld]; let n3 = 0;
+          const r3 = await runKeep(tabs3, async () => { n3++; if (n3 === 1) { tabs3.push(ghost); throw new Error('Tab X is no longer available.'); } tabs3.push(real); return real; });
+          ok('다시 연 탭 + 첫 시도가 남긴 센터 탭 = 둘 다 닫음(closed 2) · 다른 탭은 그대로', r3.state === 'ok' && r3.closed === 2 && real.closed && ghost.closed && !keepOld.closed, JSON.stringify(r3) + CLOSED);
+          const tabs4 = [oldSell]; let n4 = 0; const real4 = mkTab('dash', {}, lg3, 'N4');   /* 전부터 있던 센터 탭(대시보드 주소가 아닌 꼴로 흉내 = 찾기에 안 걸리게 주소만 바꿈) */
+          oldSell.url = () => 'https://sell.smartstore.naver.com/#/products/list';
+          const r4 = await runKeep(tabs4, async () => { n4++; if (n4 === 1) throw new Error('Tab X is no longer available.'); tabs4.push(real4); return real4; });
+          ok('다시 열기 뒤에도 전부터 있던 센터 탭은 안 닫음(내가 연 것만 closed 1)', r4.state === 'ok' && r4.closed === 1 && real4.closed && !oldSell.closed, JSON.stringify(r4) + CLOSED); }
+        ok('기다림 = 첫 읽기 7초 · 다시 보기 6초(코드 글자)', /await wait\(7000\);/.test(W.JS_KEEP) && /await wait\(6000\); a = await look\(\); \}/.test(W.JS_KEEP) && !/await wait\(5000\);\s*\/\*/.test(W.JS_KEEP));
+        ok('유지 코드 = 여전히 센터 첫 화면만(#1082 조건) · [스토어 이동] 없음', /home\/dashboard/.test(W.JS_KEEP) && !/point|benefit|pay-order|저장|지급/.test(W.JS_KEEP) && !/스토어\s*이동/.test(W.JS_KEEP));
+    }
+
+    console.log('── #1242 메모리(커밋) 감시 · 메모리 부족 알림');
+    {
+        const told2 = []; W._setKeep(() => ({ start: async () => ({}), replJson: async () => ({ state: 'ok', store: '제주아꼼이네' }), stop: async () => { } }), async (reason, kind) => { told2.push({ reason, kind }); return true; });
+        const st2 = () => { try { return JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); } catch (e) { return {}; } };
+        try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
+        let reads = 0; W._setMem(() => { reads++; return { free_mb: 11990, total_mb: 15339 }; });
+        let m = await W.memMaybe();
+        ok('여유 넉넉(11,990MB) = 재고 기록 · 알림 0', m && m.free_mb === 11990 && W.MEM.free_mb === 11990 && W.MEM.total_mb === 15339 && told2.length === 0 && reads === 1);
+        ok('1시간 안 다시 = 안 잼', (await W.memMaybe()) === null && reads === 1);
+        const q = []; await W.heartbeat({ query: async (sql, args) => { q.push(JSON.parse(args[0])); } }, 'idle');
+        ok('heartbeat 에 commit_free_mb·commit_total_mb·mem_at 실림', q.length === 1 && q[0].commit_free_mb === 11990 && q[0].commit_total_mb === 15339 && !!q[0].mem_at && q[0].state === 'idle' && q[0].pid === process.pid, JSON.stringify(q[0]));
+        W._setMem(() => ({ free_mb: 800, total_mb: 16221 })); m = await W.memMaybe(true);
+        ok('여유 800MB(< 1,024) = 텔레그램 1통(갈래 vm_mem · 120자 안)', told2.length === 1 && told2[0].kind === 'vm_mem' && /여유 800MB/.test(told2[0].reason) && told2[0].reason.length <= 120 && st2().mem_told_day, JSON.stringify(told2));
+        await W.memMaybe(true);
+        ok('같은 날 다시 낮음 = 알림 추가 0', told2.length === 1);
+        fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...st2(), mem_told_day: '2026-01-01' })); await W.memMaybe(true);
+        ok('날이 바뀌면 다시 1통', told2.length === 2 && told2[1].kind === 'vm_mem');
+        W._setMem(() => null); const before = W.MEM.free_mb; m = await W.memMaybe(true);
+        ok('못 잼(null · 윈도우 아님·명령 실패) = 조용히 넘어감 · 앞 값 그대로', m === null && W.MEM.free_mb === before && told2.length === 2);
+        W._setMem(() => { throw new Error('powershell 없음'); }); m = await W.memMaybe(true);
+        ok('재는 중 오류 = 조용히 넘어감', m === null && told2.length === 2);
+        const q0 = []; W._setMem(null); await W.heartbeat({ query: async (sql, args) => { q0.push(JSON.parse(args[0])); } }, 'idle');
+        ok('아직 잰 적 없으면 heartbeat 는 종전 꼴(메모리 칸 없음)', q0.length === 1 && !('commit_free_mb' in q0[0]), JSON.stringify(q0[0]));
+        ok('메모리 부족 글 판정 = OutOfMemory · bun.report · out of memory / 보통 오류는 아님', W.isOomText('Decompression error: OutOfMemory') && W.isOomText('https://bun.report/1.4.4/wa1424') && W.isOomText('JavaScript heap out of memory') && !W.isOomText('exit 3') && !W.isOomText('10분 넘어 끔') && !W.isOomText(''));
+        /* claudeOnce 실패 길 = 가짜 실행 파일이 메모리 부족 글을 내고 죽음 */
+        const fake = path.join(T, 'fake-oom.js'); fs.writeFileSync(fake, "process.stdin.resume(); process.stdin.on('end', () => { process.stderr.write(process.env.FAKE_ERR || 'boom'); process.exit(Number(process.env.FAKE_CODE || 1)); });");
+        process.env.VM_CLAUDE_BIN = fake; told2.length = 0; try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
+        W._setMem(() => ({ free_mb: 390, total_mb: 16221 }));
+        process.env.FAKE_ERR = 'Decompression error: OutOfMemory';
+        let c1 = await W.claudeOnce(null, { id: 9001, content: '[VM] 시험' }, 'm', 20000, '시험', T);
+        ok('Claude 가 OutOfMemory 로 죽음 = 실패 답 그대로 + 텔레그램 vm_oom 1통(+ 여유가 낮으면 vm_mem 도)', c1.ok === false && /OutOfMemory/.test(c1.why) && told2.some(x => x.kind === 'vm_oom' && x.reason.length <= 120) && told2.filter(x => x.kind === 'vm_oom').length === 1 && told2.some(x => x.kind === 'vm_mem'), JSON.stringify([c1, told2]));
+        const n1 = told2.length; process.env.FAKE_ERR = 'https://bun.report/1.4.4/wa1424a542'; c1 = await W.claudeOnce(null, { id: 9002, content: '[VM] 시험' }, 'm', 20000, '시험', T);
+        ok('같은 날 또 죽음(bun 충돌 주소) = 실패 답 · 알림 추가 0', c1.ok === false && /bun\.report/.test(c1.why) && told2.length === n1);
+        try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } told2.length = 0; process.env.FAKE_ERR = 'Error: network timeout'; c1 = await W.claudeOnce(null, { id: 9003, content: '[VM] 시험' }, 'm', 20000, '시험', T);
+        ok('보통 실패(메모리 아님) = 알림 0 · 실패 답 종전 꼴', c1.ok === false && /claude 실패: Error: network timeout/.test(c1.why) && told2.length === 0, JSON.stringify([c1, told2]));
+        delete process.env.VM_CLAUDE_BIN; delete process.env.FAKE_ERR; W._setMem(null); W._setKeep(null, null);
+    }
+
     console.log('── ③ 지시문');
     const P = W.promptFor({ id: 1, content: '[VM] 아이디 abc123 포인트 보상 5,000 · 사유 타이벡 파손 보상처리' });
     const A = W.promptFor({ id: 2, content: '[VM] 배송지 변경 주문번호 2026110170868221 → 제주시 서흘길 9, 3층' }, { sentToday: false });
@@ -203,6 +286,7 @@ async function runKeep(tabs, openTab) {
     ok('배송지 지시문 = 배송지 갈래 · 스토어 확인 줄 1개 · (a) 다음 (b-t) 앞', W.isAddr('[VM] 배송지 변경 주문번호 2026110170868221 → 제주시 서흘길 9, 3층') && cnt(A, /\(a-2\) #1230 스토어 확인/g) === 1 && A.indexOf('(a) 센터 로그인') < A.indexOf('(a-2)') && A.indexOf('(a-2)') < A.indexOf('(b-t)'));
     ok('스토어 확인 줄 = 직영몰이면 [스토어 이동] → 다시 읽기 → 아니면 지급·저장 없이 멈춤 · 직영몰 주문은 안 함', /\[스토어 이동\]/.test(P) && /지급·저장하지 말고 멈춰/.test(P) && /직영몰 주문은 VM 이 안 해요/.test(P) && /이름을 다시 읽는다/.test(P));
     ok('그 밖 지시(조회)에는 스토어 확인 줄 없음(종전 그대로)', cnt(G, /#1230/g) === 0);
+    ok('#1242 뒷정리 줄(연 탭 닫기) = 포인트·배송지·조회 지시문 모두 1줄', [P, A, G].every(x => cnt(x, /⑦뒷정리\(#1242\)/g) === 1 && /closeTab/.test(x)));
     ok('포인트·배송지 기존 절차 줄 그대로((b-0)·(c)·(d)·(e)·(f) · 배송지 (b)~(h)·(i))', ['(b-0)', '(b-1)', '(c) 중복 막기', '(d) 지급 화면', '(d-2)', '(e) 끝 보고', '(f) (b) 길', '(g) 지시 글 꼴'].every(x => P.includes(x)) && ['(b) 판매관리', '(c) 그 주문의', '(d) 저장 뒤', '(e) 멈춤', '(f) 지시에 배송 메모', '(g) 끝 보고', '(h) 지시 글 꼴', '(i) 오늘 최종발주'].every(x => A.includes(x)));
 
     console.log(`\n합계 ${pass}/${pass + fail}${fail ? ' · 실패 ' + fail : ''}`);
