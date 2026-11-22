@@ -56,6 +56,11 @@ const CENTER_HOME = 'https://sell.smartstore.naver.com/#/home/dashboard';
 const MEM_MS = process.env.VM_MEM_MS != null && process.env.VM_MEM_MS !== '' ? Number(process.env.VM_MEM_MS) : 3600e3;
 const MEM_LOW_MB = Number(process.env.VM_MEM_LOW_MB) || 1024;
 const MEM = { at: 0, free_mb: null, total_mb: null };   // 마지막으로 잰 값(heartbeat 에 같이 실림)
+// #1242-2 누수 주인 = 어사이드 앱 본체(실측 11/22: 가만히 있어도 핸들이 1초에 1개쯤·커밋이 시간당 0.5GB 늘고, 앱만 끄면 그만큼 돌아옴) → 러너가 어사이드 앱만 끄고(다음에 쓸 때 저절로 다시 켜짐) 메모리를 돌려받음
+//   끄는 때 = ①커밋 여유가 VM_ASIDE_RECYCLE_MB(기본 3,072MB) 아래 ②매일 VM_ASIDE_RECYCLE_HOUR(기본 04시 KST)에 1번 · 둘 다 러너가 쉬는 중·잠금이 비었을 때만 · 끄기 = VM_ASIDE_RECYCLE_MB=0(여유 갈래 · 빈 값은 기본 3,072) · VM_ASIDE_RECYCLE_HOUR 빈 값 또는 음수(하루 1번 갈래)
+const ASIDE_RECYCLE_MB = process.env.VM_ASIDE_RECYCLE_MB != null && process.env.VM_ASIDE_RECYCLE_MB !== '' ? Number(process.env.VM_ASIDE_RECYCLE_MB) : 3072;
+const ASIDE_RECYCLE_HOUR = process.env.VM_ASIDE_RECYCLE_HOUR != null ? (process.env.VM_ASIDE_RECYCLE_HOUR === '' ? -1 : Number(process.env.VM_ASIDE_RECYCLE_HOUR)) : 4;
+const ASIDE_RECYCLE_GAP_MS = 2 * 3600e3;   // 여유가 낮아 끈 뒤 2시간은 같은 까닭으로 또 끄지 않음(껐는데도 안 돌아오면 = 주인이 다른 것 → 메모리 알림이 맡음)
 const ALLOWED = 'mcp__aside__repl,mcp__aside__exec';   // 어사이드만(교차 점검 2 · 파일 읽기 도구는 .env 유출 길이라 막음)
 const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
 // claude 작업 폴더 = 늘 ~/.akkome/vm-out/<지시번호>(리포 밖 = 리포 CLAUDE.md 안 실림 · .env 있는 C:\akm-vm 도 피함 · aside MCP 는 user 설정이라 그대로)
@@ -524,6 +529,38 @@ async function memMaybe(force) {
     if (r.free_mb < MEM_LOW_MB) await tellOnce('mem_told_day', `VM 메모리(커밋) 여유 ${r.free_mb}MB — VM 재부팅이 필요해요 · 그 전엔 [VM] 지시(포인트·배송지)가 실패할 수 있음`, 'vm_mem');
     return r;
 }
+// ── #1242-2 어사이드 앱 다시 열기(누수 돌려받기) ──
+let asideKiller = null;   // 시험용 갈아끼우기(_setAsideKill)
+function asideKill() {
+    if (asideKiller) return asideKiller();
+    if (process.platform !== 'win32') return false;
+    // 🔴 앱(Aside.exe)과 데몬(aside-daemon.exe)을 반드시 같이 끈다(실측 11/22): 앱만 끄면 데몬이 남아 다음 사용이 「Profile 0 is not connected to the daemon」으로 계속 실패 · 둘 다 없으면 다음 사용 때 「Aside isn't running. Opening it in the background…」로 저절로 켜지고 로그인(쿠키)도 그대로
+    //   이름만으로 끄면(taskkill /IM Aside.exe) 같은 이름의 CLI(…\Aside\CLI\current\aside.exe = 러너·「워커VM」 세션의 MCP 연결)까지 꺼짐 → 실행 파일 경로에 \CLI\ 가 든 것은 빼고 앱 본체 + 데몬만
+    try {
+        const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ASIDE_KILL_PS], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+        return Number(String(out).trim().split(/\s+/).pop()) > 0;
+    } catch (e) { return false; }
+}
+const ASIDE_KILL_PS = "$n = 0; Get-CimInstance Win32_Process | ? { ($_.Name -ieq 'aside-daemon.exe') -or (($_.Name -ieq 'Aside.exe') -and ($_.ExecutablePath -notmatch '\\\\CLI\\\\')) } | % { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $n++ } catch { } }; $n";
+async function asideRecycleMaybe(now) {
+    const t = now || Date.now(), st = keepRead(), day = kstDay(), hour = new Date(t + 9 * 3600e3).getUTCHours();
+    let why = '';
+    if (ASIDE_RECYCLE_MB > 0 && MEM.free_mb != null && MEM.free_mb < ASIDE_RECYCLE_MB && !(st.aside_recycle_low_at && t - Date.parse(st.aside_recycle_low_at) < ASIDE_RECYCLE_GAP_MS)) why = 'low';
+    else if (ASIDE_RECYCLE_HOUR >= 0 && hour === ASIDE_RECYCLE_HOUR && st.aside_recycle_day !== day) why = 'daily';
+    if (!why) return null;
+    if (busyWhy()) return null;   // 키워드 순위·체험 번호 틱이 어사이드를 쓰는 중 = 다음 주기에
+    if (!asideKiller && process.platform !== 'win32') return null;
+    if (!lockTake()) return null;
+    let killed = false; const before = MEM.free_mb;
+    try { killed = !!asideKill(); } catch (e) { killed = false; } finally { lockFree(); }
+    const at = new Date(t).toISOString();
+    // 끈 뒤 첫 로그인 유지 = 약 75초 뒤(바로 돌면 어사이드가 켜지는 중이라 「Tab … is no longer available」 = 11/22 13:49 실례) · 그 틱이 error 면 90초 뒤 1번 더(keep_retry) · 그래도 error 면 종전 30분
+    //   여유가 낮아 끈 것이 마침 하루 1번 시각대면 그날 치도 한 것으로 침(같은 시간대에 두 번 끄지 않게)
+    keepWrite({ aside_recycle_at: at, aside_recycle_why: why, ...(why === 'low' ? { aside_recycle_low_at: at } : {}), ...(why === 'daily' || hour === ASIDE_RECYCLE_HOUR ? { aside_recycle_day: day } : {}), ...(KEEP_MS > 0 ? { at: new Date(t - KEEP_MS + 75000).toISOString(), keep_retry: 1 } : {}) });
+    MEM.at = 0;   // 다음 주기에 메모리를 다시 잼(돌아온 양이 로그에 남음)
+    log(`어사이드 다시 열기 · ${why === 'low' ? '커밋 여유 ' + before + 'MB < ' + ASIDE_RECYCLE_MB + 'MB' : '하루 1번(' + ASIDE_RECYCLE_HOUR + '시)'} · ${killed ? '앱 끔(다음에 쓸 때 저절로 켜짐)' : '끌 앱 없음'}`);
+    return { why, killed, before };
+}
 async function keepMaybe(force) {
     if (!KEEP_MS && !force) return null;
     const st = keepRead(), now = Date.now();
@@ -542,6 +579,7 @@ async function keepMaybe(force) {
     const wrongStore = !!r && (r.state === 'ok' || r.state === 'relogin') && /직영몰/.test(String(r.store || ''));
     if (wrongStore) r = { ...r, state: 'wrong_store', login: r.state };
     keepWrite({ at, result: r && r.state, error: r && r.error || null, ...(r && r.state === 'need_phone' ? { phone_at: at } : {}) });
+    if (st.keep_retry) keepWrite(r && r.state === 'error' && KEEP_MS > 0 ? { keep_retry: 0, at: new Date(Date.now() - KEEP_MS + 90000).toISOString() } : { keep_retry: 0 });   // #1242-2 어사이드를 다시 연 직후의 첫 틱이 오류면 90초 뒤 1번만 더
     log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.closed != null ? ' · 탭 닫음 ' + r.closed : ''}${r && r.error ? ' · ' + r.error : ''}`);
     if (r && (r.state === 'ok' || r.state === 'relogin') && !r.store) log('센터 로그인 유지 · 스토어 이름 못 읽음(머리 글 꼴이 바뀌었는지 확인)');
     // #1230-② 판정 못 함(unknown)이 연속 3번(1.5시간) = 진짜 풀림을 삼켰을 수 있음 → 텔레그램 하루 1통(쉼 없음) · 판정이 나오면(ok·relogin·직영몰·로그인 실패·폰 승인) 셈 0 · 어사이드 오류는 셈 그대로
@@ -587,7 +625,7 @@ async function main() {
     let lastBeat = 0;
     for (;;) {
         try {
-            try { await memMaybe(); } catch (e) { /* #1242 메모리 재기 실패는 무시 */ }
+            try { await memMaybe(); await asideRecycleMaybe(); } catch (e) { /* #1242 메모리 재기·어사이드 다시 열기 실패는 무시 */ }
             if (Date.now() - lastBeat >= BEAT_MS) { await heartbeat(pool, 'idle'); lastBeat = Date.now(); }
             const r = await pollOnce(pool);
             if (r.did) lastBeat = Date.now();
@@ -600,4 +638,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, asideRecycleMaybe, ASIDE_KILL_PS, _setAsideKill: f => { asideKiller = f || null; }, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };

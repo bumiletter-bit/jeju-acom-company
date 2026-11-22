@@ -277,6 +277,66 @@ async function runKeep(tabs, openTab) {
         delete process.env.VM_CLAUDE_BIN; delete process.env.FAKE_ERR; W._setMem(null); W._setKeep(null, null);
     }
 
+    console.log('── #1242-2 어사이드 앱 다시 열기(누수 돌려받기)');
+    {
+        const st3 = () => { try { return JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); } catch (e) { return {}; } };
+        const wipe = () => { try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } };
+        let kills = 0; W._setAsideKill(() => { kills++; return true; });
+        const at = h => Date.UTC(2026, 10, 22, h - 9, 30, 0);   /* KST h시 30분 */
+        const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+        wipe(); W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true);
+        ok('여유 넉넉(9,000MB) · 04시 아님 = 안 끔', (await W.asideRecycleMaybe(at(15))) === null && kills === 0);
+        W._setMem(() => ({ free_mb: 2500, total_mb: 15339 })); await W.memMaybe(true);
+        let rr = await W.asideRecycleMaybe(at(15));
+        ok('여유 2,500MB(< 3,072) = 어사이드 앱 끔 1회 · 기록(low) · 유지 틱은 약 75초 뒤로 당김(keep_retry 1) · 메모리 다시 재게 · 04시대가 아니라 그날 치 기록은 안 함', rr && rr.why === 'low' && rr.killed && kills === 1 && st3().aside_recycle_why === 'low' && !!st3().aside_recycle_low_at && Date.parse(st3().at) === at(15) - 30 * 60000 + 75000 && st3().keep_retry === 1 && !st3().aside_recycle_day && W.MEM.at === 0, JSON.stringify([rr, st3()]));
+        await W.memMaybe(true);
+        ok('껐는데도 여유가 낮음 = 2시간 안에는 또 끄지 않음(주인이 다른 것 = 메모리 알림 몫)', (await W.asideRecycleMaybe(at(15) + 30 * 60000)) === null && kills === 1);
+        rr = await W.asideRecycleMaybe(at(15) + 121 * 60000);
+        ok('2시간 지나도 낮으면 한 번 더', rr && rr.why === 'low' && kills === 2);
+        wipe(); W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true); kills = 0;
+        rr = await W.asideRecycleMaybe(at(4));
+        ok('04시(KST) · 오늘 아직 안 함 = 하루 1번 끔(daily) · 날짜 기록', rr && rr.why === 'daily' && kills === 1 && st3().aside_recycle_day === today, JSON.stringify([rr, st3()]));
+        ok('같은 날 04시에 다시 = 안 끔', (await W.asideRecycleMaybe(at(4) + 20 * 60000)) === null && kills === 1);
+        wipe(); fs.writeFileSync(W.LOCK, '99999'); kills = 0;
+        ok('남의 잠금(체험 번호 틱 등)이 있으면 안 끔 · 잠금 안 지움', (await W.asideRecycleMaybe(at(4))) === null && kills === 0 && fs.readFileSync(W.LOCK, 'utf8') === '99999' && !st3().aside_recycle_day);
+        fs.unlinkSync(W.LOCK);
+        W._setAsideKill(() => false); rr = await W.asideRecycleMaybe(at(4));
+        ok('끌 앱이 없음(이미 꺼짐) = 기록은 남기고 조용히 넘어감 · 잠금 풀림', rr && rr.killed === false && st3().aside_recycle_day === today && !fs.existsSync(W.LOCK));
+        W._setAsideKill(() => { throw new Error('taskkill 없음'); }); wipe(); rr = await W.asideRecycleMaybe(at(4));
+        ok('끄는 중 오류 = 잠금 풀고 넘어감(러너 안 죽음)', rr && rr.killed === false && !fs.existsSync(W.LOCK));
+        W._setMem(null); wipe(); W._setAsideKill(() => { kills++; return true; }); kills = 0;
+        ok('메모리를 아직 못 쟀고 04시도 아님 = 안 끔', (await W.asideRecycleMaybe(at(15))) === null && kills === 0);
+        /* 끈 뒤 = 로그인 유지가 30분을 기다리지 않고 바로 돎 */
+        W._setMem(() => ({ free_mb: 2000, total_mb: 15339 })); await W.memMaybe(true);
+        const seen3 = []; W._setKeep(() => ({ start: async () => ({}), replJson: async () => { seen3.push(1); return { state: 'relogin', store: '제주아꼼이네', closed: 1 }; }, stop: async () => { } }), async () => true);
+        fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ at: new Date().toISOString(), result: 'ok' }));
+        ok('(앞서) 방금 유지 틱이 돈 상태 = 30분 안이라 안 돎', (await W.keepMaybe()) === null && seen3.length === 0);
+        const shift = ms => fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...st3(), at: new Date(Date.parse(st3().at) - ms).toISOString() }));   /* 시간이 ms 만큼 흐른 꼴 */
+        await W.asideRecycleMaybe(Date.now());
+        ok('어사이드 끈 직후(0초) = 유지 틱 아직 안 돎(켜지는 중)', kills === 1 && (await W.keepMaybe()) === null && seen3.length === 0 && st3().keep_retry === 1);
+        shift(60000); ok('60초 뒤 = 아직', (await W.keepMaybe()) === null && seen3.length === 0);
+        shift(20000); let k3 = await W.keepMaybe();
+        ok('약 75초 뒤 = 유지 틱이 돌아 다시 켜고 로그인 확인(relogin) · keep_retry 풀림 · 다음은 종전 30분', k3 && k3.state === 'relogin' && seen3.length === 1 && st3().keep_retry === 0 && (await W.keepMaybe()) === null, JSON.stringify([k3, st3()]));
+        /* 끈 뒤 첫 틱이 오류(어사이드가 아직 켜지는 중) = 90초 뒤 1번만 더 */
+        let mode3 = 'throw'; W._setKeep(() => ({ start: async () => ({}), replJson: async () => { seen3.push(mode3); if (mode3 === 'throw') throw new Error('Tab X is no longer available.'); return { state: 'ok', store: '제주아꼼이네', closed: 1 }; }, stop: async () => { } }), async () => true);
+        fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ at: new Date().toISOString(), result: 'ok' })); W._setMem(() => ({ free_mb: 2000, total_mb: 15339 })); await W.memMaybe(true); seen3.length = 0;
+        await W.asideRecycleMaybe(Date.now() + 3 * 3600e3); shift(3 * 3600e3 + 80000); k3 = await W.keepMaybe();
+        ok('끈 뒤 첫 틱이 오류 = error 기록 · 90초 뒤 다시 돌게 당김(keep_retry 0)', k3 && k3.state === 'error' && seen3.length === 1 && st3().keep_retry === 0 && Math.abs(Date.parse(st3().at) - (Date.now() - 30 * 60000 + 90000)) < 5000, JSON.stringify([k3, st3()]));
+        ok('바로는 안 돎', (await W.keepMaybe()) === null && seen3.length === 1);
+        shift(95000); mode3 = 'ok'; k3 = await W.keepMaybe();
+        ok('90초 뒤 다시 = ok', k3 && k3.state === 'ok' && seen3.length === 2);
+        mode3 = 'throw'; fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ at: new Date(Date.now() - 31 * 60000).toISOString(), result: 'ok', keep_retry: 0 })); k3 = await W.keepMaybe();
+        ok('보통 때의 오류(다시 열기와 무관) = 종전대로 30분 뒤(당기지 않음)', k3 && k3.state === 'error' && Math.abs(Date.parse(st3().at) - Date.now()) < 5000 && (await W.keepMaybe()) === null);
+        /* 04시대에 여유가 낮아 끈 경우 = 그날 하루 1번 치도 한 것으로 */
+        wipe(); W._setMem(() => ({ free_mb: 2500, total_mb: 15339 })); await W.memMaybe(true); kills = 0;
+        rr = await W.asideRecycleMaybe(at(4));
+        ok('04시대에 low 로 끔 = aside_recycle_day 도 기록 · 같은 시간대 daily 로 또 끄지 않음', rr && rr.why === 'low' && st3().aside_recycle_day === today && kills === 1, JSON.stringify([rr, st3()]));
+        W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true);
+        ok('  (이어서 04시대 · 여유 넉넉) = 안 끔', (await W.asideRecycleMaybe(at(4) + 10 * 60000)) === null && kills === 1);
+        ok('끄는 명령 = 데몬 + 앱 본체만 · CLI 경로(\\CLI\\)는 빼고 · taskkill /IM 안 씀', /aside-daemon\.exe/.test(W.ASIDE_KILL_PS) && /Aside\.exe/.test(W.ASIDE_KILL_PS) && /ExecutablePath -notmatch '\\\\CLI\\\\'/.test(W.ASIDE_KILL_PS) && !/taskkill/i.test(W.ASIDE_KILL_PS));
+        W._setAsideKill(null); W._setMem(null); W._setKeep(null, null); wipe();
+    }
+
     console.log('── ③ 지시문');
     const P = W.promptFor({ id: 1, content: '[VM] 아이디 abc123 포인트 보상 5,000 · 사유 타이벡 파손 보상처리' });
     const A = W.promptFor({ id: 2, content: '[VM] 배송지 변경 주문번호 2026110170868221 → 제주시 서흘길 9, 3층' }, { sentToday: false });
