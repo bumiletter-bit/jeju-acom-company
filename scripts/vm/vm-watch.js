@@ -273,9 +273,12 @@ function findClaude() {
 // #1056-a 포인트 지급 절차(★에이전트오피스/업무지식.md 「### 네이버페이 포인트 보상 지급」 절을 러너용으로 옮김 · 그 절을 고치면 여기도)
 // #1086(대표 「고」 · VM #3549 실측) 톡톡 손님으로 온 지시 = 톡톡 파트너센터 대화방 「스마트 요약」 › 구매이력 → 상품주문번호 상세 창(보기 전용)에서 구매자 ID 전체·수취인·주소를 읽는 길
 const TALK_STEP = next => `(b-t) #1086 지시가 톡톡 손님(톡톡 아이디 앞부분·닉네임 · 대화 시각 · 글 첫마디)이면 먼저 이 길 = partner.talk.naver.com 상담 목록에서 그 대화를 찾아 연다(아이디·시각·글로 하나로 맞을 때만 · 대화 윗줄 고객 아이디는 앞부분만 보인다 예 ceo ↔ 실제 ceo72388) → 오른쪽 「스마트 요약」 › 구매이력 탭에서 지시 품목·날짜에 맞는 상품 줄 1개 → 그 줄의 상품주문번호 링크 → 새 창 주문 상세(sell.smartstore.naver.com …/order/popup/<상품주문번호>/productOrderDetail · 보기 전용)에서 구매자 ID 전체·수취인·연락처·주소·송장을 읽는다 → 그 값으로 ${next}. 맞는 대화가 0건이거나 둘 이상 · 또는 구매이력에서 지시 품목에 맞는 상품 줄이 0건이거나 둘 이상이면 아래 (b) 센터 검색 길로 · 그래도 애매하면 멈춘다. 🔴 톡톡 파트너센터에서는 읽기와 대화·탭·링크 누르기만 한다 — 메시지 보내기·태그·메모·상태 바꾸기 0.`;
+// #1230(대표 「고」 11/22) 스토어 확인 = 센터는 계정의 마지막 스토어로 열린다(노트북에서 직영몰 일을 하면 VM 도 직영몰로 열림 · 11/22 실사례) → 지급·저장 전에 스토어 이름부터
+const STORE_STEP = '(a-2) #1230 스토어 확인(로그인 뒤 · 다른 화면을 열기 전에) = 센터 화면 위쪽 「로그아웃」 아래에 적힌 스토어 이름을 읽는다. 「제주아꼼이네」(이름에 「직영몰」 없음)면 그대로 진행한다. 「제주아꼼이네 직영몰」이거나 다른 이름이면 위쪽 [스토어 이동] → 목록에서 「스마트스토어 제주아꼼이네」(직영몰·사업자몰이 아닌 줄)를 고르고 이름을 다시 읽는다 → 그래도 「제주아꼼이네」가 아니거나 이름을 못 읽으면 지급·저장하지 말고 멈춰 「⚠️ 센터가 직영몰(또는 다른 스토어)로 열려 있음 — 스토어 확인 필요 · 지급·저장 0」과 읽은 스토어 이름으로 답한다. 이 일은 네이버 스마트스토어 「제주아꼼이네」 주문만 한다 — 지시가 직영몰(사업자몰) 주문이면 스토어를 옮기지 말고 「직영몰 주문은 VM 이 안 해요 · 사람 확인 필요」로 답한다. 끝날 때 스토어는 「제주아꼼이네」인 채로 둔다.';
 const POINT_STEPS = [   // #1080(대표 11/9 23:1x) ①구매자 아이디 회원검색 · 목적 = 구매확정 이력 있으면 구매 프로모션 적립 · 없으면 비구매 적립 ②중복 = 오늘 같은 아이디만 멈춤 ③주문 찾기 최근 3개월 ④지급 화면 매번 새로 · [지급대상 확인] 무반응 = 처음부터 1회만 다시 ⑤비즈월렛 자동충전(잔액은 보고 줄에만)
     '[절차] 네이버페이 포인트 보상 지급',
     '(a) 스마트스토어센터 로그인 = 「로그인하기」 → 커머스ID 「네이버 아이디로 간편 로그인」 단추(비밀번호 입력 X · 아이디 칸이 나오면 규칙 ②의 금고 단추 1회). 2단계 인증·보안 확인이 뜨면 규칙 ②대로 멈춘다.',
+    STORE_STEP,
     TALK_STEP('(b-0)(아이디+주문번호 대조)'),
     '(b-0) #1082 지시에 구매자 네이버 아이디와 주문번호가 둘 다 적혀 있으면 찾는 단계를 건너뛴다 → 주문통합검색(최근 3개월)에서 그 주문번호 1건만 열어 구매자ID = 지시 아이디 · 품목 · 결제금액 · (지시에 손님 이름·번호가 있으면 그것도) 맞는지 대조만 → 셋 다 맞을 때만 (c)(d)(e) 대로 지급 · 하나라도 다르면 (f) 대로 멈춘다.',
     '(b-1) #1064 지시에 네이버 아이디(영문·숫자 아이디 · 예 saygoodjod)가 직접 적혀 있으면 주문 한 건을 특정할 필요가 없다 → 센터 회원검색에서 그 아이디 1건 확인 + 판매관리 › 주문통합검색(기간 = 최근 3개월)에서 구매자ID 로 지시 품목(예 타이벡) 주문이 1건 이상 있는지만 확인한다(여러 건이어도 OK · 어느 건인지 가리지 않음) → (c)(d)(e) 대로 지급. 「주문이 여럿이라 어느 건인지 몰라 못 함」 식으로 멈추지 않는다.',
@@ -291,6 +294,7 @@ const POINT_STEPS = [   // #1080(대표 11/9 23:1x) ①구매자 아이디 회�
 const ADDR_STEPS = [
     '[절차] 네이버 주문 배송지 변경(스마트스토어센터 · 쿠팡·자사몰 주문이면 하지 말고 「네이버 주문만 VM 이 바꿔요 · 사람 확인 필요」로 답한다)',
     '(a) 센터 로그인 = 「로그인하기」 → 커머스ID 「네이버 아이디로 간편 로그인」 단추(비밀번호 입력 X · 아이디 칸이 나오면 규칙 ②의 금고 단추 1회). 2단계 인증·보안 확인이 뜨면 규칙 ②대로 멈춘다.',
+    STORE_STEP,
     TALK_STEP('(c)(배송준비 화면 [고객 배송지 정보수정] · 상세 창은 보기 전용이라 거기서 고치지 않는다)'),
     '(b) 판매관리 › 배송준비(발주확인 끝난 주문 · 없으면 주문통합검색 최근 3개월)에서 주문을 찾는다 = 지시의 (상품)주문번호가 있으면 그것 먼저 · 없으면 구매자 또는 수취인 이름 + 전화번호로. 손님 ↔ 주문이 정확히 하나로 맞을 때만 다음으로.',
     '(c) 그 주문의 [고객 배송지 정보수정] → 주소 검색에 지시의 새 주소(도로명·지번)를 넣어 찾는다 → 후보가 정확히 1개일 때만 고르고 상세주소(동·호수 등)를 지시 그대로 넣는다 → 저장 1회. 받는 분 이름·번호를 바꾸라는 지시가 있으면 그 칸도 지시 그대로(없으면 그대로 둔다).',
@@ -433,21 +437,38 @@ for (const x of tabs) { try { if (/^https:\\/\\/sell\\.smartstore\\.naver\\.com\
 if (!t) { t = await openTab(HOME); opened = true; }
 else { try { await t.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { try { await t.evaluate(() => location.reload()); } catch (_) {} } }
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const look = async () => { let u = '', txt = ''; try { u = t.url(); } catch (e) {} try { txt = await t.evaluate(() => (document.body && document.body.innerText || '').slice(0, 2000)); } catch (e) {} return { u, txt }; };
+/* #1230 화면 읽기 = 주소 + 머리 글(로그아웃 글자 = 로그인됨 · 「로그인하기」 단추 = 로그인 안 된 첫 화면 · 로그아웃 아래 줄 = 지금 스토어 이름 · VM #3765 실측 꼴) */
+const look = async () => { let u = '', r = null; try { u = t.url(); } catch (e) {} try { r = await t.evaluate(() => { const b = document.body && document.body.innerText || ''; const h = b.slice(0, 3000); const m = /로그아웃\\s*\\n\\s*좌측 내비게이션 펼쳐보기\\s*\\n\\s*([^\\n]{1,40})/.exec(h); return { txt: b.slice(0, 2000), out: /로그아웃/.test(h), first: [...document.querySelectorAll('button, a, [role=button]')].some(e => /^\\s*로그인하기\\s*$/.test(e.innerText || e.textContent || '')), store: m ? m[1].trim() : '' }; }); } catch (e) {} r = r || {}; return { u, txt: r.txt || '', out: !!r.out, first: !!r.first, store: r.store || '' }; };
 const isLogin = s => /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com|\\/login/i.test(s.u);
+const isSell = s => /sell\\.smartstore\\.naver\\.com/.test(s.u);
 const isPhone = s => /2단계|인증번호|본인\\s*확인|보안\\s*확인|기기\\s*등록|새로운\\s*기기|승인\\s*요청|휴대폰으로/.test(s.txt);
+const t0 = t;
 await wait(5000);
-let a = await look(), state = 'ok', clicked = false;
+let a = await look(), state = 'ok', clicked = false, first = false;
+if (!isLogin(a) && isSell(a) && !a.out && !a.first) { await wait(4000); a = await look(); }   /* 머리가 아직 안 그려졌으면 한 번 더 */
+if (!isLogin(a) && isSell(a) && !a.out && a.first) {   /* #1230 로그인 안 된 첫 화면(「로그인하기」·「가입하기」) = 그 단추 1회 → 커머스ID 화면 */
+  try { first = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /^\\s*로그인하기\\s*$/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); } catch (e) { first = false; }
+  if (first) {
+    await wait(6000); a = await look();
+    if (!isLogin(a)) { for (const x of tabs) { try { if (x !== t0 && /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com/.test(x.url())) { t = x; a = await look(); break; } } catch (e) {} } }   /* 새 탭으로 뜬 때 */
+  }
+}
 if (isLogin(a)) {
   if (isPhone(a)) state = 'need_phone';
   else {
     try { clicked = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /간편\\s*로그인/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); } catch (e) { clicked = false; }
     if (!clicked) state = 'login_fail';
-    else { await wait(8000); a = await look(); state = !isLogin(a) && /sell\\.smartstore\\.naver\\.com/.test(a.u) ? 'relogin' : isPhone(a) ? 'need_phone' : 'login_fail'; }
+    else {
+      await wait(8000); a = await look();
+      if (t !== t0 && !isSell(a) && !isPhone(a)) { t = t0; try { await t.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) {} await wait(5000); a = await look(); }   /* 로그인 탭이 닫혔으면 처음 탭에서 다시 봄 */
+      state = !isLogin(a) && isSell(a) && !a.first ? 'relogin' : isPhone(a) ? 'need_phone' : 'login_fail';
+    }
   }
-} else if (!/sell\\.smartstore\\.naver\\.com/.test(a.u)) state = 'unknown';
+} else if (!isSell(a)) state = 'unknown';
+else if (a.out) state = first ? 'relogin' : 'ok';
+else state = a.first ? 'login_fail' : 'unknown';   /* #1230 주소만 보고 ok 로 치지 않음(로그아웃 글자가 보여야 ok) */
 let where = ''; try { const q = new URL(a.u); where = q.host + q.pathname; } catch (e) {}
-console.log(JSON.stringify({ state, clicked, opened, where }));`;
+console.log(JSON.stringify({ state, clicked, first, opened, where, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
 async function keepCenterOnce() {
     const aside = asideFactory ? asideFactory() : new (require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js')).Aside)(ASIDE_EXE, s => log(s));
     let timer = null;
@@ -457,12 +478,12 @@ async function keepCenterOnce() {
     } finally { clearTimeout(timer); await Promise.resolve(aside.stop({ keepTabs: true })).catch(() => { }); }   // 센터 탭은 남김(다음 새로고침·지급이 씀)
 }
 // 🔵 텔레그램은 체험 자동(experience_auto)의 길을 빌림 → experience_auto.enabled 를 끄면(403) 로그인 알림도 같이 꺼짐(로그만 남음)
-async function keepTell(reason) {
-    if (keepNotify) return keepNotify(reason);
+async function keepTell(reason, kind) {   // kind = 서버가 갈래마다 하루 1통(center_login 종전 · #1230 center_store)
+    if (keepNotify) return keepNotify(reason, kind || 'center_login');
     const API = String(process.env.EXP_AUTO_API || '').replace(/\/+$/, ''), TOKEN = String(process.env.EXP_AUTO_TOKEN || '');
     if (!/^https?:\/\//.test(API) || TOKEN.length < 32) { log('센터 유지: 텔레그램 길 없음(.env EXP_AUTO_API·TOKEN) — 로그만'); return false; }
     try {   // 서버 텔레그램 길 = 체험 번호 자동의 「예약 없는 멈춤」(id 0 · kind 갈래당 하루 1통 · #1040)
-        const r = await fetch(API + '/api/experience/auto/0/miss', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, kind: 'center_login' }), signal: AbortSignal.timeout(15000) });
+        const r = await fetch(API + '/api/experience/auto/0/miss', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, kind: kind || 'center_login' }), signal: AbortSignal.timeout(15000) });
         return r.status === 200;
     } catch (e) { log('센터 유지: 텔레그램 못 보냄 ' + e.message); return false; }
 }
@@ -480,8 +501,24 @@ async function keepMaybe(force) {
     try { r = await keepCenterOnce(); } catch (e) { r = { state: 'error', error: clean(e.message, 200) }; }
     finally { lockFree(); }
     const at = new Date().toISOString();
+    // #1230 로그인은 됐는데 센터가 직영몰 스토어로 열려 있음(노트북·VM 이 같은 계정 = 마지막 스토어가 따라옴) → 알림만(자동으로 옮기지 않음) · 텔레그램은 하루 1통
+    const wrongStore = !!r && (r.state === 'ok' || r.state === 'relogin') && /직영몰/.test(String(r.store || ''));
+    if (wrongStore) r = { ...r, state: 'wrong_store', login: r.state };
     keepWrite({ at, result: r && r.state, error: r && r.error || null, ...(r && r.state === 'need_phone' ? { phone_at: at } : {}) });
-    log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.error ? ' · ' + r.error : ''}`);
+    log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.error ? ' · ' + r.error : ''}`);
+    if (r && (r.state === 'ok' || r.state === 'relogin') && !r.store) log('센터 로그인 유지 · 스토어 이름 못 읽음(머리 글 꼴이 바뀌었는지 확인)');
+    // #1230-② 판정 못 함(unknown)이 연속 3번(1.5시간) = 진짜 풀림을 삼켰을 수 있음 → 텔레그램 하루 1통(쉼 없음) · 판정이 나오면(ok·relogin·직영몰·로그인 실패·폰 승인) 셈 0 · 어사이드 오류는 셈 그대로
+    if (r && r.state === 'unknown') {
+        const n = (Number(st.unknown_n) || 0) + 1; keepWrite({ unknown_n: n });
+        if (n >= 3 && st.unknown_told_day !== kstDay()) {
+            const told = await keepTell(`VM 센터 로그인 상태를 ${n}번 연속 못 읽음(화면 꼴 다름) — VM 어사이드 센터 탭을 한 번 봐 주세요 · 풀려 있으면 포인트·배송지 [VM] 멈춤`, 'center_unknown');
+            if (told) keepWrite({ unknown_told_day: kstDay() });
+        }
+    } else if (r && r.state !== 'error' && st.unknown_n) keepWrite({ unknown_n: 0 });
+    if (wrongStore && st.store_told_day !== kstDay()) {
+        const told = await keepTell('VM 센터가 직영몰로 열려 있음 — VM 어사이드 센터에서 [스토어 이동]으로 「제주아꼼이네」 스마트스토어로 바꿔 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤', 'center_store');
+        if (told) keepWrite({ store_told_day: kstDay() });
+    }
     if (r && (r.state === 'need_phone' || r.state === 'login_fail')) {
         await keepTell(r.state === 'need_phone' ? '스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — VM 어사이드 센터 탭에서 승인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤'
             : '스마트스토어센터 로그인 풀림(간편 로그인 안 됨) — VM 어사이드 센터 탭에서 로그인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤');
