@@ -64,3 +64,9 @@ html[data-ao-theme="dark"] .ss-date-banner-title span { color: var(--d-lime); }
 html[data-ao-theme="dark"] .ss-tbl .ss-tr th { color: var(--d-lime); }
 html[data-ao-theme="dark"] .rv-num.is-open { box-shadow: inset 3px 0 0 var(--d-lime); }
 html[data-ao-theme="dark"] .rv-num.is-open b, html[data-ao-theme="dark"] .rv-num.is-open small { color: var(--d-lime); }
+/* #1235 오늘 챙길 일 띠 · 메뉴 배지 — 야간 강조 숫자 = 라임(급한 것은 빨강 그대로 · 채움 칸은 흰 글) */
+html[data-ao-theme="dark"] .tb-item .tb-n { color: var(--d-lime); }
+html[data-ao-theme="dark"] .tb-item.is-urgent .tb-n { color: var(--d-err); }
+html[data-ao-theme="dark"] .tb-item.is-fill .tb-n { color: #FFFFFF; }
+html[data-ao-theme="dark"] .nav-item .nav-badge { background: var(--d-soft); color: var(--d-lime); border-color: var(--d-line); }
+html[data-ao-theme="dark"] .nav-item .nav-badge.is-urgent { color: var(--d-err); border-color: rgba(255, 122, 110, 0.45); }

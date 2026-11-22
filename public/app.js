@@ -224,6 +224,7 @@ function onLoginSuccess() {
     if (akmIsSmsApp()) { setTimeout(startNotiPolling, 5000); } else {   // #1062-e 문자 앱 = 일정·정산 첫 읽기 안 함 · 알림 종은 5초 뒤(문자 목록 먼저)
     init();
     startNotiPolling();
+    tsStart();   // #1235 오늘 챙길 일 띠·메뉴 배지
     }
     if (akmIsSmsApp()) smsAppStart();   // #1062 「아꼼이 문자」 앱 = 문자 창만
     notiApplyHash();   // #576 푸시 알림으로 열린 경우 그 알림의 창으로
@@ -748,7 +749,82 @@ async function renderScheduleBrief() {
         (dutyNames.length ? `<span class="sch-b-chip">🌙 오늘 당직 <b>${dutyNames.join('·')}</b></span>` : '');
     box.style.display = 'flex';
     _schedBriefAt = Date.now();
+    window._tsTodayCnt = todayCnt; tsRender();   // #1235 띠 「오늘 일정」 = 이 칩과 같은 셈
 }
+
+// ---------- #1235 오늘 챙길 일 띠(일정 맨 위) · 메뉴 숫자 배지 ----------
+//   숫자 = 서버 /api/today-summary(그 메뉴 화면 API 를 같은 계정으로 다시 불러 화면과 같은 판정 · today-rules.js) · 오늘 일정만 위 칩 셈
+//   2분마다 + 화면 돌아올 때 · 실패·끔(설정 today_summary {enabled:false}) = 띠·배지 조용히 숨김 · 세무사 = 안 돎
+const TS = { d: null, at: 0, busy: false, timer: null };
+const tsIsOwner = () => !!currentUser && currentUser.role === 'admin' && currentUser.position === '대표';
+const tsN = v => (typeof v === 'number' && v > 0) ? v : 0;
+async function tsLoad(force) {
+    if (!currentUser || TS.busy || (!force && Date.now() - TS.at < 55000)) return;
+    TS.busy = true;
+    try { const r = await api('/api/today-summary'); TS.d = (r && r.ok && !r.off) ? (r.counts || {}) : null; }
+    catch (e) { TS.d = null; }
+    finally { TS.busy = false; TS.at = Date.now(); }
+    tsRender();
+}
+function tsStart() {
+    if (TS.timer || !currentUser || currentUser.role === 'accountant') return;
+    tsLoad(true);
+    TS.timer = setInterval(() => { if (!document.hidden) tsLoad(); }, 120000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tsLoad(); });
+}
+function tsItems() {
+    const c = TS.d; if (!c) return null;
+    const srv = tsIsOwner() ? ['inq', 'memo', 'exp', 'appr', 'recon'] : ['inq', 'memo', 'exp'];
+    const allFail = srv.every(k => c[k] === null || c[k] === undefined);   /* 서버 항목이 전부 실패 = 0건과 다름 → 「없음 ✓」 대신 일정 칸만(없으면 띠 숨김) */
+    if (allFail) return tsN(window._tsTodayCnt) ? [{ k: 'today', label: '오늘 일정', text: tsN(window._tsTodayCnt) + '건' }] : null;
+    const md = s => s ? `${Number(String(s).slice(5, 7))}/${Number(String(s).slice(8, 10))}` : '';
+    const rc = c.recon && (c.recon.status === 'warn' || c.recon.status === 'unpaid') ? c.recon : null;
+    const it = {
+        recon: rc ? { label: `정산 대조 · ${rc.basis_start === rc.basis_end ? md(rc.basis_start) : md(rc.basis_start) + '~' + md(rc.basis_end)} 발송분`, text: rc.status === 'warn' ? '차이 큼' : '미입금', urgent: true } : null,
+        appr: tsN(c.appr) ? { label: '승인 대기', text: tsN(c.appr) + '건' } : null,
+        inq: tsN(c.inq) ? { label: '미답 문의', text: tsN(c.inq) + '건' } : null,
+        memo: tsN(c.memo) ? { label: '메모함 빨강 줄', text: tsN(c.memo) + '줄', urgent: true } : null,
+        exp: tsN(c.exp) ? { label: '체험 번호 미입력', text: tsN(c.exp) + '건' } : null,
+        today: tsN(window._tsTodayCnt) ? { label: '오늘 일정', text: tsN(window._tsTodayCnt) + '건' } : null,
+    };
+    const order = tsIsOwner() ? ['recon', 'appr', 'inq', 'memo', 'exp', 'today'] : ['memo', 'inq', 'exp', 'today'];
+    return order.filter(k => it[k]).map(k => Object.assign({ k }, it[k]));
+}
+function tsBadge(page, val, urgent, title) {
+    const nav = document.querySelector(`.nav-item[data-page="${page}"]`); if (!nav) return;
+    let b = nav.querySelector('.nav-badge');
+    if (!val) { if (b) { b.remove(); nav.removeAttribute('aria-label'); } return; }
+    if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; b.setAttribute('aria-hidden', 'true'); nav.appendChild(b); }
+    b.textContent = typeof val === 'number' ? (val > 99 ? '99+' : String(val)) : String(val);
+    b.classList.toggle('is-urgent', !!urgent); b.title = title;
+    const name = ((nav.querySelector('.nav-text') || {}).textContent || '').trim();
+    nav.setAttribute('aria-label', `${name} (${typeof val === 'number' ? val + '건' : '확인 필요'})`);   /* 읽기 프로그램 = 「문의 관리 (5건)」 */
+}
+function tsRender() {
+    const items = tsItems(), box = document.getElementById('today-band');
+    if (box) {
+        if (!items) { box.hidden = true; box.innerHTML = ''; }
+        else {
+            const fill = items.findIndex(x => x.urgent);   /* 채움은 가장 급한 1칸만 */
+            box.innerHTML = items.length ? items.map((x, i) => `<button type="button" class="tb-item${i === fill ? ' is-fill' : x.urgent ? ' is-urgent' : ''}" data-ts="${x.k}" aria-label="${escapeHtml(x.label + ' ' + x.text + ' — 눌러서 열기')}"><span class="tb-l">${escapeHtml(x.label)}</span><span class="tb-n">${escapeHtml(x.text)}</span></button>`).join('') : '<p class="tb-none">오늘 챙길 일 없음 ✓</p>';
+            box.hidden = false;
+        }
+    }
+    const c = TS.d, memo = c ? tsN(c.memo) : 0, appr = c && tsIsOwner() ? tsN(c.appr) : 0;
+    tsBadge('agent-office', memo + appr, memo > 0, [memo ? `메모함 빨강 줄 ${memo}줄` : '', appr ? `승인 대기 ${appr}건` : ''].filter(Boolean).join(' · '));
+    tsBadge('inquiry', c ? tsN(c.inq) : 0, false, c ? `미답 문의 ${tsN(c.inq)}건` : '');
+    tsBadge('settlement', c && c.recon && (c.recon.status === 'warn' || c.recon.status === 'unpaid') ? '!' : 0, true, '네이버 정산 대조 확인 필요');
+}
+function tsGo(k) {
+    const until = fn => { let w = 0; const t = () => { try { if (fn()) return; } catch (_) { return; } if ((w += 100) <= 5000) setTimeout(t, 100); }; t(); };
+    if (k === 'recon') return notiGo('settlement:settlement-status');
+    if (k === 'appr') { notiGo('agent-office'); return until(() => { const t = document.querySelector('#desk-tabs .desk-tab[data-tab="all"]'); if (!t || !t.offsetParent) return false; t.click(); return true; }); }   /* 승인 카드가 보이는 「이전 채팅 이력」(모두) 탭 — 옛 「대표 확인함」 탭은 #566 에서 없어짐 */
+    if (k === 'inq') return notiGo('inquiry');
+    if (k === 'today') { const td = document.querySelector('#schedule-calendar-body td.today'); if (td) td.scrollIntoView({ block: 'center' }); return; }
+    if (k === 'memo') return until(() => { if (!window.AkmOrderMemo) return false; window.AkmOrderMemo.open(); return true; });
+    if (k === 'exp') return until(() => { if (!window.AkmExp) return false; if (!window.AkmExp.isOpen()) window.AkmExp.open(); const p = document.getElementById('xp-nophone'); if (p && !p.hidden && !p.classList.contains('none')) { p.click(); return true; } return false; });
+}
+document.addEventListener('click', e => { const b = e.target && e.target.closest ? e.target.closest('#today-band .tb-item') : null; if (b) tsGo(b.dataset.ts); });
 
 // ---------- 주간 뷰 ----------
 async function renderScheduleWeek() {

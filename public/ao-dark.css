@@ -1083,7 +1083,7 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .settle-paid-diff { background: rgba(230, 165, 76, 0.14); color: #F79E5A; }
 :where(html[data-ao-theme="dark"]) .rv-num .rv-open14 { color: var(--primary); }
 
-/* ── theme.css 에서 옮긴 것 (181규칙) ── */
+/* ── theme.css 에서 옮긴 것 (193규칙) ── */
 :where(html[data-ao-theme="dark"]) .main-content { background: var(--page-bg); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); border-right: 1px solid var(--border); box-shadow: none; }
 :where(html[data-ao-theme="dark"]) .sidebar-header { border-bottom: 1px solid var(--border-soft); }
@@ -1266,6 +1266,18 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .rv-num.is-open b { color: #ACA8E5; }
 :where(html[data-ao-theme="dark"]) .rv-num.is-open span { color: var(--text-dark); }
 :where(html[data-ao-theme="dark"]) .rv-num.is-open small { color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .tb-item { border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .tb-item:hover { border-color: rgba(82, 92, 224, 0.4); }
+:where(html[data-ao-theme="dark"]) .tb-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .tb-item .tb-l { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .tb-item .tb-n { color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .tb-item.is-urgent { background: var(--d-soft); border-color: rgba(224, 92, 82, 0.4); }
+:where(html[data-ao-theme="dark"]) .tb-item.is-urgent .tb-n { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .tb-item.is-fill { background: var(--d-accent-fill); border-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .tb-item.is-fill .tb-l, :where(html[data-ao-theme="dark"]) .tb-item.is-fill .tb-n { color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .today-band .tb-none { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .nav-item .nav-badge { background: var(--primary-light); color: #ACA8E5; border: 1px solid rgba(82, 92, 224, 0.4); }
+:where(html[data-ao-theme="dark"]) .nav-item .nav-badge.is-urgent { background: var(--d-soft); color: #F19A93; border-color: rgba(224, 92, 82, 0.4); }
 
 /* ── order-organizer.css 에서 옮긴 것 (66규칙) ── */
 :where(html[data-ao-theme="dark"]) #page-organizer .oo-btn { border: 1px solid var(--border); background: var(--d-card); color: var(--text-dark); box-shadow: var(--shadow-sm); }
@@ -1535,3 +1547,9 @@ html[data-ao-theme="dark"] .ss-date-banner-title span { color: var(--d-lime); }
 html[data-ao-theme="dark"] .ss-tbl .ss-tr th { color: var(--d-lime); }
 html[data-ao-theme="dark"] .rv-num.is-open { box-shadow: inset 3px 0 0 var(--d-lime); }
 html[data-ao-theme="dark"] .rv-num.is-open b, html[data-ao-theme="dark"] .rv-num.is-open small { color: var(--d-lime); }
+/* #1235 오늘 챙길 일 띠 · 메뉴 배지 — 야간 강조 숫자 = 라임(급한 것은 빨강 그대로 · 채움 칸은 흰 글) */
+html[data-ao-theme="dark"] .tb-item .tb-n { color: var(--d-lime); }
+html[data-ao-theme="dark"] .tb-item.is-urgent .tb-n { color: var(--d-err); }
+html[data-ao-theme="dark"] .tb-item.is-fill .tb-n { color: #FFFFFF; }
+html[data-ao-theme="dark"] .nav-item .nav-badge { background: var(--d-soft); color: var(--d-lime); border-color: var(--d-line); }
+html[data-ao-theme="dark"] .nav-item .nav-badge.is-urgent { color: var(--d-err); border-color: rgba(255, 122, 110, 0.45); }

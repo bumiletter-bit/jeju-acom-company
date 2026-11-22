@@ -542,3 +542,20 @@ input:focus, textarea:focus, select:focus {
 .rv-num.is-open b { font-size: 28px; color: var(--primary-ink); }
 .rv-num.is-open span { color: var(--text-dark); font-weight: 700; }
 .rv-num.is-open small { color: var(--primary-ink); }   /* 옅은 인디고 바탕 위 보조 글 = 진한 인디고(종전 --text-mid 4.4:1) */
+
+/* #1235 오늘 챙길 일 띠(일정 맨 위) · 메뉴 숫자 배지 — 옅은 바탕 + 큰 숫자 · 채움은 가장 급한 1칸만 · 급한 것만 빨강 · 0 건은 빠짐 · 폰은 가로 넘김(높이 안 늘어남) */
+.today-band { display: flex; gap: 10px; margin: 0 0 12px; padding: 2px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.today-band[hidden] { display: none !important; }
+.today-band::-webkit-scrollbar { display: none; }
+.tb-item { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-width: 116px; min-height: 64px; padding: 10px 14px; border: 1px solid var(--card-border); border-radius: 12px; background: var(--card-bg); color: var(--text-dark); font: inherit; text-align: left; cursor: pointer; }
+.tb-item:hover { border-color: var(--primary-line); }
+.tb-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.tb-item .tb-l { font-size: 13px; font-weight: 600; color: var(--text-mid); white-space: nowrap; }
+.tb-item .tb-n { font-size: 22px; font-weight: 800; line-height: 1.2; color: var(--primary-ink); white-space: nowrap; }
+.tb-item.is-urgent { background: var(--danger-bg); border-color: var(--danger-line); }
+.tb-item.is-urgent .tb-n { color: var(--danger-ink); }
+.tb-item.is-fill { background: var(--primary); border-color: var(--primary); }
+.tb-item.is-fill .tb-l, .tb-item.is-fill .tb-n { color: #fff; }
+.today-band .tb-none { padding: 4px 2px; font-size: 13px; color: var(--text-mid); }
+.nav-item .nav-badge { margin-left: auto; flex: 0 0 auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; line-height: 1; background: var(--primary-light); color: var(--primary-ink); border: 1px solid var(--primary-line); }
+.nav-item .nav-badge.is-urgent { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-line); }

@@ -873,7 +873,7 @@
         const tail = [b.ship_now ? '· 주문 오늘 발송처리' : '', b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.normal && b.state !== 'allnormal' && b.state !== 'normal_later' && b.state !== 'normal_split' ? `· 일반발송 ${b.normal}건` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');   // #936-b 확인 줄 = 박스는 세되 완료 아님
         return tail ? main + ' ' + tail : main;
     }
-    const badgeK = b => (b.unsure > 0 && !['over', 'personal', 'unknown'].includes(b.state)) ? 'short' : (BADGE_K[b.state] || 'unk');   // #936-b 확인 줄 있으면 호박(완료 아님 · 발송됨도 = 실제 안 나간 줄) · 초과는 빨강 그대로
+    const badgeK = b => (window.AKMToday && AKMToday.memoBadgeK) ? AKMToday.memoBadgeK(b) /* #1235 공용 판정(today-rules.js · 같은 식) · 없으면 아래 종전 식 */ : (b.unsure > 0 && !['over', 'personal', 'unknown'].includes(b.state)) ? 'short' : (BADGE_K[b.state] || 'unk');   // #936-b 확인 줄 있으면 호박(완료 아님 · 발송됨도 = 실제 안 나간 줄) · 초과는 빨강 그대로
     // #1020(대표 11/5) 일반 메모 줄(사이즈·보내는이 등) 매칭 배지 = 서버 badge {kind:'line', state ok|fail|unknown, t, why} · 입력삭제 n/m 배지(kind 없음)와 따로
     const lineBadge = r => r.badge && r.badge.kind === 'line' ? r.badge : null;
     const indivBadge = r => r.badge && r.badge.kind !== 'line' ? r.badge : null;
@@ -882,7 +882,7 @@
     const lbText = lb => lb.state === 'fail' ? LB_T.fail : (lb.t || LB_T[lb.state] || LB_T.unknown);
     const lbHtml = lb => lb ? `<span class="om-pill om-lbadge k-${LB_K[lb.state] || 'unk'}" data-act="edit"${lb.why ? ` title="${esc(lb.why)}"` : ''}>${esc(lbText(lb))}</span>` : '';
     const badgeHtml = r => indivBadge(r) ? `<button type="button" class="om-pill om-badge k-${badgeK(r.badge)}" data-act="pairx" title="메모함 기준 미리보기 · 최종 판정은 최종발주 카드" aria-label="${esc(lineShow(r) + ' 입력삭제 매칭 ' + badgeText(r.badge) + ' · 누르면 추가 매칭')}">${esc(badgeText(r.badge))}</button>` : '';
-    const lineTone = (lb, ib) => lb ? (lb.state === 'ok' ? 'ok' : lb.state === 'fail' ? 'bad' : '') : ib ? ({ ok: 'ok', over: 'bad', short: 'bad' }[badgeK(ib)] || '') : '';
+    const lineTone = (lb, ib) => (window.AKMToday && AKMToday.memoLineTone) ? AKMToday.memoLineTone(lb, ib) /* #1235 공용 판정 · 없으면 종전 식 */ : lb ? (lb.state === 'ok' ? 'ok' : lb.state === 'fail' ? 'bad' : '') : ib ? ({ ok: 'ok', over: 'bad', short: 'bad' }[badgeK(ib)] || '') : '';
     // #1132(대표 11/12) 목록 줄 위 알약 = 한 알약 한 뜻 · 순서 ①매칭 상태 ②줄 종류 ③날짜 · 화면 표시만(서버 판정·저장 글·메모 칸 글 무변경 · aria 는 풀어 쓴 글 그대로)
     const SPLIT_DONE = ['ok', 'split', 'personal', 'normal_split', 'sent_split'];
     const badgeTail = b => [b.unsure ? `· 확인 필요 ${b.unsure}` : '', b.service ? `· 서비스 ${b.service}` : '', b.normal && b.state !== 'allnormal' && b.state !== 'normal_later' && b.state !== 'normal_split' ? `· 일반발송 ${b.normal}건` : '', b.item_diff ? '· 품목 다름' : ''].filter(Boolean).join(' ');
