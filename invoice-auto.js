@@ -28,6 +28,7 @@ function normOrders(channel, rows) {
         if (channel === 'naver') o = { order_key: String(r._pid || ''), box_id: String(r._pid || ''), name: r['수취인명'], tel: r['수취인연락처1'], tel2: r['수취인연락처2'], addr: r['통합배송지'], buyer: r['구매자연락처'], option: r['옵션정보'], qty: r['수량'] };
         else if (channel === 'coupang') o = { order_key: String(r._shipmentBoxId || r._orderId || '') + '|' + String(r._vendorItemId || ''), box_id: String(r._shipmentBoxId || ''), order_id: String(r._orderId || ''), vendor_item_id: String(r._vendorItemId || ''), name: r['수취인이름'], tel: r['수취인전화번호'], addr: r['수취인 주소'], buyer: r['구매자전화번호'], option: r['노출상품명(옵션명)'] || r['등록상품명'], qty: r['구매수(수량)'] };
         else if (channel === 'cafe24') o = { order_key: String(r._orderId || '') + '|' + String(r._itemCode || ''), box_id: String(r._orderId || ''), order_id: String(r._orderId || ''), item_code: String(r._itemCode || ''), name: r['수령인'], tel: r['수령인 휴대전화'], addr: r['수령인 주소(전체)'], buyer: r['주문자 휴대전화'], option: r['주문상품명(세트상품 포함)'], qty: r['수량'] };
+        if (o && channel === 'naver' && r._store === 'biz') o.store = 'biz';   // #1253 직영몰 주문 표식(화면 표시 갈래만 · 짝 맞추기·보내기 무관 · 스마트스토어 행은 칸 없음)
         if (!o || !o.order_key || o.order_key === '|') continue;
         o.channel = channel; o.qty = Math.max(1, parseInt(o.qty, 10) || 1); o.option = String(o.option || '').trim();
         o.kName = normName(o.name); o.kTel = dg(o.tel); o.kAddr = normAddr(o.addr); o.kBuyer = dg(o.buyer);
@@ -229,25 +230,27 @@ function stripPII(card) {
 function buildCard(m, orders) {
     const rows = []; let n = 0;
     const by = { naver: { auto: 0, todo: 0, cash: 0, skipped: 0 }, coupang: { auto: 0, todo: 0, cash: 0, skipped: 0 }, cafe24: { auto: 0, todo: 0, cash: 0, skipped: 0 } };
+    const biz = { auto: 0, todo: 0, cash: 0, skipped: 0 }, bizOf = o => (o.store === 'biz' ? { store: 'biz' } : {});   // #1253 직영몰 몫(by.naver 안에 들어 있는 수 · 화면이 갈라 보임)
     const shipOpt = s => ({ tracking: s.tracking, recipient_masked: maskRecipient(s.name, s.tel), ...who(s.name, s.tel), product: s.product });
     const boxItems = new Map(); for (const o of orders) if (o.channel === 'coupang' && o.box_id) { if (!boxItems.has(o.box_id)) boxItems.set(o.box_id, []); if (o.vendor_item_id && !boxItems.get(o.box_id).includes(o.vendor_item_id)) boxItems.get(o.box_id).push(o.vendor_item_id); }
     const sendCols = o => ({ order_id: o.order_id || null, vendor_item_id: o.vendor_item_id || null, box_vendor_items: o.channel === 'coupang' ? (boxItems.get(o.box_id) || [o.vendor_item_id]).filter(Boolean) : null });   // #838-4 B 전송 칸(쿠팡 = 상자 안 옵션 전부)
     for (const a of m.assign) {
         const o = a.o, ss = a.ships.slice().sort((x, y) => (x.tracking < y.tracking ? -1 : 1));
         rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), ...who(o.name, o.tel), option: o.option, qty: o.qty,
-            tracking: ss[0].tracking, tracking_all: ss.map(s => s.tracking), rule: a.rule, status: 'auto', pick_options: [] });
+            tracking: ss[0].tracking, tracking_all: ss.map(s => s.tracking), rule: a.rule, status: 'auto', pick_options: [], ...bizOf(o) });
         by[o.channel].auto++; by[o.channel].skipped += ss.length - 1;
+        if (o.store === 'biz') { biz.auto++; biz.skipped += ss.length - 1; }
     }
     for (const t of m.todos) {
         const o = t.o;
         rows.push({ id: 'r' + (++n), channel: o.channel, order_key: o.order_key, box_id: o.box_id, item_code: o.item_code || null, ...sendCols(o), recipient_masked: maskRecipient(o.name, o.tel), ...who(o.name, o.tel), option: o.option, qty: o.qty,
-            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt), suggest: t.suggest || null, suggest_why: t.suggest ? (t.suggest_why || '확인 필요') : null, ...(t.why ? { why: t.why } : {}) });
-        by[o.channel].todo++;
+            tracking: null, tracking_all: [], rule: t.rule, status: 'todo', pick_options: t.options.map(shipOpt), suggest: t.suggest || null, suggest_why: t.suggest ? (t.suggest_why || '확인 필요') : null, ...(t.why ? { why: t.why } : {}), ...bizOf(o) });
+        by[o.channel].todo++; if (o.store === 'biz') biz.todo++;
     }
     const assignedKeys = new Set(m.assign.map(a => a.o.channel + ':' + a.o.order_key).concat(m.todos.map(t => t.o.channel + ':' + t.o.order_key)));
-    const extraByCh = new Map(m.assign.map(a => [a.o.kBuyer, a.o.channel])); m.extra.forEach(s => { const ch = extraByCh.get(s._kb || s.senderTel); if (ch) by[ch].skipped++; });
+    const extraByCh = new Map(m.assign.map(a => [a.o.kBuyer, a.o])); m.extra.forEach(s => { const eo = extraByCh.get(s._kb || s.senderTel); if (eo) { by[eo.channel].skipped++; if (eo.store === 'biz') biz.skipped++; } });
     return {
-        by_channel: by, rows,
+        by_channel: by, rows, ...(biz.auto + biz.todo ? { by_biz: biz } : {}),
         cash: m.cash.map(s => ({ ...shipOpt(s), why: '보내는이 ! = 현금 주문(송장만 · 등록 대상 아님)' })),
         extra: m.extra.map(s => ({ ...shipOpt(s), why: '같은 구매자의 다른 주소 박스(입력삭제 나머지 · 등록 안 함 · 색인에만)' })),
         unmatched: m.unmatched.map(s => ({ ...shipOpt(s), why: unmatchedWhy(s) })),

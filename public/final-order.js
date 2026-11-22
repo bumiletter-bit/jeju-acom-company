@@ -3251,6 +3251,16 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const CH = ['naver', 'coupang', 'cafe24'];
     const CH_LABEL = { naver: '네이버', coupang: '쿠팡', cafe24: '자사몰' };
+    // #1253 표시용 직영몰 갈래 — 짝 결과 줄의 store:'biz'(서버가 직영몰 주문에 단 표식)로만 가름 · 서버 칸(naver)은 직영몰 몫을 빼고 보임 · 직영몰 0 이면 줄·카드 없음(종전 화면 그대로)
+    const DCH = ['naver', 'biz', 'coupang', 'cafe24'], DLABEL = { naver: '네이버', biz: '네이버 직영몰', coupang: '쿠팡', cafe24: '자사몰' };
+    const bizIds = () => new Set(((ia.res && ia.res.rows) || []).filter(x => x.channel === 'naver' && x.store === 'biz').map(x => x.id));
+    const dchOf = (x, biz) => (x && x.channel === 'naver' && (biz ? biz.has(x.id) : x.store === 'biz') ? 'biz' : x && x.channel);
+    const labOf = (x, biz) => DLABEL[dchOf(x, biz)] || (x && x.channel) || '';
+    const dchShow = biz => DCH.filter(c => c !== 'biz' || biz.size > 0);
+    function splitCount(counts, items, state, biz) {   /* 서버 채널 수 → 표시 채널 수(직영몰 = 그 상태 줄 수 · 네이버 = 서버 수 − 직영몰) */
+        const c = counts || {}, nb = biz.size ? (items || []).filter(it => it.channel === 'naver' && biz.has(it.id) && it.state === state).length : 0;
+        return { naver: (c.naver || 0) - nb, biz: nb, coupang: c.coupang || 0, cafe24: c.cafe24 || 0 };
+    }
     const RULE = {
         auto: '이름·번호·주소 일치', auto_multi: '이름·번호·주소 일치 · 박스 여러 개(첫 운송장 등록)', auto_qty_diff: '이름·번호·주소 일치 · 박스 수 다름',
         by_product: '같은 분 다른 품목 · 상품명으로 가름', same_item_any: '같은 분 같은 품목 · 하나씩 배정', indiv_store_addr: '개별 주소 · 스토어 주소 운송장', indiv_any: '개별 주소 · 그 구매자 운송장 하나',
@@ -3385,7 +3395,8 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const qty2 = rows.filter(x => (x.tracking_all || []).length > 1).length;
         const fetchErr = CH.filter(c => r.fetch && r.fetch[c] && !r.fetch[c].ok);
         const files = (r.files || []).map((f, i) => { const lb = f.partner_label || (f.partner && f.partner !== '?' ? f.partner : '') || ('파일' + (i + 1)); return `${esc(lb)} ${Number(f.rows) || 0}박스`; }).join(' · ');   // #1051 거래처 이름 + 박스(운송장 1줄 = 1박스) · 못 정하면 「파일n」
-        const chRow = c => { const b = (r.by_channel || {})[c] || {}; return `<li><b>${CH_LABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
+        const bz = r.by_biz || null, chB = c => { const bc = r.by_channel || {}; if (c === 'biz') return bz || {}; const b = bc[c] || {}; return c === 'naver' && bz ? { auto: (b.auto || 0) - (bz.auto || 0), todo: (b.todo || 0) - (bz.todo || 0), skipped: (b.skipped || 0) - (bz.skipped || 0) } : b; };   // #1253 직영몰 카드(있을 때만) · 네이버 = 직영몰 몫 뺌
+        const chRow = c => { const b = chB(c); return `<li><b>${DLABEL[c]}</b><span>자동 <em>${b.auto || 0}</em> · 할 일 <em>${b.todo || 0}</em>${b.skipped ? ` · 등록 안 하는 박스 <em>${b.skipped}</em>` : ""}</span></li>`; };
         out.innerHTML = `
             ${r.marks && r.marks.source === 'none' ? `<p class="fo-hint fo-ia-warn" role="alert"><b>최종발주 표식 없음 · 날짜 확인</b> — ${esc(r.ship_date || '')} 날짜로 저장된 최종발주 표식(입력삭제 · 오늘 안 나감)이 없어요. 발송일이 맞는지 위 「발송일」 칸에서 확인해 주세요 · 그날 최종발주를 안 만들었다면 그대로 진행해도 돼요</p>` : ''}
             <p class="fo-hint"><b>${esc(r.ship_date || '')} 발송분</b>${r.ship_date_src === 'picked' ? '(고른 날짜)' : r.ship_date_src === 'file' ? '(파일 이름에서 읽음)' : r.ship_date_src === 'today' ? '(파일 이름에 날짜가 없어 오늘로)' : ''} · ${files || '파일 없음'} · 운송장 ${s.shipments || 0}개 · 금일 미발송건 ${Number(r.orders_without_tracking) || 0}건(지정일 안 보낸 줄)${r.marks && r.marks.source === 'server' && r.marks.differs ? ` · 서버 표식 사용(${r.marks.local === 'none' ? '이 브라우저엔 표식 없음' : '이 브라우저 값과 달라 마지막 저장 기준'}${marksWho(r.marks)})` : ''}</p>
@@ -3393,9 +3404,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             <div class="fo-sum fo-ia-sum">
                 <span>자동 <b>${s.auto || 0}</b></span><span class="${todo.length ? 'warn' : ''}">할 일 <b>${todo.length}</b></span><span>현금(송장만) <b>${s.cash || 0}</b></span><span>수량2 <b>${qty2}</b></span><span>다른 주소 박스 <b>${s.extra || 0}</b></span><span>주문 없음 <b>${s.unmatched || 0}</b></span>
             </div>
-            <ul class="fo-ch fo-ia-ch">${CH.map(chRow).join('')}</ul>
+            <ul class="fo-ch fo-ia-ch">${DCH.filter(c => c !== 'biz' || bz).map(chRow).join('')}</ul>
             <div class="fo-ia-todo" id="fo-ia-todo">${todo.length ? todo.map(cardHtml).join('') : '<p class="fo-done">고를 것이 없어요 · 전부 자동으로 짝이 맞았어요</p>'}</div>
-            ${listHtml(`자동 ${auto.length}`, auto, !todo.length, x => [CH_LABEL[x.channel] || x.channel, who(x), `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
+            ${listHtml(`자동 ${auto.length}`, auto, !todo.length, x => [labOf(x), who(x), `${x.option || ''}${x.qty > 1 ? ' × ' + x.qty : ''}`, trk(x), RULE[x.rule] || x.rule])}
             ${listHtml(`현금(송장만) ${(r.cash || []).length}`, r.cash || [], false, x => ['', who(x), x.product, tno(x.tracking), x.why])}
             ${listHtml(`다른 주소 박스 ${(r.extra || []).length}`, r.extra || [], false, x => ['', who(x), x.product || '', tno(x.tracking), x.why])}
             ${listHtml(`주문 없음 ${(r.unmatched || []).length}`, r.unmatched || [], false, x => ['', who(x), x.product, tno(x.tracking), x.why])}
@@ -3417,7 +3428,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const v = ia.picks.get(x.id), noOpt = x.rule === 'todo_indiv_none' && !(x.pick_options || []).length, done = v != null && !noOpt, sg = done && ia.sugg.has(x.id);
         const opts = (x.pick_options || []).map(o => `<option value="${esc(o.tracking)}"${v === o.tracking ? ' selected' : ''}>${esc(tno(o.tracking))} · ${esc(who(o))} · ${esc(o.product || '')}</option>`).join('');
         return `<div class="fo-card" data-state="${sg ? 'open' : done ? 'done' : 'open'}" data-ia-id="${esc(x.id)}">
-            <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(CH_LABEL[x.channel] || x.channel)}</span><b>${esc(who(x))} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
+            <div class="fo-card-top"><span class="fo-tag" data-k="pick">${esc(labOf(x))}</span><b>${esc(who(x))} · ${esc(x.option || '')}${x.qty > 1 ? ' × ' + x.qty : ''}</b></div>
             <div class="fo-card-body"><div class="fo-line"><span>왜</span><p>${esc(x.why || RULE[x.rule] || x.rule)}</p></div><div class="fo-line"><span>주문번호</span><p>${esc(x.order_key)}</p></div></div>
             <div class="fo-card-acts">${noOpt ? '<span class="fo-wait">고를 운송장이 없어요 · 채널에서 직접 등록하거나 빠진 거래처 파일을 넣어 다시 짝 맞추기</span>' : `<label class="fo-pick">운송장 <select data-ia-pick="${esc(x.id)}" aria-label="${esc(who(x))} 주문에 붙일 운송장"><option value=""${done ? '' : ' selected'}>고르기</option>${opts}<option value="manual"${v === 'manual' ? ' selected' : ''}>수기로 둘게요(등록 안 함)</option></select></label>${sg ? `<span class="fo-ia-sg">${esc(x.suggest_why || '확인 필요 · 미리 고름')}</span>` : done ? `<span class="fo-done">${v === 'manual' ? '수기로 둠' : '고름'}</span>` : '<span class="fo-wait">아직 안 고름</span>'}`}</div>
         </div>`;
@@ -3445,11 +3456,13 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     // #838-5 두 단계: [등록] = 준비(dry · 채널 전송 0 · 같은 실행에서 다시 해도 됨) → 서버 설정 send_enabled 가 켜져 있으면 [채널에 보내기] + 확인 한 번(되돌릴 수 없음)
     //   #841(대표 10/25): [등록]은 묻지 않고 바로 준비 조회 · 보내기 확인(주황)만 남김
     function askSend() {
-        const box = $('fo-ia-confirm'), g = ia.reg, rd = (g && g.ready) || {}, tot = CH.reduce((a, c) => a + (rd[c] || 0), 0);
-        box.innerHTML = `<p id="fo-ia-q"><b>채널에 실제로 보내요 · 되돌릴 수 없어요.</b> ${CH.map(ch => `${CH_LABEL[ch]} ${rd[ch] || 0}건`).join(' · ')} = ${tot}건을 발송처리해요. 틀린 송장은 채널에서 취소할 수 없어요.</p>
+        const box = $('fo-ia-confirm'), g = ia.reg, biz = bizIds(), rd0 = (g && g.ready) || {}, tot = CH.reduce((a, c) => a + (rd0[c] || 0), 0), rd = splitCount(rd0, g && g.items, 'ready', biz);   // #1253 직영몰 건수 따로(합계 = 서버 수 그대로)
+        box.innerHTML = `<p id="fo-ia-q"><b>채널에 실제로 보내요 · 되돌릴 수 없어요.</b> ${dchShow(biz).map(ch => `${DLABEL[ch]} ${rd[ch] || 0}건`).join(' · ')} = ${tot}건을 발송처리해요. 틀린 송장은 채널에서 취소할 수 없어요.</p>
             <div class="fo-acts"><button type="button" class="fo-btn primary" id="fo-ia-send-yes">보내기</button><button type="button" class="fo-btn" id="fo-ia-no">취소</button></div>`;
         $('fo-ia-send').closest('.fo-acts').after(box);
-        box.hidden = false; $('fo-ia-send-yes').focus({ preventScroll: true });
+        box.hidden = false;
+        box.scrollIntoView({ block: 'nearest' });   // #1253 [채널에 보내기]가 판 아래 끝이면 띠가 판 밖에 그려져 [보내기]·[취소]가 안 보였음(scroll-margin = 떠 있는 「↑ 맨 위」 자리 비움)
+        $('fo-ia-send-yes').focus({ preventScroll: true });
     }
     const picksNow = () => { const p = {}; todoRows().forEach(x => { p[x.id] = ia.picks.get(x.id); }); return p; };
     async function register() {
@@ -3484,9 +3497,9 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function failRows() {
         const r = ia.res, g = ia.reg, byId = new Map(((r && r.rows) || []).map(x => [x.id, x])), out = [], seen = new Set();
         const WHY = { failed: '실패(채널이 거절)', unknown: '모름 · 응답을 못 받았어요 · 다시 보내지 말고 채널 화면에서 확인', manual: '수기' }, NOWHY = '이유 미상 · 총괄 확인';
-        ia.failExtra = false;
-        ((g && g.items) || []).filter(it => !/^(ready|already|sent|skipped)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; seen.add(it.id); out.push([CH_LABEL[it.channel] || it.channel, it.order_key || x.order_key || '', who(x), x.option || '', it.tracking || '', (WHY[it.state] || '전송 안 됨(' + (it.state || '?') + ')') + (it.error ? ' · ' + it.error : it.state === 'manual' ? ' · 고르지 않았거나 수기로 골랐어요' : it.state === 'unknown' ? '' : ' · ' + NOWHY)]); });
-        todoRows().filter(x => ia.picks.get(x.id) === 'manual' && !seen.has(x.id)).forEach(x => { ia.failExtra = true; out.push([CH_LABEL[x.channel] || x.channel, x.order_key, who(x), x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule || NOWHY)]); });
+        ia.failExtra = false; const bz = bizIds();
+        ((g && g.items) || []).filter(it => !/^(ready|already|sent|skipped)$/.test(it.state || '')).forEach(it => { const x = byId.get(it.id) || {}; seen.add(it.id); out.push([labOf(it, bz), it.order_key || x.order_key || '', who(x), x.option || '', it.tracking || '', (WHY[it.state] || '전송 안 됨(' + (it.state || '?') + ')') + (it.error ? ' · ' + it.error : it.state === 'manual' ? ' · 고르지 않았거나 수기로 골랐어요' : it.state === 'unknown' ? '' : ' · ' + NOWHY)]); });
+        todoRows().filter(x => ia.picks.get(x.id) === 'manual' && !seen.has(x.id)).forEach(x => { ia.failExtra = true; out.push([labOf(x), x.order_key, who(x), x.option || '', '', '수기로 둠 · ' + (RULE[x.rule] || x.rule || NOWHY)]); });
         return out;
     }
     // #961 주문에 안 붙은 운송장 = 전송 실패 아님(확인만) · 이유 = 서버 판정 글
@@ -3494,36 +3507,38 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
     function drawResult() {
         const g = ia.reg, box = $('fo-ia-result'); if (!g) return;
         const items = g.items || [], byId = new Map(((ia.res && ia.res.rows) || []).map(x => [x.id, x])), fails = failRows(), ums = unmatchedRows();
-        const per = c => items.filter(it => it.channel === c), st = (c, s) => per(c).filter(it => it.state === s).length;
-        const sum = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0);
-        const held = items.filter(it => it.state === 'manual'), heldHtml = () => held.length ? `<ul class="fo-ia-bad">${held.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="failed"><b>수기 · 등록 안 함</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''} · ${esc(it.error || '고르지 않았거나 수기로 골랐어요')}</span></li>`; }).join('')}</ul>` : '';   // #961 이유 없는 수기 줄도 보임
+        const biz = bizIds(), shows = dchShow(biz), per = c => items.filter(it => dchOf(it, biz) === c), st = (c, s) => per(c).filter(it => it.state === s).length;   // #1253 표시 채널(직영몰 있으면 한 줄 더)
+        const sum = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0), dc = k => splitCount(g[k], items, k, biz);
+        const mk = (Number(g.manual) || 0) + (Number(g.skipped) || 0) ? `<p class="fo-hint fo-ia-note">안 됨 가운데 수기 <b>${Number(g.manual) || 0}</b> · 뺌 <b>${Number(g.skipped) || 0}</b></p>` : '';
+        const held = items.filter(it => it.state === 'manual'), heldHtml = () => held.length ? `<ul class="fo-ia-bad">${held.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="failed"><b>수기 · 등록 안 함</b><span>${esc(labOf(it, biz))} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''} · ${esc(it.error || '고르지 않았거나 수기로 골랐어요')}</span></li>`; }).join('')}</ul>` : '';   // #961 이유 없는 수기 줄도 보임
         // #1186 「이미 등록」으로 묶인 줄 가운데 앞 실행 결과를 모르는 것(전송 중 서버가 멈춤 등) = 따로 보여 줌(다시 안 보냄 · 채널 화면에서 확인)
         const unk = items.filter(it => it.state === 'already' && /^(unknown|sending)$/.test(it.prev_state || ''));
-        const unkHtml = unk.length ? `<div class="fo-ia-um"><p class="fo-hint err" role="alert"><b>앞 실행에서 결과를 모르는 줄 ${unk.length}건</b> · 다시 보내지 않아요 · 채널 화면에서 발송처리가 됐는지 확인해 주세요</p><ul class="fo-ia-bad">${unk.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="unknown"><b>모름 · 채널에서 확인</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''}</span></li>`; }).join('')}</ul></div>` : '';
+        const unkHtml = unk.length ? `<div class="fo-ia-um"><p class="fo-hint err" role="alert"><b>앞 실행에서 결과를 모르는 줄 ${unk.length}건</b> · 다시 보내지 않아요 · 채널 화면에서 발송처리가 됐는지 확인해 주세요</p><ul class="fo-ia-bad">${unk.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="unknown"><b>모름 · 채널에서 확인</b><span>${esc(labOf(it, biz))} · ${esc(who(x))} · ${esc(it.order_key || x.order_key || '')}${it.tracking ? ' · ' + esc(tno(it.tracking)) : ''}</span></li>`; }).join('')}</ul></div>` : '';
         let head, table, extra = '';
         if (g.dry === false) {
             const cf = g.confirmed;
             head = `<h3>보낸 결과 <small>보냄 ${sum('sent')} · 실패 ${sum('failed')} · 모름 ${sum('unknown')}</small></h3>`;
             table = `<thead><tr><th>채널</th><th>보냄</th><th>실패</th><th>모름</th><th>이미 등록</th></tr></thead><tbody>
-                ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.sent || {})[c] || 0}</td><td>${(g.failed || {})[c] || 0}</td><td class="${(g.unknown || {})[c] ? 'bad' : ''}">${(g.unknown || {})[c] || 0}</td><td>${st(c, 'already')}</td></tr>`).join('')}
-                <tr class="tot"><td>합계</td><td>${sum('sent')}</td><td>${sum('failed')}</td><td>${sum('unknown')}</td><td>${Number(g.already) || 0} · 수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr></tbody>`;
+                ${(() => { const S = dc('sent'), F = dc('failed'), U = dc('unknown'); return shows.map(c => `<tr><td>${DLABEL[c]}</td><td>${S[c]}</td><td>${F[c]}</td><td class="${U[c] ? 'bad' : ''}">${U[c]}</td><td>${st(c, 'already')}</td></tr>`).join(''); })()}
+                <tr class="tot"><td>합계</td><td>${sum('sent')}</td><td>${sum('failed')}</td><td>${sum('unknown')}</td><td>${Number(g.already) || 0}</td></tr></tbody>`;
+            extra += mk;
             const bad = items.filter(it => it.state === 'failed' || it.state === 'unknown');
             if (cf && cf.checked) extra += `<p class="fo-hint">네이버 발송 상태 확인 ${Number(cf.naver) || 0}/${cf.checked}건</p>`;
             else if (cf && cf.error) extra += `<p class="fo-hint">네이버 발송 상태 확인을 못 했어요(${esc(cf.error)}) — 보낸 결과는 위 표 그대로예요</p>`;
             extra += heldHtml();
-            if (bad.length) extra += `<ul class="fo-ia-bad">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><b>${it.state === 'unknown' ? '모름 · 다시 안 보냄 · 채널 화면에서 확인' : '실패 · 다음 [짝 맞추기] 때 다시 보낼 수 있어요'}</b><span>${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))} · ${esc(it.order_key || '')} · ${esc(tno(it.tracking))}${it.error ? ' · ' + esc(it.error) : it.state === 'failed' ? ' · 이유 미상 · 총괄 확인' : ' · 응답을 못 받았어요'}</span></li>`; }).join('')}</ul>`;
+            if (bad.length) extra += `<ul class="fo-ia-bad">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><b>${it.state === 'unknown' ? '모름 · 다시 안 보냄 · 채널 화면에서 확인' : '실패 · 다음 [짝 맞추기] 때 다시 보낼 수 있어요'}</b><span>${esc(labOf(it, biz))} · ${esc(who(x))} · ${esc(it.order_key || '')} · ${esc(tno(it.tracking))}${it.error ? ' · ' + esc(it.error) : it.state === 'failed' ? ' · 이유 미상 · 총괄 확인' : ' · 응답을 못 받았어요'}</span></li>`; }).join('')}</ul>`;
         } else {
             head = `<h3>등록 준비 ${g.send_enabled ? '<small>아직 채널에 보내지 않았어요</small>' : '<small>시험 단계 · 채널로 보낸 것 0</small>'}</h3>`;
             table = `<thead><tr><th>채널</th><th>준비됨</th><th>이미 등록</th><th>안 됨</th></tr></thead><tbody>
-                ${CH.map(c => `<tr><td>${CH_LABEL[c]}</td><td>${(g.ready || {})[c] || 0}</td><td>${st(c, 'already')}</td><td>${per(c).length - st(c, 'ready') - st(c, 'already')}</td></tr>`).join('')}
-                <tr class="tot"><td>합계</td><td>${sum('ready')}</td><td>${Number(g.already) || 0}</td><td>수기 ${Number(g.manual) || 0} · 뺌 ${Number(g.skipped) || 0}</td></tr></tbody>`;
+                ${(() => { const R = dc('ready'); return shows.map(c => `<tr><td>${DLABEL[c]}</td><td>${R[c]}</td><td>${st(c, 'already')}</td><td>${per(c).length - st(c, 'ready') - st(c, 'already')}</td></tr>`).join(''); })()}
+                <tr class="tot"><td>합계</td><td>${sum('ready')}</td><td>${Number(g.already) || 0}</td><td>${items.filter(it => CH.includes(it.channel) && it.state !== 'ready' && it.state !== 'already').length}</td></tr></tbody>`;
             const canSend = g.send_enabled === true && canReg() && !ia.sent && sum('ready') > 0;
             extra = g.send_enabled === true
                 ? `<div class="fo-acts">${canSend ? `<button type="button" class="fo-btn primary" id="fo-ia-send">채널에 보내기 (${sum('ready')}건)</button>` : ''}<span class="fo-msg" id="fo-ia-send-msg" role="status"></span></div>`
                 : `<div class="fo-acts"><span class="fo-msg" id="fo-ia-send-msg" role="status">${ia.sent ? '' : '지금은 채널 전송이 꺼져 있어요 — 준비만 저장했어요'}</span></div>`;
-            extra = heldHtml() + extra;
+            extra = mk + heldHtml() + extra;
         }
-        box.innerHTML = `${head}<div class="fo-ia-scroll"><table>${table}</table></div>${unkHtml}${extra}
+        box.innerHTML = `${head}<div class="fo-ia-scroll fo-ia-ctab"><table>${table}</table></div>${unkHtml}${extra}
             <div class="fo-acts">${fails.length ? `<button type="button" class="fo-btn" id="fo-ia-dl">실패 줄 내려받기 (${fails.length})</button>` : '<span class="fo-done">실패·수기 줄 없음</span>'}<span class="fo-msg" id="fo-ia-dl-msg" role="status"></span></div>
             ${ums.length ? `<div class="fo-ia-um" id="fo-ia-um"><p class="fo-hint"><b>주문에 안 붙은 운송장 ${ums.length} (확인만)</b> · 전송 실패가 아니에요</p><ul class="fo-ia-bad">${ums.map(u => `<li data-k="um"><b>${esc(u.why)}</b><span>${esc(who(u.x))} · ${esc(u.x.product || '')} · ${esc(tno(u.x.tracking))}</span></li>`).join('')}</ul><div class="fo-acts"><button type="button" class="fo-btn" id="fo-ia-dl-um">이 줄 내려받기 (${ums.length})</button></div></div>` : ''}`;
         box.hidden = false; regNote();
@@ -3573,13 +3588,13 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         const g = ia.reg; if (!g || g.dry !== false) return;
         closeModal(false);
         const byId = new Map(((ia.res && ia.res.rows) || []).map(x => [x.id, x])), items = g.items || [];
-        const n = c => (g.sent || {})[c] || 0, okLine = CH.map(c => `${CH_LABEL[c]} ${n(c)}`).join(' · ');
+        const biz = bizIds(), S = splitCount(g.sent, items, 'sent', biz), okLine = dchShow(biz).map(c => `${DLABEL[c]} ${S[c]}`).join(' · ');   // #1253 직영몰 따로
         const bad = items.filter(it => it.state === 'failed' || it.state === 'unknown' || (it.state === 'manual' && it.error)), held = bad.filter(it => it.state === 'manual').length;
         const tot = k => CH.reduce((a, c) => a + ((g[k] || {})[c] || 0), 0), ok = !bad.length && !tot('failed') && !tot('unknown');
         const body = ok
             ? `<p class="fo-iam-big">오류 없음</p><p class="fo-iam-line">${esc(okLine)}</p>`
             : `<p class="fo-iam-line">보냄 <b>${tot('sent')}</b> · ${esc(okLine)}</p><p class="fo-iam-line warn">실패 <b>${tot('failed')}</b> · 모름 <b>${tot('unknown')}</b>${held ? ` · 수기 <b>${held}</b>` : ''} — 아래 줄은 채널 화면에서 확인하거나 수기로 넣어 주세요</p>
-               <ul class="fo-iam-list">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><span class="fo-iam-k">${it.state === 'unknown' ? '모름' : it.state === 'manual' ? '수기' : '실패'}</span><span class="fo-iam-t">${esc(CH_LABEL[it.channel] || it.channel)} · ${esc(who(x))}${it.tracking ? ` · <span class="fo-iam-no">${esc(tno(it.tracking))}</span>` : ''}</span><span class="fo-iam-why">${esc(it.error || (it.state === 'unknown' ? '응답 없음 · 다시 안 보냄' : '채널이 거절'))}</span></li>`; }).join('')}</ul>`;
+               <ul class="fo-iam-list">${bad.map(it => { const x = byId.get(it.id) || {}; return `<li data-k="${it.state}"><span class="fo-iam-k">${it.state === 'unknown' ? '모름' : it.state === 'manual' ? '수기' : '실패'}</span><span class="fo-iam-t">${esc(labOf(it, biz))} · ${esc(who(x))}${it.tracking ? ` · <span class="fo-iam-no">${esc(tno(it.tracking))}</span>` : ''}</span><span class="fo-iam-why">${esc(it.error || (it.state === 'unknown' ? '응답 없음 · 다시 안 보냄' : '채널이 거절'))}</span></li>`; }).join('')}</ul>`;
         const el = document.createElement('div'); el.className = 'fo-iam'; el.id = 'fo-ia-modal';
         el.innerHTML = `<div class="fo-iam-box" role="dialog" aria-modal="true" aria-labelledby="fo-iam-h" data-ok="${ok}"><h3 id="fo-iam-h">${ok ? '등록 완료' : '등록 결과 · 확인할 줄 있음'}</h3>${body}
             <div class="fo-acts">${ok ? '' : '<button type="button" class="fo-btn" data-iam="dl">수기 파일 내려받기</button>'}<button type="button" class="fo-btn primary" data-iam="close">닫기</button></div></div>`;

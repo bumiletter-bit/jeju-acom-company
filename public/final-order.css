@@ -862,3 +862,17 @@ html[data-ao-theme="dark"] .fo-src[data-src="card"] { background: rgba(251, 191,
 html[data-ao-theme="dark"] .fo-ia-out > .fo-ia-regbar { background: var(--fd-card); }
 /* #1186 누름 자리 44(터치·좁은 화면) — 옵션 창 [닫기]·검색 칸 */
 @media (max-width: 960px), (pointer: coarse) { .fo-optpanel-x { min-height: 44px; min-width: 44px; } .fo .fo-optpanel-q input { min-height: 44px; } }
+/* #1253 자동 송장 결과 표(등록 준비·보낸 결과) = 숫자 칸 오른쪽 정렬·같은 폭 · 표는 내용 폭(넓은 화면에서 숫자가 멀리 흩어지지 않게) · 합계 줄 옅은 바탕 · 수기·뺌은 표 아래 한 줄
+ * 보내기 확인 띠 = 판을 내려 띠 전체가 보이게(final-order.js askSend) · 띠가 떠 있는 동안 「↑ 맨 위」 숨김 */
+.fo-ia-result > .fo-ia-ctab { align-self: flex-start; max-width: 100%; }
+.fo-ia-ctab table { width: auto; min-width: 380px; }
+.fo-ia-ctab th, .fo-ia-ctab td { padding: 9px 14px; vertical-align: middle; }
+.fo-ia-ctab th:first-child, .fo-ia-ctab td:first-child { min-width: 116px; }
+.fo-ia-ctab th:not(:first-child), .fo-ia-ctab td:not(:first-child) { width: 88px; text-align: right; }
+.fo-ia-ctab tbody tr:last-child td { border-bottom: 0; }
+.fo-ia-ctab tr.tot td { background: var(--f-soft); font-size: 13.5px; }
+.fo-ia-note b { color: var(--f-ink); font-variant-numeric: tabular-nums; }
+.fo-ia-confirm { scroll-margin: 16px 0 24px; }
+.fo:has(#fo-ia-confirm:not([hidden])) .fo-float { visibility: hidden; }   /* 확인 띠가 떠 있는 동안 「↑ 맨 위」가 띠 글을 가리지 않게(보내기 결과 팝업 .iam-open 과 같은 구도) */
+@media (max-width: 640px) { .fo-ia-result > .fo-ia-ctab { align-self: stretch; } .fo-ia-ctab table { width: 100%; min-width: 0; } .fo-ia-ctab th, .fo-ia-ctab td { padding: 8px 10px; } .fo-ia-ctab th:first-child, .fo-ia-ctab td:first-child { min-width: 0; } .fo-ia-ctab th:not(:first-child), .fo-ia-ctab td:not(:first-child) { width: auto; } }
+html[data-ao-theme="dark"] .fo-ia-ctab tr.tot td { background: var(--fd-bg); }
