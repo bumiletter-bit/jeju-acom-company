@@ -49,6 +49,13 @@ const pad2 = n => String(n).padStart(2, '0');
 const validYmd = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
 const DOW = '일월화수목금토';
 const dowOf = ymd => DOW[new Date(ymd + 'T00:00:00Z').getUTCDay()];
+// #1231(대표 「알림 머리말도 헷갈리니까 고쳐줘」 11/22) /auto/0/miss 텔레그램 글 — VM 센터 로그인 유지 갈래(예약 id 없음)만 머리말을 「VM 스마트스토어센터」로 · 그 밖(예약 id 있음·다른 kind)은 종전 글자 그대로
+const MISS_CENTER_KINDS = new Set(['center_login', 'center_store', 'center_unknown']);
+function missTgText(row, kind, reason) {
+    if (!row && MISS_CENTER_KINDS.has(kind)) return `🖥️ VM 스마트스토어센터 확인 필요 · ${reason}`;
+    const what = row ? `예약 ${row.order_no} · ${row.visit_date ? row.visit_date.slice(5).replace('-', '/') : '?'} ${row.visit_time || ''}` : '어사이드 멈춤';
+    return `🍊 체험 번호 자동 입력 못 함 · ${what} · ${reason}${row ? ' — 에이전트 오피스 · 체험 예약 「번호 미입력」에서 직접 넣어 주세요' : ''}`;
+}
 // #822(대표 10/22 「엑셀 디자인 테두리부터 이쁘게 · 취소·반품 색 · 번호 010-0000-0000」) 엑셀 = 시트 ① 체험 예약(머리 인디고·흰 글 · 전체 테두리 · 틀 고정 · 필터 · 금액 #,##0
 //   · 취소·반품 줄 = 연빨강 바탕 + 회색 글 + 이름 취소선 · 방문 = 연초록 · 날짜 확인 필요 칸 = 호박 · 맨 아래 합계(취소·반품 뺀 것) · 접수 안내 = 알림톡/문자) · 시트 ② 현장 판매(귤)(날짜·요일·금액·메모·적은 사람 + 합계)
 const XL = { head: 'FF4F46E5', line: 'FFD0D5DD', off: 'FFFEF3F2', offInk: 'FF98A2B3', vis: 'FFECFDF3', warn: 'FFFFFAEB', sum: 'FFF2F4F7', sale: 'FFFFF4E6' };
@@ -1018,8 +1025,7 @@ module.exports = function mountExperience(app, deps) {
             cur.n++; cur.last_at = new Date().toISOString(); cur.reason = reason; cur.kind = kind;
             let told = false;
             if (!cur.notified && deps.notifyTelegram) {
-                const what = row ? `예약 ${row.order_no} · ${row.visit_date ? row.visit_date.slice(5).replace('-', '/') : '?'} ${row.visit_time || ''}` : '어사이드 멈춤';
-                try { deps.notifyTelegram(`🍊 체험 번호 자동 입력 못 함 · ${what} · ${reason}${row ? ' — 에이전트 오피스 · 체험 예약 「번호 미입력」에서 직접 넣어 주세요' : ''}`); told = true; } catch (_) { }
+                try { deps.notifyTelegram(missTgText(row, kind, reason)); told = true; } catch (_) { }
                 cur.notified = told;
             }
             m[key] = cur; await cfgSet(KEY_AUTO_MISS, m);
