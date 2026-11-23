@@ -274,7 +274,7 @@
             <div class="ev-head-acts">
                 <span class="ev-dirty" role="status">${S.saving ? '저장하는 중' : (S.dirty ? '저장 안 한 변경 있음' : '')}</span>
                 ${btn(S.saving ? '저장 중' : '변경 저장', `data-ev="save"${S.dirty && !S.saving ? '' : ' disabled'}`, 'primary')}
-                ${isOpen() ? btn('📤 오늘 송장 올리기', 'data-ev="upgo"', 'ev-upgo') : ''}
+                ${isOpen() ? btn('📤 오늘 송장 올리기', 'data-ev="uphead"', 'ev-upgo') : ''}
                 ${isOpen() ? `<details class="ev-headmore"><summary class="ev-btn ghost">더 보기</summary><div class="ev-headmore-pop">${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost')}</div></details>`
                     : `${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost ev-head-reset')}`}</div>
         </div>`;   // #1270 열린 회차에서는 [새 회차]·[초기화]를 「더 보기」 안으로 물리고 송장 올리기 바로가기를 머리에
@@ -961,7 +961,7 @@
             case 'down':
                 if (!await confirmBox('페이지를 내릴까요?', '손님 페이지가 「이벤트가 끝났어요」로 바뀌고 /guide 카드·봇 답도 꺼져요. 다시 열 수 있어요.', '내리기', true)) return;
                 return act('go-live', { mode: 'down' }, '페이지를 내렸어요');
-            case 'upgo': {   // #1270 머리 「오늘 송장 올리기」 = ⑤ 열기·운영 칸을 펼치고 송장 칸으로(올리기 길은 기존 그대로)
+            case 'uphead': {   // #1277 (종전 'upgo' = 등록 단추와 겹쳐 등록이 안 됨) · #1270 머리 「오늘 송장 올리기」 = ⑤ 열기·운영 칸을 펼치고 송장 칸으로(올리기 길은 기존 그대로)
                 closeMore();
                 S.open.add(5); render();
                 const box = $('ev-upbox'), drop = $('ev-drop');
