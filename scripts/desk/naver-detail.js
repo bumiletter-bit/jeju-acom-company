@@ -139,13 +139,12 @@ function buildPatch(o) {
     if (o.opt) { const p = parseOptArgs(o.opt); errs.push(...p.errs); if (!p.errs.length) patch.options = p.opts; }
     if (o.addOpt) { const p = parseAddOpts(o.addOpt); errs.push(...p.errs); if (!p.errs.length) patch.options_add = p.opts; }
     if (o.optOrder != null) {   // #1177 옵션 순서 — 지금 옵션 id 와 +n(n번째 --add-opt · 1부터)을 쉼표로 · 서버 꼴 = id 글 · 'add:<0부터>'
-        if (!o.addOpt) errs.push('--opt-order 는 --add-opt 와 같이만 써요(새 옵션을 붙이면서 순서를 정함)');
-        else if (!String(o.optOrder).split(',').some(x => x.trim())) errs.push('--opt-order 가 비었어요 — "<옵션 id>,+1,<옵션 id>,+2,…" 꼴로(#1178)');
+        if (!String(o.optOrder).split(',').some(x => x.trim()))   /* #1258 --add-opt 없이 순서만도 됨(지금 옵션 id 전부를 화면 순서대로 · +n 은 --add-opt 가 있을 때만) */ errs.push('--opt-order 가 비었어요 — "<옵션 id>,+1,<옵션 id>,+2,…" 꼴로(#1178)');
         else {
             const out = [];
             for (const raw of String(o.optOrder).split(',').map(x => x.trim()).filter(Boolean)) {
                 const m = /^\+(\d+)$/.exec(raw);
-                if (m) { if (Number(m[1]) < 1) errs.push(`--opt-order 「${raw}」: +1 부터예요`); else out.push('add:' + (Number(m[1]) - 1)); }
+                if (m) { if (!o.addOpt) errs.push(`--opt-order 「${raw}」: +n 은 --add-opt 로 새 옵션을 붙일 때만 써요(순서만 바꿀 땐 옵션 id 만)`); else if (Number(m[1]) < 1) errs.push(`--opt-order 「${raw}」: +1 부터예요`); else out.push('add:' + (Number(m[1]) - 1)); }
                 else if (/^\d+$/.test(raw)) out.push(raw);
                 else errs.push(`--opt-order 「${raw}」: 옵션 id(show 의 옵션 표) 또는 +n(n번째 --add-opt)이에요`);
             }
@@ -257,7 +256,8 @@ function saleLine(label, s, expectBad) {
 const tenX = (a, b) => { a = Number(a) || 0; b = Number(b) || 0; if (a === b || a <= 0) return false; return b >= a * 10 || b <= a / 10; };
 
 // ── 전/후 표·카드 (before = 보관본 JSON · patch = 바꿀 값)
-function planRows(before, patch) {
+function planRows(before, patch, opt) {
+    const discMax = opt && Number.isFinite(opt.discMax) && opt.discMax > 0.5 ? Math.min(opt.discMax, 0.7) : 0.5;   /* #1260 상품별 할인 상한(설정 naver_discount_over · 없으면 종전 50% · 서버 npwCheckPatch 와 같은 판정) */
     const op = (before && before.originProduct) || {};
     const rows = [], warns = [], stops = [];
     // 옵션·판매가·상품명(#721 2차) — 바뀐 칸만 · 결제가가 10배 넘게 움직이면 멈춤(0 하나 더·덜 의심)
@@ -325,6 +325,20 @@ function planRows(before, patch) {
         warns.push('자사몰(카페24) 옵션은 관리자 화면에서 따로 만들어야 해요 · 송장변환 품목 연결(단가표 이름)도 확인');
         if (op.statusType === 'OUTOFSTOCK' && patch.options_add.some(x => x.stock > 0) && !('status' in patch)) warns.push('지금 품절 상태예요 — 재고 있는 옵션을 붙이면 서버가 판매중으로도 같이 돌려요');
     }
+    if ('options_order' in patch && !('options_add' in patch)) {   // #1258 옵션 추가 없이 순서만(서버 npwCheckPatch 와 같은 거절 · 전/후 줄 · 조합 내용은 그대로 자리만)
+        const oc = combos(before), want = oc.map(c => String(c.id)), got = patch.options_order.map(String);
+        const label = t => { const c = oc.find(y => String(y.id) === t); return c ? optName(c) + (c.usable === false ? '(숨김)' : '') : t; };
+        const bad = got.filter(t => !want.includes(t)), dup = got.filter((t, i) => got.indexOf(t) !== i);
+        if (!oc.length) stops.push('옵션이 없는 상품이에요 — 순서를 바꿀 것이 없어요');
+        else if (bad.length) stops.push(`옵션 순서에 이 상품에 없는 것: ${bad.join(', ')} — 옵션 id 는 show 의 옵션 표`);
+        else if (dup.length) stops.push(`옵션 순서에 두 번 들어간 것: ${dup.map(label).join(', ')}`);
+        else if (got.length !== want.length) stops.push(`옵션 순서는 지금 옵션 ${oc.length}개(숨김 포함)를 모두 적어요(빠진 것: ${want.filter(t => !got.includes(t)).map(label).join(', ')})`);
+        else if (JSON.stringify(got) === JSON.stringify(want)) stops.push('옵션 순서가 지금과 같아요 — 바꿀 것이 없어요');
+        else {
+            rows.push({ field: '옵션 화면 순서', before: oc.map(c => optName(c) + (c.usable === false ? '(숨김)' : '')).join(' → '), after: got.map(label).join(' → ') });
+            warns.push('옵션 순서만 바꿔요(이름·추가금·재고·판매 여부 그대로) · 손님 옵션 목록 순서 = 보낸 배열 순서(정렬 「등록순」 상품) · 되돌리기(revert) = 보관본 순서');
+        }
+    }
     if ('group_names' in patch) {   // #773 옵션 묶음 이름(주문서 옵션 글 앞부분)
         const g = ((((op.detailAttribute || {}).optionInfo || {}).optionCombinationGroupNames) || {});
         for (const [k, v] of Object.entries(patch.group_names)) {
@@ -342,7 +356,7 @@ function planRows(before, patch) {
         if (!d0.unitType) stops.push('지금 즉시할인이 없는 상품이에요 — 처음 할인 걸기는 스마트스토어센터에서');
         else if (d0.unitType === d1.unitType && d0.value === d1.value) stops.push(`즉시할인이 이미 ${txt(d1)} 예요`);
         else if (d1.unitType === 'PERCENT' && d1.value > 99) stops.push('할인 % 는 99 까지예요');
-        else if (rate > 0.5) stops.push(`할인이 판매가 ${won(sp1)}원의 ${Math.round(rate * 1000) / 10}% 예요 — 50% 넘는 할인은 안 받아요(대표 기준)`);
+        else if (rate > discMax) stops.push(`할인이 판매가 ${won(sp1)}원의 ${Math.round(rate * 1000) / 10}% 예요 — ${Math.round(discMax * 100)}% 넘는 할인은 안 받아요(대표 기준${discMax > 0.5 ? ' · 이 상품만 올려 둔 상한' : ''})`);
         else {
             rows.push({ field: '즉시할인', before: txt(d0), after: `${txt(d1)}(판매가의 ${Math.round(rate * 1000) / 10}%)` });
             if (!('options' in patch) && !('sale_price' in patch)) {   // 옵션·판매가 블록이 안 돌았으면 결제가 줄은 여기서(모든 옵션)
@@ -635,7 +649,9 @@ function makeRunner(deps) {
         return !!r && r.role === 'admin';
     }
     async function writeCfg() { try { const v = await cfgGet('naver_product_write'); return (v && typeof v === 'object') ? v : {}; } catch (_) { return {}; } }
-    return { send, orderBy, backupRow, isAdmin, writeCfg };
+    /* #1260 이 상품의 할인 상한 — 설정 naver_discount_over { by: { '<상품번호>': 0.6 } } (0.5 초과 ~ 0.7 이하만 · 그 밖·못 읽음 = 0.5) */
+    const discMaxOf = async (pno) => { try { const c = await cfgGet('naver_discount_over'); const by = c && typeof c === 'object' && c.by && typeof c.by === 'object' && !Array.isArray(c.by) ? c.by : null; const v = by ? Number(by[String(pno)]) : NaN; return Number.isFinite(v) && v > 0.5 ? Math.min(v, 0.7) : 0.5; } catch (e) { return 0.5; } };
+    return { send, orderBy, backupRow, isAdmin, writeCfg, discMaxOf };
 }
 
 async function main(argv, deps) {
@@ -676,7 +692,9 @@ async function main(argv, deps) {
         if (errs.length) throw new Error(errs.join(' · '));
         const op = row.before_json.originProduct || {};
         const stTag = stOf(row);   // #1203-2 직영몰 보관본이면 { store: 'biz' }(plan 에서도 같은 검사)
-        const P = planRows(row.before_json, patch);
+        const discMax = await R.discMaxOf(row.product_no);   /* #1260 */
+        const P = planRows(row.before_json, patch, { discMax });
+        if (discMax > 0.5 && ('discount' in patch || 'sale_price' in patch)) P.warns.push(`이 상품은 할인 상한이 ${Math.round(discMax * 100)}% 로 올려져 있어요(대표 승인 · 설정 naver_discount_over)`);
         const locked = usesPut(row.before_json, patch) && (await R.writeCfg()).put_enabled !== true;
         if (locked) P.warns.unshift(PUT_LOCK_TEXT + '(apply 가 거절해요 · 옵션·가격·상품명·품절·상세는 스마트스토어센터에서)');
         else if (usesPut(row.before_json, patch) && !('detail_html' in patch)) P.warns.push('상품을 통째로 저장해서 그 상품 상세는 이후 센터에서 「HTML 작성」으로 열려요(블록 편집 X · 손님 화면 동일) — 그 뒤 상세 수정은 창구에 말로 · 그림 링크는 창구가 일반 링크로 살려 보냄');

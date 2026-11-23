@@ -910,7 +910,28 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const kx = mk();
         const bx = await run({ op: 'backup', product_no: CH, order_id: 101 }, kx.deps);
         const t = async (patch, re, name) => { const x = await run({ op: 'apply', order_id: 101, backup_id: bx.backup_id, patch }, kx.deps); ok(!x.ok && re.test(x.error), name, x); };
-        await t({ options_order: ['1', '2'], sale_price: 30000 }, /옵션 추가\(options_add\)와 같이만/, '옵션 추가 없이 순서만 = 거절');
+        // #1258(대표 11/23 「기준가 0 줄이 맨 위」) 옵션 추가 없이 순서만 = 받음(종전 = 거절) · 조합 내용 그대로 자리만 · 되돌리기 = 보관본 순서
+        await t({ options_order: ['1', '2'] }, /지금과 같아요/, '#1258 순서만: 지금과 같은 순서 = 거절(바꿀 것 없음)');
+        await t({ options_order: ['2'] }, /모두 적어요/, '#1258 순서만: 하나 빠짐 = 거절');
+        await t({ options_order: ['2', '2'] }, /두 번/, '#1258 순서만: 같은 id 두 번 = 거절');
+        await t({ options_order: ['2', '99'] }, /id 도/, '#1258 순서만: 없는 id = 거절');
+        await t({ options_order: ['2', 'add:0'] }, /id 도/, '#1258 순서만: 새 자리(add:n) = 거절(추가가 없음)');
+        {
+            const ko = mk(); const bo = await run({ op: 'backup', product_no: CH, order_id: 101 }, ko.deps);
+            const ao = await run({ op: 'apply', order_id: 101, backup_id: bo.backup_id, patch: { options_order: ['2', '1'] } }, ko.deps);
+            const so = ko.nv.puts[0] && ko.nv.puts[0].originProduct.detailAttribute.optionInfo.optionCombinations;
+            ok(ao.ok && ko.nv.puts.length === 1 && so && so.map(o => o.id).join() === '2,1', '#1258 순서만: 통째 PUT 1번 · 보낸 순서 = 정한 순서(4kg → 2.5kg)', { ok: ao.ok, err: ao.error, ids: so && so.map(o => o.id) });
+            const b0 = PRODUCT.originProduct.detailAttribute.optionInfo.optionCombinations;
+            ok(so && so.every(o => JSON.stringify(o) === JSON.stringify(b0.find(x => x.id === o.id))), '#1258 순서만: 조합 내용(이름·추가금·재고·판매 여부) 글자까지 그대로');
+            ok(ao.ok && ao.not_applied.indexOf('options_order') < 0 && ao.unexpected_paths.length === 0 && (ao.new_options || []).length === 0, '#1258 순서만: not_applied 0 · 뜻밖의 변경 0 · 새 옵션 0', { na: ao.not_applied, un: ao.unexpected_paths });
+            ok(ao.sale_ok && ao.sale_ok.ok === true, '#1258 순서만: 건든 뒤 판매 정상', ao.sale_ok);
+            const ro = await run({ op: 'revert', order_id: 101, backup_id: bo.backup_id }, ko.deps);
+            const back = ko.nv.puts[ko.nv.puts.length - 1].originProduct.detailAttribute.optionInfo.optionCombinations;
+            ok(ro.ok && back.map(o => o.id).join() === '1,2' && (ro.residual_paths || []).indexOf('options_order_not_restored') < 0, '#1258 순서만: 되돌리기 = 보관본 순서(2.5kg → 4kg)', { ok: ro.ok, err: ro.error, ids: back.map(o => o.id), res: ro.residual_paths });
+            const ks2 = mk(PRODUCT, { sortById: true }); const bs2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, ks2.deps);
+            const as2 = await run({ op: 'apply', order_id: 101, backup_id: bs2.backup_id, patch: { options_order: ['2', '1'] } }, ks2.deps);
+            ok(as2.ok && as2.not_applied.includes('options_order') && as2.unexpected_paths.length === 0, '#1258 순서만: 네이버가 순서를 무시(id 순)하면 not_applied 에 options_order · 뜻밖의 변경 0', { na: as2.not_applied, un: as2.unexpected_paths });
+        }
         await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2'] }, /모두 적어요/, '하나 빠짐 = 거절');
         await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '2', 'add:1'] }, /두 번/, '같은 자리 두 번 = 거절');
         await t({ options_add: ADD, options_order: ['add:0', '1', 'add:1', '99', 'add:2'] }, /id 도/, '없는 id = 거절');

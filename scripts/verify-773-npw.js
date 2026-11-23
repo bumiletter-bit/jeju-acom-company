@@ -9,7 +9,7 @@ const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const a = src.indexOf('// #720-B 시작'), b = src.indexOf('// #720-B 끝');
 if (a < 0 || b <= a) { console.error('server.js 에서 #720-B 구간을 못 찾음'); process.exit(1); }
-const mod = new Function(src.slice(a, b) + '\nreturn { naverProductWriteRun, npwCards, npwCardRisk, npwFixCards, npwCheckPatch };')();
+const mod = new Function(src.slice(a, b) + '\nreturn { naverProductWriteRun, npwCards, npwCardRisk, npwFixCards, npwCheckPatch, npwDiscMax };')();
 const v720 = fs.readFileSync(path.join(__dirname, 'verify-720-write.js'), 'utf8');
 const fa = v720.indexOf('// ── 가짜 pool'), fb = v720.indexOf('const PRODUCT = {');
 if (fa < 0 || fb <= fa) { console.error('verify-720-write.js 에서 가짜 pool·네이버 구간을 못 찾음'); process.exit(1); }
@@ -100,6 +100,32 @@ const get = (o, p) => p.reduce((c, k) => c == null ? c : c[k], o);
         ok(mod.npwCheckPatch({ discount: { unitType: 'PERCENT', value: 20 } }, PRODUCT) === null, '20% = 통과');
         const noDisc = clone(PRODUCT); delete noDisc.originProduct.customerBenefit;
         ok(/즉시할인이 없는/.test(mod.npwCheckPatch({ discount: { unitType: 'WON', value: 1000 } }, noDisc) || ''), '거절: 할인 없는 상품에 처음 걸기(센터 몫)');
+        // #1260(대표 11/23 산하홍 「58.5%로 고」) 상품별 할인 상한 — 설정 naver_discount_over { by: { '<상품번호>': 0.6 } } 에 있는 상품만 · 0.5 초과 ~ 0.7 이하 · 그 밖은 종전 50%
+        ok(mod.npwDiscMax(null, '1') === 0.5 && mod.npwDiscMax({}, '1') === 0.5 && mod.npwDiscMax({ by: [] }, '1') === 0.5 && mod.npwDiscMax({ by: { 2: 0.6 } }, '1') === 0.5, '#1260 설정 없음·꼴 이상·다른 상품 = 0.5');
+        ok(mod.npwDiscMax({ by: { 1: 0.6 } }, 1) === 0.6 && mod.npwDiscMax({ by: { 1: '0.6' } }, '1') === 0.6, '#1260 그 상품 = 0.6(숫자·글자 둘 다)');
+        ok(mod.npwDiscMax({ by: { 1: 0.9 } }, '1') === 0.7 && mod.npwDiscMax({ by: { 1: 0.4 } }, '1') === 0.5 && mod.npwDiscMax({ by: { 1: 'x' } }, '1') === 0.5 && mod.npwDiscMax({ by: { 1: 0.5 } }, '1') === 0.5, '#1260 0.7 넘는 값은 0.7 로 묶음 · 0.5 이하·글자는 종전 0.5');
+        const over = { discount: { unitType: 'WON', value: 36500 } };   // 62,500 의 58.4%
+        ok(/50% 넘는/.test(mod.npwCheckPatch(over, PRODUCT) || '') && /50% 넘는/.test(mod.npwCheckPatch(over, PRODUCT, {}) || '') && /50% 넘는/.test(mod.npwCheckPatch(over, PRODUCT, { discMax: 0.4 }) || ''), '#1260 상한 안 줌·빈 값·0.5 아래 = 종전대로 58.4% 거절');
+        ok(mod.npwCheckPatch(over, PRODUCT, { discMax: 0.6 }) === null, '#1260 상한 0.6 인 상품 = 58.4% 통과');
+        ok(/60% 넘는.*이 상품만 올려 둔 상한/.test(mod.npwCheckPatch({ discount: { unitType: 'WON', value: 38000 } }, PRODUCT, { discMax: 0.6 }) || ''), '#1260 예외 상품도 60.8% 는 거절(설정 상한)');
+        ok(/70% 넘는/.test(mod.npwCheckPatch({ discount: { unitType: 'WON', value: 44000 } }, PRODUCT, { discMax: 0.95 }) || '') && mod.npwCheckPatch({ discount: { unitType: 'WON', value: 43750 } }, PRODUCT, { discMax: 0.95 }) === null, '#1260 상한을 크게 줘도 70% 에서 묶임(70.4% 거절 · 딱 70% 통과)');
+        ok(/50% 넘는/.test(mod.npwCheckPatch({ sale_price: 50000 }, PRODUCT) || '') && mod.npwCheckPatch({ sale_price: 50000 }, PRODUCT, { discMax: 0.6 }) === null, '#1260 판매가를 내려 60% 가 되는 경우도 같은 상한(종전 거절 · 예외 상품 통과)');
+        {   // 러너: 설정 줄을 읽어 그 상품만 통과 + audit 한 줄 · 설정 없으면 종전 거절 · PUT 0
+            const auds = []; const mk2 = (cfgVal) => { const k = mk(); const q0 = k.db.query.bind(k.db); k.db.query = async (sql, p) => (String(sql).indexOf('FROM agent_office_config WHERE key = $1') >= 0 && p && p[0] === 'naver_discount_over') ? { rows: cfgVal === undefined ? [] : [{ value: cfgVal }] } : q0(sql, p); k.deps.pool = k.db; k.deps.audit = async (x) => { auds.push(x); }; return k; };
+            const k0 = mk2(undefined); const b0 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, k0.deps); const a0 = await run({ op: 'apply', order_id: 101, backup_id: b0.backup_id, patch: over }, k0.deps);
+            ok(!a0.ok && /50% 넘는/.test(a0.error) && k0.nv.puts.length === 0, '#1260 러너: 설정 줄 없음 = 종전 거절 · PUT 0', a0);
+            const k1 = mk2({ by: { [F.CH]: 0.6 } }); const b1 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, k1.deps); const n0 = auds.length; const a1 = await run({ op: 'apply', order_id: 101, backup_id: b1.backup_id, patch: over }, k1.deps);
+            ok(a1.ok && k1.nv.puts.length === 1 && k1.nv.puts[0].originProduct.customerBenefit.immediateDiscountPolicy.discountMethod.value === 36500, '#1260 러너: 설정에 그 상품 0.6 = 58.4% 반영(PUT 1번 · 값 36,500)', { ok: a1.ok, err: a1.error });
+            const au = auds.slice(n0).map(x => JSON.stringify(x)).find(t => /naver_discount_over/.test(t)) || ''; ok(/할인 상한 예외 적용/.test(au) && /58.4/.test(au), '#1260 러너: audit 에 「할인 상한 예외 적용」 한 줄(58.4%)', au.slice(0, 200));
+            const k2 = mk2({ by: { '99999': 0.6 } }); const b2 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, k2.deps); const a2 = await run({ op: 'apply', order_id: 101, backup_id: b2.backup_id, patch: over }, k2.deps);
+            ok(!a2.ok && /50% 넘는/.test(a2.error) && k2.nv.puts.length === 0, '#1260 러너: 설정에 다른 상품만 있음 = 거절');
+            const k3 = mk2({ by: { [F.CH]: 0.6 } }); const b3 = await run({ op: 'backup', product_no: F.CH, order_id: 101 }, k3.deps); const n3 = auds.length; const a3 = await run({ op: 'apply', order_id: 101, backup_id: b3.backup_id, patch: { discount: { unitType: 'WON', value: 20000 } } }, k3.deps);
+            ok(a3.ok && !auds.slice(n3).some(x => /naver_discount_over/.test(JSON.stringify(x))), '#1260 러너: 예외 상품이어도 50% 안쪽 변경이면 예외 기록 없음', { ok: a3.ok, err: a3.error });
+        }
+        {   // 창구 도구 판정 = 서버와 같게
+            const P0 = ND.planRows(PRODUCT, over), P1 = ND.planRows(PRODUCT, over, { discMax: 0.6 }), P2 = ND.planRows(PRODUCT, { discount: { unitType: 'WON', value: 38000 } }, { discMax: 0.6 });
+            ok(P0.stops.some(x => /50% 넘는/.test(x)) && !P1.stops.length && P1.rows.some(r => r.field === '즉시할인') && P2.stops.some(x => /60% 넘는/.test(x)), '#1260 도구 planRows: 상한 없음 = 50% 멈춤 · 0.6 = 통과 · 0.6 에서 60.8% = 멈춤', { s0: P0.stops, s1: P1.stops, s2: P2.stops });
+        }
     }
 
     console.log('③ 입력형 옵션(optionCustom) 이름 — apply → revert');

@@ -18151,6 +18151,13 @@ const NPW_GROUP_PATH = ['originProduct', 'detailAttribute', 'optionInfo', 'optio
 const NPW_DISC_PATH = ['originProduct', 'customerBenefit', 'immediateDiscountPolicy', 'discountMethod'];
 const NPW_CUSTOM_PATH = ['originProduct', 'detailAttribute', 'optionInfo', 'optionCustom'];
 const NPW_DISC_MAX_RATE = 0.5;   // 대표 기준: 판매가 대비 할인 50% 넘으면 거절
+/* #1260(대표 11/23 산하홍 「58.5%로 고」): 설정 agent_office_config 'naver_discount_over' { by: { '<채널 상품번호>': 0.6 } } 에 있는 상품만 할인 상한을 그 값으로 — 0.5 초과 ~ 0.7 이하만 인정(넘는 값은 0.7 로 묶음) · 줄이 없거나 꼴이 이상하면 종전 0.5 */
+const NPW_DISC_OVER_KEY = 'naver_discount_over', NPW_DISC_HARD_MAX = 0.7;
+function npwDiscMax(cfg, pno) {
+    const by = cfg && typeof cfg === 'object' && cfg.by && typeof cfg.by === 'object' && !Array.isArray(cfg.by) ? cfg.by : null;
+    const v = by ? Number(by[String(pno)]) : NaN;
+    return Number.isFinite(v) && v > NPW_DISC_MAX_RATE ? Math.min(v, NPW_DISC_HARD_MAX) : NPW_DISC_MAX_RATE;
+}
 const NPW_MAX_CUSTOM = 10;
 // #842 상품 무게(상품 속성 kg 칸 · 단위가격 총용량) — 기준 옵션 무게가 바뀔 때. 값 = { value: 「5」 꼴 kg 글, value_seq: 그 무게 구간 번호, total: 단위가격 총용량(지금 단위 그대로) }
 //   kg 칸 = productAttributes 중 attributeRealValueUnitCode A02002 하나만(없거나 둘이면 센터에서) · 구간 번호는 같은 분류 상품 실값에서(창구 naver-detail 표)
@@ -18206,7 +18213,7 @@ function npwFixCards(html) {
     }
     return { ok: true, html: s, n, cards: cards.map(c => ({ kind: c.kind, title: c.title, link: c.link, broken: c.broken })) };
 }
-const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'group_names', 'discount', 'custom_options', 'weight', 'seo', 'after_service_guide'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
+const NPW_PUT_KEYS = ['detail_html', 'sale_price', 'name', 'options', 'options_add', 'options_order', 'group_names', 'discount', 'custom_options', 'weight', 'seo', 'after_service_guide'];   // 통째 PUT 을 타는 patch 칸(#773 묶음 이름·즉시할인·입력형 옵션 추가)
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -18314,6 +18321,13 @@ function npwApplyPatch(j, patch) {
                 if (sorted.every(Boolean) && new Set(sorted).size === oc.length) oc.splice(0, oc.length, ...sorted);
             }
         }
+    } else if (Array.isArray(patch.options_order) && patch.options_order.length) {
+        /* #1258(대표 11/23 「기준가 0 줄이 맨 위」): 옵션 추가 없이 순서만 — 지금 옵션 id 전부를 한 번씩(검사 = npwCheckPatch) · 조합 내용(이름·추가금·재고·판매 여부)은 그대로 자리만 바꿈 */
+        const oc = npwGet(j, ['originProduct', 'detailAttribute', 'optionInfo', 'optionCombinations']);
+        if (Array.isArray(oc) && patch.options_order.length === oc.length) {
+            const sorted = patch.options_order.map(t => oc.find(o => String(o.id) === String(t)));
+            if (sorted.every(Boolean) && new Set(sorted).size === oc.length) oc.splice(0, oc.length, ...sorted);
+        }
     }
     // #773 묶음 이름 · 즉시할인 · 입력형 옵션 이름 — 준 칸만(즉시할인은 discountMethod 의 value·unitType 만 · 다른 칸 그대로)
     if (patch.group_names && typeof patch.group_names === 'object') {
@@ -18372,7 +18386,8 @@ function npwPutBody(j) {
     return c;
 }
 // patch 검사 — 허용 칸만 · 값 꼴 · 지금 상품 기준 전이까지
-function npwCheckPatch(patch, before) {
+function npwCheckPatch(patch, before, opt) {
+    const discMax = opt && Number.isFinite(opt.discMax) && opt.discMax > NPW_DISC_MAX_RATE ? Math.min(opt.discMax, NPW_DISC_HARD_MAX) : NPW_DISC_MAX_RATE;   /* #1260 상품별 할인 상한(없으면 종전 0.5) */
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return 'patch 가 비었어요';
     const keys = Object.keys(patch);
     if (!keys.length) return 'patch 가 비었어요';
@@ -18467,7 +18482,7 @@ function npwCheckPatch(patch, before) {
     if ('discount' in patch || ('sale_price' in patch && npwGet(before, NPW_DISC_PATH))) {   // 판매가 대비 할인율 50% 상한(바뀐 뒤 기준)
         const exp0 = npwApplyPatch(npwClone(before), patch), sp = Number(npwGet(exp0, NPW_FIELDS.sale_price)) || 0, dd = npwDiscount(exp0);
         const off = dd.unitType === 'PERCENT' ? Math.floor(sp * dd.value / 100) : dd.value;
-        if (sp > 0 && off / sp > NPW_DISC_MAX_RATE) return `할인이 판매가의 ${Math.round(off / sp * 1000) / 10}% 예요 — ${NPW_DISC_MAX_RATE * 100}% 넘는 할인은 안 받아요(대표 기준)`;
+        if (sp > 0 && off / sp > discMax) return `할인이 판매가의 ${Math.round(off / sp * 1000) / 10}% 예요 — ${Math.round(discMax * 100)}% 넘는 할인은 안 받아요(대표 기준${discMax > NPW_DISC_MAX_RATE ? ' · 이 상품만 올려 둔 상한' : ''})`;
     }
     if ('options_add' in patch) {
         const adds = patch.options_add;
@@ -18494,8 +18509,8 @@ function npwCheckPatch(patch, before) {
     }
     if ('options_order' in patch) {   // #1177 옵션 순서 — 옵션 추가와 같이만 · 지금 옵션 id 전부 + 'add:<자리>' 전부를 한 번씩
         const ord = patch.options_order, adds = Array.isArray(patch.options_add) ? patch.options_add : [];
-        if (!adds.length) return '옵션 순서(options_order)는 옵션 추가(options_add)와 같이만 보내요';
-        const have = npwOptions(before).map(o => String(o.id));
+        const have = npwOptions(before).map(o => String(o.id));   /* #1258 옵션 추가 없이 순서만도 받음(adds 0 → 지금 옵션 id 전부를 한 번씩 · 아래 검사 그대로) */
+        if (!adds.length && Array.isArray(ord) && JSON.stringify(ord.map(x => String(x))) === JSON.stringify(have)) return '옵션 순서가 지금과 같아요 — 바꿀 것이 없어요';
         const want = [...have, ...adds.map((_, i) => 'add:' + i)];
         if (!Array.isArray(ord) || ord.length !== want.length) return `옵션 순서는 지금 옵션 ${have.length}개(숨김 포함) + 새 옵션 ${adds.length}개 = ${want.length}개를 모두 적어요`;
         const got = ord.map(x => String(x)), seenO = new Set();
@@ -18926,8 +18941,15 @@ async function naverProductWriteRun(req, deps) {
         if (op === 'apply') {
             if (row.applied_at) return fail('이미 적용한 보관본이에요 — 새로 backup 하세요');
             const before = row.before_json, patch = req.patch;
-            const perr = npwCheckPatch(patch, before);
+            /* #1260 이 상품의 할인 상한(설정 naver_discount_over · 못 읽으면 종전 0.5) — 50% 를 넘겨 받은 apply 는 audit 에 한 줄 */
+            let discMax = NPW_DISC_MAX_RATE;
+            try { const cr = await db.query(`SELECT value FROM agent_office_config WHERE key = $1`, [NPW_DISC_OVER_KEY]); discMax = npwDiscMax(cr && cr.rows && cr.rows[0] ? cr.rows[0].value : null, row.product_no); } catch (_) { discMax = NPW_DISC_MAX_RATE; }
+            const perr = npwCheckPatch(patch, before, { discMax });
             if (perr) return fail(perr);
+            if (discMax > NPW_DISC_MAX_RATE && patch && ('discount' in patch || 'sale_price' in patch)) {
+                try { const ex = npwApplyPatch(npwClone(before), patch), sp = Number(npwGet(ex, NPW_FIELDS.sale_price)) || 0, dd = npwDiscount(ex), off = dd.unitType === 'PERCENT' ? Math.floor(sp * dd.value / 100) : dd.value;
+                    if (sp > 0 && off / sp > NPW_DISC_MAX_RATE) await auditW('naver_discount_over', { product_no: row.product_no, order_id: orderId, backup_id: row.id, note: '할인 상한 예외 적용', rate: Math.round(off / sp * 1000) / 10, max: Math.round(discMax * 100), sale_price: sp, discount: off }); } catch (_) { /* 기록 실패는 반영을 막지 않음 */ }
+            }
             // 원상품 번호 = change-status 길(판매 중지·재개)에만 필요 — 품절 걸기·풀기는 채널 번호 통째 PUT
             if ((patch && patch.status === 'SUSPENSION' || (patch && patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'SUSPENSION')) && !row.origin_product_no) return fail('원상품 번호를 못 찾은 보관본이라 판매 상태를 바꿀 수 없어요');
             // #721-B 통째 PUT 잠금: 통째 PUT 을 타는 길(상세·옵션·판매가·품목명·품절 걸기/풀기)은 설정 'naver_product_write'.put_enabled === true 일 때만
@@ -19017,7 +19039,8 @@ async function naverProductWriteRun(req, deps) {
             const adds = Array.isArray(patch.options_add) ? patch.options_add : [];
             const added = adds.length ? npwFindAdded(cur, after, adds) : [];
             if (adds.length) { const roc = npwOptions(ref); added.forEach(({ i, o }) => { const r = o && roc.find(x => x.id == null && npwOptTuple(x) === npwAddTuple(adds[i])); if (r) r.id = o.id; }); }   // #1177 새 조합 자리는 이름으로(옵션 순서를 바꾸면 끝이 아님)
-            const view = (j) => adds.length ? npwSortOpts(npwStripVolatile(j)) : npwStripVolatile(j);
+            const reord = Array.isArray(patch.options_order) && patch.options_order.length > 0;   /* #1258 순서만 바꾼 apply 도 내용 비교는 id 순으로(자리 바뀜을 「뜻밖의 변경」으로 세지 않음 · 순서 자체는 아래 options_order 확인이 봄) */
+            const view = (j) => (adds.length || reord) ? npwSortOpts(npwStripVolatile(j)) : npwStripVolatile(j);
             const all = npwDiff(view(before), view(after));
             const changed = all.filter(p => !NPW_STOCK_RE.test(p) || npwIsExpected(p, exp));
             const stock_paths = all.filter(p => !changed.includes(p));
