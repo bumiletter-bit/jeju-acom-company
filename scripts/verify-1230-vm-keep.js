@@ -239,6 +239,64 @@ async function runKeep(tabs, openTab) {
         ok('유지 코드 = 여전히 센터 첫 화면만(#1082 조건) · [스토어 이동] 없음', /home\/dashboard/.test(W.JS_KEEP) && !/point|benefit|pay-order|저장|지급/.test(W.JS_KEEP) && !/스토어\s*이동/.test(W.JS_KEEP));
     }
 
+    console.log('── #1266 간편 로그인 뒤 로그인 창(OAuth 팝업) 기다림 · heartbeat 센터 결과');
+    {
+        SCREENS.oauth = { u: 'https://accounts.commerce.naver.com/oauth/callback?code=x', txt: '로그인 처리 중', out: false, first: false, store: '' };
+        SCREENS.popPhone = { u: 'https://nid.naver.com/login/ext/deviceConfirm', txt: '새로운 기기 로그인 · 2단계 인증 · 휴대폰으로 승인 요청을 보냈습니다', out: false, first: false, store: '' };
+        const noOpen3 = async () => { throw new Error('openTab 불림'); };
+        const taps = lg => lg.filter(x => /tap간편=true/.test(x)).length;
+        /* 팝업이 늦게 닫힘: 간편 로그인 → 새 로그인 창이 뜸 · 처음 탭은 로그인 화면 그대로 → 창을 3번째 볼 때 닫힘 → 처음 탭 새로고침하면 대시보드 */
+        { const lg = [], tabs5 = []; let peeks = 0, done = false; const pop5 = mkTab('oauth', { onLook: x => { peeks++; if (peeks >= 3) { x.closed = true; done = true; } } }, lg, 'P');
+          const a5 = mkTab('first', { onFirst: x => { x.screen = 'login'; }, onSimple: () => { tabs5.push(pop5); }, onReload: () => (done ? 'dash' : null) }, lg, 'A'); tabs5.push(a5);
+          const r5 = await runKeep(tabs5, noOpen3);
+          ok('팝업이 늦게 닫힘 → 기다린 뒤 처음 탭 새로고침 → relogin · 간편 로그인 1번만 · waited ≥ 1', r5.state === 'relogin' && r5.clicked && taps(lg) === 1 && r5.waited >= 1 && r5.store === '제주아꼼이네' && lg.includes('A:reload'), JSON.stringify(r5) + lg); }
+        /* 끝내 첫 화면: 팝업이 상한(6번)까지 안 닫힘 · 새로고침해도 로그인 화면 = login_fail · 팝업은 안 닫음(사람 몫) */
+        { const lg = [], tabs6 = []; const pop6 = mkTab('oauth', {}, lg, 'P');
+          const a6 = mkTab('first', { onFirst: x => { x.screen = 'login'; }, onSimple: () => { tabs6.push(pop6); } }, lg, 'A'); tabs6.push(a6);
+          const r6 = await runKeep(tabs6, noOpen3);
+          ok('팝업이 끝내 안 닫히고 새로고침해도 로그인 전 = login_fail · 간편 로그인 1번만 · 기다림 상한 6 · 팝업 안 닫음', r6.state === 'login_fail' && r6.clicked && taps(lg) === 1 && r6.waited === 6 && !pop6.closed && r6.closed === 0 && r6.store === '', JSON.stringify(r6) + lg); }
+        /* 팝업이 닫혔는데도 처음 탭이 첫 화면 = login_fail(종전 실패 길) */
+        { const lg = [], tabs7 = []; const pop7 = mkTab('oauth', { onLook: x => { x.closed = true; } }, lg, 'P');
+          const a7 = mkTab('first', { onFirst: x => { x.screen = 'login'; }, onSimple: x => { tabs7.push(pop7); x.screen = 'first'; } }, lg, 'A'); tabs7.push(a7);
+          const r7 = await runKeep(tabs7, noOpen3);
+          ok('팝업은 닫혔는데 처음 탭이 여전히 「로그인하기」 첫 화면 = login_fail · 「로그인하기」·간편 로그인 다시 안 누름', r7.state === 'login_fail' && taps(lg) === 1 && lg.filter(x => /tap로그인하기=true/.test(x)).length === 1, JSON.stringify(r7) + lg); }
+        /* 팝업이 2단계·폰 승인 화면 = need_phone · 그 창 그대로 */
+        { const lg = [], tabs8 = []; const pop8 = mkTab('popPhone', {}, lg, 'P');
+          const a8 = mkTab('dash', { onReload: () => 'login', onSimple: () => { tabs8.push(pop8); } }, lg, 'A'); tabs8.push(a8);
+          const r8 = await runKeep(tabs8, noOpen3);
+          ok('새로 뜬 로그인 창이 2단계·폰 승인 = need_phone · 창 안 닫음 · 기다림 0', r8.state === 'need_phone' && !pop8.closed && r8.waited === 0 && taps(lg) === 1, JSON.stringify(r8) + lg); }
+        /* 팝업 없음 = 종전: 바로 되면 새로고침 추가 0 · 안 되면 login_fail */
+        { const lg = []; const a9 = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; } }, lg, 'A'); const r9 = await runKeep([a9], noOpen3);
+          ok('팝업 없음 · 바로 로그인됨 = relogin · 기다림 0 · 새로고침은 처음 1번뿐(종전과 같음)', r9.state === 'relogin' && r9.waited === 0 && lg.filter(x => x === 'A:reload').length === 1, JSON.stringify(r9) + lg); }
+        { const lg = []; let n = 0; const a10 = mkTab('dash', { onReload: () => { n++; return 'login'; }, onSimple: () => { } }, lg, 'A'); const r10 = await runKeep([a10], noOpen3);
+          ok('팝업 없음 · 눌러도 그대로 = login_fail · 기다림 0 · 간편 로그인 1번만(한 번 더 새로고침해 보고 판정)', r10.state === 'login_fail' && r10.waited === 0 && taps(lg) === 1 && n === 2, JSON.stringify(r10) + lg); }
+        /* 느린 로그인: 팝업 없이 처음 탭이 늦게 넘어감 → 다시 보기에서 relogin */
+        { const lg = []; let n = 0; const a11 = mkTab('dash', { onReload: () => { n++; return n === 1 ? 'login' : 'dash'; }, onSimple: () => { } }, lg, 'A'); const r11 = await runKeep([a11], noOpen3);
+          ok('팝업 없음 · 8초엔 로그인 화면이었지만 새로고침하니 대시보드 = relogin', r11.state === 'relogin' && taps(lg) === 1 && r11.store === '제주아꼼이네', JSON.stringify(r11) + lg); }
+        /* 로그인된 뒤 남은 팝업은 닫음(이 틱에 뜬 것만) · 전부터 있던 로그인 탭은 그대로 */
+        { const lg = [], tabs12 = []; const old12 = mkTab('loginNoBtn', {}, lg, 'O'); const pop12 = mkTab('oauth', {}, lg, 'P');
+          const a12 = mkTab('dash', { onReload: () => 'login', onSimple: x => { tabs12.push(pop12); x.screen = 'dash'; } }, lg, 'A'); tabs12.push(old12, a12);
+          const r12 = await runKeep(tabs12, noOpen3);
+          ok('바로 로그인됐는데 로그인 창이 남음 = relogin · 그 창만 닫음 · 전부터 있던 로그인 탭·센터 탭은 안 닫음', r12.state === 'relogin' && pop12.closed && !old12.closed && !a12.closed && r12.closed === 1, JSON.stringify(r12) + CLOSED); }
+        ok('유지 코드 = 간편 로그인 누르는 곳 1곳 · 비밀번호·금고 낱말 0 · 기다림 상한 6번', (W.JS_KEEP.match(/간편\\s\*로그인/g) || []).length === 1 && !/password|비밀번호|금고|vault|fill\(|\.type\(/i.test(W.JS_KEEP) && /i < 6/.test(W.JS_KEEP));
+        /* heartbeat 센터 결과 */
+        const st5 = () => { try { return JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); } catch (e) { return {}; } };
+        try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
+        const hb = async () => { const q = []; await W.heartbeat({ query: async (sql, args) => { q.push(JSON.parse(args[0])); } }, 'idle'); return q[0]; };
+        let h = await hb();
+        ok('유지가 한 번도 안 돈 PC = heartbeat 에 center 칸 없음(종전 꼴)', h && !('center' in h) && h.state === 'idle', JSON.stringify(h));
+        const told5 = []; let next5 = { state: 'relogin', clicked: true, first: true, where: 'sell.smartstore.naver.com/', store: '제주아꼼이네' };
+        W._setKeep(() => ({ start: async () => ({}), replJson: async () => next5, stop: async () => { } }), async (reason, kind) => { told5.push({ reason, kind }); return true; });
+        await W.keepMaybe(true); h = await hb();
+        ok('유지 뒤 heartbeat.center = { state relogin · at · store 제주아꼼이네 }', h.center && h.center.state === 'relogin' && h.center.store === '제주아꼼이네' && h.center.at === st5().center_at && !Number.isNaN(Date.parse(h.center.at)), JSON.stringify(h));
+        next5 = { state: 'login_fail', clicked: true, first: true, waited: 8, where: 'sell.smartstore.naver.com/', store: '' }; await W.keepMaybe(true); h = await hb();
+        ok('실패 뒤 heartbeat.center.state = login_fail · 텔레그램 종전 1통(center_login · 「간편 로그인 안 됨」) · 3시간 쉼', h.center.state === 'login_fail' && h.center.store === '' && told5.length === 1 && told5[0].kind === 'center_login' && /간편 로그인 안 됨/.test(told5[0].reason) && !!st5().phone_at, JSON.stringify(h) + JSON.stringify(told5));
+        next5 = { state: 'ok', where: 'x', store: '제주아꼼이네 직영몰' }; await W.keepMaybe(true); h = await hb();
+        ok('직영몰로 열림 = heartbeat.center.state wrong_store · store 직영몰', h.center.state === 'wrong_store' && /직영몰/.test(h.center.store), JSON.stringify(h.center));
+        fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...st5(), at: '2026-01-01T00:00:00.000Z' })); h = await hb();
+        ok('상태 파일 at 을 앞당겨 써도(어사이드 다시 열기) center.at 은 실제 유지 시각 그대로', h.center.at === st5().center_at && h.center.at !== '2026-01-01T00:00:00.000Z');
+    }
+
     console.log('── #1242 메모리(커밋) 감시 · 메모리 부족 알림');
     {
         const told2 = []; W._setKeep(() => ({ start: async () => ({}), replJson: async () => ({ state: 'ok', store: '제주아꼼이네' }), stop: async () => { } }), async (reason, kind) => { told2.push({ reason, kind }); return true; });
