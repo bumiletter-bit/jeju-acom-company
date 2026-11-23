@@ -2130,13 +2130,15 @@
         bx.date = iso; t.value = md(iso);
     }
     function ceRows(r) {   // 카드 저장 = 바꾼 주문마다 줄 하나
-        const out = [];
+        const out = [], os = ceOrders(r), nOrd = os.length;   // #1276 그 번호로 찾은 주문 수(주문번호별)
         Object.keys(r._xo || {}).forEach(oid => {
             const bx = r._xo[oid].bx; if (!bx || !bx.ce) return;
+            const ox = (os.find(o => o.id === String(oid)) || {}).x || {}, byBuyer = ox.as === 'buyer';   // #1276 점검 ① 넣은 번호가 그 주문의 구매자 번호일 때만 번호 키 날짜 줄 · 받는 분 번호로 찾은 주문 = 종전 주문번호 키(구매자 번호 없으면 최종발주가 못 잡음 · 있으면 그 구매자의 다른 주문을 nOrd 가 안 세어 전부 보류됨)
             const arr = boxClean(bx), changed = arr.some(b => b.s || b.t || ['o', 'n', 'p', 'p2', 'a', 'm', 'sn', 'sp'].some(k => b[k])), d = bx.date || null;
             if (!changed && !d) return;
-            const at = new Date().toISOString(), tel = bx.key || r.key, sd = d ? md(d) : '';   // 계약 docs/1027-customer-edit.md §2 = ⓐ 발송일 날짜 줄(주문번호 키 · #938 꼴) · ⓑ 값 = 박스별 줄(구매자 번호 키 · 1박스도) · 둘 다 = ⓐ+ⓑ
-            if (d) out.push({ kind: 'line', key: oid, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note: sd + ' 발송', line: [sd, oid, sd + ' 발송', bx.plat].join('\t'), checked: { plat: bx.plat, as: 'order', at, buyer: telShow(tel), pno: oid }, _ceK: 'date' });
+            const at = new Date().toISOString(), tel = bx.key || r.key, sd = d ? md(d) : '';   // 계약 docs/1027-customer-edit.md §2 = ⓐ 발송일만 = 날짜 줄(주문번호 키 · #938 꼴) · ⓑ 값 = 박스별 줄(구매자 번호 키 · 1박스도) · 🔴 #1276(대표 11/23 「5056이 2개가 떠 있어 헷갈려」) 둘 다 = ⓑ 한 줄만(ship_date·pno 를 가짐 → 지정일 전 막이는 서버 pickForShip #1133 이 ⓐ 꼴 대기 줄을 대신 만듦 · 양식 결과 같음)
+            if (d && !changed && (nOrd >= 2 || !byBuyer)) out.push({ kind: 'line', key: oid, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note: sd + ' 발송', line: [sd, oid, sd + ' 발송', bx.plat].join('\t'), checked: { plat: bx.plat, as: 'order', at, buyer: telShow(tel), pno: oid }, _ceK: 'date' });
+            else if (d && !changed) out.push({ kind: 'line', key: tel, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note: sd + ' 발송', line: [sd, tel, sd + ' 발송', bx.plat].join('\t'), checked: { plat: bx.plat, as: 'buyer', at, buyer: telShow(tel), pno: oid }, _ceK: 'tdate' });   // #1276 대표 「주문 번호 줄은 2건 이상일 때 그 한 건만 · 나머지는 구매자 번호로」 = 주문 1건 날짜만 = 번호 키 「M/D 발송」 한 줄(손 입력 「번호 M/D 발송」과 같은 길)
             if (changed) { const note = '박스별 ' + boxSummary(arr); out.push({ kind: 'line', key: tel, plat: bx.plat, ship_date: d, sure: true, check_why: [], src: 'edit', note, boxes: arr, line: [sd, tel, note, bx.plat].join('\t'), checked: { plat: bx.plat, as: 'buyer', at, buyer: telShow(tel), pno: oid }, _ceK: 'box' }); }
         });
         return out;
@@ -2603,17 +2605,25 @@
             if (!out.length) { c._saving = false; toast('바꾼 것이 없어요 · 저장하지 않았어요'); return; }
             const keep0 = btn.innerHTML; btn.disabled = true; btn.textContent = '저장하는 중…';
             const open0 = (OM.list || []).filter(o => o.kind === 'line' && o.state === 'open' && o.checked && o.id != null);
-            const same = x => open0.find(o => digits(o.key) === digits(x.key) && String(o.checked.pno || '') === String(x.checked.pno) && (x._ceK === 'box' ? isBoxRow(o) : !isBoxRow(o) && /발송$/.test(String(o.note || ''))));
-            let nPut = 0, bad = null; const posts = [];
-            for (const x of out) { const o = same(x); if (o) { const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
+            const dNote = o => /^\d{1,2}\/\d{1,2}\s*발송$/.test(String(o.note || '').trim());   // #1276 점검 ③ 날짜 줄 = 「M/D 발송」 꼴만(「개별발송」 등 다른 줄은 PUT·비우기 대상 아님)
+            const same = x => open0.find(o => digits(o.key) === digits(x.key) && String(o.checked.pno || '') === String(x.checked.pno) && (x._ceK === 'box' ? isBoxRow(o) : !isBoxRow(o) && dNote(o)));
+            let nPut = 0, bad = null; const posts = [], putIds = new Set();
+            for (const x of out) { const o = same(x); if (o) { putIds.add(o.id); const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
             if (!bad && posts.length) { const res = await API.save({ raw: '', tags: [], source: 'manual', rows: posts.map(outRow) }); if (!res.ok) bad = res; }
             if (OM.card !== c) return;
             if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
+            let staleMsg = '';
+            {   // #1276 날짜 담은 번호 키 줄(박스별 줄 · 주문 1건 날짜 줄)을 저장했으면 = 같은 주문의 옛 날짜 줄은 「비운 것」으로(되살리기 가능) · 남기면 옛 날짜에 그 주문이 따로 풀림
+                //   옛 날짜 줄 = ⓐ 주문번호 키 「M/D 발송」(#1276 전 저장분) · 점검 ② 같은 번호 키·같은 pno 「M/D 발송」 줄(날짜만 먼저 저장 → 값+날짜로 다시) · 이번에 PUT 한 줄은 뺌
+                const stale = [...new Set(out.filter(x => (x._ceK === 'box' || x._ceK === 'tdate') && x.ship_date).flatMap(x => open0.filter(o => !putIds.has(o.id) && !isBoxRow(o) && dNote(o) && ((digits(o.key) === digits(x.checked.pno) && String(o.checked.pno || x.checked.pno) === String(x.checked.pno)) || (digits(o.key) === digits(x.key) && String(o.checked.pno || '') === String(x.checked.pno)))).map(o => o.id)))];
+                let nFail = 0; for (const id of stale) { const y = await API.remove(id); if (!y || !y.ok) nFail++; }
+                if (nFail) staleMsg = ` · 옛 날짜 줄 ${nFail}개는 못 지웠어요 — 목록에서 직접 지워 주세요`;   // 점검 ④
+            }
             { const te0 = $('om-tp-tel'); if (te0) te0.value = ''; OM.tpLast = null; OM.tpSaved = null; }   // #1168 저장 뒤 꼬리표 번호 칸 비움(다음 손님 번호를 지우고 넣지 않게)
             const F = c.smFrom || null, smOk = !!(F && out.some(x => x._ceK === 'box' && (x.boxes || []).some(b => b && b.m && smText({ note: b.m }).includes(smText({ note: F.text }).slice(0, 300))))); let smMsg = '';   /* 넘긴 글이 실제로 어느 박스 배송메세지에 들어 저장됐을 때만 */   // #1188 줄 카드에서 넘어온 글이 배송메세지로 저장됨 = 옛 보통 줄을 「비운 것」으로(되살리기 가능 · 박스별 줄 저장이 된 뒤에만)
             if (smOk && F.id != null) { const y = await API.remove(F.id); smMsg = y && y.ok ? ' · 옛 보통 줄은 지웠어요(「비운 것」에서 되살릴 수 있어요)' : ' · 옛 보통 줄은 못 지웠어요 — 목록에서 직접 지워 주세요'; }
             if (smOk && F.clearRaw) { const raw = $('om-raw'); if (raw) { OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); } }
-            if (OM.card === c) cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}${smMsg}`, smMsg ? 6000 : undefined); load(); if (F && F.rest && F.rest.length && !OM.card) smOpen(F.rest); return;
+            if (OM.card === c) cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}${smMsg}${staleMsg}`, smMsg || staleMsg ? 6000 : undefined); load(); if (F && F.rest && F.rest.length && !OM.card) smOpen(F.rest); return;
         }
         const smQ = c.mode !== 'edit' ? rows.filter(r => r.kind === 'line' && r._smGo && isDoorRow(r)) : [];   // #1188 여러 줄 카드에서 [배송메세지로 넣기]를 눌러 둔 줄 = 종전대로 보통 줄로 먼저 저장 → 저장된 줄 id 로 고객정보수정 판을 이어 띄움(판을 닫아도 보통 줄은 남음 · 박스별 줄 저장 뒤에만 옛 줄 지움)
         const smNext = (saved, sent) => { if (!smQ.length || OM.card) return; smOpen(smQ.map(r => { const i = sent ? sent.indexOf(r) : -1; let id = i >= 0 && saved && saved[i] && saved[i].id != null ? saved[i].id : null; if (id == null) { const o = (OM.list || []).find(x => x.kind === 'line' && x.state === 'open' && x.id != null && digits(x.key) === digits(r.key) && smText(x) === smText(r) && isDoorRow(x)); if (o) id = o.id; } return { tel: r.key, text: smText(r), id }; }).filter(x => x.id != null)); };   /* 저장된 줄을 못 찾은 글은 넘기지 않음(글이 어디에도 없게 되는 길 없음) */
