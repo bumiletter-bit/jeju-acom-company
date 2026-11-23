@@ -385,6 +385,14 @@ async function sendTestOne({ to, key, vars: extVars }) {
     const ok = r && Number(r.code) === 0;
     return { status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), message, tpl_code: form.tpl_code };
 }
+// #1262(대표 11/23): 시험 발송 — 문자(LMS) 한 통. 받는 번호 = sendTestOne 과 같은 허용 목록(회사 번호 + aligo_test_send_allow)만 · 발송은 실발송과 같은 sendLms(smsSafe 포함 · 스위치·키 판정 그대로)
+async function sendTestLms({ to, subject, message }) {
+    const receiver = String(to || '').replace(/[^0-9]/g, '');
+    if (!(await testSendAllow()).includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
+    if (!message || !String(message).trim()) return { status: 'no-message' };
+    const r = await sendLms({ receiver, subject: subject || '제주아꼼이네 배송 안내', message: String(message) });
+    return { ...r, message: String(message) };
+}
 
 // ── 템플릿 등록·검수 신청 실행기 (지시 #98 — 대표 최종 GO 전용, 서버 측 실행: 알리고 키가 Render env에만 있으므로)
 //    발동은 server.js 플래그 폴러(aligo_register_request {go:'yes'})로만. 실발송 아님 — 등록(template/add)·검수 신청(template/request)만.
@@ -488,4 +496,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, matchNotifyAlias, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, setCfgReader, testSendAllow, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */
+module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, matchNotifyAlias, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, sendTestLms, setCfgReader, testSendAllow, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */

@@ -9,9 +9,9 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap">
 <style>
-/* #1254 손님 화면 리뉴얼(대표 11/23) — 행사 그림 6차 결(밝은 크림 바탕 · 귤색 포인트 · 짙은 글 · 흰 카드 · 부드러운 그림자 · 큰 숫자 · 마감 띠 · 화이팅 아꼼이) · 기능·API·조회·가림 꼴 무변경(꾸밈·문구 배치만)
+/* #1254 손님 화면 리뉴얼(대표 11/23) — 겨울 메인 결(#1261 · 눈 오는 연파랑 하늘 · 밤색 간판 · 빨강 딱지 · 흰 카드 · 귤색 알약 · 겨울 아꼼이) · 기능·API·조회·가림 꼴 무변경(꾸밈·문구 배치만)
    🔴 미리보기(관리 화면 iframe) 강조가 찾는 자리 그대로: #hPrize · #hSearch · .note .r .hand · .mtitle .hand · .mfoot .msg · .hero .banner · .mhero img · #evInfo · #prizes .prize .info .n/.d · .pimg .cnt/.hand · #result .res .pic/.sub b */
-:root{--bg:#FFF8EE;--card:#fff;--card2:#FFFBF5;--ink:#281E16;--mid:#6B5B4E;--light:#8A7A6C;--line:#F0E3D2;--o:#E8590C;--o-ink:#C2410C;--o-dark:#fff;--hl:rgba(255,190,90,.45);
+:root{--bg:#FFF8EE;--card:#fff;--card2:#FFFBF5;--ink:#281E16;--mid:#6B5B4E;--light:#8A7A6C;--line:#F0E3D2;--o:#E8590C;--o-ink:#C2410C;--o-dark:#fff;--hl:rgba(255,190,90,.45);--red:#E1332A;--brown:#3E2617;--brown2:#5A3922;
 --ok:#1F7A4D;--ok-bg:#EDF8F1;--ok-line:#CBEBD8;--win-bg:#FFF2DC;--win-line:#F3C987;--hand:#E8590C;--shadow:0 1px 2px rgba(120,60,10,.05),0 10px 26px -16px rgba(160,80,20,.30)}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%;background:var(--bg)}
@@ -29,48 +29,51 @@ body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic
 .hero{position:relative;border-radius:16px;overflow:hidden;background:var(--card);line-height:0;margin-bottom:12px}
 .hero[hidden]{display:none}
 .hero .banner{display:block;width:100%;height:auto}
-/* 머리 = 행사 이름·기간 */
-.evh{position:relative;padding:22px 2px 6px;min-height:236px}
-.evh .art{position:absolute;right:-6px;top:6px;width:132px;height:auto;pointer-events:none;filter:drop-shadow(0 12px 18px rgba(160,80,20,.18))}
-.evh .eyebrow,.evh h1,.evh .when,.evh .lead{position:relative;max-width:64%}
-.evh .rule{max-width:52%}
-.evh .eyebrow{font-size:14px;font-weight:700;color:var(--o-ink)}
-.evh h1{margin-top:6px;font-size:38px;line-height:1.16;font-weight:800;letter-spacing:-1.2px}
-.evh .rule{height:1px;background:var(--o);opacity:.85;margin:16px 0 12px}
-.evh .when{font-size:17px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.3px}
-.evh .lead{margin-top:4px;font-size:13.5px;color:var(--mid)}
-/* 3종 혜택 */
-.promo{margin-top:16px}
+/* 겨울 판 = 이번 행사일 때만(html·body.winter · drawHead 토글) — 다른 회차·닫힘·준비 중은 위 6차 색 그대로 */
+html.winter{background:#E4F0FA}
+body.winter{--bg:#E4F0FA;--card2:#F6FAFE;--ink:#2A1E16;--mid:#5F5650;--light:#7D746C;--line:#E2E9F0;--o:#EE6418;--hl:rgba(255,170,140,.45);background-color:#E4F0FA;background-image:linear-gradient(180deg,#CFE5F7 0,#E4F0FA 1100px)}
+/* 머리·혜택 = 눈 하늘 판(.top) */
+.top{position:relative}
+.winter .top{position:relative;margin:-16px -16px 0;padding:18px 16px 18px;background:#CFE5F7 url(img/ev_snow_bg.webp) center bottom/cover no-repeat;border-radius:0 0 22px 22px}
+.evh{text-align:center;padding:4px 0 2px}
+.evh .when{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:8px 16px;border-radius:999px;background:var(--brown);color:#fff;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;box-shadow:0 6px 14px -8px rgba(62,38,23,.6)}
+.evh .when b{color:#FFC24B;font-weight:800}
+.evh h1{margin-top:12px;font-size:32px;line-height:1.2;font-weight:800;letter-spacing:-1px;color:var(--brown)}
+.evh .eyebrow{margin-top:4px;font-size:17px;font-weight:800;color:var(--o)}
+.evh .lead{margin-top:6px;font-size:14px;color:var(--mid)}
+.evh .lead[hidden],.sign[hidden]{display:none}
+.sign{position:relative;display:flex;align-items:center;justify-content:center;gap:12px;margin:12px 2px 0;padding:16px 12px;border-radius:18px;background:linear-gradient(180deg,var(--brown2),var(--brown));border:2px solid #7A5235;box-shadow:inset 0 0 0 4px rgba(255,255,255,.06),0 12px 24px -14px rgba(62,38,23,.8)}
+.sign .tag{display:inline-block;padding:4px 12px 6px;border-radius:10px;background:var(--red);color:#FFE07A;font-size:30px;font-weight:900;letter-spacing:-1px;transform:rotate(-4deg);box-shadow:0 6px 12px -6px rgba(0,0,0,.5)}
+.sign .tx{color:#fff;font-size:30px;font-weight:900;letter-spacing:-1px}
+.promo{margin-top:22px;display:grid;gap:22px}
 .promo[hidden]{display:none}
-.tiles{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:6px}
-.tiles .plus{align-self:center;color:var(--o);font-size:20px;font-weight:700}
-.tile{background:#fff;border-radius:16px;padding:12px 4px 14px;box-shadow:var(--shadow);text-align:center;display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0;animation:tileIn .32s cubic-bezier(.23,1,.32,1) both}
-.tile:nth-child(3){animation-delay:.06s} .tile:nth-child(5){animation-delay:.12s}
-.tile .k{font-size:12.5px;color:var(--mid);font-weight:600}
-.tile img{display:block;margin:0 auto 6px;height:54px;width:auto;max-width:100%;object-fit:contain}
-.tile .big{font-size:clamp(15px,4.3vw,21px);white-space:nowrap;font-weight:800;color:var(--ink);letter-spacing:-.6px;line-height:1.15;font-variant-numeric:tabular-nums}
-.tile .s{font-size:13px;font-weight:600;color:var(--mid);line-height:1.35}
-.tile.on .big,.tile.cp .big{color:var(--o-ink)}
-.tile .ph{height:54px;margin:0 auto 6px;display:flex;align-items:center;justify-content:center}
-.tile .ph span{width:30px;height:30px;border-radius:50%;margin:0 -4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(160,80,20,.2)}
-.tile .ph span:nth-child(1){background:radial-gradient(circle at 35% 35%,#FFB04D,#E8700C)} .tile .ph span:nth-child(2){background:radial-gradient(circle at 35% 35%,#F5C343,#D98E0B)} .tile .ph span:nth-child(3){background:radial-gradient(circle at 35% 35%,#F7D560,#E0A314)}
-@keyframes tileIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.tnote{margin-top:10px;text-align:center;font-size:13px;color:var(--mid)}
-.bens{margin-top:14px;background:#fff;border-radius:16px;padding:2px 14px;box-shadow:var(--shadow)}
-.bens .ben:last-child{border-bottom:0}
-.ben{display:grid;grid-template-columns:26px 1fr;gap:10px;padding:14px 2px;border-bottom:1px solid var(--line)}
-.ben .ck{width:22px;height:22px;margin-top:2px;border-radius:50%;background:var(--o);display:flex;align-items:center;justify-content:center}
-.ben .ck svg{width:13px;height:13px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:20;stroke-dashoffset:20;animation:ckDraw .4s .25s ease-out forwards}
-.ben:nth-child(2) .ck svg{animation-delay:.4s} .ben:nth-child(3) .ck svg{animation-delay:.55s}
-@keyframes ckDraw{to{stroke-dashoffset:0}}
-.ben .t{font-size:16.5px;font-weight:800;letter-spacing:-.3px}
-.ben .t em{font-style:normal;color:var(--o-ink)}
-.ben .d{margin-top:3px;font-size:13px;color:var(--mid);line-height:1.6}
-.ben .d b{color:var(--ink);font-weight:700}
-.band{margin-top:14px;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:10px 14px;border-radius:12px;background:var(--o);color:#fff;font-weight:800;font-size:15px;text-align:center;box-shadow:0 10px 22px -12px rgba(232,89,12,.7)}
-.band svg{width:20px;height:20px;flex-shrink:0;stroke:#fff;stroke-width:2.2;fill:none;stroke-linecap:round}
-.band i{font-style:normal;opacity:.5;font-weight:400}
+.bcard{position:relative;background:#fff;border-radius:20px;padding:26px 14px 16px;text-align:center;box-shadow:0 14px 30px -18px rgba(40,70,110,.45)}
+.blab{position:absolute;left:50%;top:0;transform:translate(-50%,-50%);white-space:nowrap;padding:6px 16px;border-radius:999px;background:var(--o);color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 12px -6px rgba(238,100,24,.7)}
+.bhl{font-size:14.5px;font-weight:800;color:var(--red)}
+.bbig{margin-top:2px;font-size:30px;font-weight:900;letter-spacing:-1px;color:var(--o)}
+.rlist{list-style:none;margin-top:10px;display:grid;gap:8px;text-align:left}
+.rlist li{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:4px 8px;padding:10px 12px;border-radius:12px;background:#FFF5EA}
+.rlist .rk{grid-row:span 2;align-self:center;padding:3px 9px;border-radius:999px;background:var(--o);color:#fff;font-size:12.5px;font-weight:800;white-space:nowrap}
+.rlist b{font-size:16px;font-weight:800;letter-spacing:-.3px}
+.rlist small{grid-column:2;font-size:12.5px;color:var(--mid)}
+.rlist em{grid-column:3;grid-row:1/span 2;font-style:normal;padding:4px 10px;border-radius:999px;background:var(--red);color:#fff;font-size:13.5px;font-weight:800;white-space:nowrap}
+.bnote{margin-top:10px;font-size:13px;color:var(--mid)}
+.duo{display:grid;grid-template-columns:36% 1fr;gap:10px;align-items:end}
+.duo .wak{width:100%;height:auto;align-self:end;margin-bottom:-6px;filter:drop-shadow(0 14px 12px rgba(60,100,150,.35))}
+.dcol{display:grid;gap:24px}
+.bnum{font-size:44px;line-height:1.05;font-weight:900;letter-spacing:-1.5px;color:var(--o);font-variant-numeric:tabular-nums}
+.bnum small{font-size:22px;margin-left:2px}
+.bsub{margin-top:6px;font-size:16px;font-weight:800;letter-spacing:-.3px}
+.bok{margin-top:6px;font-size:14px;font-weight:700;color:#1E7A45}
+.bnote2{margin-top:4px;font-size:12px;color:var(--mid);line-height:1.45}
+.badge{position:absolute;right:-6px;top:-18px;width:66px;height:66px;border-radius:50%;background:var(--red);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;font-weight:800;line-height:1.1;box-shadow:0 8px 16px -8px rgba(225,51,42,.8);transform:rotate(8deg)}
+.badge b{font-size:19px;font-weight:900;color:#FFE07A}
+.fpill{margin:4px auto 0;max-width:100%;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.9);text-align:center;font-size:13.5px;font-weight:700;color:var(--brown);box-shadow:0 6px 14px -10px rgba(40,70,110,.6)}
+.winter .hero:not([hidden]) + .top{margin-top:0;border-radius:22px}
+@media (max-width:360px){ .winter .top{margin:-12px -12px 0} .sign .tag,.sign .tx{font-size:25px} .sign{gap:8px} .evh h1{font-size:28px} .bnum{font-size:38px} .duo{grid-template-columns:32% 1fr} .rlist li{padding:9px 10px} .rlist b{font-size:15px} }
+@media (min-width:600px){ .winter .top{margin:-28px -16px 0;padding:28px 24px 24px;border-radius:0 0 28px 28px} .evh h1{font-size:40px} .sign .tag,.sign .tx{font-size:36px} }
 /* 경품 */
+.top + .card{margin-top:16px}
 .prize{display:grid;grid-template-columns:44px 1fr 92px;grid-template-areas:"rank info img";align-items:center;gap:10px;background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-top:10px;position:relative}
 .rank{grid-area:rank;width:44px;height:44px;border-radius:50%;background:transparent;border:1.5px solid var(--o);display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;color:var(--o-ink);font-size:14px;line-height:1;gap:2px}
 .rank .cr{font-size:12px}
@@ -193,18 +196,19 @@ body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic
   <div class="hero" hidden>
     <img class="banner" src="img/lucky_hero_full.webp" alt="제주아꼼이네 고객 감사 이벤트" width="991" height="289">
   </div>
+  <section class="top" id="evTop">
   <header class="evh">
-    <p class="eyebrow" id="evEyebrow">고객 감사 이벤트</p>
-    <h1 id="evTitleV">제주아꼼이네 고객 감사 이벤트</h1>
-    <div class="rule"></div>
     <p class="when" id="evWhen">이벤트 기간 확인 중</p>
+    <h1 id="evTitleV">제주아꼼이네 고객 감사 이벤트</h1>
+    <p class="eyebrow" id="evEyebrow" hidden></p>
+    <div class="sign" id="evSign" hidden><span class="tag">트리플</span><span class="tx">혜택 이벤트</span></div>
     <p class="lead" id="evLead">주문하신 분 이름이나 번호로 접수와 당첨을 확인해 보세요.</p>
-    <img class="art" id="evArt" src="img/ev_akkome_fight.webp" alt="" width="353" height="640" hidden onerror="this.onerror=null;this.hidden=true">
     <div class="sr" id="evTitle">제주아꼼이네 고객 감사 이벤트</div>
     <div class="sr" id="evPeriod"></div>
   </header>
 
   <section class="promo" id="promo" hidden aria-label="행사 혜택"></section>
+  </section>
 
   <div class="card">
     <div class="head"><h2><span class="dot"></span>내 접수 확인</h2><span class="hand" id="hSearch">성함·번호로 확인해보세요! ♡</span></div>
@@ -325,7 +329,7 @@ function render(j){
     return `<div class="prize${e.prizes.length===1?' one':''}"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div>${d?`<div class="d">${escMl(d)}</div>`:''}</div><div class="pimg">${im}<span class="cnt">${p.count}명</span>${n?`<span class="hand">${esc(n)}</span>`:''}</div></div>`;
   }).join('');
   const total=e.prizes.reduce((a,p)=>a+p.count,0);
-  $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(상품이 발송된 날 저녁부터 반영)</span>`;
+  $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(상품이 발송된 날 오전 10시부터 반영)</span>`;
   if(e.published&&!PREVIEW) openWinners(false);
 }
 let WIN=null;
@@ -370,7 +374,7 @@ const deco=(t)=>`<div class="rrow"><span class="hand2">${t}</span><img class="de
 function show(j,q){
   const box=$('#result'); const e=j.event; const girl=girlImg();
   if(!j.results.length){
-    box.innerHTML=`<div class="res none">${girl}<div class="body"><div class="big">접수된 주문이 없습니다 😳</div><ul><li>'${esc(q)}'으로 등록된 ${j.mode==='phone'?'연락처가':'성함이'} 없어요.</li><li>주문하신 분 성함이나 휴대폰 번호로 다시 검색해보세요.</li><li>선물하기 주문은 받는 분 연락처로 검색됩니다.</li><li>상품이 발송된 날 저녁부터 반영돼요. 오늘 주문하셨다면 발송 뒤 다시 확인해 주세요.</li></ul></div>${deco('다음엔<br>꼭 만나요!')}</div>`; return;
+    box.innerHTML=`<div class="res none">${girl}<div class="body"><div class="big">접수된 주문이 없습니다 😳</div><ul><li>'${esc(q)}'으로 등록된 ${j.mode==='phone'?'연락처가':'성함이'} 없어요.</li><li>주문하신 분 성함이나 휴대폰 번호로 다시 검색해보세요.</li><li>선물하기 주문은 받는 분 연락처로 검색됩니다.</li><li>상품이 발송된 날 오전 10시부터 반영돼요. 오늘 주문하셨다면 발송 뒤 다시 확인해 주세요.</li></ul></div>${deco('다음엔<br>꼭 만나요!')}</div>`; return;
   }
   const rec=j.by==='receiver';
   const first=j.results[0];
@@ -451,39 +455,40 @@ if(PREVIEW){ const s=document.createElement('style'); s.id='pvHlCss'; s.textCont
 /* #1254 머리·3종 혜택·안내(그리기만) — PROMO = 11/23~11/27 행사 글(대표 확정 문안 · ~/.akkome/wip-1252/문안.md) · 이 행사 설정(시작일 11/20~11/30)이고 오늘(한국)이 11/29 이전일 때만
    다음 이벤트 = 시작일이 범위 밖이면 저절로 종전 꼴(설정 제목·기간 · 혜택 칸 없음) · 행사가 바뀌면 이 글을 고치거나 지울 것 */
 const PROMO={ minStart:'2026-11-20', maxStart:'2026-11-30', until:'2026-11-29',
-  eyebrow:'귤이 제일 맛있어지는 때', title:'이제,\n시작합니다.', period:'11.23 (월) ~ 11.27 (금)', lead:'오전 8시 주문까지',
-  band:'11.27 (금) 오전 8시 주문까지', url:'https://brand.naver.com/jejuakkome/products/6400134206',
-  tiles:[ { ph:1, big:'행사가 할인', s:'판매 1·2·3위 품목', on:true }, { img:'img/ev_coupon_2000.webp', big:'2,000원 쿠폰', s:'전 상품', cp:true }, { img:'img/ev_boxes_1plus1.webp', big:'1+1', s:'50분께 한 박스 더' } ],
-  tnote:'행사 상품에도 쿠폰을 함께 쓰실 수 있어요',
-  items:[
-    { t:'판매 1·2·3위 품목 <em>2,000원 할인</em>', d:'타이벡감귤 5kg 로얄과 · 노지감귤 10kg 로얄과 · 노지 황금향 5kg (황금향 10kg은 <b>3,000원</b>) · 옵션 맨 위 <b>「(행사)」</b>를 골라 주세요 · 우리 가게 10/23~11/22 출고 박스 기준' },
-    { t:'전 상품 <em>2,000원 쿠폰</em>', d:'<b>행사 상품에도 함께</b> 쓰실 수 있어요 · 체험 상품 제외 · 아이디당 1개 · 상품 화면에서 <b>[쿠폰 받기]</b>로 받으신 뒤 주문하실 때 쓰시면 돼요' },
-    { t:'주문하신 분 중 50분께 <em>한 박스 더 (1+1)</em>', d:'주문만 하시면 자동 응모(11/24 발송분부터) · 주문하실 때마다 응모 기회가 늘어요 · 당첨 발표 <b>11/27(금)</b> · 당첨 상품 <b>11/29(일)</b> 발송' } ],
+  when:'행사 기간 <b>11.23 (월) ~ 11.27 (금)</b> 오전 8시', title:'이제, 시작합니다.', eyebrow:'아꼼이네가 준비한',
+  url:'https://brand.naver.com/jejuakkome/products/6400134206',
+  rank:[ ['인기 1위','타이벡감귤','가정용 5kg 로얄과','2,000원↓'], ['인기 2위','노지감귤','가정용 10kg 로얄과','2,000원↓'], ['인기 3위','노지 황금향','가정용 5kg','2,000원↓'], ['인기 3위','노지 황금향','가정용 10kg','3,000원↓'] ],
+  rnote:'옵션에서 「(행사)」 줄을 골라 주세요 · 우리 가게 10/23~11/22 출고 박스 기준',
+  fpill:'11/24 발송분부터 응모 · 발표 11/27(금) · 11/29(일) 발송',
   guide:['<b>당첨 상품</b>은 11/29(일)에 보내드려요','<b>주문 1건마다 응모 1번</b>이에요. 여러 번 주문하시면 기회가 늘어요','<b>행사 상품도 같은 귤</b>이에요. 상자·송장에 「행사」 표기가 없어 선물로도 편해요','<b>체험 주문</b>은 응모 대상이 아니에요'] };
 const kstToday=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
 const promoOn=e=>{ const st=String((e&&e.start)||''); return !!st&&st>=PROMO.minStart&&st<=PROMO.maxStart&&(PREVIEW||kstToday()<=PROMO.until); };
 function drawHead(e){
   const on=promoOn(e)&&CFG.state!=='down';   /* 닫힌 이벤트 = 혜택 머리 끔(「이벤트가 끝났어요」 위에 안 남게) */
-  $('#evEyebrow').textContent=on?PROMO.eyebrow:'고객 감사 이벤트';
-  $('#evTitleV').innerHTML=on?PROMO.title.split('\n').map(esc).join('<br>'):esc(CFG.display_title||e.title||'고객 감사 이벤트');
-  $('#evArt').hidden=!on;
+  document.documentElement.classList.toggle('winter',on); document.body.classList.toggle('winter',on);   /* #1261 겨울 바탕·색은 이번 행사일 때만 */
+  { const tc=document.querySelector('meta[name="theme-color"]'); if(tc) tc.setAttribute('content',on?'#CFE5F7':'#FFE9D2'); }
+  if(on) $('#evWhen').innerHTML=PROMO.when; else $('#evWhen').textContent=e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내';
+  $('#evTitleV').textContent=on?PROMO.title:(CFG.display_title||e.title||'고객 감사 이벤트');
+  $('#evEyebrow').textContent=on?PROMO.eyebrow:''; $('#evEyebrow').hidden=!on; $('#evSign').hidden=!on;
+  $('#evLead').hidden=on; if(!on) $('#evLead').textContent=e.announce?`${fmtDate(e.announce)} 당첨자 발표 · 이름이나 번호로 확인해 보세요`:'이름이나 번호로 접수와 당첨을 확인해 보세요';
   if(on) $('#evPeriod').textContent='11/23(월) ~ 11/27(금) 오전 8시 주문까지 · 11/24 발송분부터 응모 · 11/27 당첨 발표';   /* 설정 기간(발송일 기준 11/24~11/27)은 판정에만 · 손님 글은 행사 문안 */
-  $('#evWhen').textContent=on?PROMO.period:(e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내');
-  $('#evLead').textContent=on?PROMO.lead:(e.announce?`${fmtDate(e.announce)} 당첨자 발표 · 이름이나 번호로 확인해 보세요`:'이름이나 번호로 접수와 당첨을 확인해 보세요');
 }
-const CK='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>';
-const CLOCK='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 function drawPromo(e){
   const el=$('#promo'), on=promoOn(e);
-  el.innerHTML=on?`<div class="tiles">${PROMO.tiles.map((t,i)=>(i?'<span class="plus" aria-hidden="true">+</span>':'')+`<div class="tile${t.on?' on':''}${t.cp?' cp':''}">${t.img?`<img src="${t.img}" alt="" loading="lazy">`:'<div class="ph" aria-hidden="true"><span></span><span></span><span></span></div>'}<b class="big">${t.big}</b><span class="s">${t.s}</span></div>`).join('')}</div>
-    <p class="tnote">${PROMO.tnote}</p>
-    <div class="bens">${PROMO.items.map(b=>`<div class="ben"><span class="ck">${CK}</span><div><div class="t">${b.t}</div><div class="d">${b.d}</div></div></div>`).join('')}</div>
-    <div class="band" role="note">${CLOCK}<span>종료임박 <i>|</i> ${PROMO.band}</span></div>`:'';
+  el.innerHTML=on?`<article class="bcard"><span class="blab">혜택 1 · 인기 판매 1·2·3위 품목 행사</span>
+      <p class="bhl"><span class="hl">지금 제주아꼼이네에서 가장 많이 팔리는 상품</span></p><p class="bbig">행사가 할인</p>
+      <ul class="rlist">${PROMO.rank.map(r=>`<li><span class="rk">${r[0]}</span><b>${r[1]}</b><small>${r[2]}</small><em>${r[3]}</em></li>`).join('')}</ul>
+      <p class="bnote">${PROMO.rnote}</p></article>
+    <div class="duo"><img class="wak" src="img/ev_akkome_winter.webp" alt="" width="236" height="480" loading="lazy"><div class="dcol">
+      <article class="bcard"><span class="blab">혜택 2</span><p class="bnum">2,000<small>원</small></p><p class="bsub">추가 할인 쿠폰 (체험 제외)</p><p class="bok">✓ 행사가에도 함께 사용 OK</p><p class="bnote2">상품 화면에서 [쿠폰 받기]로 받으신 뒤 주문하실 때 쓰시면 돼요 · 아이디당 1개</p></article>
+      <article class="bcard"><span class="blab">혜택 3</span><span class="badge" aria-hidden="true">추첨<b>50명</b></span><p class="bnum">1+1</p><p class="bsub">증정 이벤트 (추첨)</p><p class="bok">✓ 주문하면 자동 응모</p><p class="bnote2">주문 1건마다 응모 1번</p></article>
+    </div></div>
+    <p class="fpill">${PROMO.fpill}</p>`:'';
   el.hidden=!on;
 }
 function drawGuide(e){
   const on=promoOn(e);
-  const rows=['<b>접수 내역</b>은 상품이 발송된 날 저녁부터 보여요'];
+  const rows=['<b>접수 내역</b>은 상품이 발송된 날 오전 10시부터 보여요'];
   if(e.announce) rows.push(`<b>당첨 발표 ${fmtDate(e.announce)}</b> · 이 화면에서 바로 확인할 수 있어요`);
   if(on) rows.push(...PROMO.guide);
   $('#guideList').innerHTML=rows.map(h=>`<li>${h}</li>`).join('');

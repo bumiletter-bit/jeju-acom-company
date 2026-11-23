@@ -6425,12 +6425,22 @@ async function guideResolveByToken(token) {
 // #449(대표 GO 9/16 — 추석 이벤트 1회성): 발송안내 알림톡 [맛있게 드시는 법·보관법] 버튼 페이지(/guide) 상단 이벤트 안내 블록.
 //   설정 = agent_office_config 'guide_event_card' {enabled, title, lines[], btn, url(https만), start, end}(start/end = KST 'YYYY-MM-DD', 포함).
 //   설정이 없거나 꺼졌거나 기간 밖이면 '' → 페이지 출력은 종전과 바이트 동일(스타일도 블록 안에만 둠). 알림톡 템플릿·버튼 URL 무접촉(재심사 없음).
-function guideEventCardHtml(cfg, nowMs) {
+// #1262(대표 11/23 「알림톡에 당첨 확인 링크가 없는데?」 = 카드 시작일 전): 시험 발송 알림톡 버튼에만 붙는 미리보기 키 — 서버 비밀값으로 만든 1시간 칸 HMAC(지금·직전 칸만 통과 = 최대 2시간) · DB 0 · 키가 없거나 틀리면 종전 판정 그대로
+function guideEvPrevToken(nowMs, back) {
+    const slot = Math.floor((Number(nowMs) || Date.now()) / 3600000) - (back || 0);
+    return crypto.createHmac('sha256', String(JWT_SECRET)).update('guide-evprev:' + slot).digest('hex').slice(0, 20);
+}
+function guideEvPrevOk(tok, nowMs) {
+    const t = String(tok || '');
+    if (!/^[0-9a-f]{20}$/.test(t)) return false;
+    return t === guideEvPrevToken(nowMs, 0) || t === guideEvPrevToken(nowMs, 1);
+}
+function guideEventCardHtml(cfg, nowMs, opt) {
     if (!cfg || typeof cfg !== 'object' || cfg.enabled === false) return '';
     const url = String(cfg.url || '');
     if (!/^https:\/\/[A-Za-z0-9.\-]+\.[A-Za-z]{2,}(\/[^\s"'<>]*)?$/.test(url)) return '';
     const today = new Date((Number(nowMs) || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10);
-    if (cfg.start && today < String(cfg.start)) return '';
+    if (cfg.start && today < String(cfg.start) && !(opt && opt.preview === true)) return '';   // #1262 미리보기 키가 맞을 때만 시작일 전에도(끝난 뒤는 그대로 숨김)
     if (cfg.end && today > String(cfg.end)) return '';
     const title = guideEsc(cfg.title || '이벤트 안내');
     const lines = (Array.isArray(cfg.lines) ? cfg.lines : []).map(l => guideEsc(l)).filter(Boolean);
@@ -6474,7 +6484,7 @@ app.get('/guide', async (req, res) => {
         const groups = (!picked && GUIDE_LIST_WHEN_EMPTY) ? guideGroups(rows) : [];   // #639: 고른 품목이 없을 때만 — 번호 없이 나간 링크가 빈 화면이 되지 않게
         const listEmpty = groups.length > 0;
         const others = rows.filter(r => !picked || r.id !== picked.id);
-        let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now()); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경)
+        let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now(), { preview: guideEvPrevOk(req.query.evprev) }); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경) · #1262 evprev = 시험 발송 미리보기 키
         // #691(대표 10/14): 품목 장마다 「네이버에서 구매하기」 — 그 행의 네이버 상품 번호로. 번호가 없으면 버튼도 글자도 없다(종전 「구매처 링크 준비 중」 글자 제거)
         const buyBtn = (r) => /^\d{6,18}$/.test(String((r && r.naver_product_no) || '')) ? `
                     <a class="buy-btn" href="https://brand.naver.com/jejuakkome/products/${r.naver_product_no}" target="_blank" rel="noopener">네이버에서 구매하기 ›</a>` : '';
@@ -12881,6 +12891,20 @@ async function collectCoupangNotify() {
     }
     return `쿠팡 주문안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held}·발주확인 ${confirmed}·확인실패 ${confirmFailed})`;
 }
+// #1262 쿠팡 발송 안내 문자 본문 조립(종전 collectCoupangGuide 안의 글을 그대로 옮김 · 시험 발송 길도 이 함수) — 부르기 전에 notifyNameTailLoad() 를 기다릴 것
+function coupangGuideLmsText({ optText, matched, hasGuide, hinfo, ordererName, tracking, nowMs }) {
+    const now = nowMs || Date.now();
+    let message;
+    if (hasGuide) message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, now, hinfo.arriveOff);
+    else {
+        // 안내문 미등록 폴백 = E 문면 기반(버튼 없는 LMS라 링크를 본문 텍스트로)
+        const 도착안내 = shippingSchedule.computeArrival(now, hinfo.arriveOff, hinfo.reasons).text;
+        const nm = ordererName || '고객';
+        message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${kakaoNotify.cleanProductName(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
+    }
+    { const tc = notifyNameTailCfg(optText, now); if (tc && tc.note && message) message = String(tc.note).slice(0, 120) + '\n\n' + message; }   // #542: 쿠팡 문자는 상품명이 없는 안내문이라 맨 위 한 줄로
+    return message;
+}
 // ── 쿠팡 발송 안내 (LMS — DEPARTURE 감지. 품목 안내문 있으면 그 전문, 없으면 E 문면 기반 + 링크 텍스트)
 async function collectCoupangGuide() {
     const sheets = await coupangFetchSheets(7, 'DEPARTURE');
@@ -12908,16 +12932,8 @@ async function collectCoupangGuide() {
             gMeta = { opt: optText, pid: matched ? matched.id : null };
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const tracking = String(first.invoiceNumber || s.invoiceNumber || '').replace(/[^0-9]/g, '');
-            let message;
             await notifyNameTailLoad();   // #542
-            if (hasGuide) message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff);
-            else {
-                // 안내문 미등록 폴백 = E 문면 기반(버튼 없는 LMS라 링크를 본문 텍스트로)
-                const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
-                const nm = (s.orderer && s.orderer.name) || '고객';
-                message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${kakaoNotify.cleanProductName(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
-            }
-            { const tc = notifyNameTailCfg(optText); if (tc && tc.note && message) message = String(tc.note).slice(0, 120) + '\n\n' + message; }   // #542: 쿠팡 문자는 상품명이 없는 안내문이라 맨 위 한 줄로
+            const message = coupangGuideLmsText({ optText, matched, hasGuide, hinfo, ordererName: s.orderer && s.orderer.name, tracking });   // #1262 조립은 한 함수(시험 발송도 같은 함수)
             const recvTel = coupangRecvTel(s);
             if (!recvTel || coupangBadTel(recvTel)) {
                 await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
@@ -17912,6 +17928,20 @@ setInterval(async () => {
     }
 }, 60000);
 
+// #1262 쿠팡 꼴 발송 안내 문자 시험 한 통 — req {kind:'cp_lms', to, opt?(쿠팡 옵션 글 · 없으면 타이벡 행사 줄 꼴), name?}
+//   조립 = coupangGuideLmsText(실발송 collectCoupangGuide 와 같은 함수 · 맨 위 notify_name_tail 줄 포함) · 발송 = kakaoNotify.sendTestLms(허용 목록만) · 기록 표 쓰기 0
+async function aligoTestCoupangLms(req) {
+    const optText = String((req && req.opt) || '').slice(0, 200) || '타이벡감귤 가정용 5kg(로얄과 2S~M) (행사)';
+    const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    const optAlias = await naverCfgGet('notify_opt_alias').catch(() => null);
+    const matched = kakaoNotify.matchNotifyProductLoose(optText, bp) || kakaoNotify.matchNotifyAlias(optText, bp, optAlias);
+    const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
+    await notifyNameTailLoad();
+    const message = coupangGuideLmsText({ optText, matched, hasGuide, hinfo, ordererName: String((req && req.name) || '고객').slice(0, 20), tracking: '' });
+    const r = await kakaoNotify.sendTestLms({ to: req && req.to, subject: '제주아꼼이네 배송 안내', message });
+    return { opt: optText, matched_id: matched ? matched.id : null, has_guide: hasGuide, ...r };
+}
 // 지시 #153-4: 단건 테스트 실발송 러너 — 🔴 대표 GO 후에만 플래그(aligo_test_send_request {go:'yes', to, key}) 투입.
 //    수신번호는 kakao-notify 화이트리스트(대표 번호)로 하드 제한 — 스위치 전체 ON 없이 이모지 실물 확정용 1건.
 setInterval(async () => {
@@ -17922,7 +17952,16 @@ setInterval(async () => {
     try {
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_test_send_request'`);
         if (!req || req.go !== 'yes') return;
-        const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key, vars: req.vars });   // #161: 변수 오버라이드
+        if (req.kind === 'cp_lms') {   // #1262 쿠팡 꼴 발송 안내 문자 시험 — 실발송과 같은 조립 함수 · 허용 목록 번호만 · 주문·발송 기록(lms_guide_log) 0
+            const r = await aligoTestCoupangLms(req);
+            await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: 'cp_lms', ...r });
+            return;
+        }
+        let vars = req.vars;
+        if (req.preview_card === true && req.key === 'guide') {   // #1262 시험 알림톡 버튼(/guide?p=#{상품코드})에 이벤트 카드 미리보기 키를 붙임 = 시작일 전에도 카드가 보임(최대 2시간)
+            vars = Object.assign({}, vars || {}); vars['상품코드'] = String(vars['상품코드'] || '') + '&evprev=' + guideEvPrevToken(Date.now(), 0);
+        }
+        const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key, vars });   // #161: 변수 오버라이드
         await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: req.key || 'welcome', ...r });
     } catch (e) {
         console.error('[aligo-test] 시험 발송 실패:', String(e.message || e).slice(0, 200));   // #803 렌더 로그에도
