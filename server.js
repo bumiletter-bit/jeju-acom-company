@@ -17931,7 +17931,7 @@ setInterval(async () => {
 // #1262 쿠팡 꼴 발송 안내 문자 시험 한 통 — req {kind:'cp_lms', to, opt?(쿠팡 옵션 글 · 없으면 타이벡 행사 줄 꼴), name?}
 //   조립 = coupangGuideLmsText(실발송 collectCoupangGuide 와 같은 함수 · 맨 위 notify_name_tail 줄 포함) · 발송 = kakaoNotify.sendTestLms(허용 목록만) · 기록 표 쓰기 0
 async function aligoTestCoupangLms(req) {
-    const optText = String((req && req.opt) || '').slice(0, 200) || '타이벡감귤 가정용 5kg(로얄과 2S~M) (행사)';
+    const optText = String((req && req.opt) || '').slice(0, 200) || '제주아꼼이네 제철 고당도 타이벡감귤, (행사) 타이벡감귤 가정용 5kg(로얄과 2S~M)';   // 실제 쿠팡 꼴(상품명, 옵션명)
     const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     const optAlias = await naverCfgGet('notify_opt_alias').catch(() => null);
