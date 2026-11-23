@@ -209,7 +209,7 @@ function pairCash(r, line, ctx, opt) {
     return checkRow({ kind: 'cash', cells: c, ship_date: isDay(own) ? own : (isDay(ld) ? ld : null), src: r.src || 'edit', indiv: true, indivKey: key }, ctx);
 }
 // #894 F4 품목 열쇠 = 채널 옵션(「아꼼이네 상품선택: 3. (제철)과즙팡팡 황금향 / 상품 및 과수: …」)과 현금 줄 품목(단가표 이름) 을 같은 꼴로
-const itemKeyOf = o => String(o == null ? '' : o).replace(/^\s*[^:：/]*상품선택\s*[:：]\s*/, '').replace(/^\s*\d+\.\s*/, '').replace(/^\s*\((?:제철|예약|특가|행사)\)\s*/, '').replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
+const itemKeyOf = o => String(o == null ? '' : o).replace(/^\s*[^:：/]*상품선택\s*[:：]\s*/, '').replace(/^\s*\d+\.\s*/, '').replace(/^\s*\((?:제철|예약|특가|행사)\)\s*/, '').replace(/([:：\/·=]\s*)\(행사\)\s*/g, '$1') /* #1274 2단 옵션 「/ 상품 및 과수: (행사) …」 = 칸 경계 뒤 (행사)만 뗌 */.replace(/\s*-\s*/g, ' - ') /* #1274 황금향 행사 옵션 「가정용-5kg」 ↔ 단가표 「가정용 - 5kg」 = 하이픈 앞뒤 띄어쓰기를 한 꼴로(양쪽 열쇠에 같이) */.replace(/\s+[^\s]*로!$/, '').replace(/\s+/g, ' ').trim();
 // #894 F4 짝 후보(순수) — orders = 그 번호의 주문 [{option, qty}] · rows = 열린 현금·주소 줄(표 행 꼴) · key = 입력삭제 번호
 //   need = 품목별 주문 박스 − 이미 짝 된 주소 줄(「!」 없음 · K = 그 번호) 박스 · groups = 짝 안 된 현금(「!」) 줄을 묶음(entry)별로 모아 품목별 박스가 need 와 딱 같은 것 · 최근 묶음 먼저
 function pairHint(orders, rows, key) {
