@@ -51,6 +51,7 @@ function parseOpts(args) {
         else if (a === '--detail-from-naver') o.fromNaver = args[++i];
         else if (a === '--detail-blocks') o.detailBlocks = args[++i];   // #756
         else if (a === '--add-item') (o.addItem = o.addItem || []).push(args[++i]);
+        else if (a === '--add-attr') o.addAttr = args[++i];   /* #1252 새 옵션의 구매옵션 값(예: "농산물 중량") = 새 옵션명 — 쿠팡은 구매옵션 값이 옵션마다 달라야 함 · 안 주면 종전 그대로 */
         else if (a === '--suggest') o.suggest = true;
         else if (a === '--live') o.live = true;   // #741 map: 지금 파는 옵션(판매중 · 재고 > 0)만
         else if (a === '--apply') o.mapApply = true;
@@ -189,7 +190,11 @@ function planFull(before, o, readFile) {
                 if (have.has(x.itemName)) { errs.push(`옵션명 「${x.itemName}」 이 이미 있어요`); continue; }
                 rows.push({ field: `새 옵션 「${x.itemName}」`, before: '(없음)', after: `${won(x.price)}원 · 재고 ${won(x.stock != null ? x.stock : 99999)} · 마지막 옵션(${(items[items.length - 1] || {}).itemName || '?'})을 틀로` });
             }
-            if (!errs.length) patch.items_add = I.items.map(x => Object.assign({ itemName: x.itemName, price: x.price, stock: x.stock != null ? x.stock : 99999 }));
+            const attrName = o.addAttr != null ? String(o.addAttr).trim() : '';
+            if (o.addAttr != null && !attrName) errs.push('--add-attr 는 구매옵션 이름을 주세요(예: "농산물 중량")');
+            else if (attrName && !items.some(it => (it.attributes || []).some(a => a && a.attributeTypeName === attrName))) errs.push(`--add-attr 「${attrName}」: 이 상품 옵션에 그 이름의 구매옵션이 없어요`);
+            if (attrName && !errs.length) rows.push({ field: `새 옵션 구매옵션 「${attrName}」`, before: '(틀 옵션 값)', after: '새 옵션명 그대로' });
+            if (!errs.length) patch.items_add = I.items.map(x => Object.assign({ itemName: x.itemName, price: x.price, stock: x.stock != null ? x.stock : 99999 }, attrName ? { attributes: [{ attributeTypeName: attrName, attributeValueName: x.itemName }] } : {}));
         }
     }
     if (o.name != null) {
