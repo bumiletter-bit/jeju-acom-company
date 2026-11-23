@@ -63,7 +63,7 @@ function optionKey(parts, pricingNames) {
             m.setPricing(Array.isArray(pricingNames) ? pricingNames : []);
             let r = pricingNames && pricingNames.length ? m.matchProduct(text) : null;
             if (typeof r !== 'string' || r.startsWith('[미매칭]')) r = m.matchProductRaw(text);
-            if (typeof r === 'string' && r && !r.startsWith('[미매칭]')) return { key: 'p:' + r, label: r, by: 'match' };
+            if (typeof r === 'string' && r && !r.startsWith('[미매칭]')) return { key: 'p:' + r + evTail(text), label: r, by: 'match' };   /* #1256 행사 줄은 묶음 열쇠만 따로(label = 단가표 이름 그대로 → 발주·자동 송장·메모함은 종전과 같음) */
         } catch (e) { /* 글자 열쇠로 */ }
     }
     return { key: textKey(ps), label: ps.map(x => x.replace(/^s*d+s*[.)]s*/, '')).join(' / '), by: 'text' };
@@ -76,8 +76,10 @@ function cafe24OptKey(s) {
     const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
     const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
     const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
-    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') : '';
+    /* #1256(대표 11/23): 「(행사)」가 든 옵션 글은 열쇠 끝에 「|행사」(server.js 와 같게 · 행사 줄과 기존 줄을 한 열쇠로 안 묶음 · 「(행사)」 없는 글은 글자 그대로) */
+    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') + (/\(행사\)/.test(t) ? '|행사' : '') : '';
 }
+const evTail = (t) => /\(행사\)/.test(String(t == null ? '' : t)) ? '|행사' : '';   /* #1256 가격 대조 묶음 열쇠용(품목 이름·라벨은 안 바꿈) */
 
 const kstDate = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
 const won = n => (n == null || !Number.isFinite(Number(n))) ? null : Math.round(Number(n));
@@ -209,7 +211,7 @@ async function build(opt) {
         if (!page) { page = { key, channel: 'coupang', id: x.seller_product_id ? String(x.seller_product_id) : x.vid, name: c.name || x.product_name || '쿠팡 상품', tier: tierOf(key, x.product_name || ''), options: 0, sold: true, status: '쿠팡', linked: null, ignore: !!c.ignore, note: c.note || undefined }; pages.push(page); }
         page.options++;
         const bn = Number(x.bot_product_id) > 0 ? botName[Number(x.bot_product_id)] : null;
-        const ok = bn ? { key: 'p:' + bn, label: bn, by: 'map' } : x.label ? { key: 'p:' + String(x.label), label: String(x.label), by: 'map' } : optionKey([x.product_name, x.item_name].filter(Boolean), pricingNames);
+        const ok = bn ? { key: 'p:' + bn + evTail(x.item_name), label: bn, by: 'map' } : x.label ? { key: 'p:' + String(x.label) + evTail(x.item_name), label: String(x.label), by: 'map' } : optionKey([x.product_name, x.item_name].filter(Boolean), pricingNames);
         rows.push({ gkey: ok.key, label: ok.label, by: ok.by, page_key: key, channel: 'coupang', option_text: String(x.item_name || x.vid), price: x.price, tier: page.tier, vid: x.vid,
             changed_at: null, prev_price: null, unchanged_since: null, changed_unknown: true, sold: x.price != null && x.on_sale === true && Number(x.stock) > 0, ignore: page.ignore || !!x.separate, separate: !!x.separate || undefined, read_error: x.error || undefined });
     }

@@ -2057,7 +2057,7 @@ async function renderSettlementCalendar() {
         document.getElementById('daesung-payment').textContent = `${(totalUnpaid.daesung || 0).toLocaleString()} 원`;
         document.getElementById('hyodon-payment').textContent = `${(totalUnpaid.hyodon || 0).toLocaleString()} 원`;
         document.getElementById('aewol-payment').textContent = `${(totalUnpaid.aewol || 0).toLocaleString()} 원`;
-        document.getElementById('cj-payment').textContent = `${(totalUnpaid.cj || 0).toLocaleString()} 원`;
+        { const cjv = totalUnpaid.cj || 0; document.getElementById('cj-payment').textContent = cjv < 0 ? `선결제 잔액 ${Math.abs(cjv).toLocaleString()} 원` : `${cjv.toLocaleString()} 원`; }   /* #1257 CJ 선결제가 쌓인 택배비보다 많으면 남은 선결제로 보임(총 결제예정 합계는 다른 거래처처럼 마이너스 그대로) */
         document.getElementById('expected-payment').textContent = `${(totalUnpaid.total || 0).toLocaleString()} 원`;
 
         // 선결제 라인 숨김 (총합에 이미 반영됨)
@@ -2078,7 +2078,7 @@ async function renderSettlementCalendar() {
     prepayments.forEach(p => {
         if (p.date && p.date.startsWith(monthStr)) {
             if (!dailyPrepayments[p.date]) dailyPrepayments[p.date] = [];
-            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : (p.partner === '기타거래처' ? '기타' : p.partner));
+            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : (p.partner === '기타거래처' ? '기타' : (p.partner === 'CJ택배' ? 'CJ' : p.partner)));   /* #1257 CJ택배 = CJ */
             dailyPrepayments[p.date].push({ name: shortName, amount: p.amount });
         }
     });
@@ -7221,6 +7221,8 @@ async function renderPrepaymentList() {
     }
 }
 
+// #1257 CJ택배를 고르면 두 번 빠짐 안내 한 줄(막지는 않음)
+{ const pp = document.getElementById('prepay-partner'); if (pp) pp.addEventListener('change', e => { const h = document.getElementById('prepay-cj-hint'); if (h) h.hidden = e.target.value !== 'CJ택배'; }); }
 // 지급결제 금액 입력 시 천 단위 콤마 자동 표시 (마이너스 지원)
 document.getElementById('prepay-amount').addEventListener('input', function(e) {
     const raw = e.target.value;
@@ -7246,6 +7248,7 @@ document.getElementById('prepay-save').addEventListener('click', async () => {
     try {
         await api('/api/prepayments', 'POST', { partner, amount, date, note });
         document.getElementById('prepay-partner').value = '';
+        { const h = document.getElementById('prepay-cj-hint'); if (h) h.hidden = true; }
         document.getElementById('prepay-amount').value = '';
         document.getElementById('prepay-date').value = '';
         document.getElementById('prepay-note').value = '';

@@ -4528,19 +4528,21 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
             FROM prepayments
             GROUP BY partner
         `);
-        let daesungPrepay = 0, hyodonPrepay = 0, aewolPrepay = 0;
+        let daesungPrepay = 0, hyodonPrepay = 0, aewolPrepay = 0, cjPrepay = 0;
         prepayResult.rows.forEach(r => {
             if (r.partner === '대성(시온)') daesungPrepay = Number(r.total);
             else if (r.partner === '효돈농협') hyodonPrepay = Number(r.total);
             else if (r.partner === '기타거래처') aewolPrepay = Number(r.total);
+            else if (r.partner === 'CJ택배') cjPrepay = Number(r.total);   // #1257(대표 11/23) CJ 택배 선결제 = CJ 카드에서 뺌(다른 거래처와 같은 규칙 · 넘으면 마이너스 = 남은 선결제)
         });
 
         const daesungNet = daesung - daesungPrepay;
         const hyodonNet = hyodon - hyodonPrepay;
         const aewolNet = aewol - aewolPrepay;
-        const total = daesungNet + hyodonNet + aewolNet + cjTotal;
+        const cjNet = cjTotal - cjPrepay;
+        const total = daesungNet + hyodonNet + aewolNet + cjNet;
 
-        res.json({ daesung: daesungNet, hyodon: hyodonNet, aewol: aewolNet, cj: cjTotal, total });
+        res.json({ daesung: daesungNet, hyodon: hyodonNet, aewol: aewolNet, cj: cjNet, total });
     } catch (err) {
         console.error('전체 미정산 합계 오류:', err);
         res.status(500).json({ error: err.message });
@@ -17250,7 +17252,8 @@ function cafe24OptKey(s) {
     const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
     const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
     const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
-    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') : '';
+    /* #1256(대표 11/23): 옵션 글에 「(행사)」가 있으면 열쇠 끝에 「|행사」 — 같은 품목의 행사 줄과 기존 줄을 한 열쇠로 묶지 않는다(05:10 대조 = 행사 줄끼리 · 공개 스냅샷 짝 글자 = 행사 줄끼리). 「(행사)」 없는 글의 열쇠는 글자 그대로(무회귀) · price-check.js 사본과 같게 */
+    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') + (/\(행사\)/.test(t) ? '|행사' : '') : '';
 }
 // #689(대표 「고」 10/14 · 워커1 설계): 자사몰 공개 스냅샷(/api/public/store-snapshot)에서 「네이버 전용」 옵션을 뺀다 — 스킨 무접촉.
 //   네이버 전용 = 설정 cafe24_sync_ignore_opts.keys(05:10 경보·가격 확인·창구 mall-price 가 같이 쓰는 열쇠 한 곳)에 든 옵션 가운데, 연결표(cafe24_sync_map)에 있는 상품의 · 팔리는(usable · 재고 > 0) 옵션만.
