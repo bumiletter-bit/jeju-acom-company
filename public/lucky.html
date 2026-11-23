@@ -189,9 +189,16 @@ body.winter{--bg:#E4F0FA;--card2:#F6FAFE;--ink:#2A1E16;--mid:#5F5650;--light:#7D
 @media (max-width:360px){ .wrap{padding:12px 12px 36px} .evh h1{font-size:28px} .evh .art{width:98px} .tile img,.tile .ph{height:44px} .tiles{gap:4px} .tile{padding:10px 2px} .tiles .plus{font-size:16px} .wl{grid-template-columns:1fr} .search button.go{min-width:76px;padding:0 14px} }
 @media (min-width:720px){ .wrap{padding-top:32px} .evh h1{font-size:46px} .evh .art{width:170px} }
 @media (prefers-reduced-motion:reduce){ .res,.mbox,.tile{animation:none} .ben .ck svg{animation:none;stroke-dashoffset:0} .buy,.search button.go{transition:none} }
+/* #1270 첫 그림 전 = 화면 숨김(HTML 기본 글 「고객 감사 이벤트」·옛 배너가 잠깐 보였다가 바뀌는 잔상 막기) · 그린 뒤·실패·5초 뒤 보임 */
+body.boot .wrap{visibility:hidden;animation:bootShow 0s 5s forwards}
+body.boot::after{content:'불러오는 중';position:fixed;top:40%;left:0;right:0;text-align:center;font-size:14px;font-weight:700;color:var(--muted,#667085);animation:bootHide 0s 5s forwards}
+@keyframes bootShow{to{visibility:visible}}
+@keyframes bootHide{to{visibility:hidden}}
 </style>
+<noscript><style>body.boot .wrap{visibility:visible}body.boot::after{content:none}</style></noscript>
 </head>
-<body>
+<body class="boot">
+<script>setTimeout(function(){document.body.className=document.body.className.replace(/\bboot\b/,'');},5000);</script>
 <div class="wrap">
   <div class="hero" hidden>
     <img class="banner" src="img/lucky_hero_full.webp" alt="제주아꼼이네 고객 감사 이벤트" width="991" height="289">
@@ -282,7 +289,10 @@ const fbAttr=fb=>` onerror="this.onerror=null;${fb?`this.src='${fb}'`:"this.styl
 async function loadEvent(){
   if(PREVIEW){ if(window.parent!==window){ try{ window.parent.postMessage({type:'lucky:ready'},location.origin); }catch(_){} } return; }   // 관리 화면 iframe = 서버 조회 없이 초안 메시지만
   try{ const r=await fetch('/api/lucky/event'+(PK?'?pk='+encodeURIComponent(PK):'')); const j=await r.json(); render(j); }catch(e){ $('#evInfo').textContent='이벤트 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'; }
+  bootDone();
 }
+function bootDone(){ document.body.classList.remove('boot'); }
+setTimeout(bootDone,5000);   /* #1270 응답이 늦거나 막혀도 5초 뒤엔 보임(빈 화면에 갇히지 않게) */
 function applyLook(){
   const t=CFG.texts, dt=CFG.display_title;
   document.title=dt?`${dt} — 접수·당첨 확인`:DEF.title;
@@ -425,6 +435,7 @@ if(PREVIEW) window.addEventListener('message',ev=>{
     render({ event:e, counts:d.counts||{orders:0,customers:0}, _forceState:!!st });
     if(!st) previewShow(scene);
   }catch(err){ console.warn('[미리보기] 그리기 실패',err&&err.message); }
+  bootDone();
   const focus=typeof d.focus==='string'&&d.focus.length<=60?d.focus:'';
   if(focus){ try{ pvFocus(focus); }catch(err){ console.warn('[미리보기] 강조 실패',err&&err.message); } }
   try{ window.parent.postMessage(focus?{type:'lucky:rendered',scene,focus}:{type:'lucky:rendered',scene},location.origin); }catch(_){}

@@ -21,7 +21,7 @@
         try { j = await r.json(); } catch (e) { j = null; }
         return { ok: r.ok && !!j && j.ok !== false, status: r.status, body: j || {} };
     };
-    const errText = b => { const e = b && (b.message || b.error); const M = { SERVER: '서버 오류가 났어요. 잠시 뒤 다시 해 주세요', CONFIRM: '확인이 필요해요', BAD: '보낸 값이 올바르지 않아요', PREPARING: '이벤트가 아직 열리지 않았어요', CLOSED: '이벤트가 내려갔어요' }; return M[e] || e || '저장하지 못했어요'; };
+    const errText = b => { const e = b && (b.message || b.error); const M = { SERVER: '서버 오류가 났어요. 잠시 뒤 다시 해 주세요', CONFIRM: '확인이 필요해요', BAD: '보낸 값이 올바르지 않아요', PREPARING: '이벤트가 아직 열리지 않았어요', CLOSED: '이벤트가 내려갔어요', LIVE_ROUND: '진행 중인 이벤트라 확인이 더 필요해요. 화면을 새로 고친 뒤 다시 해 주세요' }; return M[e] || e || '저장하지 못했어요'; };
     const clone = o => JSON.parse(JSON.stringify(o == null ? null : o));
     const kstToday = () => { const d = new Date(Date.now() + 9 * 3600e3); return d.toISOString().slice(0, 10); };
     const addDays = (ymd, n) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || '')) return ''; const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -119,6 +119,17 @@
         return 'preparing';
     }
     const isOpen = () => ['live', 'published'].includes(stateOf());
+    // #1270 [새 회차]·[초기화] 를 두 번 묻는 까닭(없으면 '') = 열려 있음 · 예약됨 · 응모 주문 있음 · 추첨했는데 발표 전
+    const liveGuard = () => {
+        if (!S.id) return '';
+        const st = stateOf(), d = S.db || {}, n = (d.orders || []).length, w = (d.winners || []).length;
+        if (isOpen()) return '지금 손님에게 열려 있어요';
+        if (st === 'scheduled') return '시작일에 자동으로 열리도록 예약돼 있어요';
+        if (n) return `응모 주문 ${n}건이 들어 있어요`;
+        if (w && !(S.ev || {}).published) return '추첨은 했지만 아직 발표 전이에요';
+        return '';
+    };
+    const closeMore = () => { document.querySelectorAll('#event-root details.ev-headmore[open]').forEach(d => { d.open = false; }); };
 
     // ── 그림 주소 ─────────────────────────────────────────
     const assetById = id => S.assets.find(a => String(a.id) === String(id));
@@ -263,8 +274,10 @@
             <div class="ev-head-acts">
                 <span class="ev-dirty" role="status">${S.saving ? '저장하는 중' : (S.dirty ? '저장 안 한 변경 있음' : '')}</span>
                 ${btn(S.saving ? '저장 중' : '변경 저장', `data-ev="save"${S.dirty && !S.saving ? '' : ' disabled'}`, 'primary')}
-                ${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost ev-head-reset')}</div>
-        </div>`;
+                ${isOpen() ? btn('📤 오늘 송장 올리기', 'data-ev="upgo"', 'ev-upgo') : ''}
+                ${isOpen() ? `<details class="ev-headmore"><summary class="ev-btn ghost">더 보기</summary><div class="ev-headmore-pop">${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost')}</div></details>`
+                    : `${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost ev-head-reset')}`}</div>
+        </div>`;   // #1270 열린 회차에서는 [새 회차]·[초기화]를 「더 보기」 안으로 물리고 송장 올리기 바로가기를 머리에
     }
     function cardHtml(k, ck, body) {
         const c = ck[k], op = S.open.has(k);
@@ -582,7 +595,8 @@
                 ${lock ? `<p class="ev-warn" id="ev-lockmsg">열기 전에 채울 것: ${esc(ck.openMiss.join(' · '))}</p>` : `<p class="ev-f-h">열면 손님 페이지 · /guide 카드 · 봇 답에 한 번에 나가요.${S.dirty ? ' 저장 안 한 변경은 먼저 저장돼요.' : ''}</p>`}</div>` : ''}
             ${open || st === 'down' ? `<ul class="ev-where">${where.map(([l, on, x]) => `<li class="${on ? 'on' : ''}"><span class="ev-st ${on ? 'ok' : 'no'}">${on ? '보임' : '안 보임'}</span>${l}${x ? ' <small>' + esc(x) + '</small>' : ''}</li>`).join('')}</ul>` : ''}
             <div class="ev-stats"><div><span>응모권(대상 주문)</span><b>${elig.length}</b></div><div><span>응모 고객</span><b>${cust.size}</b></div><div><span>당첨자</span><b>${winners.length}</b></div><div><span>발표</span><b>${ev.published ? '발표 중' : (winners.length ? '추첨 끝' : '접수 중')}</b></div></div>
-            <div class="ev-sub"><div class="ev-sub-h"><b>송장 올리기</b><span class="ev-f-h">거래처(대성·효돈) 송장 엑셀 · 같은 송장은 빠짐</span></div>
+            <div class="ev-sub" id="ev-upbox"><div class="ev-sub-h"><b>송장 올리기</b><span class="ev-f-h">거래처(대성·효돈) 송장 엑셀 · 같은 송장은 빠짐</span></div>
+                ${upLastHtml(ups)}
                 <div class="ev-drop" id="ev-drop" tabindex="0" role="button" aria-label="송장 엑셀 고르기">엑셀을 끌어다 놓거나 눌러서 고르세요(여러 개 가능)<input type="file" id="ev-xlsx" accept=".xlsx,.xls,.csv" multiple hidden></div>
                 <div id="ev-upprev">${upPreview()}</div></div>
             <div class="ev-sub"><div class="ev-sub-h"><b>등록 현황</b></div>
@@ -594,6 +608,16 @@
                 ${winners.map((w, i) => `<tr><td>${i + 1}</td><td><b>${esc(w.prize)}</b></td><td>${esc(w.name)}</td><td>${esc(w.phone)}</td><td>${esc(String(w.product || '').slice(0, 24))} · ${w.orders || 1}건</td></tr>`).join('') || '<tr><td colspan="5" class="ev-empty">아직 추첨 전이에요</td></tr>'}</tbody></table></div>
                 <div class="ev-row">${btn('당첨자 복사', `data-ev="wcopy"${winners.length ? '' : ' disabled'}`, 'sm')}${btn('당첨자 엑셀', `data-ev="wxlsx"${winners.length ? '' : ' disabled'}`, 'sm')}</div></div>
             ${open || st === 'scheduled' ? `<div class="ev-sub ev-danger-zone"><div class="ev-row">${btn('페이지 내리기', 'data-ev="down"', 'danger')}</div></div>` : ''}`;   // #718 아래 [초기화] 는 머리띠 것과 중복이라 없앰
+    }
+    // #1270 송장 칸 위 한 줄 = 마지막 올린 날짜·거래처 + 오늘(KST) 대성·효돈 중 빠진 것
+    function upLastHtml(ups) {
+        const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+        const last = ups[0];
+        const lastTxt = last ? `마지막 송장 날짜 <b>${esc(mdw(last.date) || last.date)}</b> · ${ups.filter(r => r.date === last.date).map(r => esc(r.vendor || '기타') + ' ' + r.n + '건').join(' · ')}` : '아직 올린 송장이 없어요';
+        const todayV = new Set(ups.filter(r => r.date === today).map(r => r.vendor));
+        const miss = ['대성', '효돈'].filter(v => !todayV.has(v));
+        const todayTxt = !isOpen() ? '' : (miss.length ? `<span class="ev-up-miss">오늘(${esc(mdw(today))}) ${miss.map(esc).join('·')} 아직</span>` : `<span class="ev-up-ok">오늘(${esc(mdw(today))}) 대성·효돈 다 올라감</span>`);
+        return `<p class="ev-uplast" role="status">${lastTxt}${todayTxt ? ' ' + todayTxt : ''}</p>`;
     }
     function upPreview() {
         if (!S.ordersPending.length) return '';
@@ -937,22 +961,40 @@
             case 'down':
                 if (!await confirmBox('페이지를 내릴까요?', '손님 페이지가 「이벤트가 끝났어요」로 바뀌고 /guide 카드·봇 답도 꺼져요. 다시 열 수 있어요.', '내리기', true)) return;
                 return act('go-live', { mode: 'down' }, '페이지를 내렸어요');
+            case 'upgo': {   // #1270 머리 「오늘 송장 올리기」 = ⑤ 열기·운영 칸을 펼치고 송장 칸으로(올리기 길은 기존 그대로)
+                closeMore();
+                S.open.add(5); render();
+                const box = $('ev-upbox'), drop = $('ev-drop');
+                if (box) box.scrollIntoView({ block: 'center' });
+                if (drop) { drop.focus({ preventScroll: true }); drop.classList.add('ev-flash'); setTimeout(() => drop.classList.remove('ev-flash'), 1600); }
+                return;
+            }
             case 'new': {
+                closeMore();
                 if (S.dirty && !await confirmBox('저장 안 한 변경이 있어요', '새 회차를 만들면 지금 고친 내용은 사라져요.', '버리고 계속', true)) return;
-                if (!await confirmBox('새 회차를 시작할까요?', S.id ? '지금 회차는 지워지지 않고 보관돼요. 빈 회차가 새로 만들어져요.' : '빈 회차가 새로 만들어져요. 열기 전에는 손님에게 보이지 않아요.', '새 회차 시작', !!S.id)) return;
+                const live = liveGuard();
+                if (live) {   // #1270 열린·응모 중·발표 전 회차 = 두 번 묻기 + 서버에 live_ok
+                    if (!await confirmBox('지금 진행 중인 이벤트가 닫혀요', `「${S.ev.title || '지금 회차'}」가 ${live}. 새 회차로 바꾸면 손님 화면·알림톡 카드·봇 안내가 바뀝니다. 계속할까요?`, '계속', true)) return;
+                    if (!await confirmBox('정말 새 회차로 바꿀까요?', '지금 이벤트를 보고 있는 손님은 「준비 중」 화면을 보게 돼요. 실수로 눌렀다면 [취소]를 눌러 주세요.', '네, 새 회차로 바꿔요', true)) return;
+                } else if (!await confirmBox('새 회차를 시작할까요?', S.id ? '지금 회차는 지워지지 않고 보관돼요. 빈 회차가 새로 만들어져요.' : '빈 회차가 새로 만들어져요. 열기 전에는 손님에게 보이지 않아요.', '새 회차 시작', !!S.id)) return;
                 S.open = new Set([1]);
-                return act('new-round', { confirm: 'NEW', title: '새 이벤트' }, '새 회차를 만들었어요 · ①부터 채워 주세요');
+                return act('new-round', Object.assign({ confirm: 'NEW', title: '새 이벤트' }, live ? { live_ok: 'LIVE' } : {}), '새 회차를 만들었어요 · ①부터 채워 주세요');
             }
             case 'copy': {
+                closeMore();
                 if (isOpen()) { toast('열려 있는 회차는 먼저 내린 뒤 복사할 수 있어요', 'error', 3600); return; }
                 const rid = await pickRound(); if (!rid) return;
                 if (!await confirmBox('이 회차 설정을 가져올까요?', '지금 회차의 설정(제목·경품·그림·문구)이 바뀌어요. 주문·당첨자는 그대로예요.', '가져오기', true)) return;
                 S.open = new Set([1]);
                 return act('copy-round', { from_id: rid, title: '' }, '지난 회차 설정을 가져왔어요 · 날짜를 채워 주세요');
             }
-            case 'reset':
+            case 'reset': {
+                closeMore();
                 if (!await confirmBox('이 회차를 초기화할까요?', `이 회차의 주문 ${((S.db || {}).orders || []).length}건·당첨 기록을 지우고 날짜·경품·제외 품목도 비운 초안 상태로 돌립니다.${isOpen() ? ' 열려 있는 손님 페이지·/guide 카드·봇 답도 닫혀요.' : ''} 되돌릴 수 없어요.`, '초기화', true)) return;
-                return act('reset', { confirm: 'RESET' }, '초기화했어요');
+                const liveR = liveGuard();
+                if (liveR && !await confirmBox('정말 초기화할까요?', `「${S.ev.title || '지금 회차'}」가 ${liveR}. 손님은 「준비 중」 화면을 보게 되고 되돌릴 수 없어요. 실수로 눌렀다면 [취소]를 눌러 주세요.`, '네, 초기화해요', true)) return;
+                return act('reset', Object.assign({ confirm: 'RESET' }, liveR ? { live_ok: 'LIVE' } : {}), '초기화했어요');
+            }
             case 'draw': {
                 const d = S.db || {};
                 if ((d.winners || []).length && !await confirmBox('다시 추첨할까요?', '이미 뽑은 당첨자가 있어요. 전부 새로 뽑아요.', '다시 추첨', true)) return;
@@ -1006,6 +1048,9 @@
         // #718 「더 보기」 열고 닫음 기억(details toggle 은 안 번짐 → capture) · ② 는 경품 손글씨 칸을 같이 보임/숨김
         const onMore = e => { const d = e.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.more) return; if (!S.more) S.more = new Set(); d.open ? S.more.add(d.dataset.more) : S.more.delete(d.dataset.more); if (d.dataset.more === '2') document.querySelectorAll('#event-root .ev-prize [data-k$=".note"]').forEach(el => { el.hidden = !d.open; }); };
         root.addEventListener('toggle', onMore, true);
+        // #1270 머리 「더 보기」 판 = Esc·바깥 누름으로 닫힘
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.querySelector('#event-root details.ev-headmore[open]')) { e.preventDefault(); closeMore(); const s = document.querySelector('#event-root details.ev-headmore > summary'); if (s) s.focus(); } });
+        document.addEventListener('pointerdown', e => { const d = document.querySelector('#event-root details.ev-headmore[open]'); if (d && !d.contains(e.target)) closeMore(); }, true);
         document.addEventListener('toggle', e => { if (e.target.closest && e.target.closest('#ev-pv-ov')) onMore(e); }, true);
         root.addEventListener('keydown', e => { if (e.target.id === 'ev-drop' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('ev-xlsx').click(); } });
         root.addEventListener('click', e => { if (e.target.closest('#ev-drop') && e.target.id !== 'ev-xlsx') $('ev-xlsx').click(); });

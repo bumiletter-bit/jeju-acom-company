@@ -712,11 +712,14 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     } catch (e) { fail(res, e); }
   });
 
+  // #1270 열린·예약·응모 중·발표 전 회차를 닫는 단추(새 회차·초기화)는 화면이 두 번 물은 뒤 live_ok 'LIVE' 를 같이 보낼 때만
+  const liveBusy = db => { const e = db.event || {}; return isOpen(stateOf(db)) || e.live_mode === 'scheduled' || (db.orders || []).length > 0 || ((db.winners || []).length > 0 && !e.published); };
   // 전체 초기화 — 직원 가능(#708 · 대표 10/15 · 화면이 확인 창 1번 뒤 confirm 글자를 넣어 보냄 · 원본 동일: confirm 'RESET')
   app.post(A + '/reset', authMiddleware, async (req, res) => {
     try {
       if (req.body.confirm !== 'RESET') return res.status(400).json({ error: 'CONFIRM' });
       const before = await loadCurrent(true);
+      if (cacheId && liveBusy(before) && req.body.live_ok !== 'LIVE') return res.status(409).json({ error: 'LIVE_ROUND' });
       const n = before.orders.length, wasOpen = isOpen(stateOf(before));
       const db = await withLock(async () => { const db = DEFAULT(); db.event.live_mode = 'draft'; db.event.start = db.event.end = db.event.announce = ''; db.event.prizes = []; db.event.excludeProducts = []; await save(db); if (wasOpen) await syncOut(db, req); return db; });
       audit(req, 'lucky_reset', { ordersBefore: n });
@@ -730,6 +733,7 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
       if (req.body.confirm !== 'NEW') return res.status(400).json({ error: 'CONFIRM' });
       const r = await withLock(async () => {
         const cur = await loadCurrent(true); const wasOpen = isOpen(stateOf(cur)) && !!cacheId;
+        if (cacheId && liveBusy(cur) && req.body.live_ok !== 'LIVE') return { err: { status: 409, body: { error: 'LIVE_ROUND' } } };
         if (cacheId) await pool.query(`UPDATE ${T} SET is_current=FALSE, archived_at=NOW() WHERE id=$1`, [cacheId]);
         cacheId = null;
         const db = DEFAULT();
@@ -741,7 +745,8 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
         if (wasOpen) await syncOut(db, req);   // 열려 있던 회차를 보관했으니 카드·봇은 꺼진다
         return db;
       });
-      audit(req, 'lucky_new_round', { title: r.event.title });
+      if (r.err) return res.status(r.err.status).json(r.err.body);
+      audit(req, 'lucky_new_round', { title: r.event.title, live_ok: req.body.live_ok === 'LIVE' });
       res.json(await withMeta(r, { id: cacheId }));   // 손질 ⓐ: state(preparing)·checklist 도 같이
     } catch (e) { fail(res, e); }
   });
