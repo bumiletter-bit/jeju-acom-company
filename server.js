@@ -9013,20 +9013,49 @@ async function collectKakaoNotifyStore(store, ctx) {
         list = list.filter(x => !mi.has(String(x.productOrderId || '')));
         await naverBizRemember(list.map(x => String(x.productOrderId || '')));
     } else ctx.ids = new Set(list.map(x => String(x.productOrderId || '')).filter(Boolean));
-    const paidIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
+    const paidIdsOnly = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
         .map(x => String(x.productOrderId || '')).filter(Boolean))];
+    /* #1269(대표 11/23 · 끝 4831 실사례): 결제 직후 손님이 배송지·배송 희망일을 바꾸면 변경 목록의 「마지막 변경 종류」가 PAYED 대신
+         DELIVERY_ADDRESS_CHANGED · HOPE_DELIVERY_INFO_CHANGED(공식 문서 lastChangedType 표)로 덮여 주문 안내·자동 발주확인이 통째로 빠졌다.
+       → 그 두 종류도 후보에 넣되(스마트스토어 길만 · 직영몰 길은 종전 그대로) 아래에서 ①이력에 없는 주문 ②상세조회 상태 PAYED·클레임 없음(종전 판정)
+         ③결제 시각이 이번 조회 창(체크포인트 − 60분) 안 일 때만 보낸다(오래된 주문이 한꺼번에 나가지 않게) · 손으로 발주확인이 이미 된 주문은 안내만 · 자동 발주확인 안 함.
+       kakao_notify_pick_request {order_keys:[…≤5]} = 「이 주문만 다시 집기」 한 번 쓰고 지워지는 요청(창 조건만 빼고 위 판정 그대로 · 결과 kakao_notify_pick_result). */
+    const NOTIFY_LATE_TYPES = ['DELIVERY_ADDRESS_CHANGED', 'HOPE_DELIVERY_INFO_CHANGED'];
+    const lateSet = new Set(store === 'biz' ? [] : list.filter(x => NOTIFY_LATE_TYPES.includes(String(x.lastChangedType || '')))
+        .map(x => String(x.productOrderId || '')).filter(id => id && !paidIdsOnly.includes(id)));
+    const pickSet = new Set();
+    if (store !== 'biz') {
+        let pick = null;
+        try { pick = await naverCfgGet('kakao_notify_pick_request'); } catch (_) { pick = null; }
+        if (pick != null) {
+            await pool.query(`DELETE FROM agent_office_config WHERE key = 'kakao_notify_pick_request'`).catch(() => {});   // 선제거 = 한 번만
+            for (const k of (Array.isArray(pick.order_keys) ? pick.order_keys : []).slice(0, 5)) { const s = String(k || '').replace(/\D/g, ''); if (s.length >= 10) pickSet.add(s); }
+            for (const k of pickSet) lateSet.delete(k);
+        }
+    }
+    const paidIds = [...new Set([...paidIdsOnly, ...lateSet, ...pickSet])];
     if (paidIds.length === 0) return '신규 결제 0건 — 알림톡 대상 없음';
     // 이미 이력에 있는 주문 제외 (재시작·중복 감지 안전)
     const seen = await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [paidIds]);
     const seenSet = new Set(seen.rows.map(r => r.order_key));
     const targets = paidIds.filter(id => !seenSet.has(id));
-    if (targets.length === 0) return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`;
+    const pickNote = {};   // #1269 다시 집기 결과(주문번호 → 무엇이 됐는지)
+    for (const k of pickSet) if (seenSet.has(k)) pickNote[k] = '이력 있음 — 보내지 않음(중복 막이)';
+    const savePick = async () => {
+        if (!pickSet.size) return;
+        try {
+            const r = await pool.query(`SELECT order_key, mode, status, confirm_status FROM kakao_notify_log WHERE order_key = ANY($1)`, [[...pickSet]]);
+            const byKey = new Map(r.rows.map(x => [x.order_key, x]));
+            await naverCfgSet('kakao_notify_pick_result', { at: new Date().toISOString(), items: [...pickSet].map(k => ({ key: k, note: pickNote[k] || null, log: byKey.get(k) || null })) });
+        } catch (_) { /* 결과 줄 = 보조 */ }
+    };
+    if (targets.length === 0) { await savePick(); return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`; }
     // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69·#73: 휴무일·안내 문구는 DB — 화면 관리)
     const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     const expIds = await experienceProductIds(); let experienceSkipped = 0;   // #775-A
     let done = 0, failed = 0, tokFailed = 0;
-    const sentReal = [], manualKeys = [], simulated = [];   // 지시 #92: 발주확인 대상 분류
+    const sentReal = [], manualKeys = [], simulated = [], placedKeys = [];   // 지시 #92: 발주확인 대상 분류 · #1269 placedKeys = 손으로 발주확인된 주문(안내만)
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
         if (i > 0) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
@@ -9041,6 +9070,12 @@ async function collectKakaoNotifyStore(store, ctx) {
             const od = c.order || it.order || po.order || {};
             const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
             if (!orderKey) continue;
+            // #1269 배송지·희망일 변경으로 덮인 후보 = 결제 시각이 이번 조회 창 안일 때만(기록 없이 건너뜀 = 다음 틱에 다시 봐도 같은 판정)
+            //   취소·클레임 판정보다 먼저 = 이력 없는 옛 주문이 skip 줄(틀린 사유)로 이력에 새로 생기지 않게(워커3 점검)
+            if (lateSet.has(orderKey)) {
+                const _pm = Date.parse(od.paymentDate || od.orderDate || '');
+                if (!_pm || _pm < fromMs) continue;
+            }
             // 지시 #141: 결제~수집 사이 취소·클레임 레이스 방어 — 상세조회 시점 상태 재확인.
             //   PAYED가 아니거나(즉시취소 = CANCELED 계열) 클레임 필드가 붙은 건(취소요청 등 — 상태는 PAYED 유지)은 발송 대상에서 제외 + 이력에 사유 기록.
             const poStatus = String(po.productOrderStatus || '');
@@ -9052,6 +9087,7 @@ async function collectKakaoNotifyStore(store, ctx) {
                      `취소·클레임으로 제외 (상태 ${poStatus || '-'}${claimMark ? ' · 클레임 ' + claimMark : ''})`]).catch(() => {});
                 continue;   // 발송·발주확인 분류 전부 미포함 (취소 건은 수기 영역)
             }
+            const placedByHand = (lateSet.has(orderKey) || pickSet.has(orderKey)) && String(po.placeOrderStatus || '') === 'OK';   // #1269 손으로 이미 발주확인 = 안내만
             // #775-A 체험(배송 없는) 상품 — 택배 주문안내(발송일 문구)를 보내지 않고 자동 발주확인도 하지 않는다(발주확인 = 배송완료 → 취소가 반품 길이 됨 · 사람이 누름)
             //   이력엔 skip 한 줄(중복 방지 · 이력 화면) · 체험 접수 문자는 #775 본 설계에서
             if (isExperienceOrder(po, expIds)) {
@@ -9150,9 +9186,11 @@ async function collectKakaoNotifyStore(store, ctx) {
                 else if (res.mode === 'real') failed++;
                 if (res.status === 'token-failed') tokFailed++;   // #1092 알리고 인증 실패 = 고장 의심
                 // 지시 #92 분류: 실발송 성공 → 발주확인 대상 / 실발송 실패 → 수기 / dry-run → 시뮬레이션 표기
-                if (res.mode === 'real' && res.status === 'sent') sentReal.push(orderKey);
+                if (res.mode === 'real' && res.status === 'sent' && placedByHand) placedKeys.push(orderKey);   // #1269 자동 발주확인 건너뜀
+                else if (res.mode === 'real' && res.status === 'sent') sentReal.push(orderKey);
                 else if (res.mode === 'real') manualKeys.push(orderKey);
                 else simulated.push(orderKey);
+                if (pickSet.has(orderKey)) pickNote[orderKey] = '보냄 시도 = ' + res.mode + '/' + res.status;
             } catch (e) {
                 failed++;
                 manualKeys.push(orderKey);   // 문면 생성 실패 = 발송 없음 → 수기 발주확인 필요 (#92)
@@ -9184,6 +9222,9 @@ async function collectKakaoNotifyStore(store, ctx) {
     if (manualKeys.length) {
         await pool.query(`UPDATE kakao_notify_log SET confirm_status='manual-needed' WHERE order_key = ANY($1) AND confirm_status IS NULL`, [manualKeys]).catch(() => {});
     }
+    if (placedKeys.length) {   // #1269 손으로 이미 발주확인된 주문 = 자동 발주확인 호출 0
+        await pool.query(`UPDATE kakao_notify_log SET confirm_status='already', confirm_error='손으로 발주확인됨 — 자동 발주확인 건너뜀(#1269)' WHERE order_key = ANY($1) AND confirm_status IS NULL`, [placedKeys]).catch(() => {});
+    }
     if (sentReal.length) {
         if (kakaoNotify.switchOn()) {
             const cr = await naverConfirmOrders(sentReal);
@@ -9213,6 +9254,7 @@ async function collectKakaoNotifyStore(store, ctx) {
     }
     const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
     if (experienceSkipped) console.log(`[#775-A] 주문안내 알림톡·자동 발주확인에서 체험 주문 ${experienceSkipped}건 뺌`);
+    await savePick();
     return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·발주확인 ${confirmed}·확인실패 ${confirmFailed}·신규결제 ${paidIds.length}건${experienceSkipped ? `·체험 제외 ${experienceSkipped}` : ''})`;
 }
 
