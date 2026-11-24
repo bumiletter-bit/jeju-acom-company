@@ -44,12 +44,14 @@ function mkTab(start, plan, log, name) {
         } };
     return t;
 }
+const CLOCK = { t: 0 };   /* #1281-b 그 실행에서 기다린 ms 합 */
 const CLOSED = [];   /* #1242 그 실행에서 닫힌 탭 이름 */
 const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-async function runKeep(tabs, openTab) {
-    const out = []; const fakeConsole = { log: s => out.push(s) }; const fastTimeout = (fn) => { Promise.resolve().then(fn); return 0; };
+async function runKeep(tabs, openTab, code) {
+    const out = []; const fakeConsole = { log: s => out.push(s) }; const fastTimeout = (fn, ms) => { CLOCK.t += Number(ms) || 0; Promise.resolve().then(fn); return 0; };   /* #1281-b 가짜 시계 = 기다린 ms 를 더함(실제로는 바로) */
+    CLOCK.t = 0; const FakeDate = { now: () => CLOCK.t };
     CLOSED.length = 0; const closeTab = async t => { if (!t || t.closed) throw new Error('이미 닫힌 탭'); t.closed = true; CLOSED.push(t.name); };
-    await new AsyncFunction('tabs', 'openTab', 'console', 'setTimeout', 'closeTab', W.JS_KEEP)(tabs, openTab, fakeConsole, fastTimeout, closeTab);
+    await new AsyncFunction('tabs', 'openTab', 'console', 'setTimeout', 'closeTab', 'Date', code || W.JS_KEEP)(tabs, openTab, fakeConsole, fastTimeout, closeTab, FakeDate);
     return JSON.parse(out[out.length - 1]);
 }
 
@@ -112,7 +114,7 @@ async function runKeep(tabs, openTab) {
 
     console.log('── ok 판정 강화');
     log = []; t = mkTab('blank', {}, log, 'A'); r = await runKeep([t], noOpen);
-    ok('센터 주소인데 머리 글이 안 보임(두 번 봐도) = unknown(주소만으로 ok 아님)', r.state === 'unknown' && t.looks === 2, JSON.stringify(r) + ' looks ' + t.looks);
+    ok('센터 주소인데 머리 글이 안 보임(#1281 네 번 봐도) = unknown(주소만으로 ok 아님)', r.state === 'unknown' && t.looks === 4, JSON.stringify(r) + ' looks ' + t.looks);
 
     log = []; t = mkTab('blank', { onLook: x => { if (x.looks >= 2) x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen);
     ok('머리 글이 늦게 그려짐(두 번째에 보임) = ok', r.state === 'ok' && r.store === '제주아꼼이네', JSON.stringify(r));
@@ -393,6 +395,81 @@ async function runKeep(tabs, openTab) {
         ok('  (이어서 04시대 · 여유 넉넉) = 안 끔', (await W.asideRecycleMaybe(at(4) + 10 * 60000)) === null && kills === 1);
         ok('끄는 명령 = 데몬 + 앱 본체만 · CLI 경로(\\CLI\\)는 빼고 · taskkill /IM 안 씀', /aside-daemon\.exe/.test(W.ASIDE_KILL_PS) && /Aside\.exe/.test(W.ASIDE_KILL_PS) && /ExecutablePath -notmatch '\\\\CLI\\\\'/.test(W.ASIDE_KILL_PS) && !/taskkill/i.test(W.ASIDE_KILL_PS));
         W._setAsideKill(null); W._setMem(null); W._setKeep(null, null); wipe();
+    }
+
+    console.log('── #1281 단추 늦게 뜸 · 쉼 중 상태 읽기만');
+    {
+        let log, t, r; const noOpen = async () => { throw new Error('openTab 불림'); };
+        log = []; t = mkTab('dash', { onReload: () => 'loginNoBtn', onLook: x => { if (x.screen === 'loginNoBtn' && x.looks >= 4) x.screen = 'login'; }, onSimple: x => { x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('커머스ID 화면에서 간편 로그인 단추가 늦게 뜸 = 기다렸다 1번 누름 → relogin(종전 = 6초 1번 찾고 login_fail)', r.state === 'relogin' && r.clicked && log.filter(x => x === 'A:tap간편=true').length === 1 && log.filter(x => x === 'A:tap간편=false').length >= 1, JSON.stringify(r) + log);
+
+        log = []; t = mkTab('dash', { onReload: () => 'loginNoBtn' }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('끝내 단추 없음 = login_fail · 찾기는 최대 10번(무한 대기 X)', r.state === 'login_fail' && !r.clicked && log.filter(x => /tap간편/.test(x)).length === 10, JSON.stringify(r) + ' taps ' + log.filter(x => /tap간편/.test(x)).length);
+
+        log = []; t = mkTab('dash', { onReload: () => 'loginNoBtn', onLook: x => { if (x.screen === 'loginNoBtn' && x.looks >= 3) x.screen = 'phone'; } }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('단추 기다리는 중 폰 승인 화면 = need_phone · 누름 0', r.state === 'need_phone' && !log.some(x => /tap간편=true/.test(x)), JSON.stringify(r) + log);
+
+        log = []; t = mkTab('first', { onFirst: () => { }, onLook: x => { if (x.screen === 'first' && x.looks >= 3) x.screen = 'login'; }, onSimple: x => { x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('「로그인하기」 뒤 커머스ID 화면이 늦게 뜸 = 기다렸다 간편 로그인 → relogin(「로그인하기」 1번만)', r.state === 'relogin' && r.first && r.clicked && log.filter(x => /tap로그인하기=true/.test(x)).length === 1, JSON.stringify(r) + log);
+
+        let n = 0; log = []; t = mkTab('dash', { onReload: () => { n++; return n === 1 ? 'login' : 'login'; }, onSimple: () => { }, onLook: x => { if (x.screen === 'login' && log.includes('A:tap간편=true') && x.looks >= 3) x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('간편 로그인 누른 뒤 늦게 넘어감(새로고침 뒤에도 로그인 화면 · 8초 뒤 다시 보니 대시보드) = relogin · 누름 1번', r.state === 'relogin' && log.filter(x => x === 'A:tap간편=true').length === 1, JSON.stringify(r) + log + ' looks ' + t.looks);
+
+        ok('읽기만 코드(JS_KEEP_RO) = 누름 막이 RO 표식 · 종전 코드는 RO false', /const RO = true;/.test(W.JS_KEEP_RO) && /const RO = false;/.test(W.JS_KEEP) && W.JS_KEEP_RO.replace('const RO = true;', '') === W.JS_KEEP.replace('const RO = false;', ''));
+        log = []; t = mkTab('dash', {}, log, 'A'); r = await runKeep([t], noOpen, W.JS_KEEP_RO);
+        ok('읽기만 · 대시보드 = ok · 누름 0 · 스토어 이름', r.state === 'ok' && r.ro === true && r.store === '제주아꼼이네' && !log.some(x => /tap/.test(x)), JSON.stringify(r));
+        log = []; t = mkTab('first', { onFirst: x => { x.screen = 'login'; } }, log, 'A'); r = await runKeep([t], noOpen, W.JS_KEEP_RO);
+        ok('읽기만 · 로그인 안 된 첫 화면 = logged_out · 「로그인하기」 누름 0', r.state === 'logged_out' && !r.first && !log.some(x => /tap/.test(x)), JSON.stringify(r) + log);
+        log = []; t = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen, W.JS_KEEP_RO);
+        ok('읽기만 · 커머스ID 로그인 화면 = logged_out · 간편 로그인 누름 0', r.state === 'logged_out' && !r.clicked && !log.some(x => /tap/.test(x)), JSON.stringify(r) + log);
+        log = []; t = mkTab('dash', { onReload: () => 'phone' }, log, 'A'); r = await runKeep([t], noOpen, W.JS_KEEP_RO);
+        ok('읽기만 · 폰 승인 화면 = need_phone · 누름 0', r.state === 'need_phone' && !log.some(x => /tap/.test(x)), JSON.stringify(r));
+        log = []; const nt = mkTab('first2', {}, log, 'N'); r = await runKeep([], async () => nt, W.JS_KEEP_RO);
+        ok('읽기만 · 센터 탭 없어 새로 연 탭이 로그인 전 = logged_out · 그 탭은 닫음(쌓이지 않게)', r.state === 'logged_out' && r.opened && CLOSED.includes('N') && !log.some(x => /tap/.test(x)), JSON.stringify(r) + CLOSED);
+
+        console.log('── #1281-b 어사이드 repl 상한(120초) 안 · 읽기만 폰 승인 탭 닫기');
+        log = []; t = mkTab('dash', { onReload: () => 'loginNoBtn' }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('단추 끝내 없음 = 찾기 10번 이하 · 기다림 합 < 50초(시작 35초 안에서만 찾음)', r.state === 'login_fail' && CLOCK.t < 50000 && log.filter(x => /tap간편/.test(x)).length <= 10, 'clock ' + CLOCK.t + ' taps ' + log.filter(x => /tap간편/.test(x)).length);
+        log = []; t = mkTab('blank', { onLook: x => { if (x.looks >= 4) x.screen = 'first'; } }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('최악 길(빈 머리 3번 → 「로그인하기」 → 커머스ID 안 뜸) = 기다림 합 < 100초', CLOCK.t < 100000 && r.state === 'login_fail', JSON.stringify(r) + ' clock ' + CLOCK.t);
+        { const tabsW = []; const pw = mkTab('login', {}, log, 'P'); log = []; const tw = mkTab('dash', { onReload: () => 'loginNoBtn', onLook: x => { if (x.screen === 'loginNoBtn' && x.looks >= 4) x.screen = 'login'; }, onSimple: () => { if (!tabsW.includes(pw)) tabsW.push(pw); } }, log, 'A'); tabsW.push(tw);
+          r = await runKeep(tabsW, noOpen);
+          ok('최악 길(단추 늦게 → 누름 → 로그인 창이 안 닫힘 30초 → 새로고침 → 로그인 전) = 기다림 합 < 110초(repl 120초 안) · 8초 재확인은 100초 넘으면 건너뜀', r.state === 'login_fail' && r.clicked && CLOCK.t < 110000, JSON.stringify(r) + ' clock ' + CLOCK.t); }
+        log = []; const np = mkTab('phone', {}, log, 'N'); r = await runKeep([], async () => np, W.JS_KEEP_RO);
+        ok('읽기만 · 새로 연 탭이 폰 승인 화면 = need_phone · 그 탭 닫음 · 누름 0', r.state === 'need_phone' && r.opened && CLOSED.includes('N') && !log.some(x => /tap/.test(x)), JSON.stringify(r) + CLOSED);
+        log = []; const np2 = mkTab('phone', {}, log, 'N'); r = await runKeep([], async () => np2);
+        ok('누름 있는 틱 · 새로 연 탭이 폰 승인 화면 = need_phone · 탭 그대로(사람이 풀 화면 · 종전)', r.state === 'need_phone' && !CLOSED.includes('N'), JSON.stringify(r) + CLOSED);
+        { const src = fs.readFileSync(path.join(__dirname, 'vm', 'vm-watch.js'), 'utf8');
+          ok('경주 상한 = 5분 · 오류 글도 5분 · 잠금 낡음 판정(15분)보다 짧음', /rej\(new Error\('센터 유지 5분 넘음'\)\), 5 \* 60000\)/.test(src) && !/센터 유지 3분 넘음/.test(src) && /LOCK_STALE_MS = 15 \* 60000/.test(src)); }
+
+        const told6 = [], seen6 = []; let next6 = null;
+        W._setKeep(() => ({ start: async () => ({}), replJson: async (title, code) => { seen6.push({ title, ro: /const RO = true;/.test(code) }); return next6; }, stop: async () => { } }), async (reason, kind) => { told6.push({ reason, kind }); return true; });
+        const st6 = () => JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); const ago = m => new Date(Date.now() - m * 60000).toISOString();
+        const put6 = o => { try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } fs.writeFileSync(W.KEEP_STATE, JSON.stringify(o)); };
+        const FAILED = { phone_at: ago(31), at: ago(31), result: 'login_fail', center_at: ago(31), center_state: 'login_fail', center_store: '' };
+
+        put6(FAILED); next6 = { state: 'ok', where: 'sell.smartstore.naver.com/', store: '제주아꼼이네', ro: true }; let k6 = await W.keepMaybe();
+        ok('login_fail 뒤 쉼 중(31분) · 사람 손으로 로그인됨 = 읽기만 틱 → ok · 쉼 풀림 · heartbeat center ok · 텔레그램 0', k6 && k6.state === 'ok' && seen6.length === 1 && seen6[0].ro && /#1281/.test(seen6[0].title) && !st6().phone_at && st6().center_state === 'ok' && told6.length === 0, JSON.stringify(st6()) + JSON.stringify(seen6));
+        next6 = { state: 'ok', where: 'x', store: '제주아꼼이네' }; fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...st6(), at: ago(31) })); k6 = await W.keepMaybe();
+        ok('쉼 풀린 뒤 다음 틱 = 종전 유지 틱(누름 있는 코드)', k6 && k6.state === 'ok' && seen6.length === 2 && !seen6[1].ro, JSON.stringify(seen6));
+
+        put6(FAILED); seen6.length = 0; next6 = { state: 'logged_out', where: 'sell.smartstore.naver.com/home', store: '', ro: true }; k6 = await W.keepMaybe();
+        ok('쉼 중 · 아직 로그아웃 = 읽기만(누름 0) · 쉼 그대로 · heartbeat center = login_fail 그대로 · 텔레그램 0', k6 && k6.state === 'logged_out' && seen6.length === 1 && seen6[0].ro && st6().phone_at === FAILED.phone_at && st6().center_state === 'login_fail' && st6().center_at === FAILED.center_at && st6().ro_result === 'logged_out' && told6.length === 0, JSON.stringify(st6()));
+        ok('  그 뒤 30분 안 = 안 돎', (await W.keepMaybe()) === null && seen6.length === 1);
+
+        put6({ ...FAILED, at: ago(5) }); seen6.length = 0; ok('쉼 중이라도 직전 틱 30분 안 = 안 돎', (await W.keepMaybe()) === null && seen6.length === 0);
+
+        put6({ ...FAILED, phone_at: ago(181), at: ago(181) }); seen6.length = 0; next6 = { state: 'relogin', clicked: true, where: 'x', store: '제주아꼼이네' }; k6 = await W.keepMaybe();
+        ok('3시간 쉼이 지나면 = 종전 유지 틱(누름 있음)', k6 && k6.state === 'relogin' && seen6.length === 1 && !seen6[0].ro);
+
+        put6({ ...FAILED, result: 'need_phone', center_state: 'need_phone' }); seen6.length = 0; next6 = { state: 'need_phone', where: 'nid.naver.com/login', ro: true }; k6 = await W.keepMaybe();
+        ok('폰 승인 쉼 중 · 아직 폰 승인 화면 = 읽기만 · 쉼 그대로 · 알림 0(누르기 재시도 0)', k6 && k6.state === 'need_phone' && seen6[0].ro && st6().phone_at === FAILED.phone_at && told6.length === 0);
+        put6({ ...FAILED, result: 'need_phone', center_state: 'need_phone' }); seen6.length = 0; next6 = { state: 'ok', where: 'x', store: '제주아꼼이네 직영몰', ro: true }; k6 = await W.keepMaybe();
+        ok('쉼 중 읽어 보니 로그인됐는데 직영몰 = 쉼 풀림 + 종전 직영몰 알림 1통', k6 && k6.state === 'wrong_store' && !st6().phone_at && told6.length === 1 && told6[0].kind === 'center_store', JSON.stringify(told6));
+
+        put6(FAILED); seen6.length = 0; next6 = { state: 'login_fail', where: 'x', store: '' }; k6 = await W.keepMaybe(true);
+        ok('force = 쉼 무시 종전 길(누름 있는 코드 · 종전 알림)', k6 && k6.state === 'login_fail' && !seen6[0].ro && told6.length === 2 && told6[1].kind === 'center_login');
+        W._setKeep(null, null); try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
     }
 
     console.log('── ③ 지시문');
