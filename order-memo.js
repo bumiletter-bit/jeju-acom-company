@@ -744,15 +744,18 @@ function mount(app, deps) {
     //   #1209(대표 11/21 「한번 더 조회 고」) opt.always = 주문이 이미 있어도 조회(GET lookup 길만 = 주문 찾기·고객정보수정·메모 수정·입력삭제 판·줄 카드 번호 확인 ·같은 번호 수집 사이 두 번째 결제가 30분 수집을 안 기다리게) · 상한(번호당 10분·시간당 20)은 refreshPreorders 그대로 · opt 없는 다른 길 = 종전 그대로
     //   #1209-b 있어도 조회(always)는 가게 전체 5분에 한 번(_alwaysAt = 실제로 돈 시각 · skip·off 는 기록·로그 0) → 시간당 20 통에서 최대 12 · 문자 봇 몫 8 남김 · 0건 갈래는 무관
     let _alwaysAt = 0; const ALWAYS_GAP_MS = 5 * 60 * 1000;
-    const refreshIfMiss = async (keys, opt) => {
-        if (typeof deps.refreshPreorders !== 'function') return;
+    const LK_WAIT_MS = 12000, LK_RETRY_S = 15, LK_PENDING = /^(timeout|error|skip:busy|skip:running)$/;   // #1286 ② lookup 0건 = 즉시 조회를 이만큼까지 기다림 · 아직 도는 중이면 화면이 LK_RETRY_S 초 뒤 다시
+    const refreshIfMiss = async (keys, opt) => {   // #1286 돌려줌 = 마지막 번호 결과(done·timeout·error·skip:*·off · 표에 이미 있으면 have) · 종전 부르는 곳은 안 씀
+        if (typeof deps.refreshPreorders !== 'function') return 'off';
+        let last = 'off';
         const always = !!(opt && opt.always === true);
         for (const d of [...new Set((keys || []).map(dg).filter(k => /^0\d{8,11}$/.test(k)))]) {
             let have = 0; if (!always) try { have = (await pool.query('SELECT 1 FROM order_memo_preorders WHERE miss = 0 AND buyer_digits = $1 LIMIT 1', [d])).rowCount; } catch (e) { if (!/order_memo_preorders/.test(String(e.message))) throw e; }
-            if (have) continue;
-            if (always && Date.now() - _alwaysAt < ALWAYS_GAP_MS) return;   /* #1209 있어도 조회 = 가게 전체 5분에 한 번(그 조회가 최근 2일 주문을 다 받아 옴 · 시간당 20 통에서 최대 12 · 문자 봇 몫 남김) */
-            try { const how = await deps.refreshPreorders(d); const skipped = /^(skip|off)/.test(String(how)); if (always && !skipped) _alwaysAt = Date.now(); if (!(always && skipped)) console.log('[발주 메모함] 즉시 주문 조회 ' + d.slice(-4) + ' → ' + how); } catch (e) { console.error('[발주 메모함] 즉시 주문 조회 실패(무시):', e.message); }   /* #1209 시각 = 실제로 돈 때(done·timeout·error)만 · always 의 skip·off 줄은 안 찍음 */
+            if (have) { last = 'have'; continue; }
+            if (always && Date.now() - _alwaysAt < ALWAYS_GAP_MS) return 'skip:gap';   /* #1209 있어도 조회 = 가게 전체 5분에 한 번(그 조회가 최근 2일 주문을 다 받아 옴 · 시간당 20 통에서 최대 12 · 문자 봇 몫 남김) */
+            try { const how = await deps.refreshPreorders(d); last = String(how); const skipped = /^(skip|off)/.test(String(how)); if (always && !skipped) _alwaysAt = Date.now(); if (!(always && skipped)) console.log('[발주 메모함] 즉시 주문 조회 ' + d.slice(-4) + ' → ' + how); } catch (e) { console.error('[발주 메모함] 즉시 주문 조회 실패(무시):', e.message); last = 'error'; }   /* #1209 시각 = 실제로 돈 때(done·timeout·error)만 · always 의 skip·off 줄은 안 찍음 */
         }
+        return last;
     };
     app.post('/api/order-memo', authMiddleware, wrap(async (req, res) => {
         const raw = s(req.body && req.body.raw, MAX_RAW).trim();
@@ -1058,6 +1061,7 @@ function mount(app, deps) {
         if (!phone && !mall && !orderNo) throw err(400, '전화번호(0으로 시작 9~12자리) 또는 주문번호를 주세요');
         const kv = mall ? key : d;
         let matches = [], cov = null, src = 'none', tot = { rows: 0, n: 0, q: 0 }, shown = 0;
+        const find = async () => { matches = []; cov = null; src = 'none'; tot = { rows: 0, n: 0, q: 0 }; shown = 0;   // #1286 ② 즉시 조회 뒤 한 번 더 찾으려고 함수로(안 = 종전 그대로)
         try {
             const have = Number((await pool.query('SELECT count(*)::int AS n FROM order_memo_preorders')).rows[0].n);
             if (have > 0) {
@@ -1083,11 +1087,22 @@ function mount(app, deps) {
                 cov = (await pool.query("SELECT to_char(MAX(seen_at) AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') AS last_seen FROM sms_preorders")).rows[0];
             } catch (e) { if (!/sms_preorders/.test(String(e.message))) throw e; }   // 표가 없는 서버(문자 기능 꺼짐) = 못 찾음
         }
-        if (phone && !matches.length) refreshIfMiss([d]).catch(() => {});   // #936 [넣기]·카드 번호 찾기에서 주문 없음 = 즉시 조회(응답은 종전 그대로 · 다음 조회·목록부터)
-        else if (phone) refreshIfMiss([d], { always: true }).catch(() => {});   // #1209 주문이 이미 있어도 한 번(수집 사이에 같은 번호로 결제한 주문 · 다음 [주문 찾기]부터 보임 · 응답은 안 기다림 · 상한은 refreshPreorders 그대로)
+        };
+        await find();
+        // #1286 ②(대표 11/24 「원래 바로 돼야 하면 바로 · 기다려야 하면 안내」) 전화번호 0건 = 즉시 조회(#936)를 기다린 뒤 한 번 더 찾아 한 번에 답함(종전 = 안 기다리고 0건 → 다음 [주문 찾기]부터 보임 · 11/24 21:20 사이즈 줄 실사례)
+        //   기다림 상한 = LK_WAIT_MS(즉시 조회 자체 상한 10초 + 여유) · 조회가 아직 도는 중(시간 초과·다른 조회 중)이면 pending = 화면이 retry_s 초 뒤 저절로 다시 찾음 · 「못 찾았어요」 확정 글은 pending 아닐 때만
+        let fresh = null;
+        const noWait = req.query.wait === '0' || plat === '쿠팡';   // #1286 점검 2) 쿠팡 줄(주문 표 번호 = 050 안심번호 → 손님 번호로 늘 0건) = 기다리지 않고 종전 답(즉시 조회는 걸어만 둠)
+        if (phone && !matches.length && noWait) refreshIfMiss([d]).catch(() => {});
+        else if (phone && !matches.length) {
+            fresh = await Promise.race([refreshIfMiss([d]).catch(() => 'error'), new Promise(z => { const t = setTimeout(() => z('timeout'), LK_WAIT_MS); if (t.unref) t.unref(); })]);
+            if (fresh !== 'off') await find();   // 0건 = DB 한 번 더(가벼움 · 다른 번호 조회가 받아 온 줄도 보임)
+        }
+        const pending = !!(phone && !matches.length && LK_PENDING.test(String(fresh || '')));
+        if (phone && fresh == null && matches.length) refreshIfMiss([d], { always: true }).catch(() => {});   // #1209 주문이 이미 있어도 한 번(수집 사이에 같은 번호로 결제한 주문 · 다음 [주문 찾기]부터 보임 · 응답은 안 기다림 · 상한은 refreshPreorders 그대로)
         const days = 7;
-        res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches, total: tot.n, total_qty: tot.q, limit: LK_LIMIT, cut: tot.n > shown, ...(tot.n > shown ? { shown } : {}),   // #1101·#1102 cut = 최근 LK_LIMIT 주문(묶음)만 보냄 · shown = 실제 보낸 주문 수(잘렸을 때만 칸) · total = 화면 머리와 같은 주문 묶음 수(상품주문번호 또는 order_key 앞 토막) · total_qty = qty 없으면 1
-            message: matches.length ? '' : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
+        res.json({ ok: true, key, plat: plat || '', found: matches.length > 0, matches, ...(fresh != null ? { fresh: String(fresh), pending } : {}), ...(pending ? { retry_s: LK_RETRY_S } : {}), total: tot.n, total_qty: tot.q, limit: LK_LIMIT, cut: tot.n > shown, ...(tot.n > shown ? { shown } : {}),   // #1101·#1102 cut = 최근 LK_LIMIT 주문(묶음)만 보냄 · shown = 실제 보낸 주문 수(잘렸을 때만 칸) · total = 화면 머리와 같은 주문 묶음 수(상품주문번호 또는 order_key 앞 토막) · total_qty = qty 없으면 1
+            message: matches.length ? '' : pending ? `주문을 불러오는 중이에요 · ${LK_RETRY_S}초 뒤 다시 찾아요` : '못 찾았어요 — 7일 지난 주문이면 판매처를 골라 주세요',
             coverage: { days, source: src, last_seen: cov ? cov.last_seen : null,
                 note: '발송 전 주문 = 결제 7일 안 · 60분마다 모음(문자 수집기와 같은 회차) · 발송·취소된 주문은 빠짐' } });
     }));

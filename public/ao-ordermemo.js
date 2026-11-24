@@ -106,7 +106,7 @@
         pairHint: key => safe(call('/api/order-memo/pair-hint?key=' + encodeURIComponent(key))),   // #894 F4 번호로 못 찾은 현금 줄 묶음 후보(읽기만 · 옛 서버 404 = 종전 화면)   // #874 저장된 현금(「!」) 줄 → 입력삭제 주소 줄 · { undo, rows } = 되돌리기
         forShip: date => safe(call('/api/order-memo/for-ship?date=' + encodeURIComponent(date))),
         catalog: () => safe(call('/api/invoice/catalog')),
-        lookup: (key, plat) => safe(call('/api/order-memo/lookup?key=' + encodeURIComponent(key) + '&plat=' + encodeURIComponent(plat || ''))),   // #850-c 판매처 확인(계약 §7 · 읽기만)
+        lookup: (key, plat, noWait) => safe(call('/api/order-memo/lookup?key=' + encodeURIComponent(key) + '&plat=' + encodeURIComponent(plat || '') + (noWait ? '&wait=0' : ''))),   // #1286 noWait = 0건이어도 즉시 조회를 안 기다림(쿠팡 줄)   // #850-c 판매처 확인(계약 §7 · 읽기만)
     };
     // 서버 줄(계약 1절) → 화면 줄 — 칸은 그대로 두고 빠진 것만 채움
     // #936 메모 줄 badge = 서버가 센 입력삭제 매칭 미리보기(옛 서버 = null)
@@ -397,6 +397,11 @@
     const SZ_ROYAL = o => { const t = String(o || ''); return /귤/.test(t) && /로얄과/.test(t) && !/선물용/.test(t); };
     const SZ_GWA = o => { const t = String(o || ''); return /황금향|한라봉|레드향|천혜향/.test(t) && !/카라향/.test(t) && /선물/.test(t); };   // #1061-c 과수 = 선물용 만감류만(gwaItem 과 같음 · 가정용·혼합과 X · 메모리 jeju-gift-size-rule)
     const LK_RETRY = [2500, 2500, 3000];   // #1061-c 첫 조회 0건 = 즉시 주문 조회(#936)가 끝나기를 기다려 다시 묻는 간격(합 8초)
+    const lkPendS = b => (b && b.pending === true ? Math.max(3, Math.min(60, Number(b.retry_s) || 15)) : 0);   // #1286 ② 서버 「즉시 조회가 아직 도는 중」(pending) = 그 초 뒤 다시 · 0 = 아님
+    const LK_HOLD_MS = 20000;   // #1286 점검 4) 찾기가 이만큼 넘게 안 끝나면(폰 연결 걸림) [저장]을 더 안 막음
+    const lkHold = L => !!L && L.state === 'busy' && !(L.t0 && Date.now() - L.t0 > LK_HOLD_MS);   // 찾기 중이라 [저장]을 잠깐 막을 때 = 20초 안
+    const lkCp = r => String((r && r.plat) || '').trim() === '쿠팡';   // #1286 점검 2) 쿠팡 주문 표 번호 = 050 안심번호 → 손님 실제 번호로는 늘 0건 = 「주문 없음」 알림·막기·기다림 대상 아님(종전 꼴)
+    const lkOldSrv = b => !!b && !('pending' in b);   // #1286 ② 0건 답에 pending 칸이 없음 = 옛 서버(안 기다리고 0건) → 종전 다시 묻기 그대로 · 새 서버 = 이미 즉시 조회를 기다린 답이라 pending 일 때만 다시
     function szBlock(r) {
         if (!r || r.kind !== 'line' || isBoxRow(r) || !(r._lk && r._lk.state === 'done')) return '';
         const n = String(r.note || ''), k = /사이즈/.test(n) ? 'size' : /\d\s*과로/.test(n) ? 'gwa' : ''; if (!k) return '';
@@ -485,6 +490,7 @@
         p.hidden = false;
         if (x.state === 'busy') { p.innerHTML = '<p class="om-sm-s" role="status">주문 찾는 중…</p>'; return; }
         if (x.state === 'err') { p.innerHTML = `<p class="om-sm-s err" role="alert">${esc(x.msg)} · [주문 찾기]를 다시 눌러 주세요</p>`; return; }
+        if (x.state === 'none' && x.wait) { p.innerHTML = `<p class="om-sm-s" role="status">주문을 불러오는 중이에요 · ${esc(x.wait)}초 뒤 다시 찾아요</p>`; return; }   // #1286 ② 서버 pending
         if (x.state === 'none') { p.innerHTML = `<p class="om-sm-s" role="status">이 번호의 발송 전 주문을 못 찾았어요${x.retried ? ' · 방금 결제했으면 잠시 뒤 [주문 찾기]를 다시 눌러 주세요' : ' · 한 번 더 찾는 중…'}</p>`; return; }
         const m = x.matches, one = m.length === 1, ex = x.pick != null ? smExisting(m[x.pick]) : null;
         const short = o => String(o.option || '').split('/').pop().replace(/^[^:]*:\s*/, '').trim();
@@ -495,16 +501,21 @@
             + `<p class="om-sm-s">다음 최종발주의 <b>우리 택배 양식 배송메시지</b>로 나가요. 네이버·쿠팡·자사몰 주문 원본은 바뀌지 않아요.</p>`
             + `<div class="om-sm-acts"><button type="button" class="om-btn" data-smact="close">닫기</button><button type="button" class="om-btn primary" data-smact="save"${x.saving ? ' disabled' : ''}>${x.saving ? '저장 중…' : ex ? '메모 고쳐 저장' : '메모 저장'}</button></div></div>`;
     }
-    async function smFind(retried) {
+    async function smFind(retried, tries) {
         const te = $('om-tp-tel'), v = String(te.value || '').trim(), phone = smPhone(), order = !phone && (/^\d{10,20}$/.test(v) || /^\d{8}-\d{7}$/.test(v));
         if (!phone && !order) { smReset(); tpNote('손님 번호나 주문번호를 넣어 주세요 · 예) 010-1234-5678', 'err'); te.focus({ preventScroll: true }); return; }
         if (phone && !retried) te.value = fmtTel(te.value);
-        clearTimeout(OM.smT); const seq = (OM.smSeq = (OM.smSeq || 0) + 1); OM.sm = { state: 'busy', seq, phone, text: '', pick: null, matches: [], retried: !!retried }; tpNote(''); smDraw();
+        clearTimeout(OM.smT); const seq = (OM.smSeq = (OM.smSeq || 0) + 1); OM.sm = { state: 'busy', seq, phone, text: '', pick: null, matches: [], retried: !!retried, tries: tries || 0 }; tpNote(''); smDraw();
         const res = await API.lookup(phone || v, '');
         if (!OM.sm || OM.sm.seq !== seq) return;
         if (!res.ok) { OM.sm.state = 'err'; OM.sm.msg = errText(res, '주문을 못 찾았어요'); smDraw(); return; }
         const m = res.body && Array.isArray(res.body.matches) ? res.body.matches : [];
-        if (!m.length) { OM.sm.state = 'none'; smDraw(); if (!retried) OM.smT = setTimeout(() => { if (OM.sm && OM.sm.seq === seq) smFind(true); }, 6000); return; }   // lookup 이 즉시 조회를 걸어 둠(#936) → 6초 뒤 한 번 더
+        if (!m.length) {   // lookup 이 즉시 조회를 걸어 둠(#936) → 6초 뒤 한 번 더 · #1286 ② 새 서버 = 즉시 조회를 기다린 답 → 아직 도는 중(pending)일 때만 그 초 뒤 다시(최대 2번) · 아니면 바로 「못 찾았어요」 확정
+            const ps = lkPendS(res.body), n0 = OM.sm.tries || 0, again = ps ? n0 < 2 : (!retried && lkOldSrv(res.body));
+            OM.sm.state = 'none'; OM.sm.wait = again && ps ? ps : 0; OM.sm.retried = !again || !!retried; smDraw();
+            if (again) OM.smT = setTimeout(() => { if (OM.sm && OM.sm.seq === seq) smFind(true, n0 + 1); }, ps ? ps * 1000 : 6000);
+            return;
+        }
         OM.sm.state = 'done'; OM.sm.matches = m; OM.sm.cut = cutOf(res.body); if (m.length === 1) { OM.sm.pick = 0; const ex = smExisting(m[0]); OM.sm.text = ex ? ex.checked.ship_memo : ''; }
         smDraw(); const t = $('om-sm-t'); if (t && OM.sm.pick != null) t.focus({ preventScroll: true });
     }
@@ -576,10 +587,10 @@
             if (canLook(r.key)) {
                 let lk = await API.lookup(String(r.key).trim());
                 {   // #1061-c(대표 11/9 실기기) 금방 들어온 주문 = 첫 조회가 즉시 주문 조회(#936 · 6초쯤)보다 먼저 와 0건 → 「주문 찾는 중…」 띠로 2.5초마다 다시(최대 3회 · 약 8초) · 그래도 0건일 때만 미매칭 되묻기
-                    const tel1 = te.value;
-                    for (let i = 0; i < LK_RETRY.length && lk.ok && lk.body && !(Array.isArray(lk.body.matches) && lk.body.matches.length) && canLook(r.key) && /^0\d{8,11}$/.test(digits(r.key)); i++) {
-                        go.textContent = '주문 찾는 중…'; tpNote('주문 찾는 중…');
-                        await new Promise(z => setTimeout(z, LK_RETRY[i]));
+                    const tel1 = te.value; let pn = 0;   // #1286 점검 6) pending 다시 = 최대 2번
+                    for (let i = 0; i < LK_RETRY.length && lk.ok && lk.body && !(Array.isArray(lk.body.matches) && lk.body.matches.length) && (lkOldSrv(lk.body) || (lkPendS(lk.body) && pn < 2)) && canLook(r.key) && /^0\d{8,11}$/.test(digits(r.key)); i++) {   // #1286 ② 새 서버 = pending 일 때만 다시(그 초 뒤)
+                        const ps0 = lkPendS(lk.body); if (ps0) pn++; go.textContent = '주문 찾는 중…'; tpNote(ps0 ? `주문을 불러오는 중이에요 · ${ps0}초 뒤 다시 찾아요` : '주문 찾는 중…');
+                        await new Promise(z => setTimeout(z, ps0 ? ps0 * 1000 : LK_RETRY[i]));
                         if (OM.tp !== x || !$('om-tp') || $('om-tp').hidden || !OM.el || OM.el.hidden) { end(); if (OM.tp && $('om-tp') && !$('om-tp').hidden) tpNote('취소했어요 · 저장하지 않았어요', 'warn'); return; }   // 판 × · 다른 꼬리표 = 저장 0(새 판에 띠는 다른 꼬리표일 때만)
                         if (te.value !== tel1) { end(); tpNote('번호가 바뀌었어요 · [넣기]를 다시 눌러 주세요', 'warn'); return; }
                         lk = await API.lookup(String(r.key).trim());
@@ -2045,7 +2056,7 @@
     function cutHtml(c, tail) { return c && c.n ? `<p class="om-ordn om-ce-cut" role="note">${cutTxt(c)}${tail || ''}</p>` : ''; }
     function ceListHtml(r, ri) {
         const L = r._lk;
-        if (!L || L.state === 'busy') return '<p class="om-lk" role="status" data-k="busy">주문 찾는 중…</p>';
+        if (!L || L.state === 'busy') return `<p class="om-lk" role="status" data-k="busy">${L && L.wait ? `주문을 불러오는 중이에요 · ${esc(L.wait)}초 뒤 다시 찾아요` : '주문 찾는 중…'}</p>`;   // #1286 ②
         if (L.state === 'err') return '<p class="om-lk" role="alert" data-k="warn">주문을 찾지 못했어요(연결 오류) · 카드를 닫고 다시 해 주세요</p>';
         smPre(r); const smN = smNoteHtml(r);   /* #1188 줄 카드에서 넘어온 글 = 주문 1건·1박스면 미리 채움 · 안내 한 줄 */
         const os = ceOrders(r); if (!os.length) return smN + '<p class="om-lk" role="status" data-k="warn">이 번호의 발송 전 주문을 못 찾았어요 · 선물하기 주문은 받는 분 번호로 넣어 주세요 — 7일 지난 주문·예약 주문은 여기서 안 보여요</p>';   // #1038 선물하기 = 구매자 번호 없음 → 받는 분 번호로 찾음(lookup 은 둘 다 찾음)
@@ -2085,6 +2096,12 @@
     const smExBox = oid => (OM.list || []).find(o => o.kind === 'line' && o.state === 'open' && isBoxRow(o) && o.checked && String(o.checked.pno || '') === String(oid) && Array.isArray(o.boxes) && o.boxes.length) || null;
     const smMis = (r, oid) => { const ex = smExBox(oid), o = ceOrders(r).find(x => x.id === String(oid)); return !!(ex && o && ex.boxes.length !== Math.max(1, Math.min(o.qty || 1, BOX_MAX))); };
     const smSame = (a, b) => smText({ note: a }) === smText({ note: b });
+    // #1286 ③ 옛 보통 줄을 고쳐 쓸 수 있나 = 아직 열린 기사님 글 줄 · 발주에 넣은 표식(used_on) 없음
+    const smOldRow = F => (F && F.id != null ? (OM.list || []).find(o => o.id === F.id && o.state === 'open' && !o.used_on && isDoorRow(o)) || null : null);
+    // #1188 점검 3 유지 = 넘긴 글이 저장 글에 실려 갔을 때만(머리말 뺌·빈칸·문장부호 무시 · 사람이 앞뒤를 조금 잘라도 실림) · 전혀 다른 글 = 옛 줄 남김
+    const smSq = t => smClean(t).replace(/[\s.,·!?~…'"()\[\]-]+/g, '');
+    const smCarried = (F, x) => { if (!F || !x || x._ceK !== 'box') return false; const a = smSq(F.text); if (!a) return false; return (x.boxes || []).some(b => { if (!b || b.s) return false; const m = smSq(b.m); return !!m && (m.includes(a) || (m.length >= 4 && a.includes(m))); }); };
+    const smClean = t => { const s0 = String(t || '').replace(/\s+/g, ' ').trim(), s1 = s0.replace(/^(?:배송\s*메[세시]지|배송\s*메모|메모)\s*(?:수정|변경)?\s*[:：]?\s*/, '').trim(); return s1 || s0; };   // #1286 ③ 「배송메세지수정 왼쪽 2층…」 → 「왼쪽 2층…」(머리말뿐이면 그대로)
     function smFill(r, oid) {   // 고른 주문 판에 한 번만 · 저장된 박스별 줄 값(받는 분·주소 등)은 그대로 깔고(덮어 지우지 않게) · 배송메세지는 넘어온 글로 채움(저장해 둔 글이 있어도 바꿈 = 대표 11/18 「입력 시 우리가 입력한 걸로」) · 박스마다 주소가 다르면 안 넣고 안내만
         const c = OM.card, F = c && c.smFrom, xo = r._xo && r._xo[oid], bx = xo && xo.bx; if (!F || !bx || bx._smSeen) return;
         bx._smSeen = true; F.st = F.st || {};
@@ -2092,7 +2109,7 @@
         if (ex && ex.boxes.length === bx.arr.length) bx.arr.forEach((b, i) => BOX_K.forEach(k => { if (!b[k] && ex.boxes[i] && ex.boxes[i][k]) b[k] = String(ex.boxes[i][k]); }));
         const live = bx.arr.filter(b => !b.s), as = [...new Set(live.map(b => String(b.a || '').trim()))];
         if (bx.arr.length > 1 && as.length > 1) { F.st[oid] = 'addr'; return; }
-        live.forEach(b => { b.m = F.text.slice(0, 300); }); F.st[oid] = 'filled';
+        live.forEach(b => { b.m = smClean(F.text).slice(0, 300); }); F.st[oid] = 'filled';   // #1286 ③ 직원이 붙인 머리말(「배송메세지수정」·「메모수정」)은 빼고 기사님 글만
         if (F.id == null) c.dirty = true;   /* 아직 어디에도 저장 안 된 글 = 닫을 때 「저장 안 하고 닫을까요?」 */
     }
     function smPre(r) {   // 주문 찾기가 끝났을 때 = 주문 1건·1박스면 바로 그 주문 판을 열고 채움 · 그 밖 = 주문 고르기(고른 주문에 채움)
@@ -2104,10 +2121,10 @@
     }
     function smNoteHtml(r) {
         const c = OM.card, F = c && c.smFrom; if (!F) return '';
-        const q = `「${esc(cut1(F.text, 40))}」`, P = t => `<p class="om-smb om-smb-n" role="status">${t}</p>`;
+        const q = `「${esc(cut1(smClean(F.text), 40))}」`, P = t => `<p class="om-smb om-smb-n" role="status">${t}</p>`;   // #1286 ③ 칸에 넣는 글과 같게
         const keep = F.id != null ? '닫으면 보통 줄로 남아요' : '닫으면 이 글은 저장되지 않아요';
         const st = Object.values(F.st || {}), nF = st.filter(v => v === 'filled').length, out = [];
-        if (nF) out.push(`배송메세지 칸에 ${q}를 넣어 뒀어요${nF > 1 ? `(주문 ${nF}건)` : ''} · 확인하고 [저장]을 눌러 주세요${F.id != null ? ' · 저장하면 메모함의 옛 보통 줄은 지워요(「비운 것」에서 되살릴 수 있어요)' : ''}`);
+        if (nF) out.push(`배송메세지 칸에 ${q}를 넣어 뒀어요${nF > 1 ? `(주문 ${nF}건)` : ''} · 확인하고 [저장]을 눌러 주세요${F.id != null ? (smOldRow(F) && !Object.keys(F.st || {}).some(oid => F.st[oid] === 'filled' && smExBox(oid)) ? ' · 저장하면 메모함의 옛 보통 줄이 이 내용으로 바뀌어요(새 줄 없음)' : ' · 저장하면 메모함의 옛 보통 줄은 지워요(「비운 것」에서 되살릴 수 있어요)') : ''}`);   // #1286 ③ 점검 5) 실제 길과 같게 = 고쳐 씀(옛 줄 열림·used_on 없음·그 주문 박스별 줄 없음) / 그 밖 = 종전 글
         if (st.includes('addr')) out.push(`박스마다 주소가 달라요 · 넣을 박스에 직접 넣어 주세요(넣을 글 ${q})`);
         if (st.includes('mis')) out.push('이 주문엔 박스 수가 다른 박스별 줄이 저장돼 있어요 · 메모함 목록에서 그 줄을 열어 고쳐 주세요');
         if (out.length) return P(out.join('<br>') + ' · ' + keep);
@@ -2205,21 +2222,21 @@
     function lkKind(r) {
         const L = r._lk; if (!L) return '';
         if (L.state === 'busy') return 'busy'; if (L.state === 'err') return 'warn';
-        if (!L.matches.length) return 'warn';
+        if (!L.matches.length) return lkCp(r) ? 'warn' : 'none';   // #1286 ① · 점검 2) 쿠팡 줄 = 종전 꼴 이 번호 발송 전 주문 0건 = 눈에 띄는 호박 판(종전 호박 글자 = 직원이 못 봄 · 11/24 줄 1129)
         if (!r.plat) return 'warn';
-        const m = lkIn(r); if (!m.length) return 'warn';
+        const m = lkIn(r); if (!m.length) return lkCp(r) ? 'warn' : 'none';
         if (indivRecv(r)) return 'warn';   // #867 입력삭제 줄 = 받는 분 번호면 막음
         return m[0].as === 'recv' ? 'ask' : 'ok';
     }
     function lkText(r) {
         const L = r._lk; if (!L) return '';
-        if (L.state === 'busy') return '주문 찾는 중…';
+        if (L.state === 'busy') return L.wait ? `주문을 불러오는 중이에요 · ${L.wait}초 뒤 다시 찾아요` : '주문 찾는 중…';   // #1286 ②
         if (L.state === 'err') return '주문을 찾지 못했어요(연결 오류) · 판매처를 골라 주세요';
-        if (!L.matches.length) return '못 찾았어요 — 7일 지난 주문·예약 주문은 여기서 안 보여요 · 판매처를 골라 주세요';
+        if (!L.matches.length) return lkCp(r) ? '못 찾았어요 — 7일 지난 주문·예약 주문은 여기서 안 보여요 · 판매처를 골라 주세요' : '⚠ 발송 전 주문에서 이 번호를 못 찾았어요 · 번호를 다시 확인해 주세요 — 7일 지난 주문·예약 주문은 여기서 안 보여요 · 판매처를 골라 주세요';   // #1286 ① · 쿠팡 줄 = 종전 글
         const ps = lkPlats(r);
         if (!r.plat) return `${ps.join('·')} 여러 곳에 주문이 있어요 · 판매처를 골라 주세요`;
         const m = lkIn(r);
-        if (!m.length) return `${r.plat}엔 이 번호 주문이 없어요 · ${ps.join('·')}에 있어요`;
+        if (!m.length) return `${lkCp(r) ? '' : '⚠ '}${r.plat}엔 이 번호 주문이 없어요 · ${ps.join('·')}에 있어요`;
         const x = m[0], who = x.recv_name || (x.recv_initial ? x.recv_initial + '○' : ''), pd = md(x.paid_at);
         const body = [who ? '받는 분 ' + who : '', optBrief(x.option) + (x.qty ? ` ${x.qty}박스` : ''), pd ? pd + ' 결제' : ''].filter(s => s.trim()).join(' · ') + (m.length > 1 ? ` 외 ${m.length - 1}건` : '');
         if (indivRecv(r)) return `입력삭제는 구매자 번호로 넣어야 송장이 붙어요 · 구매자 번호로 바꿔 주세요${indivBuyer(r) ? '' : ' · 구매자 번호를 번호 칸에 직접 넣어 주세요'} · 지금 번호 = 받는 분 번호 · ${x.plat} · ${body}`;   // #867
@@ -2239,7 +2256,7 @@
     const lkHtml = (r, ri) => lkTxtHtml(r, ri) + (r._lk && r._lk.state === 'done' && r._lk.cut ? `<span class="om-ce-cut"> · ${esc(cutTxt(r._lk.cut))}</span>` : '') + (indivRecv(r) && indivBuyer(r) ? `<button type="button" class="om-btn sm om-lk-fix" data-cact="tobuyer" data-ri="${ri}">구매자 번호로 바꾸기 <small>${esc(telShow(indivBuyer(r)))}</small></button>` : '');
     const indivBadAt = () => OM.card ? OM.card.rows.findIndex(r => !r._new && indivRecv(r)) : -1;
     // #867 손질 ① 입력삭제 줄 찾기가 도는 중이거나 지금 번호 ≠ 찾은 번호(0.7초 틈) = 잠깐 막음 · 찾기 결과가 없는 줄(_lk 없음)·연결 오류·판매처 미선택은 안 막음
-    const indivPendAt = () => OM.card ? OM.card.rows.findIndex(r => !r._new && isIndivRow(r) && !!r._lk && (r._lk.state === 'busy' || r._lk.key !== digits(r.key))) : -1;
+    const indivPendAt = () => OM.card ? OM.card.rows.findIndex(r => !r._new && isIndivRow(r) && !!r._lk && (lkHold(r._lk) || (r._lk.state !== 'busy' && r._lk.key !== digits(r.key)))) : -1;   /* #1286 점검 4) 찾기 20초 넘게 안 끝나면(폰 연결 걸림) 안 막음 */
     const optBrief = s => shortOpt(String(s || '').replace(/^[^:]*선택\s*:\s*/, '').replace(/^\d+\.\s*/, ''));
     function lkCheck(r) { const m = r.plat && r._lk && r._lk.state === 'done' ? lkIn(r) : [], b = !isPhoneKey(r.key) && r.checked && r.checked.buyer && isPhoneKey(r.checked.buyer) ? r.checked.buyer : null; const c0 = r.checked && typeof r.checked === 'object' && r._key0 != null && r._key0 === digits(r.key) && r._plat0 === r.plat ? r.checked : null, keep = {}; if (c0) ['split_sent', 'pno', 'ship_memo'].forEach(k => { if (c0[k] != null && c0[k] !== '') keep[k] = c0[k]; });   /* #1186 번호·판매처가 그대로면 첫날 발송처리 표식·고른 주문·배송메모는 찾기 결과가 다시 와도 보존(종전 = 새 객체로 덮어 저장 때 지워짐) */
         r.checked = m.length ? Object.assign({ plat: r.plat, as: m[0].as, at: new Date().toISOString() }, b ? { buyer: b } : {}, keep) : (b ? Object.assign({}, r.checked, { buyer: b }) : (keep.split_sent && c0.plat && c0.as ? Object.assign({ plat: c0.plat, as: c0.as, at: c0.at || new Date().toISOString() }, keep) : null)); }   // #938 주문번호 줄의 구매자 번호(checked.buyer)는 찾기 결과가 와도 보존
@@ -2254,20 +2271,28 @@
         const seg = p.parentNode.querySelector('.om-seg'); if (seg) seg.querySelectorAll('.om-seg-b').forEach(x => x.setAttribute('aria-checked', x.dataset.v === r.plat ? 'true' : 'false'));
         touched(ri, LINE_FIELDS.find(x => x.k === 'plat'));
     }
-    async function lkRun(ri) {
+    async function lkRun(ri, again) {   // again = 0건 다시 묻기(찾기 시작 시각 t0 을 이어 감 · #1286 점검 4)
         const c = OM.card, r = c && c.rows[ri]; if (!r || r.kind !== 'line') return;
         if (!canLook(r.key)) { if (r._lk) { r._lk = null; r.checked = null; lkPaint(ri); } return; }
         const key = digits(r.key), seq = (r._lkSeq = (r._lkSeq || 0) + 1);
-        r._lk = { state: 'busy', key, matches: [] }; lkPaint(ri);
-        const res = await API.lookup(String(r.key).trim());   // 셋 다 한 번에 · 판매처를 바꿔 누르면 받아 둔 결과로 거름(호출 0)
+        const t0 = again && r._lk && r._lk.key === key && r._lk.t0 ? r._lk.t0 : Date.now();
+        r._lk = { state: 'busy', key, matches: [], t0 }; lkPaint(ri);
+        setTimeout(() => { if (OM.card !== c || r._lkSeq !== seq || !r._lk || r._lk.state !== 'busy') return; const sv = $('om-card-save'); if (sv && !c.wait) { sv.innerHTML = saveLabel(blankN()); saveSync(sv); } }, Math.max(0, t0 + LK_HOLD_MS - Date.now()) + 300);   // #1286 점검 4) 20초 넘게 답이 없으면 [저장] 단추 「번호 확인 중…」·회색을 풂(찾기가 끝나면 종전대로 lkPaint 가 다시 칠함)
+        const res = await API.lookup(String(r.key).trim(), '', lkCp(r));   // 셋 다 한 번에 · 판매처를 바꿔 누르면 받아 둔 결과로 거름(호출 0) · #1286 쿠팡 줄 = 즉시 조회 안 기다림
         if (OM.card !== c || r._lkSeq !== seq) return;
         const i = c.rows.indexOf(r); if (i < 0) return;
         r._lk = res.ok && res.body ? { state: 'done', key, matches: Array.isArray(res.body.matches) ? res.body.matches : [], cut: cutOf(res.body) } : { state: 'err', key, matches: [] };   // #1101 cut = 서버가 최근 n건만 보냄(옛 서버 = 칸 없음 → null)
         {   // #1061-c 0건 = 즉시 주문 조회(#936)를 기다려 「주문 찾는 중…」 그대로 다시(번호당 최대 3회 · 약 8초 · 번호 바꾸면 처음부터)
             if (r._lkTryKey !== key) { r._lkTryKey = key; r._lkTry = 0; }
-            if (r._lk.state === 'done' && !r._lk.matches.length && isSzRow(r) && /^0\d{8,11}$/.test(key) && r._lkTry < LK_RETRY.length) {   // 사이즈·과수 줄만(입력삭제·날짜·보내는이 줄 = 종전 1회 · 입력삭제 [저장] 안 막힘)
-                const wait = LK_RETRY[r._lkTry++]; r._lk = { state: 'busy', key, matches: [] }; lkPaint(i);
-                setTimeout(() => { if (OM.card !== c || r._lkSeq !== seq || digits(r.key) !== key) return; const j = c.rows.indexOf(r); if (j >= 0) lkRun(j); }, wait);
+            const ps = res.ok ? lkPendS(res.body) : 0;
+            if (ps && r._lk.state === 'done' && !r._lk.matches.length && r._lkTry < 2) {   // #1286 ② 서버 pending(즉시 조회가 아직 도는 중) = 모든 줄 · 「불러오는 중 · N초 뒤」 글로 그 초 뒤 다시(번호당 최대 2번)
+                r._lkTry++; r._lk = { state: 'busy', key, matches: [], wait: ps, t0 }; lkPaint(i);
+                setTimeout(() => { if (OM.card !== c || r._lkSeq !== seq || digits(r.key) !== key) return; const j = c.rows.indexOf(r); if (j >= 0) lkRun(j, true); }, ps * 1000);
+                return;
+            }
+            if (r._lk.state === 'done' && !r._lk.matches.length && isSzRow(r) && /^0\d{8,11}$/.test(key) && r._lkTry < LK_RETRY.length && res.ok && lkOldSrv(res.body)) {   // #1286 새 서버 = 이미 즉시 조회를 기다린 답 → 다시 안 물음   // 사이즈·과수 줄만(입력삭제·날짜·보내는이 줄 = 종전 1회 · 입력삭제 [저장] 안 막힘)
+                const wait = LK_RETRY[r._lkTry++]; r._lk = { state: 'busy', key, matches: [], t0 }; lkPaint(i);
+                setTimeout(() => { if (OM.card !== c || r._lkSeq !== seq || digits(r.key) !== key) return; const j = c.rows.indexOf(r); if (j >= 0) lkRun(j, true); }, wait);
                 return;
             }
         }
@@ -2608,7 +2633,13 @@
             const dNote = o => /^\d{1,2}\/\d{1,2}\s*발송$/.test(String(o.note || '').trim());   // #1276 점검 ③ 날짜 줄 = 「M/D 발송」 꼴만(「개별발송」 등 다른 줄은 PUT·비우기 대상 아님)
             const same = x => open0.find(o => digits(o.key) === digits(x.key) && String(o.checked.pno || '') === String(x.checked.pno) && (x._ceK === 'box' ? isBoxRow(o) : !isBoxRow(o) && dNote(o)));
             let nPut = 0, bad = null; const posts = [], putIds = new Set();
-            for (const x of out) { const o = same(x); if (o) { putIds.add(o.id); const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
+            // #1286 ③(대표 11/24 줄 1129 → 1131) 줄 카드 [배송메세지로 넣기]로 온 판 = 배송메세지가 든 첫 박스별 줄을 새로 만들지 않고 그 옛 보통 줄(F.id)에 고쳐 씀(같은 줄 · 같은 자리 · 손으로 지울 줄 0)
+            //   옛 줄 = 아직 열린 보통 줄(기사님 글 줄 · 박스별·날짜·입력삭제 줄 아님 · 발주에 넣은 표식 used_on 없음)일 때만 · 그 주문에 이미 박스별 줄이 있으면(same) 그 줄 PUT + 옛 줄 「비운 것」(종전)
+            //   점검 3(#1188) 유지 = 넘긴 글이 실려 갔을 때만(smCarried) · 옛 줄 PUT 이 실패하면(다른 사람이 지움·409 등) 그 줄은 종전대로 새 줄 POST(저장이 먼저 · 막히는 길 0)
+            const F0 = c.smFrom || null, smOld = smOldRow(F0);
+            const smHasM = x => x && x._ceK === 'box' && (x.boxes || []).some(b => b && !b.s && String(b.m || '').trim());
+            let smInto = null;
+            for (const x of out) { const o = same(x); if (!o && smOld && !smInto && smCarried(F0, x)) { const res = await API.update(smOld.id, { key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked, boxes: x.boxes }); if (res.ok) { smInto = x; putIds.add(smOld.id); } else posts.push(x); continue; } if (o) { putIds.add(o.id); const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
             if (!bad && posts.length) { const res = await API.save({ raw: '', tags: [], source: 'manual', rows: posts.map(outRow) }); if (!res.ok) bad = res; }
             if (OM.card !== c) return;
             if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
@@ -2620,8 +2651,10 @@
                 if (nFail) staleMsg = ` · 옛 날짜 줄 ${nFail}개는 못 지웠어요 — 목록에서 직접 지워 주세요`;   // 점검 ④
             }
             { const te0 = $('om-tp-tel'); if (te0) te0.value = ''; OM.tpLast = null; OM.tpSaved = null; }   // #1168 저장 뒤 꼬리표 번호 칸 비움(다음 손님 번호를 지우고 넣지 않게)
-            const F = c.smFrom || null, smOk = !!(F && out.some(x => x._ceK === 'box' && (x.boxes || []).some(b => b && b.m && smText({ note: b.m }).includes(smText({ note: F.text }).slice(0, 300))))); let smMsg = '';   /* 넘긴 글이 실제로 어느 박스 배송메세지에 들어 저장됐을 때만 */   // #1188 줄 카드에서 넘어온 글이 배송메세지로 저장됨 = 옛 보통 줄을 「비운 것」으로(되살리기 가능 · 박스별 줄 저장이 된 뒤에만)
-            if (smOk && F.id != null) { const y = await API.remove(F.id); smMsg = y && y.ok ? ' · 옛 보통 줄은 지웠어요(「비운 것」에서 되살릴 수 있어요)' : ' · 옛 보통 줄은 못 지웠어요 — 목록에서 직접 지워 주세요'; }
+            const F = c.smFrom || null, smOk = !!(F && out.some(x => smCarried(F, x))); let smMsg = '';   /* #1286 ③ 넘긴 글이 실려 저장됐을 때(종전 = 글자 그대로만 → 「배송메세지수정」 머리말을 지우면 옛 줄이 남음 · 11/24 줄 1129 · 이제 머리말·빈칸·문장부호 무시) */   // #1188 줄 카드에서 넘어온 글이 배송메세지로 저장됨 = 옛 보통 줄을 「비운 것」으로(되살리기 가능 · 박스별 줄 저장이 된 뒤에만)
+            if (smInto) smMsg = ' · 옛 보통 줄을 이 내용으로 바꿨어요(새 줄 없음)';   // #1286 ③ 같은 줄을 고쳐 씀 = 지울 것 없음(nPut 에 안 셈)
+            else if (F && F.id != null && !smOk && out.some(smHasM)) smMsg = ' · 옛 보통 줄은 글이 달라 남겨 뒀어요 · 필요 없으면 목록에서 지워 주세요';   // #1188 점검 3 = 전혀 다른 글로 저장하면 옛 글을 지우지 않음
+            else if (smOk && F.id != null) { const y = await API.remove(F.id); smMsg = y && y.ok ? ' · 옛 보통 줄은 지웠어요(「비운 것」에서 되살릴 수 있어요)' : ' · 옛 보통 줄은 못 지웠어요 — 목록에서 직접 지워 주세요'; }
             if (smOk && F.clearRaw) { const raw = $('om-raw'); if (raw) { OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); } }
             if (OM.card === c) cardClose(true); toast(`주문 ${new Set(out.map(x => x.checked.pno)).size}건 고친 것을 저장했어요${nPut ? ` · 이미 있던 줄 ${nPut}개는 고쳐 저장` : ''}${smMsg}${staleMsg}`, smMsg || staleMsg ? 6000 : undefined); load(); if (F && F.rest && F.rest.length && !OM.card) smOpen(F.rest); return;
         }
@@ -2645,6 +2678,23 @@
             cardReveal(c, bad); const rc = $('om-card').querySelectorAll('.om-rowcard')[bad], t = rc && (rc.querySelector('.om-lk-fix') || rc.querySelector('#om-f-' + bad + '-key'));
             if (t) { t.scrollIntoView({ block: 'center' }); t.focus({ preventScroll: true }); }
             return;
+        }
+        {   // #1286 ①(대표 11/24 줄 1129 = 번호를 틀리게 넣어도 저장 때 아무 말 없음) 이 번호 발송 전 주문 0건인 메모 줄 = [저장] 한 번 막고 알림 · 같은 번호로 한 번 더 누르면 저장(막지는 않음)
+            //   대상 = 목록 배지 「확인필요(발송 전 주문 없음)」 와 같은 줄(메모 줄 · 박스별 줄 아님 · 찾을 수 있는 번호 · 판매처 거름) · 현금 줄 X · 고치기 카드는 번호·판매처를 바꿨을 때만(발송된 옛 줄을 다시 열 때 오경보 X)
+            const tgt = (r, i) => !r._new && r.kind === 'line' && !isBoxRow(r) && !lkCp(r) && canLook(r.key) && (c.mode !== 'edit' || digits(r.key) !== digits((c.orig[i] || {}).key) || String(r.plat || '') !== String((c.orig[i] || {}).plat || ''));
+            const late = c.rows.map((r, i) => i).filter(i => tgt(c.rows[i], i) && (!c.rows[i]._lk || c.rows[i]._lk.key !== digits(c.rows[i].key)));   // 번호를 막 고쳐 아직 찾기 전(0.7초 틈) = 지금 찾기 시작 · 이번 누름은 「확인 중」(다음 누름부터 아래 20초 상한 안에서 판정)
+            if (late.length) { late.forEach(i => { clearTimeout(c.rows[i]._lkT); lkRun(i); }); c._saving = false; toast('주문 확인 중이에요 · 잠시 뒤 다시 눌러 주세요'); return; }
+            const pend = c.rows.findIndex((r, i) => tgt(r, i) && lkHold(r._lk));   // 점검 4) 찾기 20초 넘게 안 끝나면 안 막음(저장이 먼저)
+            if (pend >= 0) { c._saving = false; toast('주문 확인 중이에요 · 잠시 뒤 다시 눌러 주세요'); return; }
+            const noOrd = c.rows.map((r, i) => [r, i]).filter(([r, i]) => tgt(r, i) && r._lk && r._lk.state === 'done' && r._lk.key === digits(r.key) && lkKind(r) === 'none');
+            const sig = noOrd.map(([r]) => digits(r.key) + '|' + (r.plat || '')).join(',');
+            if (noOrd.length && c._noOrdOk !== sig) {
+                c._noOrdOk = sig; c._saving = false;
+                const [r0, i0] = noOrd[0];
+                toast(`발송 전 주문에서 이 번호를 못 찾았어요(${telShow(r0.key)}${noOrd.length > 1 ? ` 외 ${noOrd.length - 1}줄` : ''}) · 번호를 다시 확인해 주세요 · 맞으면 [저장]을 한 번 더 눌러 주세요`, 8000);
+                cardReveal(c, i0); const p0 = $('om-card') && $('om-card').querySelector('#om-lk-' + i0); if (p0) p0.scrollIntoView({ block: 'center' });
+                return;
+            }
         }
         btn.disabled = true; const keep = btn.innerHTML; btn.textContent = '저장하는 중…';
         let drop = [], skipped = 0;

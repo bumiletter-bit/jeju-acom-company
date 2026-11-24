@@ -77,7 +77,7 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
     const browser = await chromium.launch();
     const pe = [];
     const reset = () => { Object.assign(S, { px: true, px2: false, px3: false, pxHide: false, pxOrig: false, deleted: new Set(), puts: [], pairs: [], services: [], saves: [], mut, listDelay: 0, badges: {}, preview: null, extra: null, calls: [] });
-        S.lookup = { [dg(K(504))]: [ord(504)], [dg(K(508))]: [ord(508)], [dg(K(517))]: [ord(517), ord(517, { pno: PNO(517) + '9', order_no: '202611175179', option: CAT[2], recv_name: '둘째주문' })], [dg(K(601))]: [ord(601)], [dg(K(602))]: [ord(602, { qty: 3 })], [dg(K(502))]: [ord(502)] }; };
+        S.lookup = { [dg(K(504))]: [ord(504)], [dg(K(508))]: [ord(508)], [dg(K(517))]: [ord(517), ord(517, { pno: PNO(517) + '9', order_no: '202611175179', option: CAT[2], recv_name: '둘째주문' })], [dg(K(601))]: [ord(601)], [dg(K(602))]: [ord(602, { qty: 3 })], [dg(K(603))]: [ord(603)], [dg(K(502))]: [ord(502)] }; };   // #1286 603(「보내는이 홍길동」 줄)도 주문 있음 = ① 주문 0건 저장 알림이 이 검증(배송메세지 띠)에 안 끼게 · ① 은 v1286 에서
     async function newPage(v, vp) {
         const cx = await browser.newContext(Object.assign({ viewport: { width: 1280, height: 900 } }, vp || {})); const p = await cx.newPage(); p.on('pageerror', e => pe.push(String(e)));
         await cx.addInitScript(ACT);
@@ -89,7 +89,8 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
     const listOf = p => p.evaluate(() => Object.fromEntries([...document.querySelectorAll('#om-list .om-ml')].map(li => [li.dataset.id, { html: li.outerHTML, text: (li.querySelector('.om-ml-l') || {}).textContent || '', pills: [...li.querySelectorAll('.om-ml-h .om-pill')].map(x => x.textContent.trim()) }])));
     const openEdit = async (p, id) => { await p.click(`#om-list .om-ml[data-id="${id}"] .om-ml-t`); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard'); await p.waitForTimeout(900); };
     const closeCard = async p => { await p.click('#om-card .om-back[data-cact="cancel"]'); await p.waitForTimeout(200); const d = p.locator('#om-card [data-cact="discard"]'); if (await d.count()) { await d.click(); } await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(800); };
-    const cardNorm = p => p.evaluate(() => { const c = document.getElementById('om-card'); return c.querySelector('.om-card-b').innerHTML.replace(/<div class="om-smb-w" id="om-smb-\d+"><\/div>\s*/g, '').replace(/\s+/g, ' '); });
+    // #1286 ① = 주문 0건 줄의 찾기 결과 글·꼴(data-k none · ⚠ 글)만 종전 글로 되돌려 견줌(그 밖은 HEAD 와 글자까지 같아야 함 · ① 자체는 verify 아래 「#1286」 줄에서 따로)
+    const cardNorm = p => p.evaluate(() => { const c = document.getElementById('om-card'); return c.querySelector('.om-card-b').innerHTML.replace(/<div class="om-smb-w" id="om-smb-\d+"><\/div>\s*/g, '').replace(/data-k="none"/g, 'data-k="warn"').replace(/⚠ 발송 전 주문에서 이 번호를 못 찾았어요 · 번호를 다시 확인해 주세요 — /g, '못 찾았어요 — ').replace(/\s+/g, ' '); });
     const band = p => p.evaluate(() => { const b = document.querySelector('#om-card .om-smb'); return b ? { t: b.querySelector('.om-smb-t b').textContent, sub: b.querySelector('.om-smb-t span').textContent, btns: [...b.querySelectorAll('button')].map(x => x.textContent.trim()), hint: (b.querySelector('.om-acts span') || {}).textContent || '' } : null; });
     const paste = async (p, text, rows) => { S.preview = { ok: true, rows }; await p.fill('#om-raw', text); await p.click('#om-go'); await p.waitForSelector('#om-card:not([hidden]) .om-rowcard', { timeout: 8000 }); await p.waitForTimeout(900); };
     const pv = (id, note) => ({ kind: 'line', key: K(id), note, plat: '네이버', line: ['', K(id), note, '네이버'].join('\t'), sure: true, check_why: [] });
@@ -120,7 +121,8 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         for (const id of ['505', '506', '507', '508', '511', '516', '501', '523', '524']) {
             await openEdit(O.p, id); await openEdit(N.p, id);
             const a = await cardNorm(O.p), b = await cardNorm(N.p), bd = await band(N.p);
-            ok(!bd && a === b, `줄 ${id} 카드 = 띠 없음 · 카드 본문이 HEAD 와 같음`, { band: bd, same: a === b });
+            ok(!bd && a === b, `줄 ${id} 카드 = 띠 없음 · 카드 본문이 HEAD 와 같음(#1286 ① 주문 0건 글만 빼고)`, { band: bd, same: a === b });
+            if (id === '505') { const lk = await N.p.evaluate(() => { const e = document.querySelector('#om-lk-0'); return e ? { k: e.dataset.k, t: e.textContent } : null; }); ok(!!lk && lk.k === 'none' && /^⚠ 발송 전 주문에서 이 번호를 못 찾았어요/.test(lk.t), '#1286 ① 주문 0건 줄(505) = 호박 판 「⚠ 발송 전 주문에서 이 번호를 못 찾았어요」', lk); }
             await closeCard(O.p); await closeCard(N.p);
         }
         await openEdit(N.p, '504');
@@ -137,15 +139,15 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         reset(); let X = await newPage('new'); let p = X.p;
         await openEdit(p, '504'); await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForSelector('#om-card:not([hidden]) .om-ce'); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(600);
         let st = await p.evaluate(() => ({ h: document.querySelector('#om-card-t').textContent, note: document.querySelector('#om-card .om-smb-n').textContent, m: [...document.querySelectorAll('#om-card [data-cact="bxf"][data-k="m"]')].map(i => i.value) }));
-        ok(/고객정보수정/.test(st.h) && st.m.length === 1 && st.m[0] === DOOR && /넣어 뒀어요/.test(st.note) && /옛 보통 줄은 지워요/.test(st.note) && /닫으면 보통 줄로 남아요/.test(st.note), '고객정보수정 판이 열리고 배송메세지 칸에 글이 미리 · 안내 한 줄', st);
+        ok(/고객정보수정/.test(st.h) && st.m.length === 1 && st.m[0] === DOOR && /넣어 뒀어요/.test(st.note) && /옛 보통 줄이 이 내용으로 바뀌어요\(새 줄 없음\)/.test(st.note) && /닫으면 보통 줄로 남아요/.test(st.note), '고객정보수정 판이 열리고 배송메세지 칸에 글이 미리 · 안내 한 줄(#1286 ③ 「옛 보통 줄이 이 내용으로 바뀌어요」)', st);
         ok(S.saves.length === 0 && S.puts.length === 0 && S.deleted.size === 0, '누르기만 = 서버 쓰기 0(저장은 [저장])');
         await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
-        let sv = S.saves[0] && S.saves[0].rows && S.saves[0].rows[0];
-        ok(S.saves.length === 1 && S.saves[0].rows.length === 1 && sv.boxes.length === 1 && sv.boxes[0].m === DOOR && sv.checked.pno === PNO(504) && /^박스별 1박스/.test(sv.note) && dg(sv.key) === dg(K(504)), '[저장] = 박스별 줄 POST · boxes[0].m = 글 · checked.pno = 그 주문', sv);
-        ok(S.deleted.has(504) && S.deleted.size === 1 && S.puts.length === 0, '저장된 뒤 옛 보통 줄(504)만 지움(비운 것으로)', [...S.deleted]);
-        ok((await toasts(p)).some(t => /옛 보통 줄은 지웠어요/.test(t)), '안내 = 「옛 보통 줄은 지웠어요」');
+        let sv = S.puts.find(x => x._id === 504);   // #1286 ③ = 새 줄 POST 대신 옛 줄 504 를 PUT(같은 줄 · 지움 0)
+        ok(S.saves.length === 0 && S.puts.length === 1 && !!sv && sv.boxes.length === 1 && sv.boxes[0].m === DOOR && sv.checked.pno === PNO(504) && /^박스별 1박스/.test(sv.note) && dg(sv.key) === dg(K(504)), '[저장] = 옛 줄 504 PUT(박스별 · boxes[0].m = 글 · checked.pno = 그 주문) · 새 줄 POST 0', { sv, saves: S.saves.length });
+        ok(S.deleted.size === 0, '#1286 ③ 지움 0(같은 줄을 고쳐 씀)', [...S.deleted]);
+        ok((await toasts(p)).some(t => /옛 보통 줄을 이 내용으로 바꿨어요/.test(t)), '안내 = 「옛 보통 줄을 이 내용으로 바꿨어요(새 줄 없음)」');
         let l2 = await listOf(p);
-        ok(!l2['504'], '목록에서 옛 줄 사라짐');
+        ok(!!l2['504'], '목록에 같은 줄(504) 그대로(가짜 목록 = 고친 값은 안 바뀜 · 줄이 사라지지도 새로 생기지도 않음)');
         await X.cx.close();
 
         // ── 4. 주문 2건 = 주문 고르기 · 고른 주문에만 ──
@@ -158,8 +160,8 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         st = await p.evaluate(() => [...document.querySelectorAll('#om-card [data-cact="bxf"][data-k="m"]')].map(i => i.value));
         ok(st.length === 1 && st[0] === '경비실에 맡겨주세요 3층', '둘째 주문 [고치기] = 그 주문 배송메세지 칸에 글', st);
         await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
-        sv = S.saves[0] && S.saves[0].rows[0];
-        ok(S.saves.length === 1 && S.saves[0].rows.length === 1 && sv.checked.pno === PNO(517) + '9' && sv.boxes[0].m === '경비실에 맡겨주세요 3층' && S.deleted.has(517), '저장 = 고른 주문(pno) 박스별 줄 1개 · 옛 줄 지움', sv);
+        sv = S.puts.find(x => x._id === 517);
+        ok(S.saves.length === 0 && !!sv && sv.checked.pno === PNO(517) + '9' && sv.boxes[0].m === '경비실에 맡겨주세요 3층' && S.deleted.size === 0, '저장 = 고른 주문(pno) 박스별 줄을 옛 줄 517 에 PUT(#1286 ③ · 새 줄 0 · 지움 0)', { sv, saves: S.saves.length, del: [...S.deleted] });
         await X.cx.close();
 
         // ── 5. 그 주문에 박스별 줄이 이미 있음 = 저장된 값 위에(덮어 지우지 않음 · PUT) ──
@@ -224,15 +226,16 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         st = await p.evaluate(() => ({ m: [...document.querySelectorAll('#om-card [data-cact="bxf"][data-k="m"]')].map(i => [i.dataset.x, i.value].join(':')), note: document.querySelector('#om-card .om-smb-n').textContent }));
         ok(st.m.join('|') === 'A2:공동현관 비번 #4321|A2:공동현관 비번 #4321|A3:공동현관 비번 #4321' && /넣어 뒀어요\(주문 2건\)/.test(st.note), '둘째(2박스)·셋째(쿠팡) 주문 [고치기] = 그 두 주문 칸에만 글(첫째 주문 판은 안 열림) · 「주문 2건」', st);
         await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
-        const r3 = (S.saves[0] && S.saves[0].rows) || [], by = pn => r3.find(x => x.checked && x.checked.pno === pn);
-        ok(S.saves.length === 1 && r3.length === 2 && by('A2').boxes.length === 2 && by('A2').boxes.every(b => b.m === '공동현관 비번 #4321') && by('A2').plat === '네이버' && by('A3').boxes.length === 1 && by('A3').boxes[0].m === '공동현관 비번 #4321' && by('A3').plat === '쿠팡' && !by('A1'), '저장 = 박스별 줄 2개(pno A2·A3 각각 · 판매처 각각) · 첫째 주문(A1) 줄 없음', r3.map(x => [x.checked.pno, x.plat, x.boxes.length]));
-        ok(S.puts.length === 0 && S.deleted.has(530) && S.deleted.size === 1, '같은 번호의 사이즈 줄(531)·다른 주문 박스별 줄(532) = 무접촉(PUT 0 · 지움은 옛 보통 줄 530 하나 · 한 번의 [저장] 뒤)', { puts: S.puts.map(x => x._id), del: [...S.deleted] });
+        // #1286 ③ = 첫 박스별 줄(A2)은 옛 보통 줄 530 에 PUT · 둘째(A3)는 새 줄 POST · 지움 0
+        const r3 = ((S.saves[0] && S.saves[0].rows) || []).concat(S.puts.filter(x => x._id === 530)), by = pn => r3.find(x => x.checked && x.checked.pno === pn);
+        ok(S.saves.length === 1 && S.saves[0].rows.length === 1 && r3.length === 2 && by('A2').boxes.length === 2 && by('A2').boxes.every(b => b.m === '공동현관 비번 #4321') && by('A2').plat === '네이버' && by('A3').boxes.length === 1 && by('A3').boxes[0].m === '공동현관 비번 #4321' && by('A3').plat === '쿠팡' && !by('A1') && S.puts.find(x => x._id === 530).checked.pno === 'A2', '저장 = 박스별 줄 2개(A2 = 옛 줄 530 PUT · A3 = 새 줄 POST · 판매처 각각) · 첫째 주문(A1) 줄 없음', r3.map(x => [x.checked.pno, x.plat, x.boxes.length]));
+        ok(S.puts.length === 1 && S.puts[0]._id === 530 && S.deleted.size === 0, '같은 번호의 사이즈 줄(531)·다른 주문 박스별 줄(532) = 무접촉(PUT 은 옛 보통 줄 530 하나 · 지움 0 · 한 번의 [저장] 뒤)', { puts: S.puts.map(x => x._id), del: [...S.deleted] });
         await X.cx.close();
         // 주문 2건(1박스+1박스) 중 첫째만
         reset(); S.extra = Ln => [Ln(535, '택배함에 넣어주세요', { key: K(535) })]; S.lookup[dg(K(535))] = [ord(535, { pno: 'B1', order_no: 'OB1', recv_name: '김하나' }), ord(535, { pno: 'B2', order_no: 'OB2', recv_name: '이두리', addr: '대구 9' })]; X = await newPage('new'); p = X.p;
         await openEdit(p, '535'); await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(600);
         await p.click('#om-card [data-cact="cefix"][data-o="B1"]'); await p.waitForTimeout(400); await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
-        ok(S.saves.length === 1 && S.saves[0].rows.length === 1 && S.saves[0].rows[0].checked.pno === 'B1' && S.saves[0].rows[0].boxes[0].m === '택배함에 넣어주세요' && S.deleted.has(535), '주문 2건 중 첫째만 고름 = 그 주문(pno B1) 줄 하나만 저장', S.saves[0] && S.saves[0].rows.map(x => x.checked.pno));
+        { const pb = S.puts.find(x => x._id === 535); ok(S.saves.length === 0 && S.puts.length === 1 && !!pb && pb.checked.pno === 'B1' && pb.boxes[0].m === '택배함에 넣어주세요' && S.deleted.size === 0, '주문 2건 중 첫째만 고름 = 그 주문(pno B1) 줄 하나만 저장(#1286 ③ 옛 줄 535 PUT · 지움 0)', { puts: S.puts.map(x => [x._id, x.checked && x.checked.pno]), saves: S.saves.length }); }
         await X.cx.close();
 
         // ── 6. 붙여 넣기 결과(한 줄) ──
@@ -279,7 +282,13 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         for (const how of ['×', 'Esc', '뒤로가기', '주문 못 찾음']) {
             reset(); if (how === '주문 못 찾음') S.lookup = {}; X = await newPage('new'); p = X.p;
             await paste(p, 'x', [pv(602, '문 앞에 놔주세요'), pv(603, '보내는이 홍길동')]);
-            await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForTimeout(300); await p.click('#om-card-save'); await p.waitForSelector('#om-card .om-ce', { timeout: 8000 }); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(900);
+            await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForTimeout(300); await p.click('#om-card-save');
+            if (how === '주문 못 찾음') {   // #1286 ① 주문 0건 번호 = 첫 [저장] 은 알림만(저장 0) → 한 번 더 = 저장(종전 흐름 이어짐)
+                await p.waitForTimeout(500); const t1 = await toasts(p);
+                ok(S.saves.length === 0 && t1.some(t => /발송 전 주문에서 이 번호를 못 찾았어요/.test(t)), '#1286 ① 주문 못 찾은 번호 = 첫 [저장] 저장 0 + 알림', { saves: S.saves.length, t1 });
+                await p.click('#om-card-save');
+            }
+            await p.waitForSelector('#om-card .om-ce', { timeout: 8000 }); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(900);
             const nt = await p.evaluate(() => document.querySelector('#om-card .om-smb-n').textContent);
             if (how === '주문 못 찾음') ok(/주문을 못 찾아 배송메세지로 넣지 못했어요 · 닫으면 보통 줄로 남아요/.test(nt), 'B1 주문 못 찾음 = 「넣지 못했어요 · 닫으면 보통 줄로 남아요」', nt);
             if (how === 'Esc') await p.keyboard.press('Escape'); else if (how === '뒤로가기') await p.goBack({ waitUntil: 'commit', timeout: 3000 }).catch(() => null); else await p.click('#om-card .om-back[data-cact="cancel"]');
