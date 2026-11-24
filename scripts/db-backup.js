@@ -34,6 +34,19 @@ function sqlLiteral(val) {
 //   · Ctrl+C(SIGINT) = 임시 파일(.table.tmp · .part) 지우고 종료 130
 const FETCH_N = 50;          // 한 번에 읽는 행 수(큰 bytea 줄이 많아도 메모리 작게)
 const INSERT_ROWS = 500;     // INSERT 한 문장 행 수(종전과 같게)
+// #1287 배포 백업 중 실DB(0.1c-256mb)가 crash recovery 로 떨어지고(11/23~11/24 3회) 처리 안 된 'error' 로 node 가 죽던 것
+//   ⓐ pool·client 'error' 수신 → 연결이 끊기면 그 자리에서 멈춤(다음 표로 넘어가며 실DB 를 더 찌르지 않음) · 반쪽 파일 지움 · 종료 1
+//   ⓑ 큰 값 칸(아래 WIDE_TYPES)이 있고 toast 가 WIDE_TOAST_MIN 넘는 표만 「크기 먼저」: ctid·pg_column_size(저장 크기 · toast 안 풂)만 먼저 읽고
+//      BIG_ROW 넘는 줄은 FETCH 1 + BIG_PAUSE_MS 쉼 · 나머지는 FETCH_N 묶음 · 표 이름을 박지 않음(표가 늘어도 저절로)
+//   ⓒ 출력 바이트는 종전과 같다(쓰는 길 무변경 · 읽는 묶음만 바뀜) → db-restore.js 무접촉
+const WIDE_TYPES = ['bytea', 'json', 'jsonb', 'text'];   // 큰 값이 들 수 있는 칸 종류
+const WIDE_TOAST_MIN = 1 << 20;   // 이 표의 toast 크기(pg_class 통계)가 이보다 작으면 종전 길(큰 줄이 있을 수 없음)
+const BIG_ROW = 1 << 20;          // 줄의 큰 칸 저장 크기 합이 이보다 크면 한 줄씩
+const BIG_PAUSE_MS = 150;         // 큰 줄 하나 읽은 뒤 쉼(실DB 메모리·입출력이 숨 돌리게)
+const LOST_CODES = new Set(['57P01', '57P02', '57P03', '08000', '08001', '08003', '08004', '08006']);
+const isConnLost = e => !!e && (LOST_CODES.has(e.code) || /^(ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT)$/.test(String(e.code || '')) || /Connection terminated|connection error|not queryable|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|not yet accepting|terminating connection|server closed the connection|recovery mode/i.test(String(e.message || e)));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const LOST_HINT = '실DB 연결 끊김 — 백업 멈춤(반쪽 파일 지움) · 바로 다시 돌리지 말고 3분 뒤에';
 function openOut(file) {
     const fd = fs.openSync(file, 'w'); let first = true;
     return {
@@ -63,7 +76,11 @@ async function main() {
     const only = String(process.env.BACKUP_TABLES || '').split(',').map(x => x.trim()).filter(Boolean);
 
     const pool = new Pool(dbConfig);
+    let lost = null;   // #1287 끊긴 연결의 첫 오류
+    const onLost = e => { if (!lost) { lost = e || new Error('연결 끊김'); console.error(`\n❌ ${LOST_HINT} — ${String(lost && lost.message || lost).slice(0, 200)}`); } };
+    pool.on('error', onLost);
     const client = await pool.connect();
+    client.on('error', onLost);
     const out = openOut(outFile + '.part');   // 다 끝나면 이름을 바꾼다(반쪽 파일이 백업처럼 보이지 않게)
     const failed = [];
     let ok = false;
@@ -78,6 +95,7 @@ async function main() {
 
     try {
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');   // 모든 표 = 같은 순간 · 쓰기 0
+        await client.query('SET LOCAL synchronize_seqscans = off');   // #1287 「크기 먼저」 두 번 읽기가 같은 줄 순서로(표 첫 블록부터)
         let { rows: tables } = await client.query(`
             SELECT table_name FROM information_schema.tables
             WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
@@ -99,21 +117,50 @@ async function main() {
             try {
                 await client.query('SAVEPOINT tb');
                 const { rows: cols } = await client.query(`
-                    SELECT column_name, column_default FROM information_schema.columns
+                    SELECT column_name, column_default, data_type FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = $1
                     ORDER BY ordinal_position`, [table_name]);
                 const colNames = cols.map(c => `"${c.column_name}"`).join(', ');
                 const total = Number((await client.query(`SELECT count(*)::bigint AS n FROM "${table_name}"`)).rows[0].n);
                 tl(`-- ${table_name} (${total}건)`);
-                await client.query(`DECLARE bk NO SCROLL CURSOR FOR SELECT * FROM "${table_name}"`);
-                for (;;) {
-                    const { rows } = await client.query(`FETCH ${FETCH_N} FROM bk`);
-                    if (!rows.length) break;
-                    for (const r of rows) {
-                        const v = `(${cols.map(c => sqlLiteral(r[c.column_name])).join(', ')})`;
-                        if (n % INSERT_ROWS === 0) { if (n) tr(';'); tl(`INSERT INTO "${table_name}" (${colNames}) VALUES\n` + v); }
-                        else tr(',\n' + v);
-                        n++;
+                const emit = (r) => {
+                    const v = `(${cols.map(c => sqlLiteral(r[c.column_name])).join(', ')})`;
+                    if (n % INSERT_ROWS === 0) { if (n) tr(';'); tl(`INSERT INTO "${table_name}" (${colNames}) VALUES\n` + v); }
+                    else tr(',\n' + v);
+                    n++;
+                };
+                const wide = cols.filter(c => WIDE_TYPES.includes(c.data_type));
+                const toast = wide.length && total ? Number((await client.query(
+                    `SELECT COALESCE(pg_relation_size(NULLIF(reltoastrelid, 0)), 0)::bigint AS t FROM pg_class WHERE oid = to_regclass($1)`,
+                    [`public."${table_name.replace(/"/g, '""')}"`])).rows[0]?.t || 0) : 0;
+                if (toast >= WIDE_TOAST_MIN) {
+                    // #1287 「크기 먼저」 — 저장 크기만 먼저(toast 를 풀지 않음) → 큰 줄은 한 줄씩 + 쉼
+                    const szExpr = wide.map(c => `COALESCE(pg_column_size("${c.column_name}"), 0)`).join(' + ');
+                    await client.query(`DECLARE bz NO SCROLL CURSOR FOR SELECT ctid::text AS t, (${szExpr})::bigint AS z FROM "${table_name}"`);
+                    const plan = [];
+                    for (;;) { const { rows } = await client.query('FETCH 1000 FROM bz'); if (!rows.length) break; for (const r of rows) plan.push([r.t, Number(r.z)]); }
+                    await client.query('CLOSE bz');
+                    if (plan.length !== total) throw new Error(`크기 줄 ${plan.length} ≠ 셈 ${total}`);
+                    await client.query(`DECLARE bk NO SCROLL CURSOR FOR SELECT ctid::text AS "__bk1287_ctid", * FROM "${table_name}"`);
+                    let big = 0;
+                    for (let i = 0; i < plan.length;) {
+                        let k = 1;
+                        const isBig = plan[i][1] > BIG_ROW;
+                        if (!isBig) while (k < FETCH_N && i + k < plan.length && plan[i + k][1] <= BIG_ROW) k++;
+                        const { rows } = await client.query(`FETCH ${k} FROM bk`);
+                        if (rows.length !== k) throw new Error(`묶음 줄 ${rows.length} ≠ ${k}`);
+                        rows.forEach((r, j) => { if (r.__bk1287_ctid !== plan[i + j][0]) throw new Error('크기 먼저 · 줄 순서 어긋남'); emit(r); });
+                        i += k;
+                        if (isBig) { big++; await sleep(BIG_PAUSE_MS); }
+                    }
+                    if ((await client.query('FETCH 1 FROM bk')).rows.length) throw new Error('크기 먼저 · 남은 줄 있음');
+                    if (big) console.log(`  🐢 ${table_name}: 큰 줄 ${big}개 한 줄씩`);
+                } else {
+                    await client.query(`DECLARE bk NO SCROLL CURSOR FOR SELECT * FROM "${table_name}"`);
+                    for (;;) {
+                        const { rows } = await client.query(`FETCH ${FETCH_N} FROM bk`);
+                        if (!rows.length) break;
+                        for (const r of rows) emit(r);
                     }
                 }
                 if (n) tr(';');
@@ -133,6 +180,7 @@ async function main() {
                 console.log(`  📦 ${table_name}: ${n}건`);
             } catch (e) {
                 if (!closed) try { fs.closeSync(t.fd); } catch (_) { /* 무시 */ }
+                if (lost || isConnLost(e)) { onLost(e); break; }   // #1287 끊긴 연결로 다음 표를 찌르지 않음
                 try { await client.query('ROLLBACK TO SAVEPOINT tb'); } catch (_) { /* 트랜잭션이 끊겼으면 아래 표도 실패로 찍힘 */ }
                 failed.push(table_name);
                 out.line(`-- ⚠️ ${table_name} 백업 실패: ${String(e && e.message || e).replace(/\s+/g, ' ').slice(0, 200)}`);
@@ -140,7 +188,9 @@ async function main() {
                 console.error(`  ❌ ${table_name}: 실패 — ${String(e && e.message || e).slice(0, 200)}`);
             }
         }
+        if (lost) throw Object.assign(new Error(LOST_HINT), { connLost: true });
         await client.query('COMMIT').catch(() => { });
+        if (lost) throw Object.assign(new Error(LOST_HINT), { connLost: true });
         out.close();
         try { fs.unlinkSync(tmpFile); } catch (_) { /* 없음 */ }
         fs.renameSync(outFile + '.part', outFile);
@@ -151,13 +201,13 @@ async function main() {
         if (failed.length) { console.error(`❌ 실패한 표 ${failed.length}개: ${failed.join(', ')} — 그 표는 이 백업에 데이터가 없음`); process.exitCode = 1; }
     } finally {
         if (!ok) { try { out.close(); } catch (_) { /* 이미 닫힘 */ } cleanup(); }
-        try { await client.query('ROLLBACK'); } catch (_) { /* 이미 끝 */ }
-        client.release();
-        await pool.end();
+        if (!lost) { try { await client.query('ROLLBACK'); } catch (_) { /* 이미 끝 */ } }
+        client.release(lost ? true : undefined);   // 끊긴 연결은 버림
+        await pool.end().catch(() => { });
     }
 }
 
 main().catch(err => {
-    console.error('❌ 백업 실패:', err.message);
+    console.error('❌ 백업 실패:', err.connLost || isConnLost(err) ? LOST_HINT + (err.connLost ? '' : ' — ' + (err.message || err.code)) : (err.message || err.code || String(err)));
     process.exit(1);
 });
