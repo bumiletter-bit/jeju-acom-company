@@ -1219,11 +1219,12 @@
         requestAnimationFrame(() => { const f = $('om-card').querySelector('.om-f.blank input, .om-f.blank textarea, .om-f.blank .om-combo') || $('om-card-save'); if (f) f.focus({ preventScroll: !phoneW() }); });
     }
     // fromHist = 뒤로가기로 이미 기록이 빠진 경우 · force = 묻지 않고 닫기
+    const cardBoxDirty = c => c.rows.some(r => [r._bx].concat(Object.values(r._xo || {}).map(o => o && o.bx)).some(bx => bx && bx._0 != null && JSON.stringify(boxClean(bx)) !== bx._0));   // #1298 ② 박스 판(박스별 입력) 칸만 고친 것도 닫을 때 묻기
     function cardClose(force, fromHist) {
         const c = OM.card; if (!c) return;
         if (CAL.inp) calClose(false);   // #1169 달력이 뜬 채 카드 뒤로가기 = 달력부터 닫고 종전대로(묻기 포함)
         if (!force && c.ceAsk) { c.ceAsk = null; renderConfirm(); if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0); return; }   // #1290 ② 묻는 판이 뜬 채 ×·뒤로가기 = 그 판만 닫힘(카드·[저장] 그대로)
-        if (!force && (c.dirty || c.fileN) && !c.confirm) {   // #895 파일로 넣은 줄 = 고친 것으로 셈(닫을 때 묻기)
+        if (!force && (c.dirty || c.fileN || cardBoxDirty(c)) && !c.confirm) {   // #895 파일로 넣은 줄 = 고친 것으로 셈(닫을 때 묻기)
             c.confirm = true; renderConfirm();
             if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
             return;
@@ -1253,10 +1254,10 @@
         f.innerHTML = `<div class="om-confirm om-dup" role="alert"><b>새 것으로 바꿀까요?</b><ul>${items}</ul>${q.same.length ? `<small>똑같은 줄 ${q.same.length}개는 이미 있어 빼고 저장해요</small>` : ''}</div><button type="button" class="om-btn" data-cact="dupkeep">취소</button><button type="button" class="om-btn primary" data-cact="dupswap">바꾸기</button>`;
         const d = f.querySelector('[data-cact="dupswap"]'); if (d) d.focus({ preventScroll: true });
     }
-    function renderCeAsk() {   // #1290 ② [고객정보수정] 새로 넣기 · 같은 번호 열린 기사님 글 줄 1개 = 발 칸에 한 번 묻기(뒤로가기 기록 안 씀 · 닫기·Esc·뒤로가기 = 이 판만 닫힘 → [저장] 그대로)
+    function renderCeAsk(noFocus) {   // #1290 ② [고객정보수정] 새로 넣기 · 같은 번호 열린 기사님 글 줄 1개 = 발 칸에 한 번 묻기(뒤로가기 기록 안 씀 · 닫기·Esc·뒤로가기 = 이 판만 닫힘 → [저장] 그대로)
         const f = $('om-card').querySelector('.om-card-f'), q = OM.card && OM.card.ceAsk; if (!f || !q) return;
         f.innerHTML = `<div class="om-confirm om-dup om-ceask" role="alert"><b>이 번호에 이미 메모 줄이 있어요 · 그 줄을 이 내용으로 바꿀까요?</b><ul><li>「${esc(cut1(q.note, 60))}」</li></ul><small>[바꾸기] = 그 줄의 글은 이 내용으로 바뀌어요(새 줄 없음) · [따로 넣기] = 그 줄은 그대로 두고 새 줄로 저장</small></div><button type="button" class="om-btn" data-cact="ceaskx">닫기</button><button type="button" class="om-btn" data-cact="ceasksep">따로 넣기</button><button type="button" class="om-btn primary" data-cact="ceaskswap">바꾸기</button>`;
-        const d = f.querySelector('[data-cact="ceaskswap"]'); if (d) d.focus({ preventScroll: true });
+        const d = !noFocus && f.querySelector('[data-cact="ceaskswap"]'); if (d) d.focus({ preventScroll: true });
     }
     async function loadCatalog() {
         const res = await API.catalog();
@@ -1441,7 +1442,7 @@
           </div>
           <footer class="om-card-f">${c.confirm ? '' : footHtml()}</footer>
           <p class="om-card-note">${c.mode === 'edit' ? '저장하면 이 줄만 바뀌어요 · 서버가 다시 검사해요.' : '저장 전엔 아무것도 안 남아요 · 저장한 뒤에도 목록에서 고치거나 지울 수 있어요.'}</p>`;
-        if (c.confirm) renderConfirm();
+        if (c.confirm) renderConfirm(); else if (c.ceAsk) renderCeAsk(true);   // #1298 ① 묻는 판이 뜬 채 카드를 다시 그림(목록 재조회 등) = 판도 다시(종전 = 발 칸이 [취소][저장]으로 돌아가 × 첫 누름이 안 보이는 판만 닫음 · 초점은 안 옮김)
         card.classList.toggle('om-card-wide', !!c.pxOnly);   // #1142 매칭 판 = PC 에서 넓고 높게(폰은 종전 꽉 찬 꼴)
         if (!card._bound) { card._bound = true; card.addEventListener('click', onCard); card.addEventListener('input', onCardInput); card.addEventListener('focusout', onCardLeave); card.addEventListener('change', onCardChange); card.addEventListener('keydown', onCardKey); }
         const nb = card.querySelector('.om-card-b'); if (nb && sc) nb.scrollTop = sc;
@@ -2027,6 +2028,7 @@
     function boxPanelHtml(r, ri) { boxEditInit(r); bxHintFill(r); return r._bx ? bxPanel(r._bx, ri, '') : ''; }
     const xboxPanelHtml = (r, ri) => Object.keys(r._xo || {}).map(o => r._xo[o].bx ? bxPanel(r._xo[o].bx, ri, o) : '').join('');
     function bxPanel(bx, ri, x) {
+        if (bx._0 == null) bx._0 = JSON.stringify(boxClean(bx));   // #1298 ② 판을 처음 그릴 때 값 = 닫을 때 「고친 것 있음」 기준(되돌리면 안 물음)
         const kind = boxKindOf(bx), X = x ? ` data-x="${esc(x)}"` : '', id = (i, k) => `om-bx-${ri}${x ? 'x' + digits(x).slice(-8) : ''}-${i}-${k}`;
         const kOf = b => b.o ? itemK(b.o) : kind;   // #1026 박스 품목을 바꾸면 그 박스 칩 종류도 따라감
         const tailH = (b, i) => kOf(b) === 'size' ? `<div class="om-seg om-bx-seg" role="radiogroup" aria-label="박스 ${i + 1} 사이즈">${[['2S사이즈로!', '2S'], ['S사이즈로!', 'S'], ['M사이즈로!', 'M'], ['', '없음']].map(([v, l]) => `<button type="button" role="radio" class="om-seg-b" data-cact="bxt" data-ri="${ri}"${X} data-bi="${i}" data-v="${esc(v)}" aria-checked="${b.t === v ? 'true' : 'false'}">${l}</button>`).join('')}</div>`
