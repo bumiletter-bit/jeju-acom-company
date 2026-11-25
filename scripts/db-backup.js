@@ -4,13 +4,19 @@
 // 백업폴더: 기본 = 리포 밖 OneDrive "제주아꼼이네_DB백업" (환경변수 BACKUP_DIR로 변경 가능)
 // 복원은 scripts/db-restore.js 참조. 스키마는 server.js initDB(CREATE TABLE IF NOT EXISTS)가 관리하므로
 // 이 백업은 "데이터 전체"를 담는다 (TRUNCATE 후 INSERT + 시퀀스 복구).
+// #1291 json·jsonb·배열 칸은 PG 원문 글자 그대로 · 생성 칸은 뺌 → 출력 바이트가 6618f4e 판과 그 칸에서만 다르다(나머지 칸·표는 같음)
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const fs = require('fs');
 const path = require('path');
 const { Pool, types } = require('pg');
 
-// 날짜/시각 타입은 문자열 그대로 받아 원본 보존
+// 날짜/시각 타입은 문자열 그대로 받아 원본 보존(전역 pg.types · 이 스크립트는 단독 프로세스라 다른 코드에 안 샘)
 [1082, 1114, 1184].forEach(oid => types.setTypeParser(oid, v => v));
+// #1291 json·jsonb·배열(text[] 등)도 PG 가 주는 원문 글자 그대로 받는다 → '…' 로 감싸 적으면 복원 때 그 타입으로 정확히 읽힘
+//   종전 = JS 값으로 풀어 다시 적음 → jsonb 안 숫자·문자열이 날것(5 · abc)으로 나가 복원 실패 · 문자열 "5" 는 숫자로 바뀜 · 배열은 JSON 꼴 '["a"]' 로 나가 복원 실패
+//   범위 = 백업에 쓰는 이 연결(client.setTypeParser) 하나뿐 · 전역 pg.types 는 안 건드림 · 배열 타입 번호는 연결 뒤 pg_type 에서 읽음
+const RAW_OIDS = [114, 3802];   // json · jsonb
+const rawText = v => v;
 
 const dbConfig = { connectionString: process.env.DATABASE_URL };
 if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')) {
@@ -81,6 +87,10 @@ async function main() {
     pool.on('error', onLost);
     const client = await pool.connect();
     client.on('error', onLost);
+    {   // #1291 이 연결에만 원문 글자 파서(json · jsonb · 모든 배열 타입)
+        const { rows: arr } = await client.query(`SELECT oid::int AS oid FROM pg_type WHERE typcategory = 'A'`);
+        for (const oid of [...RAW_OIDS, ...arr.map(r => r.oid)]) client.setTypeParser(oid, 'text', rawText);
+    }
     const out = openOut(outFile + '.part');   // 다 끝나면 이름을 바꾼다(반쪽 파일이 백업처럼 보이지 않게)
     const failed = [];
     let ok = false;
@@ -119,6 +129,7 @@ async function main() {
                 const { rows: cols } = await client.query(`
                     SELECT column_name, column_default, data_type FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = $1
+                      AND is_generated <> 'ALWAYS'   -- #1291 생성 칸(GENERATED ALWAYS AS … STORED)은 빼고 적음 → 복원 때 PG 가 다시 계산(넣으면 「cannot insert a non-DEFAULT value」)
                     ORDER BY ordinal_position`, [table_name]);
                 const colNames = cols.map(c => `"${c.column_name}"`).join(', ');
                 const total = Number((await client.query(`SELECT count(*)::bigint AS n FROM "${table_name}"`)).rows[0].n);
