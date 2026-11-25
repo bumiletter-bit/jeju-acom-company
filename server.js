@@ -11549,12 +11549,22 @@ async function runCollectorLimited(key, fn, limitMs, onWarn) {
 // 한 회차가 끝났을 때 기록 + 알림(종전 틱 끝 부분 그대로 · lateMin = 「늦게 끝남」 분) — verify-794 가 이 줄부터 떼어 감(#1293 구간도 그 안에)
 // ── #1293 연속 실패 알림 시작 (verify-1293-collect-alert.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
 // 대표 11/25 「쿠팡은 쿠팡쪽 오류로 잠시 안 된 거 바로 오게 하지 말고 수집 3번 이상 실패 시 텔레그램」: 쿠팡 키(coupang_*)만 연속 N번째 실패에 1통 · 복구 알림은 실패 알림이 나간 때만.
-//   그 밖의 키 = 종전(정상→실패 전환 1통 · 실패→정상 1통). 연속 횟수 = naver_auto_collect.fail_count(배포에도 남음 · NULL = 칸 생기기 전 = 종전 꼴로 셈).
-const COLLECT_ALERT_AFTER = { coupang: 3 };   // 앞머리(키 '_' 앞) → 몇 번째 연속 실패에 알릴지 · 없으면 1(종전)
-function collectAlertAfter(key) { const n = COLLECT_ALERT_AFTER[String(key || '').split('_')[0]]; return n > 1 ? n : 1; }
-// r = 회차 시작 때 읽은 줄(last_status·fail_count) · status = 'ok'|'fail' → { count: 새 연속 횟수, alert: 'fail'|'recover'|null }
+//   그 밖의 키 = 아래 #1296 주기 규칙(60분 이하 = 3번째 · 나머지 = 종전 정상→실패 전환 1통 · 실패→정상 1통). 연속 횟수 = naver_auto_collect.fail_count(배포에도 남음 · NULL = 칸 생기기 전 = 종전 꼴로 셈).
+const COLLECT_ALERT_AFTER = { coupang: 3 };   // 앞머리(키 '_' 앞) → 몇 번째 연속 실패에 알릴지 · 없으면 아래 주기 규칙
+// #1296(대표 11/25 「자사도 그렇고 이런게 너무 잦게 와」 · 발단 = 상품문의 relay timeout 1회 뒤 저절로 복구) = 자주 도는 수집(주기 60분 이하)도 연속 3번째 실패에 1통 · 복구는 그 알림이 나간 때만
+//   하루 1회 키(실행 시각 앵커 = 틱이 주기를 안 씀)·주기 60분 초과(order 300분 등)·주기 모름 = 종전 첫 실패 1통(3번을 기다리면 몇 시간~며칠 늦음)
+const COLLECT_ALERT_DAILY = new Set(['settlement', 'product_snapshot', 'cafe24_sync', 'coupon_expire_notify']);   // naverAutoCollectTick 의 하루 1회 갈래와 같은 목록
+const COLLECT_ALERT_FREQ_MAX_MIN = 60, COLLECT_ALERT_FREQ_AFTER = 3;
+function collectAlertAfter(key, intervalMin) {
+    const k = String(key || ''), n = COLLECT_ALERT_AFTER[k.split('_')[0]];
+    if (n > 1) return n;
+    if (COLLECT_ALERT_DAILY.has(k)) return 1;
+    const iv = Number(intervalMin);
+    return intervalMin != null && Number.isFinite(iv) && iv > 0 && iv <= COLLECT_ALERT_FREQ_MAX_MIN ? COLLECT_ALERT_FREQ_AFTER : 1;
+}
+// r = 회차 시작 때 읽은 줄(last_status·fail_count·interval_min) · status = 'ok'|'fail' → { count: 새 연속 횟수, alert: 'fail'|'recover'|null }
 function collectAlertDecide(r, status) {
-    const n = collectAlertAfter(r.key);
+    const n = collectAlertAfter(r.key, r.interval_min);
     const prev = (r.fail_count == null || !Number.isFinite(Number(r.fail_count))) ? (r.last_status === 'fail' ? n : 0) : Math.max(0, Number(r.fail_count));   // NULL·직전 실패 = 이미 알림 나간 것으로(종전 꼴)
     const count = status === 'fail' ? prev + 1 : 0;
     if (n <= 1) return { count, alert: status === 'fail' ? (r.last_status !== 'fail' ? 'fail' : null) : (r.last_status === 'fail' ? 'recover' : null) };   // 종전 조건 그대로

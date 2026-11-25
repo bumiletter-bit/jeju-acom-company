@@ -1,4 +1,5 @@
 // #1293 검증 — 쿠팡 자동수집 실패 알림 = 연속 3번째부터 · 복구 알림은 실패 알림이 나간 때만 · 다른 키는 종전
+//   #1296 = 주기(interval_min) 60분 이하 키도 연속 3번째 · 하루 1회 키·60분 초과·주기 모름 = 종전
 //   server.js 의 「#1293 연속 실패 알림」 구간 + finishCollect 를 떼어 가짜 pool·notifyTelegram 으로 실행(실DB·텔레그램 0)
 //   node scripts/verify-1293-collect-alert.js
 'use strict';
@@ -70,7 +71,40 @@ function makeEnv(noCol) {
         await E.run(K, true);
         ok(E.sent.length === 1, '다시 3번째 = 1통');
     }
-    console.log('③ 네이버·카페24·쿠폰 키 = 종전(1번째 실패 1통 · 복구 1통 · 연속 실패 반복 0)');
+    console.log('③ 하루 1회·주기 60분 초과·주기 모름 = 종전(1번째 실패 1통 · 복구 1통 · 연속 실패 반복 0)');
+    for (const [K, iv] of [['order', 300], ['coupon_expire_notify', 1440], ['settlement', 1440], ['product_snapshot', 1440], ['cafe24_sync', 1440], ['settlement', 5], ['claim', 61], ['cafe24_guide', undefined], ['lms_guide', null], ['qna', 'x'], ['inquiry', 0]]) {
+        const E = makeEnv(false);
+        const init = { last_status: 'ok', fail_count: null }; if (iv !== undefined) init.interval_min = iv;
+        const K0 = K + ' (주기 ' + (iv === undefined ? '칸 없음' : JSON.stringify(iv)) + ')';
+        await E.run(K, true, init);
+        ok(E.sent.length === 1 && /자동수집 실패 — coupang_relay_error_504$/.test(E.sent[0]), K0 + ' 1회 실패 = 1통(「연속」 글 없음 = 종전 문구)');
+        await E.run(K, true);
+        ok(E.sent.length === 1, K0 + ' 2회 실패 = 더 안 옴');
+        await E.run(K, false);
+        ok(E.sent.length === 2 && /자동수집 복구/.test(E.sent[1]), K0 + ' 성공 = 복구 1통');
+    }
+    console.log('③-b #1296 주기 60분 이하 키 = 연속 3번째 1통 · 1~2번 뒤 복구 0통');
+    for (const [K, iv] of [['qna', 3], ['inquiry', 3], ['kakao_notify', 3], ['cafe24_notify', 3], ['experience_store', 5], ['claim', 10], ['naver_mail_index', 10], ['lms_guide', 30], ['cafe24_guide', 30], ['welcome_notify', 30], ['order', 60]]) {
+        const E = makeEnv(false), K0 = K + ' (주기 ' + iv + ')';
+        await E.run(K, true, { last_status: 'ok', fail_count: 0, interval_min: iv });
+        await E.run(K, true);
+        ok(E.sent.length === 0 && E.rows.get(K).fail_count === 2, K0 + ' 실패 1·2회 = 0통');
+        await E.run(K, false);
+        ok(E.sent.length === 0 && E.rows.get(K).fail_count === 0, K0 + ' 2회 뒤 성공 = 복구 0통');
+        await E.run(K, true); await E.run(K, true); await E.run(K, true);
+        ok(E.sent.length === 1 && new RegExp('자동수집 실패\\(연속 3번째\\) — coupang_relay_error_504$').test(E.sent[0]), K0 + ' 다시 3번째 = 1통 「연속 3번째」');
+        await E.run(K, true);
+        ok(E.sent.length === 1, K0 + ' 4번째 = 더 안 옴');
+        await E.run(K, false);
+        ok(E.sent.length === 2 && /자동수집 복구/.test(E.sent[1]), K0 + ' 성공 = 복구 1통');
+    }
+    {
+        const d = (() => { const E = makeEnv(false); return E.ctx.collectAlertDecide; })();
+        ok(d({ key: 'qna', interval_min: 3, last_status: 'fail', fail_count: 1 }, 'ok').alert === null, '배포 순간 qna 처럼 「실패 · 셈 1」 줄 → 성공 = 복구 0통(일회성 · 종전 규칙으로 실패 1통은 이미 나감 · 총괄 그대로 둠)');
+        ok(d({ key: 'qna', interval_min: 3, last_status: 'fail', fail_count: null }, 'ok').alert === 'recover', '주기 짧은 키라도 칸 NULL + 직전 실패 = 이미 알린 것으로 → 복구 1통');
+        ok(d({ key: 'coupang_notify', interval_min: 1440, last_status: 'ok', fail_count: 0 }, 'fail').alert === null, '쿠팡은 주기와 무관하게 3번째(종전 #1293)');
+    }
+    console.log('③-c (종전 꼴 그대로 · 주기 칸 없는 줄)');
     for (const K of ['order', 'cafe24_guide', 'coupon_expire_notify', 'lms_guide']) {
         const E = makeEnv(false);
         await E.run(K, true, { last_status: 'ok', fail_count: null });
@@ -119,6 +153,13 @@ function makeEnv(noCol) {
         ok(E.sent.length === 2 && /복구/.test(E.sent[1]), '칸 없음 + 쿠팡 성공 = 복구 1통(종전)');
         await E.run(K, false);
         ok(E.sent.length === 2, '칸 없음 + 연속 성공 = 더 안 옴');
+    }
+    {
+        const E = makeEnv(true), K = 'qna';
+        await E.run(K, true, { last_status: 'ok', interval_min: 3 });
+        ok(E.sent.length === 1 && /자동수집 실패 — coupang_relay_error_504$/.test(E.sent[0]), '#1296 칸 없음 + 주기 3분 키 1번째 실패 = 종전 꼴 1통');
+        await E.run(K, false);
+        ok(E.sent.length === 2 && /복구/.test(E.sent[1]), '#1296 칸 없음 + 주기 3분 키 성공 = 복구 1통(종전)');
     }
     {
         const E = makeEnv(false), K = 'coupang_guide';
