@@ -51,6 +51,9 @@ const ADDR_LIMIT_MS = Number(process.env.VM_ADDR_LIMIT_MS) || 20 * 60000;    // 
 const KEEP_MS = process.env.VM_CENTER_KEEP_MS != null && process.env.VM_CENTER_KEEP_MS !== '' ? Number(process.env.VM_CENTER_KEEP_MS) : 30 * 60000;
 const KEEP_STATE = path.join(DIR, 'vm-center-keep.json');
 const KEEP_PHONE_BACKOFF_MS = 3 * 3600e3;   // 2단계·폰 승인 화면을 본 뒤 3시간은 다시 안 누름(텔레그램은 서버가 하루 1통)
+// #1295(대표 11/25 「불필요한 연락 같은데 계속 자주 와서 안 오도록」) = 간편 로그인 실패(login_fail)는 연속 이만큼일 때만 텔레그램 + 3시간 쉼 · 그 전에는 다음 30분 틱이 다시 눌러 봄(스스로 복구되면 0통)
+//   근거 = 11/24·11/25 두 번 다 「[VM]」 지시(claude)가 같은 단추 1번으로 바로 복구(금고·폰 인증 없음) · 포인트·배송지 지시도 (a) 단계에서 스스로 로그인함 · 폰 승인(need_phone)은 사람 손이 필요해 종전처럼 바로 알림
+const KEEP_FAIL_TELL = (n => Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 3)(Math.floor(Number(process.env.VM_CENTER_FAIL_TELL)));   // 0·빈 값·음수·숫자 아님 = 기본 3 · 1 = 종전(첫 실패에 바로) · 상한 20
 const CENTER_HOME = 'https://sell.smartstore.naver.com/#/home/dashboard';
 // #1242(대표 11/22 「왜 메모리 다 쓴 거야」) VM 메모리(커밋) 감시 = 1시간마다 여유를 재서 로그·heartbeat 에 남기고, 1GB 아래면 텔레그램(하루 1통) · 0 = 끔 · 윈도우 VM 에서만 잼
 const MEM_MS = process.env.VM_MEM_MS != null && process.env.VM_MEM_MS !== '' ? Number(process.env.VM_MEM_MS) : 3600e3;
@@ -443,7 +446,7 @@ let asideFactory = null, keepNotify = null;   // 시험용 갈아끼우기(_setK
 function keepRead() { try { const j = JSON.parse(fs.readFileSync(KEEP_STATE, 'utf8')); return j && typeof j === 'object' ? j : {}; } catch (e) { return {}; } }
 function keepWrite(patch) { try { fs.mkdirSync(DIR, { recursive: true }); const s = { ...keepRead(), ...patch }; const tmp = KEEP_STATE + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(s)); fs.renameSync(tmp, KEEP_STATE); } catch (e) { log('센터 유지 상태 쓰기 실패(무시): ' + e.message); } }
 // #1266 heartbeat 에 싣는 센터 유지 결과(노트북에서 읽히게 · 상태 파일의 center_* 칸 = 유지 틱이 실제로 돈 시각 · 「at」 칸은 어사이드 다시 열기가 앞당겨 써서 따로 둠) · 유지가 한 번도 안 돈 PC = 빈 것
-function hbCenter() { const k = keepRead(); return k.center_at ? { center: { state: String(k.center_state || ''), at: k.center_at, store: String(k.center_store || '').slice(0, 40) } } : {}; }
+function hbCenter() { const k = keepRead(); return k.center_at ? { center: { state: String(k.center_state || ''), at: k.center_at, store: String(k.center_store || '').slice(0, 40), ...(k.center_why ? { why: String(k.center_why).slice(0, 120) } : {}), ...(Number(k.fail_n) > 0 ? { fail_n: Number(k.fail_n) } : {}) } } : {}; }   /* #1295 why = 실패 틱의 단서(어느 화면·무엇을 눌렀나 · 손님 정보 없음) · fail_n = 연속 실패 수 → 노트북에서 VM 로그 없이 읽힘 */
 /* #1281 jsKeep(ro) = ro 면 「상태 읽기만」(로그인 실패·폰 승인 뒤 3시간 쉼 동안 · 단추 누름 0) · JS_KEEP = 종전 유지 틱(누름 있음) */
 const jsKeep = ro => `const RO = ${ro ? 'true' : 'false'};
 const HOME =${JSON.stringify(CENTER_HOME)};
@@ -613,7 +616,7 @@ async function keepMaybe(force) {
     // #1230 로그인은 됐는데 센터가 직영몰 스토어로 열려 있음(노트북·VM 이 같은 계정 = 마지막 스토어가 따라옴) → 알림만(자동으로 옮기지 않음) · 텔레그램은 하루 1통
     const wrongStore = !!r && (r.state === 'ok' || r.state === 'relogin') && /직영몰/.test(String(r.store || ''));
     if (wrongStore) r = { ...r, state: 'wrong_store', login: r.state };
-    keepWrite({ at, result: r && r.state, error: r && r.error || null, center_at: at, center_state: r && r.state || '', center_store: r && r.store || '', ...(r && r.state === 'need_phone' ? { phone_at: at } : {}), ...(roOk ? { phone_at: null, ro_at: at, ro_result: 'ok' } : {}) });   // #1266 center_* = heartbeat 가 실어 보냄 · #1281 roOk = 쉼 풀림
+    keepWrite({ at, result: r && r.state, error: r && r.error || null, center_at: at, center_state: r && r.state || '', center_store: r && r.store || '', center_why: r && (r.state === 'login_fail' || r.state === 'need_phone' || r.state === 'unknown' || r.state === 'error') ? clean(`first=${r.first ? 1 : 0} clicked=${r.clicked ? 1 : 0} waited=${Number(r.waited) || 0} opened=${r.opened ? 1 : 0}${r.where ? ' @' + r.where : ''}${r.error ? ' ' + r.error : ''}`, 120) : '', ...(r && r.state === 'need_phone' ? { phone_at: at } : {}), ...(roOk ? { phone_at: null, ro_at: at, ro_result: 'ok' } : {}) });   // #1266 center_* = heartbeat 가 실어 보냄 · #1281 roOk = 쉼 풀림
     if (st.keep_retry) keepWrite(r && r.state === 'error' && KEEP_MS > 0 ? { keep_retry: 0, at: new Date(Date.now() - KEEP_MS + 90000).toISOString() } : { keep_retry: 0 });   // #1242-2 어사이드를 다시 연 직후의 첫 틱이 오류면 90초 뒤 1번만 더
     log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.closed != null ? ' · 탭 닫음 ' + r.closed : ''}${r && r.error ? ' · ' + r.error : ''}`);
     if (r && (r.state === 'ok' || r.state === 'relogin') && !r.store) log('센터 로그인 유지 · 스토어 이름 못 읽음(머리 글 꼴이 바뀌었는지 확인)');
@@ -629,11 +632,15 @@ async function keepMaybe(force) {
         const told = await keepTell('VM 센터가 직영몰로 열려 있음 — VM 어사이드 센터에서 [스토어 이동]으로 「제주아꼼이네」 스마트스토어로 바꿔 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤', 'center_store');
         if (told) keepWrite({ store_told_day: kstDay() });
     }
-    if (r && (r.state === 'need_phone' || r.state === 'login_fail')) {
-        await keepTell(r.state === 'need_phone' ? '스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — VM 어사이드 센터 탭에서 승인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤'
-            : '스마트스토어센터 로그인 풀림(간편 로그인 안 됨) — VM 어사이드 센터 탭에서 로그인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤');
-        if (r.state === 'login_fail') keepWrite({ phone_at: at });   // 같은 3시간 쉼(단추 거듭 누르지 않게)
-    }
+    if (r && r.state === 'need_phone') await keepTell('스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — VM 어사이드 센터 탭에서 승인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤');
+    // #1295 간편 로그인 실패 = 연속 KEEP_FAIL_TELL 번째부터 텔레그램 + 3시간 쉼 · 그 전에는 알림 0 · 쉼 0(다음 30분 틱이 다시 누름) · 판정 못 함·어사이드 오류는 셈 그대로 · 로그인됨·폰 승인이 보이면 셈 0
+    if (r && r.state === 'login_fail') {
+        const n = (Number(st.fail_n) || 0) + 1; keepWrite({ fail_n: n });
+        if (n >= KEEP_FAIL_TELL) {
+            await keepTell(`스마트스토어센터 로그인 풀림(간편 로그인 안 됨${n > 1 ? ' · 연속 ' + n + '번' : ''}) — VM 어사이드 센터 탭에서 로그인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤`);
+            keepWrite({ phone_at: at });   // 같은 3시간 쉼(단추 거듭 누르지 않게)
+        } else log(`센터 로그인 유지 · 간편 로그인 실패 ${n}/${KEEP_FAIL_TELL} — 알림 없이 다음 틱에 다시 해 봄`);
+    } else if (r && r.state !== 'error' && r.state !== 'unknown' && st.fail_n) keepWrite({ fail_n: 0 });
     return r;
 }
 // #1087 포인트·배송지 쉼 없음 → #1088 모든 갈래 쉼 없음

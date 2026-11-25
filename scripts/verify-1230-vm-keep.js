@@ -151,7 +151,25 @@ async function runKeep(tabs, openTab, code) {
     ok('relogin + 스마트스토어 = relogin · 알림 0', k.state === 'relogin' && told.length === 0);
 
     next = { state: 'login_fail', clicked: false, first: false, where: 'sell.smartstore.naver.com/', store: '' }; k = await W.keepMaybe(true);
-    ok('login_fail = 종전 알림(갈래 center_login · 「간편 로그인 안 됨」) · 3시간 쉼', k.state === 'login_fail' && told.length === 1 && told[0].kind === 'center_login' && /간편 로그인 안 됨/.test(told[0].reason) && !!state().phone_at, JSON.stringify(told));
+    ok('#1295 login_fail 1번째 = 알림 0 · 3시간 쉼 0 · 셈 1(다음 30분 틱이 다시 누름)', k.state === 'login_fail' && told.length === 0 && !state().phone_at && state().fail_n === 1, JSON.stringify(told));
+    seen.length = 0; k = await W.keepMaybe(true);
+    ok('#1295 2번째 = 알림 0 · 쉼 0 · 셈 2 · 누름 있는 유지 틱 그대로', told.length === 0 && !state().phone_at && state().fail_n === 2 && /#1082/.test(seen[0] || ''), JSON.stringify(seen));
+    next = 'throw'; await W.keepMaybe(true); next = { state: 'unknown', where: 'x', store: '' }; await W.keepMaybe(true);
+    ok('#1295 사이에 어사이드 오류·판정 못 함 = 셈 그대로 2 · 알림 0', state().fail_n === 2 && told.length === 0);
+    next = { state: 'login_fail', clicked: true, first: true, waited: 6, where: 'accounts.commerce.naver.com/login', store: '' }; k = await W.keepMaybe(true);
+    ok('#1295 3번째 = 텔레그램 1통(갈래 center_login · 「간편 로그인 안 됨 · 연속 3번」 · 120자 안) · 3시간 쉼', told.length === 1 && told[0].kind === 'center_login' && /간편 로그인 안 됨 · 연속 3번/.test(told[0].reason) && told[0].reason.length <= 120 && !!state().phone_at && state().fail_n === 3, JSON.stringify(told));
+    ok('#1295 실패 단서가 상태 파일에 남음(어느 화면·무엇을 눌렀나)', String(state().center_why || '').includes('first=1 clicked=1 waited=6 opened=0 @accounts.commerce.naver.com/login'), state().center_why);
+    { const ago31 = new Date(Date.now() - 31 * 60000).toISOString(); fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...state(), at: ago31, phone_at: ago31 })); }   /* 31분 흐른 꼴(3시간 쉼 안) */
+    seen.length = 0; next = { state: 'logged_out', ro: true, where: 'x' }; k = await W.keepMaybe();
+    ok('#1295 알린 뒤 31분 = 종전 쉼 길(읽기만 틱이 돎 · 누름 0 · 알림 0 · 셈 그대로)', k !== null && k.state === 'logged_out' && seen.length === 1 && /#1281/.test(seen[0] || '') && told.length === 1 && state().fail_n === 3, JSON.stringify(seen));
+    next = { state: 'relogin', clicked: true, first: true, where: 'x', store: '제주아꼼이네' }; k = await W.keepMaybe(true);
+    ok('#1295 복구(relogin) = 셈 0 · 단서 지움 · 알림 추가 0', state().fail_n === 0 && !state().center_why && told.length === 1);
+    next = { state: 'login_fail', where: 'x', store: '' }; await W.keepMaybe(true); await W.keepMaybe(true);
+    ok('#1295 복구 뒤 다시 실패 2번 = 처음부터 셈(2) · 알림 0', state().fail_n === 2 && told.length === 1);
+    next = { state: 'ok', where: 'x', store: '제주아꼼이네' }; await W.keepMaybe(true);
+    ok('#1295 1~2번 끊겼다 스스로 살아남 = 0통 · 셈 0', state().fail_n === 0 && told.length === 1);
+    next = { state: 'login_fail', where: 'x', store: '' }; await W.keepMaybe(true); next = { state: 'need_phone', where: 'nid.naver.com/login' }; await W.keepMaybe(true);
+    ok('#1295 폰 승인이 보이면 = 종전처럼 바로 1통 · 실패 셈 0', told.length === 2 && /2단계·폰 승인/.test(told[1].reason) && state().fail_n === 0 && !!state().phone_at);
 
     reset(); told.length = 0; next = { state: 'need_phone', where: 'nid.naver.com/login' }; k = await W.keepMaybe(true);
     ok('need_phone = 종전 알림(center_login · 「2단계·폰 승인」) · 3시간 쉼', k.state === 'need_phone' && told.length === 1 && told[0].kind === 'center_login' && /2단계·폰 승인/.test(told[0].reason) && !!state().phone_at);
@@ -177,7 +195,7 @@ async function runKeep(tabs, openTab, code) {
     next = { state: 'unknown', where: 'x', store: '' }; await W.keepMaybe(true); await W.keepMaybe(true);
     ok('다시 unknown 2번 = 셈 2 · 알림 0(처음부터 다시 셈)', state().unknown_n === 2 && told.length === 1);
     next = { state: 'login_fail', where: 'x', store: '' }; await W.keepMaybe(true);
-    ok('login_fail 이 오면 셈 0(그 알림은 종전 갈래)', state().unknown_n === 0 && told.length === 2 && told[1].kind === 'center_login');
+    ok('login_fail 이 오면 unknown 셈 0(#1295 첫 실패는 알림 0 · 실패 셈 1)', state().unknown_n === 0 && told.length === 1 && state().fail_n === 1);
 
     console.log('── #1230-② 스토어 이름 못 읽음 · 머리 범위 3,000자');
     const LOGD = path.join(HOMED, '.akkome', 'logs'); const logText = () => { try { return fs.readdirSync(LOGD).filter(f => /^vm-watch-/.test(f)).map(f => fs.readFileSync(path.join(LOGD, f), 'utf8')).join('\n'); } catch (e) { return ''; } };
@@ -292,7 +310,9 @@ async function runKeep(tabs, openTab, code) {
         await W.keepMaybe(true); h = await hb();
         ok('유지 뒤 heartbeat.center = { state relogin · at · store 제주아꼼이네 }', h.center && h.center.state === 'relogin' && h.center.store === '제주아꼼이네' && h.center.at === st5().center_at && !Number.isNaN(Date.parse(h.center.at)), JSON.stringify(h));
         next5 = { state: 'login_fail', clicked: true, first: true, waited: 8, where: 'sell.smartstore.naver.com/', store: '' }; await W.keepMaybe(true); h = await hb();
-        ok('실패 뒤 heartbeat.center.state = login_fail · 텔레그램 종전 1통(center_login · 「간편 로그인 안 됨」) · 3시간 쉼', h.center.state === 'login_fail' && h.center.store === '' && told5.length === 1 && told5[0].kind === 'center_login' && /간편 로그인 안 됨/.test(told5[0].reason) && !!st5().phone_at, JSON.stringify(h) + JSON.stringify(told5));
+        ok('#1295 첫 실패 = heartbeat.center { state login_fail · fail_n 1 · why 단서 } · 텔레그램 0 · 쉼 0', h.center.state === 'login_fail' && h.center.fail_n === 1 && /first=1 clicked=1 waited=8/.test(h.center.why || '') && told5.length === 0 && !st5().phone_at, JSON.stringify(h.center));
+        await W.keepMaybe(true); await W.keepMaybe(true); h = await hb();
+        ok('연속 3번 실패 뒤 heartbeat.center.state = login_fail · fail_n 3 · 텔레그램 1통(center_login · 「간편 로그인 안 됨」) · 3시간 쉼', h.center.fail_n === 3 && h.center.state === 'login_fail' && h.center.store === '' && told5.length === 1 && told5[0].kind === 'center_login' && /간편 로그인 안 됨/.test(told5[0].reason) && !!st5().phone_at, JSON.stringify(h) + JSON.stringify(told5));
         next5 = { state: 'ok', where: 'x', store: '제주아꼼이네 직영몰' }; await W.keepMaybe(true); h = await hb();
         ok('직영몰로 열림 = heartbeat.center.state wrong_store · store 직영몰', h.center.state === 'wrong_store' && /직영몰/.test(h.center.store), JSON.stringify(h.center));
         fs.writeFileSync(W.KEEP_STATE, JSON.stringify({ ...st5(), at: '2026-01-01T00:00:00.000Z' })); h = await hb();
@@ -467,8 +487,8 @@ async function runKeep(tabs, openTab, code) {
         put6({ ...FAILED, result: 'need_phone', center_state: 'need_phone' }); seen6.length = 0; next6 = { state: 'ok', where: 'x', store: '제주아꼼이네 직영몰', ro: true }; k6 = await W.keepMaybe();
         ok('쉼 중 읽어 보니 로그인됐는데 직영몰 = 쉼 풀림 + 종전 직영몰 알림 1통', k6 && k6.state === 'wrong_store' && !st6().phone_at && told6.length === 1 && told6[0].kind === 'center_store', JSON.stringify(told6));
 
-        put6(FAILED); seen6.length = 0; next6 = { state: 'login_fail', where: 'x', store: '' }; k6 = await W.keepMaybe(true);
-        ok('force = 쉼 무시 종전 길(누름 있는 코드 · 종전 알림)', k6 && k6.state === 'login_fail' && !seen6[0].ro && told6.length === 2 && told6[1].kind === 'center_login');
+        put6({ ...FAILED, fail_n: 3 }); seen6.length = 0; next6 = { state: 'login_fail', where: 'x', store: '' }; k6 = await W.keepMaybe(true);   /* #1295 쉼은 연속 3번 실패 뒤에만 걸리므로 그때의 셈(3)을 같이 둠 */
+        ok('force = 쉼 무시 종전 길(누름 있는 코드 · 종전 알림 · #1295 연속 4번)', k6 && k6.state === 'login_fail' && !seen6[0].ro && told6.length === 2 && told6[1].kind === 'center_login' && told6[1].reason.includes('연속 4번') && st6().fail_n === 4);
         W._setKeep(null, null); try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
     }
 
