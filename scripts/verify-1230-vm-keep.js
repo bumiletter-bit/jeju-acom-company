@@ -8,6 +8,7 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'v1230-'));
 const HOMED = path.join(T, 'home'); fs.mkdirSync(path.join(HOMED, '.akkome'), { recursive: true });
 process.env.USERPROFILE = HOMED; process.env.HOME = HOMED;   // require 전에(잠금·상태 경로가 이 홈으로)
 delete process.env.EXP_AUTO_API; delete process.env.EXP_AUTO_TOKEN;
+process.env.VM_CENTER_FAIL_TELL = '3';   // #1297 기본은 「끔」 → 종전(#1295 연속 3번째 1통) 단언들은 변수를 3 으로 켠 꼴로 봄 · 끈 꼴은 「#1297」 단언에서 변수를 지우고 봄
 const W = require('./vm/vm-watch.js');
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => { if (cond) { pass++; console.log('  ✓ ' + name); } else { fail++; console.log('  ✗ ' + name + (extra ? ' · ' + extra : '')); } };
@@ -171,6 +172,24 @@ async function runKeep(tabs, openTab, code) {
     next = { state: 'login_fail', where: 'x', store: '' }; await W.keepMaybe(true); next = { state: 'need_phone', where: 'nid.naver.com/login' }; await W.keepMaybe(true);
     ok('#1295 폰 승인이 보이면 = 종전처럼 바로 1통 · 실패 셈 0', told.length === 2 && /2단계·폰 승인/.test(told[1].reason) && state().fail_n === 0 && !!state().phone_at);
 
+    console.log('── #1297 간편 로그인 실패 알림 기본 끔(변수 없음·0·글자) · 변수 N = 그 번째 1통');
+    for (const v of [undefined, '', '0', '-2', 'abc']) {
+        if (v === undefined) delete process.env.VM_CENTER_FAIL_TELL; else process.env.VM_CENTER_FAIL_TELL = v;
+        reset(); told.length = 0; seen.length = 0; next = { state: 'login_fail', clicked: true, first: true, waited: 6, where: 'accounts.commerce.naver.com/login', store: '' };
+        for (let i = 0; i < 25; i++) await W.keepMaybe(true);
+        ok('#1297 변수 ' + (v === undefined ? '없음' : JSON.stringify(v)) + ' = 25번 연속 실패해도 0통 · 3시간 쉼 0 · 셈 25 · 매번 누름 있는 틱 · 단서 남음', told.length === 0 && !state().phone_at && state().fail_n === 25 && seen.length === 25 && seen.every(x => /#1082/.test(x || '')) && /first=1 clicked=1/.test(state().center_why || ''), JSON.stringify(told));
+    }
+    delete process.env.VM_CENTER_FAIL_TELL;
+    next = { state: 'need_phone', where: 'nid.naver.com/login' }; await W.keepMaybe(true);
+    ok('#1297 끈 채로도 폰 승인 = 바로 1통 · 3시간 쉼 · 실패 셈 0', told.length === 1 && told[0].kind === 'center_login' && /2단계·폰 승인/.test(told[0].reason) && !!state().phone_at && state().fail_n === 0);
+    ok('#1297 폰 승인 글 = 할 일(승인) + 안 하면 밀리는 것([VM] 지시 실패) · 「멈춤」 글 없음 · 120자 안', /승인해 주세요/.test(told[0].reason) && /승인 전엔 포인트 지급·배송지 변경 \[VM\] 지시가 실패해요/.test(told[0].reason) && !/멈춤/.test(told[0].reason) && told[0].reason.length <= 120, told[0].reason.length + '자');
+    process.env.VM_CENTER_FAIL_TELL = '1'; reset(); told.length = 0; next = { state: 'login_fail', where: 'x', store: '' }; await W.keepMaybe(true);
+    ok('#1297 변수 1 = 첫 실패에 1통 + 3시간 쉼 · 글에 「그 전엔 … 멈춤」 없음 · 120자 안', told.length === 1 && /간편 로그인 안 됨\)/.test(told[0].reason) && /스스로 다시 로그인해 봐요/.test(told[0].reason) && !/멈춤/.test(told[0].reason) && told[0].reason.length <= 120 && !!state().phone_at, told[0] && told[0].reason);
+    process.env.VM_CENTER_FAIL_TELL = '99'; reset(); told.length = 0; for (let i = 0; i < 19; i++) await W.keepMaybe(true);
+    const n19 = told.length; await W.keepMaybe(true);
+    ok('#1297 변수 99 = 상한 20(19번까지 0통 · 20번째 1통 「연속 20번」 · 120자 안)', n19 === 0 && told.length === 1 && /연속 20번/.test(told[0].reason) && told[0].reason.length <= 120, told[0] && told[0].reason.length + '자');
+    process.env.VM_CENTER_FAIL_TELL = '3';
+
     reset(); told.length = 0; next = { state: 'need_phone', where: 'nid.naver.com/login' }; k = await W.keepMaybe(true);
     ok('need_phone = 종전 알림(center_login · 「2단계·폰 승인」) · 3시간 쉼', k.state === 'need_phone' && told.length === 1 && told[0].kind === 'center_login' && /2단계·폰 승인/.test(told[0].reason) && !!state().phone_at);
 
@@ -259,6 +278,29 @@ async function runKeep(tabs, openTab, code) {
         ok('유지 코드 = 여전히 센터 첫 화면만(#1082 조건) · [스토어 이동] 없음', /home\/dashboard/.test(W.JS_KEEP) && !/point|benefit|pay-order|저장|지급/.test(W.JS_KEEP) && !/스토어\s*이동/.test(W.JS_KEEP));
     }
 
+    console.log('── #1297 보완 = 알림을 안 보내는 실패 틱은 이 틱이 연 탭을 닫음');
+    {
+        const noOpenQ = async () => { throw new Error('openTab 불림'); };
+        let lg = [], nt = mkTab('first', {}, lg, 'N'), rq = await runKeep([], async () => nt, W.JS_KEEP_QUIET);
+        ok('조용한 코드 · 새로 연 탭이 login_fail = 그 탭 닫음(closed 1)', rq.state === 'login_fail' && rq.opened === true && rq.closed === 1 && nt.closed, JSON.stringify(rq));
+        lg = []; nt = mkTab('first', {}, lg, 'N'); rq = await runKeep([], async () => nt, W.JS_KEEP);
+        ok('종전 코드(알림을 보내는 틱) · 같은 꼴 = 화면 남김(closed 0)', rq.state === 'login_fail' && rq.closed === 0 && !nt.closed, JSON.stringify(rq));
+        lg = []; const old = mkTab('first', {}, lg, 'A'); rq = await runKeep([old], noOpenQ, W.JS_KEEP_QUIET);
+        ok('조용한 코드 · 원래 열려 있던 탭이 login_fail = 닫지 않음(closed 0)', rq.state === 'login_fail' && rq.closed === 0 && !old.closed && CLOSED.length === 0, JSON.stringify(rq));
+        lg = []; nt = mkTab('phone', {}, lg, 'N'); rq = await runKeep([], async () => nt, W.JS_KEEP_QUIET);
+        ok('조용한 코드 · 폰 승인 화면 = 종전처럼 남김(closed 0)', rq.state === 'need_phone' && rq.closed === 0 && !nt.closed, JSON.stringify(rq));
+        ok('조용한 코드 = QUIET 표식만 다름(누름·판정 줄은 종전 코드와 같음)', /const QUIET = true;/.test(W.JS_KEEP_QUIET) && /const QUIET = false;/.test(W.JS_KEEP) && W.JS_KEEP_QUIET.replace('const QUIET = true;', 'const QUIET = false;') === W.JS_KEEP);
+        const codes = []; let nx = { state: 'login_fail', where: 'x', store: '' };
+        W._setKeep(() => ({ start: async () => ({}), replJson: async (title, code) => { codes.push(code === W.JS_KEEP_QUIET ? 'quiet' : code === W.JS_KEEP ? 'keep' : code === W.JS_KEEP_RO ? 'ro' : '?'); return nx; }, stop: async () => { } }), async () => true);
+        const wipe = () => { try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } };
+        delete process.env.VM_CENTER_FAIL_TELL; wipe(); for (let i = 0; i < 5; i++) await W.keepMaybe(true);
+        ok('변수 없음(끔) = 실패가 이어져도 매 틱 조용한 코드', codes.join(',') === 'quiet,quiet,quiet,quiet,quiet', codes.join(','));
+        process.env.VM_CENTER_FAIL_TELL = '3'; wipe(); codes.length = 0; for (let i = 0; i < 3; i++) await W.keepMaybe(true);
+        ok('변수 3 = 1·2번째 조용한 코드 · 알림을 보내는 3번째는 종전 코드(화면 남김)', codes.join(',') === 'quiet,quiet,keep', codes.join(','));
+        process.env.VM_CENTER_FAIL_TELL = '1'; wipe(); codes.length = 0; await W.keepMaybe(true);
+        ok('변수 1 = 첫 틱부터 종전 코드', codes.join(',') === 'keep', codes.join(','));
+        process.env.VM_CENTER_FAIL_TELL = '3'; wipe(); W._setKeep(null, null);
+    }
     console.log('── #1266 간편 로그인 뒤 로그인 창(OAuth 팝업) 기다림 · heartbeat 센터 결과');
     {
         SCREENS.oauth = { u: 'https://accounts.commerce.naver.com/oauth/callback?code=x', txt: '로그인 처리 중', out: false, first: false, store: '' };

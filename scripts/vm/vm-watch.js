@@ -53,7 +53,9 @@ const KEEP_STATE = path.join(DIR, 'vm-center-keep.json');
 const KEEP_PHONE_BACKOFF_MS = 3 * 3600e3;   // 2단계·폰 승인 화면을 본 뒤 3시간은 다시 안 누름(텔레그램은 서버가 하루 1통)
 // #1295(대표 11/25 「불필요한 연락 같은데 계속 자주 와서 안 오도록」) = 간편 로그인 실패(login_fail)는 연속 이만큼일 때만 텔레그램 + 3시간 쉼 · 그 전에는 다음 30분 틱이 다시 눌러 봄(스스로 복구되면 0통)
 //   근거 = 11/24·11/25 두 번 다 「[VM]」 지시(claude)가 같은 단추 1번으로 바로 복구(금고·폰 인증 없음) · 포인트·배송지 지시도 (a) 단계에서 스스로 로그인함 · 폰 승인(need_phone)은 사람 손이 필요해 종전처럼 바로 알림
-const KEEP_FAIL_TELL = (n => Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 3)(Math.floor(Number(process.env.VM_CENTER_FAIL_TELL)));   // 0·빈 값·음수·숫자 아님 = 기본 3 · 1 = 종전(첫 실패에 바로) · 상한 20
+// #1297(대표 11/25 17:40 「꺼」 · 총괄이 「끄면 정말 막혔을 때 모름」을 알린 뒤) = 간편 로그인 실패 텔레그램 기본 끔(0통 · 3시간 쉼도 없음 = 30분마다 계속 다시 누름 · heartbeat center 칸 why·fail_n 은 그대로 남음)
+//   다시 켜기 = VM 환경 변수 VM_CENTER_FAIL_TELL 에 1~20(그 번째 연속 실패에 1통 + 3시간 쉼 · 20 초과는 20) · 없음·0·빈 값·음수·숫자 아님 = 끔 · 🔴 #1295 때의 「없으면 기본 3」은 폐기
+function keepFailTell() { const n = Math.floor(Number(process.env.VM_CENTER_FAIL_TELL)); return Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 0; }   /* 부를 때마다 읽음(검증이 값을 바꿔 가며 봄) */
 const CENTER_HOME = 'https://sell.smartstore.naver.com/#/home/dashboard';
 // #1242(대표 11/22 「왜 메모리 다 쓴 거야」) VM 메모리(커밋) 감시 = 1시간마다 여유를 재서 로그·heartbeat 에 남기고, 1GB 아래면 텔레그램(하루 1통) · 0 = 끔 · 윈도우 VM 에서만 잼
 const MEM_MS = process.env.VM_MEM_MS != null && process.env.VM_MEM_MS !== '' ? Number(process.env.VM_MEM_MS) : 3600e3;
@@ -448,7 +450,8 @@ function keepWrite(patch) { try { fs.mkdirSync(DIR, { recursive: true }); const 
 // #1266 heartbeat 에 싣는 센터 유지 결과(노트북에서 읽히게 · 상태 파일의 center_* 칸 = 유지 틱이 실제로 돈 시각 · 「at」 칸은 어사이드 다시 열기가 앞당겨 써서 따로 둠) · 유지가 한 번도 안 돈 PC = 빈 것
 function hbCenter() { const k = keepRead(); return k.center_at ? { center: { state: String(k.center_state || ''), at: k.center_at, store: String(k.center_store || '').slice(0, 40), ...(k.center_why ? { why: String(k.center_why).slice(0, 120) } : {}), ...(Number(k.fail_n) > 0 ? { fail_n: Number(k.fail_n) } : {}) } } : {}; }   /* #1295 why = 실패 틱의 단서(어느 화면·무엇을 눌렀나 · 손님 정보 없음) · fail_n = 연속 실패 수 → 노트북에서 VM 로그 없이 읽힘 */
 /* #1281 jsKeep(ro) = ro 면 「상태 읽기만」(로그인 실패·폰 승인 뒤 3시간 쉼 동안 · 단추 누름 0) · JS_KEEP = 종전 유지 틱(누름 있음) */
-const jsKeep = ro => `const RO = ${ro ? 'true' : 'false'};
+const jsKeep = (ro, quiet) => `const RO = ${ro ? 'true' : 'false'};
+const QUIET = ${quiet ? 'true' : 'false'};   /* #1297 알림을 안 보내는 실패 틱 = 로그인 실패 화면도 이 틱이 연 탭은 닫고 나감(30분마다 쌓이지 않게) */
 const HOME =${JSON.stringify(CENTER_HOME)};
 let t = null, opened = false;
 for (const x of tabs) { try { if (/^https:\\/\\/sell\\.smartstore\\.naver\\.com\\/#\\/home\\/dashboard/.test(x.url())) { t = x; break; } } catch (e) {} }
@@ -512,18 +515,18 @@ else state = a.first ? 'login_fail' : 'unknown';   /* #1230 주소만 보고 ok 
 let where = ''; try { const q = new URL(a.u); where = q.host + q.pathname; } catch (e) {}
 /* #1242 뒷정리 = 이 틱이 연 탭은 닫고 나감(30분마다 새 탭이 하나씩 쌓이지 않게 · 로그인은 쿠키라 탭을 닫아도 유지) · 원래 열려 있던 탭·사람이 풀어야 하는 화면(폰 승인·로그인 실패)은 그대로 둠 */
 let closed = 0;
-if (state === 'ok' || state === 'relogin' || state === 'unknown' || state === 'logged_out' || (RO && state === 'need_phone')) { const mine = [];   /* #1281-b 읽기만 틱이 연 탭은 폰 승인 화면이어도 닫음(쉼 3시간 동안 쌓이지 않게 · 누름 있는 틱의 「사람이 풀 화면은 둠」은 그대로) */   /* #1281 logged_out = 읽기만 틱이 연 탭(사람이 풀 화면 아님) */ if (opened) mine.push(t0); if (tPop) mine.push(tPop);
-  if (state === 'relogin' && clicked) { for (const x of pops()) mine.push(x); }   /* #1266 로그인은 됐는데 남은 로그인 창(간편 로그인 뒤 이 틱에 뜬 것만) */
+if (state === 'ok' || state === 'relogin' || state === 'unknown' || state === 'logged_out' || (RO && state === 'need_phone') || (QUIET && state === 'login_fail')) { const mine = [];   /* #1281-b 읽기만 틱이 연 탭은 폰 승인 화면이어도 닫음(쉼 3시간 동안 쌓이지 않게 · 누름 있는 틱의 「사람이 풀 화면은 둠」은 그대로) */   /* #1281 logged_out = 읽기만 틱이 연 탭(사람이 풀 화면 아님) */ if (opened) mine.push(t0); if (tPop) mine.push(tPop);
+  if ((state === 'relogin' || state === 'login_fail') && clicked) { for (const x of pops()) mine.push(x); }   /* #1266 로그인은 됐는데 남은 로그인 창(간편 로그인 뒤 이 틱에 뜬 것만) */
   if (retried) { try { for (const x of tabs) { if (x === t0 || x === tPop || pre0.has(x)) continue; let u = ''; try { u = x.url(); } catch (e) {} if (isSell({ u })) mine.push(x); } } catch (e) {} }   /* 첫 열기가 「실패」했는데 탭은 생겨 있던 때 = 이 틱이 만든 센터 탭 여분만(전부터 있던 탭은 pre0 로 가림) */
   for (const x of mine) { try { await closeTab(x); closed++; } catch (e) {} } }
 console.log(JSON.stringify({ state, clicked, first, opened, closed, waited, where, ro: RO, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
-const JS_KEEP = jsKeep(false), JS_KEEP_RO = jsKeep(true);
-async function keepCenterOnce(ro) {
+const JS_KEEP = jsKeep(false), JS_KEEP_RO = jsKeep(true), JS_KEEP_QUIET = jsKeep(false, true);
+async function keepCenterOnce(ro, quiet) {
     const aside = asideFactory ? asideFactory() : new (require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js')).Aside)(ASIDE_EXE, s => log(s));
     let timer = null;
     try {
         await aside.start();
-        return await Promise.race([aside.replJson(ro ? '#1281 센터 로그인 상태 읽기(누름 0)' : '#1082 센터 로그인 유지', ro ? JS_KEEP_RO : JS_KEEP), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('센터 유지 5분 넘음')), 5 * 60000); })]);
+        return await Promise.race([aside.replJson(ro ? '#1281 센터 로그인 상태 읽기(누름 0)' : '#1082 센터 로그인 유지', ro ? JS_KEEP_RO : quiet ? JS_KEEP_QUIET : JS_KEEP), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('센터 유지 5분 넘음')), 5 * 60000); })]);
     } finally { clearTimeout(timer); await Promise.resolve(aside.stop({ keepTabs: true })).catch(() => { }); }   // 센터 탭은 남김(다음 새로고침·지급이 씀)
 }
 // 🔵 텔레그램은 체험 자동(experience_auto)의 길을 빌림 → experience_auto.enabled 를 끄면(403) 로그인 알림도 같이 꺼짐(로그만 남음)
@@ -604,7 +607,8 @@ async function keepMaybe(force) {
     if (!asideFactory && !fs.existsSync(ASIDE_EXE)) return null;   // VM 아닌 PC
     if (!lockTake()) return null;
     let r;
-    try { r = await keepCenterOnce(ro); } catch (e) { r = { state: 'error', error: clean(e.message, 200) }; }
+    const tellAt0 = keepFailTell(), quiet = !ro && (!tellAt0 || (Number(st.fail_n) || 0) + 1 < tellAt0);   // #1297 이번에 실패해도 알림이 안 나갈 틱 = 연 탭을 닫고 나감(알림을 보내는 N번째·폰 승인은 종전처럼 화면을 남김)
+    try { r = await keepCenterOnce(ro, quiet); } catch (e) { r = { state: 'error', error: clean(e.message, 200) }; }
     finally { lockFree(); }
     const at = new Date().toISOString();
     if (ro && !(r && r.state === 'ok')) {   // #1281 읽기만 틱에서 로그인 전·폰 승인·판정 못 함·오류 = 쉼 그대로 · heartbeat 센터 칸 그대로(종전 실패 판정 유지) · 알림 0 · unknown 셈 0
@@ -624,22 +628,22 @@ async function keepMaybe(force) {
     if (r && r.state === 'unknown') {
         const n = (Number(st.unknown_n) || 0) + 1; keepWrite({ unknown_n: n });
         if (n >= 3 && st.unknown_told_day !== kstDay()) {
-            const told = await keepTell(`VM 센터 로그인 상태를 ${n}번 연속 못 읽음 — VM 어사이드에서 스마트스토어센터 첫 화면을 열어 로그인 상태를 봐 주세요 · 풀려 있으면 포인트·배송지 [VM] 멈춤`, 'center_unknown');
+            const told = await keepTell(`VM 센터 로그인 상태를 ${n}번 연속 못 읽음 — VM 어사이드에서 스마트스토어센터 첫 화면을 열어 로그인 상태를 봐 주세요 · 안 봐도 [VM] 지시는 올 때 스스로 로그인해 봐요(폰 승인 화면이면 실패)`, 'center_unknown');
             if (told) keepWrite({ unknown_told_day: kstDay() });
         }
     } else if (r && r.state !== 'error' && st.unknown_n) keepWrite({ unknown_n: 0 });
     if (wrongStore && st.store_told_day !== kstDay()) {
-        const told = await keepTell('VM 센터가 직영몰로 열려 있음 — VM 어사이드 센터에서 [스토어 이동]으로 「제주아꼼이네」 스마트스토어로 바꿔 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤', 'center_store');
+        const told = await keepTell('VM 센터가 직영몰로 열려 있음 — VM 어사이드 센터에서 [스토어 이동]으로 「제주아꼼이네」 스마트스토어로 바꿔 주세요 · 안 바꿔도 [VM] 지시가 스스로 옮겨 보고, 못 옮기면 지급·저장 없이 멈춰요', 'center_store');
         if (told) keepWrite({ store_told_day: kstDay() });
     }
-    if (r && r.state === 'need_phone') await keepTell('스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — VM 어사이드 센터 탭에서 승인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤');
-    // #1295 간편 로그인 실패 = 연속 KEEP_FAIL_TELL 번째부터 텔레그램 + 3시간 쉼 · 그 전에는 알림 0 · 쉼 0(다음 30분 틱이 다시 누름) · 판정 못 함·어사이드 오류는 셈 그대로 · 로그인됨·폰 승인이 보이면 셈 0
+    if (r && r.state === 'need_phone') await keepTell('스마트스토어센터 로그인 풀림(2단계·폰 승인 화면) — 네이버 폰 승인이 필요해요 · VM 어사이드 센터 탭에서 승인해 주세요 · 승인 전엔 포인트 지급·배송지 변경 [VM] 지시가 실패해요');
+    // #1295·#1297 간편 로그인 실패 = 기본 알림 0 · 쉼 0(30분마다 다시 누름 · 셈만 올림) · VM_CENTER_FAIL_TELL=N 이면 연속 N번째부터 텔레그램 + 3시간 쉼 · 판정 못 함·어사이드 오류는 셈 그대로 · 로그인됨·폰 승인이 보이면 셈 0
     if (r && r.state === 'login_fail') {
-        const n = (Number(st.fail_n) || 0) + 1; keepWrite({ fail_n: n });
-        if (n >= KEEP_FAIL_TELL) {
-            await keepTell(`스마트스토어센터 로그인 풀림(간편 로그인 안 됨${n > 1 ? ' · 연속 ' + n + '번' : ''}) — VM 어사이드 센터 탭에서 로그인해 주세요 · 그 전엔 포인트·배송지 [VM] 멈춤`);
+        const n = (Number(st.fail_n) || 0) + 1, tellAt = keepFailTell(); keepWrite({ fail_n: n });
+        if (tellAt && n >= tellAt) {
+            await keepTell(`스마트스토어센터 로그인 풀림(간편 로그인 안 됨${n > 1 ? ' · 연속 ' + n + '번' : ''}) — VM 어사이드 센터 탭에서 로그인해 주세요 · [VM] 지시는 올 때마다 스스로 다시 로그인해 봐요`);
             keepWrite({ phone_at: at });   // 같은 3시간 쉼(단추 거듭 누르지 않게)
-        } else log(`센터 로그인 유지 · 간편 로그인 실패 ${n}/${KEEP_FAIL_TELL} — 알림 없이 다음 틱에 다시 해 봄`);
+        } else log(`센터 로그인 유지 · 간편 로그인 실패 ${n}번째${tellAt ? '/' + tellAt : '(알림 끔)'} — 알림 없이 다음 틱에 다시 해 봄`);
     } else if (r && r.state !== 'error' && r.state !== 'unknown' && st.fail_n) keepWrite({ fail_n: 0 });
     return r;
 }
@@ -680,4 +684,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, JS_KEEP_RO, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, asideRecycleMaybe, ASIDE_KILL_PS, _setAsideKill: f => { asideKiller = f || null; }, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, JS_KEEP_QUIET, JS_KEEP_RO, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, asideRecycleMaybe, ASIDE_KILL_PS, _setAsideKill: f => { asideKiller = f || null; }, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
