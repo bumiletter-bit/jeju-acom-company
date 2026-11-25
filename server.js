@@ -956,6 +956,7 @@ async function initDB() {
     // 자동수집 타이머 (설계 2026-07-25): 정산 실행 시각 앵커 + 실패 사유 표시용 컬럼
     await pool.query(`ALTER TABLE naver_auto_collect ADD COLUMN IF NOT EXISTS run_at_time VARCHAR(5)`);
     await pool.query(`ALTER TABLE naver_auto_collect ADD COLUMN IF NOT EXISTS last_error TEXT`);
+    await pool.query(`ALTER TABLE naver_auto_collect ADD COLUMN IF NOT EXISTS fail_count INTEGER`);   // #1293 연속 실패 횟수(NULL = 모름 → 종전 꼴) · 새 타이머 키 아님
     await pool.query(`UPDATE naver_auto_collect SET run_at_time = '09:30' WHERE key = 'settlement' AND run_at_time IS NULL`);
     // 정산 자동수집 스냅샷 (원본은 네이버에 있으므로 30개 초과분 물리 정리 허용)
     await pool.query(`
@@ -11545,17 +11546,42 @@ async function runCollectorLimited(key, fn, limitMs, onWarn) {
 }
 // ── #794 수집기 시간 상한 끝 ──
 
-// 한 회차가 끝났을 때 기록 + 알림(종전 틱 끝 부분 그대로 · lateMin = 「늦게 끝남」 분)
+// 한 회차가 끝났을 때 기록 + 알림(종전 틱 끝 부분 그대로 · lateMin = 「늦게 끝남」 분) — verify-794 가 이 줄부터 떼어 감(#1293 구간도 그 안에)
+// ── #1293 연속 실패 알림 시작 (verify-1293-collect-alert.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) ──
+// 대표 11/25 「쿠팡은 쿠팡쪽 오류로 잠시 안 된 거 바로 오게 하지 말고 수집 3번 이상 실패 시 텔레그램」: 쿠팡 키(coupang_*)만 연속 N번째 실패에 1통 · 복구 알림은 실패 알림이 나간 때만.
+//   그 밖의 키 = 종전(정상→실패 전환 1통 · 실패→정상 1통). 연속 횟수 = naver_auto_collect.fail_count(배포에도 남음 · NULL = 칸 생기기 전 = 종전 꼴로 셈).
+const COLLECT_ALERT_AFTER = { coupang: 3 };   // 앞머리(키 '_' 앞) → 몇 번째 연속 실패에 알릴지 · 없으면 1(종전)
+function collectAlertAfter(key) { const n = COLLECT_ALERT_AFTER[String(key || '').split('_')[0]]; return n > 1 ? n : 1; }
+// r = 회차 시작 때 읽은 줄(last_status·fail_count) · status = 'ok'|'fail' → { count: 새 연속 횟수, alert: 'fail'|'recover'|null }
+function collectAlertDecide(r, status) {
+    const n = collectAlertAfter(r.key);
+    const prev = (r.fail_count == null || !Number.isFinite(Number(r.fail_count))) ? (r.last_status === 'fail' ? n : 0) : Math.max(0, Number(r.fail_count));   // NULL·직전 실패 = 이미 알림 나간 것으로(종전 꼴)
+    const count = status === 'fail' ? prev + 1 : 0;
+    if (n <= 1) return { count, alert: status === 'fail' ? (r.last_status !== 'fail' ? 'fail' : null) : (r.last_status === 'fail' ? 'recover' : null) };   // 종전 조건 그대로
+    if (status === 'fail') return { count, alert: count === n ? 'fail' : null };
+    return { count, alert: prev >= n ? 'recover' : null };
+}
+// ── #1293 연속 실패 알림 끝 ──
+
 async function finishCollect(r, res, lateMin) {
     let status = 'ok', errMsg = null, summary = '';
     if (res.e) { status = 'fail'; errMsg = String(res.e && res.e.message || res.e).slice(0, 300); }
     else { summary = res.v; if (lateMin) errMsg = `늦게 끝남(${lateMin}분)`; }   // #796 정상이어도 메모 칸에 남김(화면은 fail 일 때만 보여 줌)
-    await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
-        [r.key, status, errMsg]);
-    if (status === 'fail' && r.last_status !== 'fail') {
+    let dec = collectAlertDecide(r, status);   // #1293
+    try {
+        await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, fail_count=$4, updated_at=NOW() WHERE key=$1`,
+            [r.key, status, errMsg, dec.count]);
+    } catch (e) {
+        if (!/fail_count/.test(String(e && e.message || e))) throw e;   // 칸과 무관한 오류 = 종전처럼 던짐
+        // #1293 fail_count 칸이 없을 때(initDB 가 못 만든 경우) = 종전 기록 그대로 + 알림도 종전 조건(횟수를 못 세므로)
+        await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
+            [r.key, status, errMsg]);
+        dec = { count: 0, alert: status === 'fail' ? (r.last_status !== 'fail' ? 'fail' : null) : (r.last_status === 'fail' ? 'recover' : null) };
+    }
+    if (dec.alert === 'fail') {
         // 연속 실패 스팸 방지 — 정상→실패 전환 시에만 1회 알림
-        notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패 — ${errMsg}`);
-    } else if (status === 'ok' && r.last_status === 'fail') {
+        notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패${dec.count > 1 ? `(연속 ${dec.count}번째)` : ''} — ${errMsg}`);
+    } else if (dec.alert === 'recover') {
         // #599(대표 10/9 텔레그램 「쿠팡 자동수집 실패 coupang_relay_error_500」): 실패 알림만 오고 저절로 복구돼도 알 길이 없었다 → 실패→정상 전환 때 1회 복구 알림
         //   (실패분은 다음 회차가 같은 기간을 다시 읽어 따라잡는다 — 주문안내 2일 · 발송안내 7일 · 처리 이력(order_key)으로 중복 없음)
         notifyTelegram(`✅ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 복구 — 다시 정상${summary ? ' (' + String(summary).slice(0, 80) + ')' : ''}`);
