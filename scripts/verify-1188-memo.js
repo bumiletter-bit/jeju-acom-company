@@ -201,7 +201,7 @@ const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (k === 'at' ? undefine
         reset(); X = await newPage('new'); p = X.p;
         await openEdit(p, '504'); await p.click('#om-card .om-smb [data-cact="smgo"]'); await p.waitForSelector('#om-card .om-smb-n'); await p.waitForTimeout(600);
         await p.fill('#om-card [data-cact="bxf"][data-k="m"]', '전혀 다른 글'); await p.click('#om-card-save'); await p.waitForSelector('#om-card', { state: 'hidden' }); await p.waitForTimeout(900);
-        ok(S.saves.length === 1 && S.saves[0].rows[0].boxes[0].m === '전혀 다른 글' && S.deleted.size === 0, '점검 3) 넘긴 글이 저장에 안 들어갔으면 옛 보통 줄 안 지움', [...S.deleted]);
+        ok(S.saves.length === 0 && S.puts.length === 1 && S.puts[0]._id === 504 && S.puts[0].boxes[0].m === '전혀 다른 글' && S.deleted.size === 0, '점검 3 → #1290 ①(대표 11/25) 다른 글로 저장해도 그 옛 줄(504)을 고쳐 씀 · 새 줄 0 · 지움 0', { saves: S.saves.length, puts: S.puts.map(x => x._id), deleted: [...S.deleted] });
         await X.cx.close();
         // 점검 4) 2박스 주문 · 저장된 박스별 줄의 박스 주소가 서로 다름 = 안 채움 + 안내
         reset(); S.extra = (Ln, Bx) => [Bx(526, [Object.assign(B0(), { a: '서울 강남구 1' }), Object.assign(B0(), { a: '부산 해운대구 2' })], '박스별 2박스 · 박스1=그대로(주소 바꿈) · 박스2=그대로(주소 바꿈)'), Ln(527, '부재 시 문 앞', { key: K(526), line: K(526) + ' 부재 시 문 앞 네이버' })]; S.lookup[dg(K(526))] = [ord(526, { qty: 2 })]; X = await newPage('new'); p = X.p;

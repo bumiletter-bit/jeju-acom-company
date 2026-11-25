@@ -323,7 +323,7 @@
             if ($('om-callog')) { $('om-callog').remove(); return; }   // #1166 기록 판
             if (CAL.inp) { calClose(true); return; }   // #1161 발송일 달력 = 달력만 닫힘
             if (OM.opt) { optClose(true); return; }
-            if (OM.card) { cardClose(); return; }
+            if (OM.card) { cardClose(); return; }   // #1290 ② 묻는 판(ceAsk) = cardClose 가 그 판만 닫음
             if (OM.tp) { tpClose(true); return; }   // #862 줄 입력판
             if (OM.prevOpen) { prevShow(false, true); return; }
             close(true);
@@ -1222,6 +1222,7 @@
     function cardClose(force, fromHist) {
         const c = OM.card; if (!c) return;
         if (CAL.inp) calClose(false);   // #1169 달력이 뜬 채 카드 뒤로가기 = 달력부터 닫고 종전대로(묻기 포함)
+        if (!force && c.ceAsk) { c.ceAsk = null; renderConfirm(); if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0); return; }   // #1290 ② 묻는 판이 뜬 채 ×·뒤로가기 = 그 판만 닫힘(카드·[저장] 그대로)
         if (!force && (c.dirty || c.fileN) && !c.confirm) {   // #895 파일로 넣은 줄 = 고친 것으로 셈(닫을 때 묻기)
             c.confirm = true; renderConfirm();
             if (fromHist) setTimeout(() => { if (OM.card === c) hbPush(c.hk || 'omcard', () => cardClose(false, true)); }, 0);   // 뒤로가기로 빠진 칸을 다시 쌓는다(아직 닫지 않음) — 다음 틱에: 기록 쪽이 칸을 닫는 고리를 다 돈 뒤(안에서 쌓으면 그 고리가 바로 또 닫음)
@@ -1251,6 +1252,11 @@
         const items = q.diff.map(x => `<li><b>${esc(telShow(q.rows[x.i].key))}</b> 이미 ${esc(x.kind)} 줄이 있어요 · 「${esc(lineView(x.olds[0].note))}」${x.olds[0].ship_date ? ' ' + esc(md(x.olds[0].ship_date)) : ''} → 「${esc(lineView(q.rows[x.i].note))}」${q.rows[x.i].ship_date ? ' ' + esc(md(q.rows[x.i].ship_date)) : ''}</li>`).join('');
         f.innerHTML = `<div class="om-confirm om-dup" role="alert"><b>새 것으로 바꿀까요?</b><ul>${items}</ul>${q.same.length ? `<small>똑같은 줄 ${q.same.length}개는 이미 있어 빼고 저장해요</small>` : ''}</div><button type="button" class="om-btn" data-cact="dupkeep">취소</button><button type="button" class="om-btn primary" data-cact="dupswap">바꾸기</button>`;
         const d = f.querySelector('[data-cact="dupswap"]'); if (d) d.focus({ preventScroll: true });
+    }
+    function renderCeAsk() {   // #1290 ② [고객정보수정] 새로 넣기 · 같은 번호 열린 기사님 글 줄 1개 = 발 칸에 한 번 묻기(뒤로가기 기록 안 씀 · 닫기·Esc·뒤로가기 = 이 판만 닫힘 → [저장] 그대로)
+        const f = $('om-card').querySelector('.om-card-f'), q = OM.card && OM.card.ceAsk; if (!f || !q) return;
+        f.innerHTML = `<div class="om-confirm om-dup om-ceask" role="alert"><b>이 번호에 이미 메모 줄이 있어요 · 그 줄을 이 내용으로 바꿀까요?</b><ul><li>「${esc(cut1(q.note, 60))}」</li></ul><small>[바꾸기] = 그 줄의 글은 이 내용으로 바뀌어요(새 줄 없음) · [따로 넣기] = 그 줄은 그대로 두고 새 줄로 저장</small></div><button type="button" class="om-btn" data-cact="ceaskx">닫기</button><button type="button" class="om-btn" data-cact="ceasksep">따로 넣기</button><button type="button" class="om-btn primary" data-cact="ceaskswap">바꾸기</button>`;
+        const d = f.querySelector('[data-cact="ceaskswap"]'); if (d) d.focus({ preventScroll: true });
     }
     async function loadCatalog() {
         const res = await API.catalog();
@@ -2595,6 +2601,13 @@
             acPut(road, { raw: road, state: 'one', road, detail: A.detail, bd: B });
             clearTimeout(r._addrT); r._addr = { state: 'one', raw: road, road, detail: A.detail, bd: B }; touched(ri, f); clearTimeout(r._addrT); addrPaint(ri); return;
         }
+        if (a === 'ceaskswap' || a === 'ceasksep' || a === 'ceaskx') {   // #1290 ② 바꾸기 = 그 줄 PUT · 따로 넣기 = 종전(새 줄) · 닫기 = 판만 닫힘([저장]을 다시 누르면 다시 물음)
+            const q = c.ceAsk; if (!q) return; c.ceAsk = null; renderConfirm();
+            if (a === 'ceaskx') return;
+            c._ceAskDone = true; c._ceSwap = a === 'ceaskswap' ? q.id : null; c._ceAskD = q.d;
+            const sv = $('om-card-save'); if (sv) return cardSave(sv);
+            return;
+        }
         if (a === 'dupswap' || a === 'dupkeep') {   // #850-f 바꾸기 = 옛 줄 지우고 새 것 · 취소 = 카드 그대로(고치거나 그 줄 빼고 다시 저장)
             const q = c.dupAsk; if (!q) return; c.dupAsk = null;
             if (a === 'dupkeep') { renderConfirm(); return; }
@@ -2636,10 +2649,20 @@
             // #1286 ③(대표 11/24 줄 1129 → 1131) 줄 카드 [배송메세지로 넣기]로 온 판 = 배송메세지가 든 첫 박스별 줄을 새로 만들지 않고 그 옛 보통 줄(F.id)에 고쳐 씀(같은 줄 · 같은 자리 · 손으로 지울 줄 0)
             //   옛 줄 = 아직 열린 보통 줄(기사님 글 줄 · 박스별·날짜·입력삭제 줄 아님 · 발주에 넣은 표식 used_on 없음)일 때만 · 그 주문에 이미 박스별 줄이 있으면(same) 그 줄 PUT + 옛 줄 「비운 것」(종전)
             //   점검 3(#1188) 유지 = 넘긴 글이 실려 갔을 때만(smCarried) · 옛 줄 PUT 이 실패하면(다른 사람이 지움·409 등) 그 줄은 종전대로 새 줄 POST(저장이 먼저 · 막히는 길 0)
-            const F0 = c.smFrom || null, smOld = smOldRow(F0);
+            //   #1290 ①(대표 11/25 「권하는 쪽」) 줄을 눌러 들어온 저장 = 글이 달라도 그 옛 줄을 바꿈(점검 3 「실렸을 때만」 풂) · 옛 메모를 남기고 하나 더 = [넣기]·[고객정보수정] 새로 넣기로만
+            //   그대로 둔 조건 = 열린 줄·used_on 없음(이미 발주에 쓴 줄은 안 바꿈 → 종전 길)·기사님 글 줄(isDoorRow) · PUT 실패 → 새 줄 POST(종전 안전길)
+            //   #1290 ② [고객정보수정] 새로 넣기 + 같은 번호 열린 기사님 글 줄 1개 = 「바꾸기」를 고르면 그 줄 id 로 같은 길(c._ceSwap)
             const smHasM = x => x && x._ceK === 'box' && (x.boxes || []).some(b => b && !b.s && String(b.m || '').trim());
-            let smInto = null;
-            for (const x of out) { const o = same(x); if (!o && smOld && !smInto && smCarried(F0, x)) { const res = await API.update(smOld.id, { key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked, boxes: x.boxes }); if (res.ok) { smInto = x; putIds.add(smOld.id); } else posts.push(x); continue; } if (o) { putIds.add(o.id); const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
+            if (c._ceAskD != null && c._ceAskD !== digits(ce.key)) { c._ceAskDone = false; c._ceSwap = null; c._ceAskD = null; }   // #1290 점검 b 고른 뒤 번호를 바꿈 = 고른 것 무효(다른 손님 줄을 덮지 않게)
+            if (!c.smFrom && !c._ceAskDone && out.some(smHasM)) {   // #1290 점검 A 배송메세지가 실제로 실릴 때만 묻기(주소·받는 분만 고친 저장 = 옛 기사님 글 줄 무접촉)
+                const ceD = digits(ce.key), pl = new Set(out.map(x => String(x.plat || '')).filter(Boolean));
+                const dr = (OM.list || []).filter(o => o.id != null && o.state === 'open' && !o.used_on && isDoorRow(o) && !/보내는\s*(?:이|분|사람)|드림/.test(String(o.note || '')) && digits(o.key) === ceD && (!o.plat || !pl.size || pl.has(String(o.plat))));
+                if (dr.length === 1) { c.ceAsk = { id: dr[0].id, note: smText(dr[0]), d: ceD }; c._saving = false; btn.disabled = false; btn.innerHTML = keep0; renderCeAsk(); return; }   // 2줄 이상 = 애매 → 묻지 않고 종전(따로 넣기)
+            }
+            const F0 = c.smFrom || (c._ceSwap != null ? { id: c._ceSwap, text: '' } : null), smOld0 = smOldRow(F0), smOld = smOld0 && c._ceSwap != null && !c.smFrom && digits(smOld0.key) !== digits(ce.key) ? null : smOld0;   // #1290 점검 b 쓰는 순간 그 줄 번호 = 지금 번호인지 한 번 더
+            let smInto = null, smFail = false;
+            const smPick = smOld ? (out.find(x => !same(x) && smHasM(x)) || null) : null;   // #1290 점검 A 배송메세지가 든 박스별 줄만(없으면 옛 줄 무접촉 · PUT 은 「비운 것」에 안 남아 덮으면 되살릴 길 없음)
+            for (const x of out) { const o = same(x); if (!o && smOld && !smInto && x === smPick) { const res = await API.update(smOld.id, { key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked, boxes: x.boxes }); if (res.ok) { smInto = x; putIds.add(smOld.id); } else { smFail = true; posts.push(x); } continue; } if (o) { putIds.add(o.id); const res = await API.update(o.id, Object.assign({ key: x.key, note: x.note, plat: x.plat, ship_date: x.ship_date || null, checked: x.checked }, x._ceK === 'box' ? { boxes: x.boxes } : {})); if (res.ok) nPut++; else bad = res; } else posts.push(x); }
             if (!bad && posts.length) { const res = await API.save({ raw: '', tags: [], source: 'manual', rows: posts.map(outRow) }); if (!res.ok) bad = res; }
             if (OM.card !== c) return;
             if (bad) { c._saving = false; btn.disabled = false; btn.innerHTML = keep0; toast(errText(bad, '저장하지 못했어요 · 다시 눌러 주세요')); return; }
@@ -2651,8 +2674,11 @@
                 if (nFail) staleMsg = ` · 옛 날짜 줄 ${nFail}개는 못 지웠어요 — 목록에서 직접 지워 주세요`;   // 점검 ④
             }
             { const te0 = $('om-tp-tel'); if (te0) te0.value = ''; OM.tpLast = null; OM.tpSaved = null; }   // #1168 저장 뒤 꼬리표 번호 칸 비움(다음 손님 번호를 지우고 넣지 않게)
-            const F = c.smFrom || null, smOk = !!(F && out.some(x => smCarried(F, x))); let smMsg = '';   /* #1286 ③ 넘긴 글이 실려 저장됐을 때(종전 = 글자 그대로만 → 「배송메세지수정」 머리말을 지우면 옛 줄이 남음 · 11/24 줄 1129 · 이제 머리말·빈칸·문장부호 무시) */   // #1188 줄 카드에서 넘어온 글이 배송메세지로 저장됨 = 옛 보통 줄을 「비운 것」으로(되살리기 가능 · 박스별 줄 저장이 된 뒤에만)
-            if (smInto) smMsg = ' · 옛 보통 줄을 이 내용으로 바꿨어요(새 줄 없음)';   // #1286 ③ 같은 줄을 고쳐 씀 = 지울 것 없음(nPut 에 안 셈)
+            const F = F0, smOk = !!(F && out.some(x => smCarried(F, x))); let smMsg = '';   /* #1286 ③ 넘긴 글이 실려 저장됐을 때(종전 = 글자 그대로만 → 「배송메세지수정」 머리말을 지우면 옛 줄이 남음 · 11/24 줄 1129 · 이제 머리말·빈칸·문장부호 무시) */   // #1188 줄 카드에서 넘어온 글이 배송메세지로 저장됨 = 옛 보통 줄을 「비운 것」으로(되살리기 가능 · 박스별 줄 저장이 된 뒤에만)
+            if (smInto) smMsg = c._ceSwap != null ? ' · 이 번호 옛 메모 줄을 이 내용으로 바꿨어요(새 줄 없음)' : ' · 옛 보통 줄을 이 내용으로 바꿨어요(새 줄 없음)';   // #1286 ③ 같은 줄을 고쳐 씀 = 지울 것 없음(nPut 에 안 셈)
+            else if (smFail) smMsg = ' · 옛 메모 줄이 방금 바뀌어 그대로 두고 새 줄로 넣었어요 · 필요 없으면 목록에서 지워 주세요';   // #1290 옛 줄 PUT 실패(409 등) = 새 줄 POST · 남이 방금 고친 옛 줄은 지우지 않음
+            else if (smOld) { if (out.some(smHasM)) { const y = await API.remove(smOld.id); smMsg = y && y.ok ? ' · 옛 보통 줄은 지웠어요(이미 있던 박스별 줄에 넣음 · 「비운 것」에서 되살릴 수 있어요)' : ' · 옛 보통 줄은 못 지웠어요 — 목록에서 직접 지워 주세요'; } else smMsg = ' · 배송메세지를 안 넣어 옛 보통 줄은 그대로 뒀어요'; }   // #1290 ① 그 주문에 박스별 줄이 이미 있음(그 줄 PUT) = 옛 줄은 「비운 것」(글이 달라도)
+            else if (c._ceSwap != null) smMsg = ' · 그 메모 줄은 이미 없어졌거나 바뀌어 새 줄로 넣었어요';   // #1290 점검 d [바꾸기] 뒤 그 줄이 사라짐(다른 사람이 지움·발주에 씀)
             else if (F && F.id != null && !smOk && out.some(smHasM)) smMsg = ' · 옛 보통 줄은 글이 달라 남겨 뒀어요 · 필요 없으면 목록에서 지워 주세요';   // #1188 점검 3 = 전혀 다른 글로 저장하면 옛 글을 지우지 않음
             else if (smOk && F.id != null) { const y = await API.remove(F.id); smMsg = y && y.ok ? ' · 옛 보통 줄은 지웠어요(「비운 것」에서 되살릴 수 있어요)' : ' · 옛 보통 줄은 못 지웠어요 — 목록에서 직접 지워 주세요'; }
             if (smOk && F.clearRaw) { const raw = $('om-raw'); if (raw) { OM.telLn = null; raw.value = ''; OM.raw = ''; OM.tags.clear(); OM.smsSrc = null; syncTags(); inState(); } }
