@@ -7173,7 +7173,7 @@ async function tgSendBlocks(blocks) {
     const res = [];
     for (let i = 0; i < blocks.length; i++) {
         if (i) await new Promise(r => setTimeout(r, 1100));
-        const r = await notifyTelegram(blocks[i], { html: true });
+        const r = await notifyTelegram(blocks[i], { html: true, keepNums: true });   // #1300 손님 응대 알림(톡톡·카카오·문자·상품문의·고객문의) = 주문번호·전화·금액 그대로(대표 11/26 「번호도 다 나와야」)
         res.push(r);
         if (r !== 'sent') break;   // 꺼짐·토큰 없음·실패면 나머지는 안 보냄(톡톡 큐는 남은 건 다음 틱에)
     }
@@ -8742,7 +8742,6 @@ const CLAIM_REASON_KO = {
 };
 const CLAIM_TAIL = '→ 판매자센터 › 반품·교환 관리';
 function claimShort(v, n) { const t = String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
-function claimTelMask(v) { return String(v == null ? '' : v).replace(/01[016789][\s.\-]?\d{3,4}[\s.\-]?(\d{4})/g, '010-****-$1'); }   // 손님 글 속 휴대폰 번호 = 끝 4자리만(tgMask 는 하이픈 번호를 못 가림)
 function claimDay(v) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? `${m[1]}-${m[2]}-${m[3]}` : ''; }
 // o = { isExp(po)→bool, labels{신청값:한글}, reasonLabels{코드:한글}, kindHint{상품주문번호:'RETURN'|'EXCHANGE'}, visit(옵션 글, 주문 ms)→{month,day,time} }
 function claimDetailBlock(it, o) {
@@ -8758,9 +8757,9 @@ function claimDetailBlock(it, o) {
     const whoTxt = who ? ` · ${who} 신청` : '';
     const head = exp ? `🟪🎟️ 체험 취소·반품${whoTxt}` : kind === 'EXCHANGE' ? `🟧 교환 요청${whoTxt}` : `🟥 반품 요청${whoTxt}`;
     const fields = [];
-    const buyer = tgMask(claimShort(od.ordererName, 30), 60);   // 대표 11/10 = 이 알림만 이름 전체(가림 예외) · 숫자만 가림
+    const buyer = claimShort(od.ordererName, 30).slice(0, 60);   // 대표 11/10 = 이 알림만 이름 전체(가림 예외) · #1300 숫자 가림도 뺌(대표 「정보들 다」)
     if (buyer) fields.push(['구매자', buyer]);
-    const pname = tgMask(claimShort(po.productName, 30), 80), popt = exp ? '' : tgMask(claimShort(po.productOption, 70), 120);   // 체험 = 옵션 글 길어 뺌(방문 일시는 「체험」 줄)
+    const pname = claimShort(po.productName, 30).slice(0, 80), popt = exp ? '' : claimShort(po.productOption, 70).slice(0, 120);   // 체험 = 옵션 글 길어 뺌(방문 일시는 「체험」 줄)
     const qn = Number(cl && cl.requestQuantity) || Number(po.quantity) || 0;
     const goods = [pname, popt].filter(Boolean).join(' / ');
     if (goods || qn) fields.push(['상품', goods + (qn ? `${goods ? ' · ' : ''}${qn}개` : '')]);
@@ -8768,7 +8767,7 @@ function claimDetailBlock(it, o) {
     const RL = (o.reasonLabels && typeof o.reasonLabels === 'object') ? o.reasonLabels : {};
     const rko = code ? (typeof RL[code] === 'string' && RL[code].trim() ? RL[code].trim() : (CLAIM_REASON_KO[code] || code)).slice(0, 40) : '';
     const detRaw = cl ? String((kind === 'EXCHANGE' ? cl.exchangeDetailedReason : cl.returnDetailedReason) || cl.returnDetailedReason || cl.exchangeDetailedReason || '') : '';
-    const det = tgMask(claimTelMask(claimShort(detRaw, 120)), 200);
+    const det = claimShort(detRaw, 120).slice(0, 200);   // #1300 손님 글 속 번호·금액 그대로(종전 = 휴대폰 끝 4자리만 · 5자리 이상 ●●●)
     if (rko || det) fields.push(['사유', [rko, det ? `"${det}"` : ''].filter(Boolean).join(' ')]);
     const day = claimDay(od.orderDate || od.paymentDate);
     if (day || poid) fields.push(['주문', [day, poid].filter(Boolean).join(' · ')]);
@@ -9408,6 +9407,7 @@ async function collectLmsGuideStore(store, ctx) {
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
+//   #1300(대표 11/26) 고객문의 저장에는 더 안 씀(원문 저장) · 지금 쓰는 곳 = 상품문의 저장(공개 게시판) · 고객문의 AI 재료(inquiryGenerate)
 function naverMaskContact(s) {
     return String(s || '')
         .replace(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g, '(연락처)')
@@ -9417,7 +9417,7 @@ function naverMaskContact(s) {
 
 // 고객문의 수집 (공식문서 확정 2026-07-26: GET /v1/pay-user/inquiries — startSearchDate/endSearchDate 필수 yyyy-MM-dd,
 //   page 1~, size 10~200, 최대 365일. 응답 content[].inquiryNo가 고유키)
-//   A안: 최소 필드만 저장(유형·제목·내용[마스킹]·상품정보·등록일·답변여부) — customerId/customerName은 저장하지 않음.
+//   A안: 최소 필드만 저장(유형·제목·내용·상품정보·등록일·답변여부) — customerId/customerName은 저장하지 않음. (내용 [마스킹]은 #1300 에서 뺌 = 원문)
 // #1202 바깥 이름·결과 글은 종전 그대로 · 직영몰 스위치(naver_biz_store + 중계서버 열쇠) 켜짐이면 스마트스토어 다음에 직영몰을 같은 길로 한 번 더
 //   직영몰 = store 'biz' 로 조회 · 저장 줄 store 'biz' · 답 등록은 naverPostInquiryAnswer 가 줄의 store 로 · 켠 뒤 들어온 미답변만 자동 응대 · 금액 재료 없음 · 실패 알림 30분 1통
 async function collectInquiry() {
@@ -9456,14 +9456,15 @@ async function collectInquiryStore(store) {
             const id = String(q.inquiryNo || '');
             if (!id) continue;
             const item = {
-                category: q.category || '', title: naverMaskContact(q.title),
-                content: naverMaskContact(q.inquiryContent),
+                // #1300(대표 11/26 「연락처도 정보들 다 나오도록」) 제목·내용·답 = 원문 저장(종전 7/26 A안 = 「(연락처)」·「(이메일)」로 바꿔 저장) · AI 재료는 inquiryGenerate·글샘이 그때 가림
+                category: q.category || '', title: String(q.title || ''),
+                content: String(q.inquiryContent || ''),
                 product_no: String(q.productNo || ''), product_name: q.productName || '',
                 product_option: q.productOrderOption || '',
                 registered_at: q.inquiryRegistrationDateTime || '',
                 answered: !!q.answered,
                 // 대표 7/28: 판매자센터·자동 게시 답변 본문 — 조회 응답 content[].answerContent (개발자포럼 #3161 확정). 마스킹 동일 적용
-                answer_content: naverMaskContact(q.answerContent || ''),
+                answer_content: String(q.answerContent || ''),
             };
             const res = isBiz
                 ? await pool.query(   // #1202 직영몰 줄 = store 'biz'(새 줄일 때만 적음 · 갱신은 raw·answered 만 = 종전과 같은 칸)
@@ -9487,6 +9488,7 @@ async function collectInquiryStore(store) {
     let inqPosted = 0, inqStaff = 0, inqFailed = 0;
     const inqDone = [];   // #1069 답변완료 건마다 텔레그램 한 통(상품·문의·답 전체)
     const inqStaffBlocks = [], inqMeta = f => ({ id: f.id, at: tgMd(f.item.registered_at), product: f.item.product_name }), inqQ = f => [f.item.title, f.item.content].filter(x => String(x || '').trim()).join('\n');   // #1128 사람 몫 건마다 한 통(🟥)
+    const inqJ = f => [f.item.title, f.item.content].map(naverMaskContact).filter(x => String(x || '').trim()).join('\n');   // #1300 판정(불만·직영몰 없는 품목·가격 60자)은 종전처럼 가린 글로(저장이 원문이 돼도 판정 글자 같게) · 알림은 inqQ = 원문
     const KIND = isBiz ? '직영몰 고객문의' : '고객문의';   // #1202 🟥 알림 머리(직영몰만 앞에 「직영몰」)
     if (freshItems.length) {
         const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
@@ -9500,8 +9502,8 @@ async function collectInquiryStore(store) {
             }
             // #1129·#1130 사람 몫이 미리 정해지는 글 = AI 부르기 전에 가름(생성 0 · ai_status 'staff' = 새 값 · 목록은 「✍️ 직원 답변 필요」 · 초안은 손님 연락에서 요청 시) · 🟥 알림은 「봇 초안」 줄 없이
             //   (a) 글 내용(배송·상품 카테고리에 적힌 받은 상품 불만·교환/반품 요청 · 카테고리 반품·교환·환불은 위 claim 갈래 종전) (b) 자동 등록 꺼짐(inquiry_auto_post 기본값) · 그대로 = 켜진 정상 건(생성 → 자동 게시 🟦) · 생성 실패 skip · 등록 실패(초안 남음 · 🟥)
-            const qcs = claimStaffOn ? qnaClaimStaff(inqQ(f)) : '';
-            const miss = isBiz ? bizInqMissing(inqQ(f), bz.missing_words) : [];   // #1202 직영몰에 없는 품목 = 직원 몫(톡톡과 같게)
+            const qcs = claimStaffOn ? qnaClaimStaff(inqJ(f)) : '';
+            const miss = isBiz ? bizInqMissing(inqJ(f), bz.missing_words) : [];   // #1202 직영몰에 없는 품목 = 직원 몫(톡톡과 같게)
             const pre = qcs ? ['불만·교환·반품 = 직원 몫', qcs + ' 글이라 봇이 답하지 않았어요'] : miss.length ? ['직영몰 · 없는 상품 문의', miss.join(', ') + ' — 직영몰에 없는 품목이라 봇이 답하지 않았어요'] : !autoOn ? ['자동 등록 꺼짐', ''] : null;
             if (pre) {
                 await pool.query(`UPDATE naver_inquiries SET ai_status='staff' WHERE inquiry_id=$1`, [f.id]);
@@ -9509,7 +9511,7 @@ async function collectInquiryStore(store) {
                 continue;
             }
             let gen = null;
-            if (isBiz && bizInqIsPrice(inqQ(f)) && !bizInqOtherScenario(inqQ(f), bzScen)) gen = { answer: '안녕하세요 고객님, 제주아꼼이네입니다 🍊\n' + bz.price_reply + '\n\n' + QNA_TAIL, used: ['직영몰 가격 안내'] };   // #1202 가격 질문 = 고정 안내(AI 0 · 금액 0)
+            if (isBiz && bizInqIsPrice(inqJ(f)) && !bizInqOtherScenario(inqJ(f), bzScen)) gen = { answer: '안녕하세요 고객님, 제주아꼼이네입니다 🍊\n' + bz.price_reply + '\n\n' + QNA_TAIL, used: ['직영몰 가격 안내'] };   // #1202 가격 질문 = 고정 안내(AI 0 · 금액 0)
             else {
                 try { gen = await inquiryGenerate(f.item, isBiz ? { biz: true } : undefined); }
                 catch (e) { console.error('[고객문의] 생성 오류(SKIP):', e.message); }
@@ -10423,7 +10425,7 @@ async function inquiryGenerate(item, opts) {   // #1202 opts.biz = 직영몰 고
         const { statusText } = biz ? await qnaStoreDataBiz() : await qnaStoreData();
         if (statusText) storeBlock = `## 현재 스토어 판매현황\n${statusText}\n\n- 품절/시즌종료 상품 구매 문의 → 품절·재입고 관련 재료로 답하세요.\n- 판매현황과 재료에 없는 상품 문의 → SKIP 하세요.`;
     } catch (_) { /* 조회 실패 → 보수적 안내 유지 */ }
-    const question = [item.title, item.content].filter(Boolean).join('\n');
+    const question = [item.title, item.content].filter(Boolean).map(naverMaskContact).join('\n');   // #1300 저장은 원문 · AI 재료는 여기서 연락처·이메일 가림(봇 답에 손님 번호가 되풀이되지 않게)
     const userContent = item.product_name ? `[상품: ${item.product_name}]\n${question}` : question;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const msg = await anthropic.messages.create({
@@ -16946,7 +16948,7 @@ async function telegramChatId() {
         return _tgChatId;
     } catch (e) { return null; }
 }
-function tgMask(text, max, keepNums) {   // #1091 keepNums = 숫자 가림 안 함(반품·교환 알림만 · 그 알림은 손님 글·상품 글을 미리 tgMask 로 가림 · 상품주문번호만 그대로)
+function tgMask(text, max, keepNums) {   // #1091 keepNums = 숫자 가림 안 함 · #1300 = HTML 알림 둘(손님 응대 tgSendBlocks · 반품·교환 claimSendPacked) 다 · 그 밖(평문) 알림은 종전대로 가림
     // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙
     // 🔴 #340(대표 지시 2026-08-10): 회원ID처럼 **글자·@·.·_·-에 붙은 숫자는 식별자**이므로 가리지 않는다.
     //    종전엔 룰렛 당첨 알림의 회원ID(4790625123@k)가 통째로 ●●●가 되어 누구에게 쿠폰을 줘야 하는지
@@ -16957,7 +16959,7 @@ function tgMask(text, max, keepNums) {   // #1091 keepNums = 숫자 가림 안 �
 }
 async function notifyTelegram(text, opts) {
     const html = !!(opts && opts.html);   // #1069 문의·톡톡 알림만 HTML(<b>) · 400 이면 평문으로 1번 다시
-    const keepNums = !!(html && opts && opts.keepNums);   // #1091 반품·교환 알림만(HTML 일 때만)
+    const keepNums = !!(html && opts && opts.keepNums);   // #1091 반품·교환 · #1300 손님 응대(HTML 일 때만)
     // 지시 #50-5: 일시 네트워크 오류 재시도 1회 (run #64 완료 알림이 배포 셧다운 순간 'fetch failed'로 유실된 사고 대응)
     const sendOnce = async () => {
         if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return 'off';

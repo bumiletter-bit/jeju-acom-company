@@ -40,7 +40,7 @@ function loadKnowledge() {
 }
 
 // ── 문의 답변 재료 (대표 7/27 — 전부 기존 DB 읽기 전용. 시나리오=톤 교과서, bot_products=사실 출처, 수집 문의=유형 참고)
-//    PII 원칙: 고객문의 본문은 수집 시 마스킹본이지만, 직원 실답변(message_logs)은 원문이므로 주입 전 마스킹 재적용.
+//    PII 원칙: 고객문의 본문은 #1300(11/26)부터 원문 저장(종전 「수집 시 마스킹본」은 낡음) · 직원 실답변(message_logs)도 원문 → 둘 다 주입 전 maskContact.
 function maskContact(s) {
     return String(s || '')
         .replace(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g, '(연락처)')
@@ -77,7 +77,7 @@ async function loadInquiryMaterials(pool, instruction) {
             + '유형별 건수: ' + (cat.rows.map(x => `${x.c || '기타'} ${x.n}건`).join(' · ') || '(수집분 없음)') + '\n'
             + '자동답변이 SKIP한(=시나리오가 못 받은) 최근 질문 예:\n'
             + [...skipQ.rows.map(x => `- (상품문의) ${String(x.q || '').replace(/\s+/g, ' ').slice(0, 100)}`),
-               ...skipI.rows.map(x => `- (고객문의) ${String((x.t || '') + ' ' + (x.c || '')).replace(/\s+/g, ' ').slice(0, 100)}`)].join('\n'));
+               ...skipI.rows.map(x => `- (고객문의) ${maskContact((x.t || '') + ' ' + (x.c || '')).replace(/\s+/g, ' ').slice(0, 100)}`)].join('\n'));   // #1300 고객문의 저장이 원문이 됨 → AI 재료 주입 전 가림
     } catch (e) { /* 생략 */ }
     try {
         const st = await pool.query(
