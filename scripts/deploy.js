@@ -5,6 +5,8 @@
 //   → push 뒤 공개 버전 길(/api/public/version · 로그인 없음 · 버전 글자만)을 15초마다 최대 9분 읽어 새 버전이 떴는지 확인
 //   → 다음 배포를 시작할 때 직전 배포(origin/main 의 version.js)가 실서버에 떠 있는지 먼저 확인 · 아니면 멈춤(연달아 배포로 겹치는 것 막기)
 //   끄기 = DEPLOY_SKIP_LIVE_CHECK=1(시작 확인만 건너뜀 · 반영 확인은 늘 함) · 주소 = DEPLOY_LIVE_URL(기본 회사 Render 주소)
+// #1317 ⑥ 나스 창구 반영 = 반영 확인 뒤 scripts/nas-desk-pull.py 로 창구 컨테이너 /work 에 git pull --ff-only(11/27 창구가 11/15 에 멈춰 119커밋 뒤처진 사고)
+//   망 밖·nas.txt 없음 = 건너뜀 한 줄 · 작업 폴더가 더러워 못 받음 = 큰 경고(exit 1 아님) · 배포 없이 창구만 = node scripts/deploy.js --desk-only
 const { execSync } = require('child_process');
 const path = require('path');
 
@@ -86,42 +88,70 @@ async function main() {
     }
 
     // ② DB 백업 — 실패하면 여기서 즉시 중단 (execSync가 throw)
-    console.log('① DB 백업 실행...');
+    console.log('② DB 백업 실행...');
     run(`node "${path.join(__dirname, 'db-backup.js')}" ${VERSION}`);
 
     // ③ 버전 태그 (-dev 버전은 태그 생략, 정식 버전만)
     if (!VERSION.includes('-dev')) {
         const tags = execSync('git tag', { cwd: ROOT, encoding: 'utf8' });
         if (!tags.split('\n').includes(VERSION)) {
-            console.log(`② 버전 태그 생성: ${VERSION}`);
+            console.log(`③ 버전 태그 생성: ${VERSION}`);
             run(`git tag -a ${VERSION} -m "release ${VERSION}"`);
             run(`git push origin ${VERSION}`);
         } else {
-            console.log(`② 태그 ${VERSION} 이미 존재 — 생략`);
+            console.log(`③ 태그 ${VERSION} 이미 존재 — 생략`);
         }
     } else {
-        console.log('② -dev 버전이므로 태그 생략');
+        console.log('③ -dev 버전이므로 태그 생략');
     }
 
     // ④ push → Render 자동 배포
-    console.log('③ GitHub push (Render 자동 배포)...');
+    console.log('④ GitHub push (Render 자동 배포)...');
     run('git push origin main');
     console.log(`\n✅ push 완료: ${VERSION}`);
 
     // ⑤ 실서버 반영 확인(#1310) — 안 되면 exit 1 이 아니라 큰 경고(push 는 이미 끝남)
-    console.log(`④ 실서버 반영 확인 — ${LIVE_URL}/api/public/version 을 15초마다 최대 9분`);
+    console.log(`⑤ 실서버 반영 확인 — ${LIVE_URL}/api/public/version 을 15초마다 최대 9분`);
     const w = await waitLive(VERSION);
     if (w.ok) console.log(`\n✅ 실서버 반영 확인 ${w.version} (${w.tries * POLL_MS / 1000}초 안)`);
     else bigWarn([`Render 반영 안 됨 — 대시보드 Deploys 확인(9분 동안 실서버 = ${w.version || '읽기 실패 ' + (w.error || '')})`,
         '기동 실패(DB 초기화 시간 초과 등)면 Render 로그를 보고 원인을 고친 뒤 다시 배포 · 손님 화면은 직전 버전 그대로일 수 있어요']);
+    // ⑥ 나스 창구 반영(#1317) — 창구(akkome-desk /work)가 새 문서·도구를 받게 git pull --ff-only · 실패·망 밖이어도 배포는 끝난 상태(exit 1 아님)
+    //   Render 반영 확인이 실패(🔴)해도 창구는 받음(총괄 11/27) · 그 줄 앞에 「서버 반영은 실패 상태」를 같이 찍음
+    if (!w.ok) console.log('⑥ (서버 반영은 실패 상태 — 창구는 그래도 받음 · 창구 새 도구가 새 서버 API 를 부르면 Render 를 먼저 살릴 것)');
+    deskPull();
     console.log('   ⚠️ CHANGELOG.md 갱신 여부를 확인하세요.');
 }
 
-if (require.main === module) {
+// #1317 나스 창구 pull — scripts/nas-desk-pull.py(paramiko · 접속 정보는 이 PC ~/.akkome/nas.txt 에서만) 의 마지막 줄 JSON → 한 줄 · 결과 dict 돌려줌(검증용 runner 주입)
+function deskPull(runner) {
+    const helper = path.join(__dirname, 'nas-desk-pull.py');
+    let res = null;
+    try {
+        const raw = runner ? runner(helper) : (() => {
+            for (const py of ['python', 'py']) {
+                try { return execSync(`${py} "${helper}"`, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000 }); }
+                catch (e) { if (e && e.stdout && String(e.stdout).trim()) return String(e.stdout); if (!/not recognized|not found|ENOENT|찾을 수 없/i.test(String((e && e.stderr) || (e && e.message) || ''))) throw e; }
+            }
+            return '';
+        })();
+        const last = String(raw || '').trim().split(/\r?\n/).pop() || '';
+        res = JSON.parse(last);
+    } catch (e) { res = { status: 'fail', msg: '도우미 실행 실패(' + String((e && e.message) || e).slice(0, 80) + ')' }; }
+    if (res.status === 'ok') console.log(`⑥ ✅ 나스 창구 = ${res.commit}${res.msg ? ' · ' + res.msg : ''}`);
+    else if (res.status === 'skip') console.log(`⑥ 나스 창구 반영 건너뜀(${res.why || '이유 없음'})`);
+    else bigWarn([`나스 창구 pull 실패 — 손으로 확인(${res.msg || ''})`, '창구 컨테이너 /work 에 손으로 고친 파일이 있으면 그것부터(창구 새 문서·도구가 안 들어간 상태)']);
+    return res;
+}
+
+if (require.main === module && process.argv.includes('--desk-only')) {   // #1317 배포 없이 창구 pull 만(문서만 고쳐 이미 푸시된 뒤 등)
+    console.log('🖥️ 나스 창구 반영만(배포 0)');
+    deskPull();
+} else if (require.main === module) {
     main().catch(err => {
         console.error('\n❌ 배포 중단:', err.message);
         console.error('   백업 실패 또는 push 실패 — 원인 해결 전까지 배포되지 않습니다.');
         process.exit(1);
     });
 }
-module.exports = { liveVersion, waitLive, checkPrevLive };
+module.exports = { liveVersion, waitLive, checkPrevLive, deskPull };
