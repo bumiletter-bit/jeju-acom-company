@@ -25,7 +25,7 @@ const NEW_HTML = fs.readFileSync(path.join(ROOT, 'public', 'lucky.html'), 'utf8'
 
 /* ── 가짜 응답 ── */
 const BASE_EVENT = () => ({ title: '제주아꼼이네 고객 감사 이벤트', start: '2026-10-20', end: '2026-10-31', announce: '2026-11-02', prizes: [{ name: '황금향 5kg 선물용', count: 5 }, { name: '황금향 3kg 선물용', count: 7 }, { name: '감귤 3kg 선물용', count: 10 }], published: false, excludeProducts: ['청귤'] });
-const SRV_TEXTS = { prize_head_hand: '제주의 좋은 마음을 선물합니다! ♡', corner_hand: '늘 함께해 주셔서\n감사합니다! ♡', search_hand: '성함·번호로 확인해보세요! ♡', winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡', winner_foot: '당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊', noitem_products: '감귤·황금향 등', preparing_title: '이벤트 준비 중이에요 🍊', preparing_line: '곧 열립니다. 조금만 기다려 주세요!', closed_title: '이벤트가 끝났어요 🙏', closed_line: '함께해 주셔서 감사합니다. 당첨되신 분께는 순차적으로 연락드려요.' };
+const SRV_TEXTS = { prize_head_hand: '제주의 좋은 마음을 선물합니다! ♡', corner_hand: '늘 함께해 주셔서\n감사합니다! ♡', search_hand: '성함·번호로 확인해보세요! ♡', winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡', winner_foot: '당첨되신 분께는 개별 문자로 안내드립니다 🍊', noitem_products: '감귤·황금향 등', preparing_title: '이벤트 준비 중이에요 🍊', preparing_line: '곧 열립니다. 조금만 기다려 주세요!', closed_title: '이벤트가 끝났어요 🙏', closed_line: '함께해 주셔서 감사합니다. 당첨되신 분께는 순차적으로 연락드려요.' };
 const SRV_NEW = (ev) => ({ display_title: ev.title, page_until: '2026-11-05', state: 'live', live_mode: 'live', images: { hero: null, winner: null, result: null }, texts: Object.assign({}, SRV_TEXTS), store_url: 'https://smartstore.naver.com/akkome', prizes: ev.prizes.map(p => Object.assign({ desc: '', note: '', image: null }, p)) });
 let EVENT_RES = null, WIN_RES = { published: false, groups: [] };
 const setEvent = (extra = {}, top = {}) => { EVENT_RES = Object.assign({ event: Object.assign(BASE_EVENT(), extra), counts: { orders: 12, customers: 9 } }, top); };

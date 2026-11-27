@@ -19,7 +19,7 @@ const addDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDa
 const TODAY = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
 
 // ── 가짜 이벤트 서버(docs/708-api.md 3절 꼴) ──
-const SRV_TEXTS = { prize_head_hand: '제주의 좋은 마음을 선물합니다! ♡', corner_hand: '늘 함께해 주셔서\n감사합니다! ♡', search_hand: '성함·번호로 확인해보세요! ♡', winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡', winner_foot: '당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊', noitem_products: '감귤·황금향 등' };   // lucky-event.js TEXT_DEFAULTS
+const SRV_TEXTS = { prize_head_hand: '제주의 좋은 마음을 선물합니다! ♡', corner_hand: '늘 함께해 주셔서\n감사합니다! ♡', search_hand: '성함·번호로 확인해보세요! ♡', winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡', winner_foot: '당첨되신 분께는 개별 문자로 안내드립니다 🍊', noitem_products: '감귤·황금향 등' };   // lucky-event.js TEXT_DEFAULTS
 function fakeServer(opt) {
     opt = opt || {};
     const F = { id: opt.noRound ? null : 41, assets: [{ id: 7, slot: 'brand', label: '황금향', url: '/api/lucky/asset/7?v=aaaa1111' }], nextAsset: 100, writes: [], orders: [], order: null };

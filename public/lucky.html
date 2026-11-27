@@ -70,6 +70,28 @@ body.winter{--bg:#E4F0FA;--card2:#F6FAFE;--ink:#2A1E16;--mid:#5F5650;--light:#7D
 .badge b{font-size:19px;font-weight:900;color:#FFE07A}
 .fpill{margin:4px auto 0;max-width:100%;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.9);text-align:center;font-size:13.5px;font-weight:700;color:var(--brown);box-shadow:0 6px 14px -10px rgba(40,70,110,.6)}
 .winter .hero:not([hidden]) + .top{margin-top:0;border-radius:22px}
+/* #1308-2 발표 뒤(PROMO on && published · body.evpub) — 머리 감사 인사 · 명단 카드 · 감사 카드 */
+.evpub .evh{min-height:0}
+.evpub .evh h1{font-size:28px;text-wrap:balance}
+.evpub .evh .eyebrow{font-size:16px}
+.pubc{padding:30px 12px 14px}
+.wl.pwl{margin-top:4px;text-align:left;gap:6px}
+.pwl.fold .w:nth-child(n+13){display:none}
+.wl.pwl .w{justify-content:space-between;gap:6px;padding:8px 10px}
+.wl.pwl .w::before{content:none}
+.wl.pwl .w .ph{overflow:visible;text-overflow:clip}
+.wl.pwl .w.sk{background:var(--card2)}
+.pmore{display:flex;align-items:center;justify-content:center;width:100%;min-height:44px;margin-top:8px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;font-size:14px;font-weight:800;cursor:pointer}
+.pmore[hidden]{display:none}
+.pmore:disabled{color:var(--light);cursor:default}
+.pmore:active{transform:scale(.98)}
+.pgo{display:flex;align-items:center;justify-content:center;min-height:44px;margin-top:4px;font-size:14px;font-weight:700;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:4px}
+.pmore:focus-visible,.pgo:focus-visible{outline:3px solid #FFB25E;outline-offset:2px}
+.pthx{padding:18px 16px 16px;font-size:14px;color:var(--mid);line-height:1.6}
+.pthx .hand{display:block;margin-bottom:6px;font-size:21px;line-height:1.25;color:var(--brown);white-space:normal;text-wrap:balance}
+.pthx b{color:var(--ink)}
+@media (max-width:360px){ .evpub .evh h1{font-size:25px} .wl.pwl{grid-template-columns:1fr 1fr;gap:5px} .wl.pwl .w{font-size:12px;padding:7px 7px;gap:4px} .wl.pwl .w .ph{font-size:11px;letter-spacing:-.2px} }
+@media (min-width:600px){ .wl.pwl{grid-template-columns:repeat(3,1fr)} .evpub .evh h1{font-size:36px} }
 @media (max-width:360px){ .winter .top{margin:-12px -12px 0} .sign .tag,.sign .tx{font-size:25px} .sign{gap:8px} .evh h1{font-size:28px} .bnum{font-size:38px} .duo{grid-template-columns:32% 1fr} .rlist li{padding:9px 10px} .rlist b{font-size:15px} }
 @media (min-width:600px){ .winter .top{margin:-28px -16px 0;padding:28px 24px 24px;border-radius:0 0 28px 28px} .evh h1{font-size:40px} .sign .tag,.sign .tx{font-size:36px} }
 /* 경품 */
@@ -330,7 +352,7 @@ function render(j){
   $('#evTitle').textContent=CFG.display_title||e.title;   // display_title 이 title 과 같으면 readCfg 가 '' 로(설정 없음)
   $('#evPeriod').textContent=`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문 고객 대상 · ${fmtDate(e.announce)} 당첨자 발표`;
   applyLook(); drawHead(e);
-  $('#promo').hidden=true;
+  $('#promo').hidden=true; PUBC=false;
   if(applyState(e)) return;
   drawPromo(e); drawGuide(e);
   $('#prizes').innerHTML=e.prizes.map((p,i)=>{
@@ -340,7 +362,8 @@ function render(j){
   }).join('');
   const total=e.prizes.reduce((a,p)=>a+p.count,0);
   $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(상품이 발송된 날 오전 10시부터 반영)</span>`;
-  if(e.published&&!PREVIEW) openWinners(false);
+  if(PUBC) $('#evInfo').innerHTML=`🎉 <b>당첨자 발표 완료!</b> (총 ${total}분)`;   /* #1308-2 명단이 맨 위 카드에 있으니 여기 단추·「아래에서」 글은 뺌(명단 단추 두 번 막기) */
+  if(e.published&&!PREVIEW&&!PUBC) openWinners(false);   /* #1308-2 명단을 화면에 바로 보이는 조건에선 발표 창 자동 1회도 안 띄움(중복) */
 }
 let WIN=null;
 function drawWinners(){
@@ -479,21 +502,26 @@ function drawHead(e){
   const on=promoOn(e)&&CFG.state!=='down';   /* 닫힌 이벤트 = 혜택 머리 끔(「이벤트가 끝났어요」 위에 안 남게) */
   document.documentElement.classList.toggle('winter',on); document.body.classList.toggle('winter',on);   /* #1261 겨울 바탕·색은 이번 행사일 때만 */
   { const tc=document.querySelector('meta[name="theme-color"]'); if(tc) tc.setAttribute('content',on?'#CFE5F7':'#FFE9D2'); }
-  const pub=on&&!!e.published;   /* #1308 발표 뒤 = 머리 글만 「당첨자 발표」 꼴(틀·색 그대로) */
-  if(pub) $('#evWhen').textContent=`${pubMD(e.announce)} 당첨자 발표 완료`; else if(on) $('#evWhen').innerHTML=PROMO.when; else $('#evWhen').textContent=e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내';
-  $('#evTitleV').textContent=pub?'당첨자 발표':on?PROMO.title:(CFG.display_title||e.title||'고객 감사 이벤트');
-  $('#evEyebrow').textContent=on?PROMO.eyebrow:''; $('#evEyebrow').hidden=!on; $('#evSign').hidden=!on;
+  const pub=on&&!!e.published;   /* #1308-2 발표 뒤 = 마감 공지 머리(알약 · 감사 인사 · 「트리플 혜택 이벤트 당첨자 발표」) · 큰 「트리플」 판은 접음(명단이 첫 화면에 오게) */
+  if(pub) $('#evWhen').textContent='이벤트가 마감되었어요'; else if(on) $('#evWhen').innerHTML=PROMO.when; else $('#evWhen').textContent=e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내';
+  $('#evTitleV').textContent=pub?'참여해 주셔서 감사합니다':on?PROMO.title:(CFG.display_title||e.title||'고객 감사 이벤트');
+  $('#evEyebrow').textContent=pub?'트리플 혜택 이벤트 당첨자 발표':on?PROMO.eyebrow:''; $('#evEyebrow').hidden=!on; $('#evSign').hidden=!on||pub;
+  document.body.classList.toggle('evpub',pub);
   $('#evLead').hidden=on; if(!on) $('#evLead').textContent=e.announce?`${fmtDate(e.announce)} 당첨자 발표 · 이름이나 번호로 확인해 보세요`:'이름이나 번호로 접수와 당첨을 확인해 보세요';
   if(on) $('#evPeriod').textContent='11/23(월) ~ 11/27(금) 오전 8시 주문까지 · 11/24 발송분부터 응모 · 11/27 당첨 발표';   /* 설정 기간(발송일 기준 11/24~11/27)은 판정에만 · 손님 글은 행사 문안 */
 }
 function drawPromo(e){
   const el=$('#promo'), on=promoOn(e);
-  if(on&&e.published){   /* #1308 발표 뒤 = 끝난 혜택 카드 대신 발표 카드(명단 단추 = openWinners · 조회 칸은 바로 아래 「내 접수 확인」) */
+  if(on&&e.published){   /* #1308-2 발표 뒤 = 끝난 혜택 카드 대신 명단을 화면에 바로(앞 PUB_FOLD 명 · [명단 전체 보기]로 펼침) + 감사 인사 · 조회 칸은 바로 아래 「내 접수 확인」 */
     const total=(e.prizes||[]).reduce((a,p)=>a+(+p.count||0),0);
-    el.innerHTML=`<article class="bcard pubc"><span class="blab">당첨자 발표</span><p class="bbig">당첨자 발표 완료</p><p class="bsub">총 ${total}분</p>
-      <button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>
-      <p class="bnote2">${PROMO.guide[0]}</p></article>`;
-    el.hidden=false; return;
+    const sk=Array.from({length:Math.min(PUB_FOLD,total||PUB_FOLD)},()=>'<div class="w sk" aria-hidden="true"><span class="nm">&nbsp;</span></div>').join('');
+    el.innerHTML=`<article class="bcard pubc"><span class="blab">당첨자 발표 · 총 ${total}분</span>
+      <div class="wl pwl fold" id="pubList" aria-busy="true">${sk}</div>
+      <button class="pmore" id="pubMore" type="button" aria-controls="pubList" aria-expanded="false" disabled${total>PUB_FOLD?'':' hidden'}>명단 전체 보기 (${total}명)</button>
+      <a class="pgo" href="#q" onclick="event.preventDefault();pubGoLookup()">내 당첨 여부는 아래에서 성함·번호로 조회 ↓</a></article>
+    <article class="bcard pthx"><p class="hand">함께해 주신 모든 분께 진심으로 감사드립니다 ♡</p>
+      <p>당첨되신 분께는 <b>개별 문자</b>로 안내드립니다</p><p>${PROMO.guide[0]}</p></article>`;
+    el.hidden=false; PUBC=true; fillPubList(e,total); return;
   }
   el.innerHTML=on?`<article class="bcard"><span class="blab">혜택 1 · 인기 판매 1·2·3위 품목 행사</span>
       <p class="bhl"><span class="hl">지금 제주아꼼이네에서 가장 많이 팔리는 상품</span></p><p class="bbig">행사가 할인</p>
@@ -507,13 +535,30 @@ function drawPromo(e){
   el.hidden=!on;
 }
 function drawGuide(e){
-  const on=promoOn(e);
+  const on=promoOn(e), pub=on&&!!e.published;   /* #1308-2 발표 뒤 = 응모 권유·행사 상품 줄과 「행사 상품 보러 가기」는 뺌(끝난 행사) */
   const rows=['<b>접수 내역</b>은 상품이 발송된 날 오전 10시부터 보여요'];
   if(e.announce) rows.push(`<b>당첨 발표 ${fmtDate(e.announce)}</b> · 이 화면에서 바로 확인할 수 있어요`);
-  if(on) rows.push(...PROMO.guide);
+  if(pub) rows.push(PROMO.guide[0],PROMO.guide[3]); else if(on) rows.push(...PROMO.guide);
   $('#guideList').innerHTML=rows.map(h=>`<li>${h}</li>`).join('');
-  const b=$('#storeBtn'); b.href=on?PROMO.url:(CFG.store_url||STORE_URL); b.textContent=on?'행사 상품 보러 가기 ›':'제주아꼼이네 스토어 가기 ›';
+  const b=$('#storeBtn'), sp=on&&!pub; b.href=sp?PROMO.url:(CFG.store_url||STORE_URL); b.textContent=sp?'행사 상품 보러 가기 ›':'제주아꼼이네 스토어 가기 ›';
 }
+/* #1308-2 발표 카드 명단 — 실화면 = /api/lucky/winners(openWinners 와 같은 WIN 캐시) · 미리보기 = 가짜 이름(PV_NAMES 돌려 씀 · 실호출 0) · 실패·미발표 = 명단 대신 [당첨자 명단 보기](발표 창) */
+const PUB_FOLD=12; let PUBC=false;
+async function fillPubList(e,total){
+  const box=$('#pubList'), more=$('#pubMore'); if(!box) return;
+  let list=null;
+  if(PREVIEW){ list=Array.from({length:total||PV_NAMES.length},(_,i)=>({name:PV_NAMES[i%PV_NAMES.length][0],phone:PV_NAMES[i%PV_NAMES.length][1]})); }
+  else{ try{ if(!WIN){ const r=await fetch('/api/lucky/winners'+(PK?'?pk='+encodeURIComponent(PK):'')); WIN=await r.json(); } if(WIN&&WIN.published) list=(WIN.groups||[]).flatMap(g=>g.winners||[]); }catch(_){ WIN=null; }
+    if(!WIN||!WIN.published) WIN=null; }   /* 오류 응답({error})을 캐시에 남기지 않음 → [당첨자 명단 보기] 가 다시 불러옴 */
+  if(!document.body.contains(box)) return;   /* 그 사이 다시 그려짐 */
+  box.removeAttribute('aria-busy');
+  if(!list||!list.length){ more.hidden=true; box.outerHTML='<button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>'; return; }
+  box.innerHTML=list.map(w=>`<div class="w"><span class="nm">${esc(w.name)}</span><span class="ph">${esc(w.phone)}</span></div>`).join('');
+  more.disabled=false;   /* 펼침 단추는 처음부터 자리를 잡아 둠(명단이 늦게 와도 아래가 안 밀리게) */
+  if(list.length>PUB_FOLD){ more.hidden=false; more.textContent=`명단 전체 보기 (${list.length}명)`; more.onclick=()=>{ const open=box.classList.toggle('fold')===false; more.setAttribute('aria-expanded',String(open)); more.textContent=open?'명단 접기':`명단 전체 보기 (${list.length}명)`; if(!open) box.scrollIntoView({block:'nearest'}); }; }
+  else { more.hidden=true; box.classList.remove('fold'); }
+}
+function pubGoLookup(){ const q=$('#q'); try{ q.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}); }catch(_){ q.scrollIntoView(); } setTimeout(()=>{ try{ q.focus({preventScroll:true}); }catch(_){} },300); }
 loadEvent();
 </script>
 </body>
