@@ -682,7 +682,7 @@ async function main() {
     const { pool } = require('../desk/_db');   // VM .env(DATABASE_URL) · 끊김 재연결 = _db 감싸기
     let stop = false; for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => { stop = true; lockFree(); log('신호로 끝냄'); process.exit(0); });
     try { await recoverOwn(pool); } catch (e) { log('기동 복구 실패(무시): ' + e.message); }
-    log(`VM 러너 시작 · ${os.hostname()} · 모델 ${MODEL} · ${POLL_MS / 1000}초마다`);
+    log(`VM 러너 시작 · ${os.hostname()} · 모델 ${MODEL} · ${POLL_MS / 1000}초마다 · 어사이드 하루 1번 = ${recycleLabel(ASIDE_RECYCLE_AT)}${process.env.VM_ASIDE_RECYCLE_HOUR != null ? ` (VM_ASIDE_RECYCLE_HOUR=「${process.env.VM_ASIDE_RECYCLE_HOUR}」)` : ""}`);   // #1314 워커2 점검 = 꼴 틀림으로 꺼진 것·환경 변수가 덮은 것을 시작 로그로 보이게
     let lastBeat = 0;
     for (;;) {
         try {
