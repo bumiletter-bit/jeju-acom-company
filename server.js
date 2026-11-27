@@ -19863,7 +19863,7 @@ function cpwApplyFull(before, patch, opt = {}) {
             const t = JSON.parse(JSON.stringify(items[items.length - 1]));
             for (const k of ['sellerProductItemId', 'vendorItemId', 'itemId', 'offerCondition']) delete t[k];
             t.itemName = nm; t.salePrice = it.price; t.maximumBuyCount = it.stock;
-            if (t.originalPrice == null || Number(t.originalPrice) < it.price) t.originalPrice = it.price;
+            t.originalPrice = it.price;   /* #1307 새 옵션 정가 = 그 옵션 판매가(본뜬 줄 정가를 물려받지 않음 · 가짜 할인 막기) — 종전과 결과가 다른 때는 「본뜬 줄 정가 > 새 판매가」뿐 */
             // 구매옵션 값(attributes · 중량 등) — 주면 그 이름 칸 값만 바꿈(없는 이름은 붙임) · 안 주면 틀 그대로
             if ('attributes' in it) {
                 const at = it.attributes;
