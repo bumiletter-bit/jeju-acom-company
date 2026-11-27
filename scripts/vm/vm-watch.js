@@ -463,7 +463,7 @@ let asideFactory = null, keepNotify = null;   // 시험용 갈아끼우기(_setK
 function keepRead() { try { const j = JSON.parse(fs.readFileSync(KEEP_STATE, 'utf8')); return j && typeof j === 'object' ? j : {}; } catch (e) { return {}; } }
 function keepWrite(patch) { try { fs.mkdirSync(DIR, { recursive: true }); const s = { ...keepRead(), ...patch }; const tmp = KEEP_STATE + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(s)); fs.renameSync(tmp, KEEP_STATE); } catch (e) { log('센터 유지 상태 쓰기 실패(무시): ' + e.message); } }
 // #1266 heartbeat 에 싣는 센터 유지 결과(노트북에서 읽히게 · 상태 파일의 center_* 칸 = 유지 틱이 실제로 돈 시각 · 「at」 칸은 어사이드 다시 열기가 앞당겨 써서 따로 둠) · 유지가 한 번도 안 돈 PC = 빈 것
-function hbCenter() { const k = keepRead(); return k.center_at ? { center: { state: String(k.center_state || ''), at: k.center_at, store: String(k.center_store || '').slice(0, 40), ...(k.center_why ? { why: String(k.center_why).slice(0, 120) } : {}), ...(Number(k.fail_n) > 0 ? { fail_n: Number(k.fail_n) } : {}) } } : {}; }   /* #1295 why = 실패 틱의 단서(어느 화면·무엇을 눌렀나 · 손님 정보 없음) · fail_n = 연속 실패 수 → 노트북에서 VM 로그 없이 읽힘 */
+function hbCenter() { const k = keepRead(); return k.center_at ? { center: { state: String(k.center_state || ''), at: k.center_at, store: String(k.center_store || '').slice(0, 40), ...(k.center_why ? { why: String(k.center_why).slice(0, 120) } : {}), ...(k.center_how ? { how: String(k.center_how).slice(0, 20) } : {}), ...(Number(k.fail_n) > 0 ? { fail_n: Number(k.fail_n) } : {}) } } : {}; }   /* #1295 why = 실패 틱의 단서(어느 화면·무엇을 눌렀나 · 손님 정보 없음) · fail_n = 연속 실패 수 → 노트북에서 VM 로그 없이 읽힘 */
 /* #1281 jsKeep(ro) = ro 면 「상태 읽기만」(로그인 실패·폰 승인 뒤 3시간 쉼 동안 · 단추 누름 0) · JS_KEEP = 종전 유지 틱(누름 있음) */
 const jsKeep = (ro, quiet) => `const RO = ${ro ? 'true' : 'false'};
 const QUIET = ${quiet ? 'true' : 'false'};   /* #1297 알림을 안 보내는 실패 틱 = 로그인 실패 화면도 이 틱이 연 탭은 닫고 나감(30분마다 쌓이지 않게) */
@@ -485,7 +485,7 @@ const pre2 = new Set(); let waited = 0;   /* #1266 pre2 = 간편 로그인 누�
 const pops = () => { const o = []; for (const x of tabs) { try { if (!pre2.has(x) && x !== t0 && /nid\\.naver\\.com|accounts\\.commerce\\.naver\\.com/.test(x.url())) o.push(x); } catch (e) {} } return o; };   /* 간편 로그인 뒤 새로 뜬 로그인 창(닫힌 탭은 url() 이 던져 빠짐) */
 const lookAt = async x => { const k = t; t = x; try { return await look(); } finally { t = k; } };
 await wait(7000);   /* #1242 실측 = 새 탭은 5초에야 머리 글이 보임(1·3초 빈 화면) → 5 → 7초 · 다시 보기 4 → 6초 */
-let a = await look(), state = 'ok', clicked = false, first = false;
+let a = await look(), state = 'ok', clicked = false, first = false, how = '';   /* #1315 how = 간편 로그인 누름 방식(mouse · mouse_err+js · js) */
 for (let i = 0; i < 3 && used() < 35000 && !isLogin(a) && isSell(a) && !a.out && !a.first; i++) { await wait(6000); a = await look(); }   /* 머리가 아직 안 그려졌으면 다시 봄(#1281 한 번 → 6초씩 최대 3번 = 「로그인하기」 첫 화면이 늦게 그려지는 때) */
 if (!RO && !isLogin(a) && isSell(a) && !a.out && a.first) {   /* #1230 로그인 안 된 첫 화면(「로그인하기」·「가입하기」) = 그 단추 1회 → 커머스ID 화면 · #1281 읽기만(RO)이면 안 누름 */
   const pre1 = new Set(tabs);   /* 누르기 전 탭 목록 = 그 뒤 새로 생긴 로그인 탭만 이 틱 것으로 봄(앞선 지시가 사람 몫으로 남긴 로그인·보안 탭은 손대지 않음) */
@@ -506,7 +506,15 @@ if (RO) {   /* #1281 읽기만 = 누름·새 로그인 0 · 로그인돼 있으�
     for (const x of tabs) pre2.add(x);   /* #1266 간편 로그인을 누르기 전 탭 = 그 뒤 새로 뜬 로그인 창(OAuth 팝업)만 이 틱 것으로 봄 */
     for (let i = 0; i < 10 && !clicked && (i === 0 || used() < 35000); i++) {   /* #1281 커머스ID 화면이 덜 그려져 단추가 아직 없으면 3초씩 최대 약 30초 기다림(누름은 찾았을 때 1번 · 그 사이 폰 승인·로그인됨이 보이면 그만) */
       if (i) { await wait(3000); const b = await look(); if (isPhone(b) || (!isLogin(b) && isSell(b) && b.out)) { a = b; break; } }
-      try { clicked = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /간편\\s*로그인/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); } catch (e) { clicked = false; }
+      /* #1315(11/27 · 40번 연속 login_fail) 이 단추는 스크립트 el.click() 이 안 먹음(워커3 VM 실측 = 실제 마우스로 누르면 1번에 됨 · 노트북도 mouse.click 으로만 넘어감) → 단추 가운데 좌표를 구해 t.mouse.click · 좌표를 못 구하거나 mouse 가 던지면 종전 el.click 으로 한 번 */
+      try {
+        const r = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /간편\\s*로그인/.test(e.innerText || e.textContent || '')); if (!el) return null; try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {} const b = el.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2; let top = null; try { top = document.elementFromPoint(x, y); } catch (e) {} const hit = !!top && (top === el || el.contains(top)); return { x, y, w: b.width, h: b.height, covered: !hit }; });   /* 워커2 점검 1 = 그 자리가 단추(또는 그 안)인지 = 덮개(공지 팝업·쿠키 띠) 위면 좌표 누름 안 함 */
+        if (r) {
+          if (r.covered) how = 'covered';
+          else if (r.w > 0 && r.h > 0) { try { await t.mouse.move(r.x, r.y); await wait(250); await t.mouse.click(r.x, r.y); clicked = true; how = 'mouse'; } catch (e) { how = 'mouse_err'; } }
+          if (!clicked) { clicked = await t.evaluate(() => { const el = [...document.querySelectorAll('button, a, [role=button]')].find(e => /간편\\s*로그인/.test(e.innerText || e.textContent || '')); if (el) { el.click(); return true; } return false; }); if (clicked) how = how ? how + '+js' : 'js'; }
+        }
+      } catch (e) { clicked = false; }
     }
     if (!clicked) state = isPhone(a) ? 'need_phone' : !isLogin(a) && isSell(a) && a.out ? 'relogin' : 'login_fail';
     else {
@@ -534,7 +542,7 @@ if (state === 'ok' || state === 'relogin' || state === 'unknown' || state === 'l
   if ((state === 'relogin' || state === 'login_fail') && clicked) { for (const x of pops()) mine.push(x); }   /* #1266 로그인은 됐는데 남은 로그인 창(간편 로그인 뒤 이 틱에 뜬 것만) */
   if (retried) { try { for (const x of tabs) { if (x === t0 || x === tPop || pre0.has(x)) continue; let u = ''; try { u = x.url(); } catch (e) {} if (isSell({ u })) mine.push(x); } } catch (e) {} }   /* 첫 열기가 「실패」했는데 탭은 생겨 있던 때 = 이 틱이 만든 센터 탭 여분만(전부터 있던 탭은 pre0 로 가림) */
   for (const x of mine) { try { await closeTab(x); closed++; } catch (e) {} } }
-console.log(JSON.stringify({ state, clicked, first, opened, closed, waited, where, ro: RO, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
+console.log(JSON.stringify({ state, clicked, first, how, opened, closed, waited, where, ro: RO, store: state === 'ok' || state === 'relogin' ? a.store : '' }));`;
 const JS_KEEP = jsKeep(false), JS_KEEP_RO = jsKeep(true), JS_KEEP_QUIET = jsKeep(false, true);
 async function keepCenterOnce(ro, quiet) {
     const aside = asideFactory ? asideFactory() : new (require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js')).Aside)(ASIDE_EXE, s => log(s));
@@ -635,7 +643,7 @@ async function keepMaybe(force) {
     // #1230 로그인은 됐는데 센터가 직영몰 스토어로 열려 있음(노트북·VM 이 같은 계정 = 마지막 스토어가 따라옴) → 알림만(자동으로 옮기지 않음) · 텔레그램은 하루 1통
     const wrongStore = !!r && (r.state === 'ok' || r.state === 'relogin') && /직영몰/.test(String(r.store || ''));
     if (wrongStore) r = { ...r, state: 'wrong_store', login: r.state };
-    keepWrite({ at, result: r && r.state, error: r && r.error || null, center_at: at, center_state: r && r.state || '', center_store: r && r.store || '', center_why: r && (r.state === 'login_fail' || r.state === 'need_phone' || r.state === 'unknown' || r.state === 'error') ? clean(`first=${r.first ? 1 : 0} clicked=${r.clicked ? 1 : 0} waited=${Number(r.waited) || 0} opened=${r.opened ? 1 : 0}${r.where ? ' @' + r.where : ''}${r.error ? ' ' + r.error : ''}`, 120) : '', ...(r && r.state === 'need_phone' ? { phone_at: at } : {}), ...(roOk ? { phone_at: null, ro_at: at, ro_result: 'ok' } : {}) });   // #1266 center_* = heartbeat 가 실어 보냄 · #1281 roOk = 쉼 풀림
+    keepWrite({ at, result: r && r.state, error: r && r.error || null, center_at: at, center_state: r && r.state || '', center_store: r && r.store || '', center_how: r && r.how || '', center_why: r && (r.state === 'login_fail' || r.state === 'need_phone' || r.state === 'unknown' || r.state === 'error') ? clean(`first=${r.first ? 1 : 0} clicked=${r.clicked ? 1 : 0}${r.how ? ' how=' + r.how : ''} waited=${Number(r.waited) || 0} opened=${r.opened ? 1 : 0}${r.where ? ' @' + r.where : ''}${r.error ? ' ' + r.error : ''}`, 120) : '', ...(r && r.state === 'need_phone' ? { phone_at: at } : {}), ...(roOk ? { phone_at: null, ro_at: at, ro_result: 'ok' } : {}) });   // #1266 center_* = heartbeat 가 실어 보냄 · #1281 roOk = 쉼 풀림
     if (st.keep_retry) keepWrite(r && r.state === 'error' && KEEP_MS > 0 ? { keep_retry: 0, at: new Date(Date.now() - KEEP_MS + 90000).toISOString() } : { keep_retry: 0 });   // #1242-2 어사이드를 다시 연 직후의 첫 틱이 오류면 90초 뒤 1번만 더
     log(`센터 로그인 유지 · ${r && r.state}${r && r.where ? ' · ' + r.where : ''}${r && r.store ? ' · 스토어 ' + clean(r.store, 30) : ''}${r && r.closed != null ? ' · 탭 닫음 ' + r.closed : ''}${r && r.error ? ' · ' + r.error : ''}`);
     if (r && (r.state === 'ok' || r.state === 'relogin') && !r.store) log('센터 로그인 유지 · 스토어 이름 못 읽음(머리 글 꼴이 바뀌었는지 확인)');

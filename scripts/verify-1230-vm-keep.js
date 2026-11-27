@@ -37,11 +37,16 @@ function mkTab(start, plan, log, name) {
             const src = String(fn), S = SCREENS[t.screen];
             if (/location\.reload/.test(src)) { log.push(name + ':reload2'); return; }
             if (/el\.click\(\)/.test(src) && /로그인하기/.test(src)) { const hit = !!S.first && !plan.firstDead; log.push(name + ':tap로그인하기=' + hit); if (hit && plan.onFirst) plan.onFirst(t); return hit; }
-            if (/el\.click\(\)/.test(src) && /간편/.test(src)) { const hit = !!S.simple; log.push(name + ':tap간편=' + hit); if (hit && plan.onSimple) plan.onSimple(t); return hit; }
+            if (/getBoundingClientRect/.test(src) && /간편/.test(src)) { if (!S.simple) log.push(name + ':tap간편=false'); return S.simple ? { x: 640, y: 420, w: 260, h: 48, covered: !!plan.covered } : null; }   /* #1315 단추 좌표 구하기 */
+            if (/el\.click\(\)/.test(src) && /간편/.test(src)) { const hit = !!S.simple && !plan.jsDead; log.push(name + ':tap간편=' + hit); log.push(name + ':how=js'); if (hit && plan.onSimple) plan.onSimple(t); return !!S.simple; }   /* #1315 jsDead = 스크립트 click 이 안 먹는 화면(실제 증상 · 찾기는 됨) */
             t.looks++; if (plan.onLook) plan.onLook(t);
             const N = SCREENS[t.screen];   /* 실제 화면처럼 = 머리 글에서 스토어 이름을 정규식으로 읽음(JS_KEEP 안 정규식과 같은 꼴을 여기서 다시 돌려 봄) */
             const m = /로그아웃\s*\n\s*좌측 내비게이션 펼쳐보기\s*\n\s*([^\n]{1,40})/.exec(N.txt.slice(0, 1500));
             return { txt: N.txt.slice(0, 2000), out: /로그아웃/.test(N.txt.slice(0, 1500)), first: !!N.first, store: m ? m[1].trim() : '' };
+        },
+        mouse: {   /* #1315 좌표 누름 = 실제 마우스 꼴 · mouseDead = 안 먹음 · mouseThrow = 던짐 */
+            async move(x, y) { log.push(name + ':move'); },
+            async click(x, y) { if (plan.mouseThrow) throw new Error('mouse 없음'); const S = SCREENS[t.screen]; const hit = !!S.simple && !plan.mouseDead && x === 640 && y === 420; log.push(name + ':tap간편=' + hit); log.push(name + ':how=mouse'); if (hit && plan.onSimple) plan.onSimple(t); }
         } };
     return t;
 }
@@ -73,6 +78,7 @@ async function runKeep(tabs, openTab, code) {
     log = []; tabs = []; t = mkTab('first', {}, log, 'A'); const pop = mkTab('login', { onSimple: x => { x.closed = true; t.screen = 'dash'; } }, log, 'P');
     t = mkTab('first', { onFirst: () => { tabs.push(pop); } }, log, 'A'); pop.plan = null; tabs.push(t);
     pop.evaluate = (orig => async fn => { const s = String(fn); if (/el\.click\(\)/.test(s) && /간편/.test(s)) { log.push('P:tap간편=true'); pop.closed = true; t.screen = 'dash'; return true; } return orig(fn); })(pop.evaluate);
+    pop.mouse.click = async () => { log.push('P:tap간편=true'); pop.closed = true; t.screen = 'dash'; };   /* #1315 좌표 누름도 같은 결과 */
     r = await runKeep(tabs, noOpen);
     ok('첫 화면 → 로그인 화면이 새 탭으로 뜸 → 간편 로그인 → 그 탭 닫힘 → 처음 탭 새로고침해 relogin', r.state === 'relogin' && r.first && r.clicked && log.includes('P:tap간편=true') && log.filter(x => x === 'A:reload').length === 2, JSON.stringify(r) + log);
 
@@ -252,6 +258,7 @@ async function runKeep(tabs, openTab, code) {
         ok('로그인 실패(login_fail) = 탭 남김', rr.state === 'login_fail' && rr.closed === 0 && !nt2.closed, JSON.stringify(rr));
         lg = []; const pop2 = mkTab('login', {}, lg, 'P'), tabs2 = []; const a2 = mkTab('first', { onFirst: () => { tabs2.push(pop2); } }, lg, 'A'); tabs2.push(a2);
         pop2.evaluate = (orig => async fn => { const s2 = String(fn); if (/el\.click\(\)/.test(s2) && /간편/.test(s2)) { a2.screen = 'dash'; return true; } return orig(fn); })(pop2.evaluate);
+        pop2.mouse.click = async () => { a2.screen = 'dash'; };   /* #1315 */
         rr = await runKeep(tabs2, noOpen2);
         ok('원래 탭 + 새로 뜬 로그인 탭 = 로그인 탭만 닫음(원래 탭은 남김)', rr.closed === 1 && pop2.closed && !a2.closed, JSON.stringify(rr) + CLOSED);
         let tries = 0; lg = []; nt2 = mkTab('dash', {}, lg, 'N'); rr = await runKeep([], async () => { tries++; if (tries === 1) throw new Error('Tab X is no longer available.'); return nt2; });
@@ -264,6 +271,7 @@ async function runKeep(tabs, openTab, code) {
           ok('전부터 있던 로그인 탭 = 건드리지 않음(누름·닫기 0) · 내 탭에서 로그인', r3.state === 'relogin' && !old.closed && !lg3.some(x => /^OLD:tap/.test(x)) && r3.closed === 0, JSON.stringify(r3) + lg3); }
         { const lg3 = [], old = mkTab('phone', {}, lg3, 'OLD'), pop3 = mkTab('login', {}, lg3, 'P'), tabs3 = [old]; const a3 = mkTab('first', { onFirst: () => { tabs3.push(pop3); } }, lg3, 'A'); tabs3.push(a3);
           pop3.evaluate = (orig => async fn => { const s3 = String(fn); if (/el\.click\(\)/.test(s3) && /간편/.test(s3)) { a3.screen = 'dash'; return true; } return orig(fn); })(pop3.evaluate);
+          pop3.mouse.click = async () => { a3.screen = 'dash'; };   /* #1315 */
           const r3 = await runKeep(tabs3, noOpen2);
           ok('전부터 있던 보안 확인 탭 + 새로 뜬 로그인 탭 = 새 탭만 닫음', r3.state === 'relogin' && r3.closed === 1 && pop3.closed && !old.closed && !a3.closed, JSON.stringify(r3) + CLOSED); }
         /* 점검 반영 ③: 첫 열기가 「실패」로 돌아왔는데 탭은 생겨 있던 때 = 여분 하나만 닫음 */
@@ -340,7 +348,7 @@ async function runKeep(tabs, openTab, code) {
           const a12 = mkTab('dash', { onReload: () => 'login', onSimple: x => { tabs12.push(pop12); x.screen = 'dash'; } }, lg, 'A'); tabs12.push(old12, a12);
           const r12 = await runKeep(tabs12, noOpen3);
           ok('바로 로그인됐는데 로그인 창이 남음 = relogin · 그 창만 닫음 · 전부터 있던 로그인 탭·센터 탭은 안 닫음', r12.state === 'relogin' && pop12.closed && !old12.closed && !a12.closed && r12.closed === 1, JSON.stringify(r12) + CLOSED); }
-        ok('유지 코드 = 간편 로그인 누르는 곳 1곳 · 비밀번호·금고 낱말 0 · 기다림 상한 6번', (W.JS_KEEP.match(/간편\\s\*로그인/g) || []).length === 1 && !/password|비밀번호|금고|vault|fill\(|\.type\(/i.test(W.JS_KEEP) && /i < 6/.test(W.JS_KEEP));
+        ok('유지 코드 = 간편 로그인 단추 찾는 곳 2곳(#1315 좌표 구하기 + 종전 click 대비 · 같은 단추 · 누름은 1번) · 비밀번호·금고 낱말 0 · 기다림 상한 6번', (W.JS_KEEP.match(/간편\\s\*로그인/g) || []).length === 2 && !/password|비밀번호|금고|vault|fill\(|\.type\(/i.test(W.JS_KEEP) && /i < 6/.test(W.JS_KEEP));
         /* heartbeat 센터 결과 */
         const st5 = () => { try { return JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); } catch (e) { return {}; } };
         try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ }
@@ -497,6 +505,23 @@ async function runKeep(tabs, openTab, code) {
         let n = 0; log = []; t = mkTab('dash', { onReload: () => { n++; return n === 1 ? 'login' : 'login'; }, onSimple: () => { }, onLook: x => { if (x.screen === 'login' && log.includes('A:tap간편=true') && x.looks >= 3) x.screen = 'dash'; } }, log, 'A'); r = await runKeep([t], noOpen);
         ok('간편 로그인 누른 뒤 늦게 넘어감(새로고침 뒤에도 로그인 화면 · 8초 뒤 다시 보니 대시보드) = relogin · 누름 1번', r.state === 'relogin' && log.filter(x => x === 'A:tap간편=true').length === 1, JSON.stringify(r) + log + ' looks ' + t.looks);
 
+        /* #1315 스크립트 click 이 안 먹는 간편 로그인 단추(11/27 VM 40번 연속 login_fail) = 단추 가운데 좌표로 mouse.click */
+        log = []; t = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; }, jsDead: true }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('#1315 js click 안 먹는 화면 + 좌표 누름 = relogin · how mouse · 누름 1번 · 단추 가운데(640,420)', r.state === 'relogin' && r.clicked && r.how === 'mouse' && log.filter(x => x === 'A:tap간편=true').length === 1 && log.includes('A:move') && !log.includes('A:how=js'), JSON.stringify(r) + log);
+        log = []; t = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; }, mouseThrow: true }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('#1315 mouse 가 던짐 = 종전 js click 1번(how mouse_err+js) → relogin', r.state === 'relogin' && r.clicked && r.how === 'mouse_err+js' && log.filter(x => x === 'A:tap간편=true').length === 1, JSON.stringify(r) + log);
+        log = []; t = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; }, mouseDead: true, jsDead: true }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('#1315 좌표 누름도 안 먹음 = login_fail · 누름 1번(js 로 또 안 누름 · how mouse)', r.state === 'login_fail' && r.clicked && r.how === 'mouse' && !log.includes('A:how=js'), JSON.stringify(r) + log);
+        log = []; t = mkTab('dash', { onReload: () => 'login', onSimple: x => { x.screen = 'dash'; }, covered: true }, log, 'A'); r = await runKeep([t], noOpen);
+        ok('#1315 단추 위에 덮개(elementFromPoint 가 단추 아님) = 좌표 누름 안 함 · 종전 js 1번(how covered+js) → relogin', r.state === 'relogin' && r.how === 'covered+js' && !log.includes('A:move') && log.filter(x => x === 'A:tap간편=true').length === 1, JSON.stringify(r) + log);
+        ok('#1315 화면 코드에 elementFromPoint 판정', /elementFromPoint/.test(W.JS_KEEP));
+        { const fs2 = require('fs');
+          W._setKeep(() => ({ start: async () => ({}), replJson: async () => ({ state: 'relogin', how: 'mouse', clicked: true, store: '제주아꼼이네' }), stop: async () => { } }), async () => true);
+          fs2.writeFileSync(W.KEEP_STATE, JSON.stringify({ at: new Date(Date.now() - 31 * 60000).toISOString(), result: 'ok' }));
+          const k15 = await W.keepMaybe(); const s15 = JSON.parse(fs2.readFileSync(W.KEEP_STATE, 'utf8'));
+          ok('#1315 성공 틱(relogin)에도 center_how 기록(why 는 빈칸 그대로)', k15 && k15.state === 'relogin' && s15.center_how === 'mouse' && !s15.center_why, JSON.stringify(s15));
+          W._setKeep(null, null); }
+        ok('#1315 center_why 에 how 칸', /how=' \+ r\.how/.test(require('fs').readFileSync(require('path').join(__dirname, 'vm', 'vm-watch.js'), 'utf8')));
         ok('읽기만 코드(JS_KEEP_RO) = 누름 막이 RO 표식 · 종전 코드는 RO false', /const RO = true;/.test(W.JS_KEEP_RO) && /const RO = false;/.test(W.JS_KEEP) && W.JS_KEEP_RO.replace('const RO = true;', '') === W.JS_KEEP.replace('const RO = false;', ''));
         log = []; t = mkTab('dash', {}, log, 'A'); r = await runKeep([t], noOpen, W.JS_KEEP_RO);
         ok('읽기만 · 대시보드 = ok · 누름 0 · 스토어 이름', r.state === 'ok' && r.ro === true && r.store === '제주아꼼이네' && !log.some(x => /tap/.test(x)), JSON.stringify(r));
