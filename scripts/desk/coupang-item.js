@@ -10,6 +10,7 @@
 //                                     | --detail-from-naver <네이버 상품번호>(#733 네이버 상세 → 블록 → 미리보기 PNG · naver-detail show 로 보관한 상세를 씀) | --add-item "<옵션명>=<가격>[=<재고>]"(#733 새 옵션 · 여러 번)
 //                                     | --detail-blocks <파일>(#756 detail-compare.js fix 가 만든 「네이버와 같게 보이게 맞춘」 블록 · --detail-from-naver 대신)
 //                                     | --brand "<브랜드 이름>" [--brand-id KR-숫자](#924 브랜드 연결 · 상품 위 칸 brand·brandId 둘만 · brandId 는 글자 그대로 · 승인행)
+//                                     | --item-attr <vendorItemId>="<구매옵션 이름>=<새 값>"(#1307 · 여러 번 · 기존 옵션의 「농산물 중량」 같은 손님 화면 옵션 글자 · 있는 칸만 · 승인행)
 //   node scripts/desk/coupang-item.js apply-full <backup_id> <지시 id> (plan-full 과 같은 인자)   전체 수정 → 「🟡 쿠팡 승인 대기」 카드
 //   node scripts/desk/coupang-item.js revert-full <backup_id> <지시 id> [--force]      보관본 그대로 다시 저장(이것도 승인행)
 //   node scripts/desk/coupang-item.js approval <상품 번호>                             승인 상태 · 반려 사유(읽기만)
@@ -47,6 +48,7 @@ function parseOpts(args) {
         else if (a === '--name' || a === '--detail' || a === '--from' || a === '--brand') o[a.slice(2)] = args[++i];
         else if (a === '--brand-id') o.brandId = args[++i];   // #924
         else if (a === '--item-name') (o.itemName = o.itemName || []).push(args[++i]);
+        else if (a === '--item-attr') (o.itemAttr = o.itemAttr || []).push(args[++i]);   /* #1307 기존 옵션 구매옵션 값(손님 화면 옵션 글자) = 서버 patch.item_attrs(#745) */
         else if (a === '--item') (o.item = o.item || []).push(args[++i]);
         else if (a === '--detail-from-naver') o.fromNaver = args[++i];
         else if (a === '--detail-blocks') o.detailBlocks = args[++i];   // #756
@@ -159,7 +161,7 @@ const shapeOf = it => ((it && it.contents) || []).map(c => `${c.contentsType || 
 // 상품 통째 보관본 + 인자 → { patch(계약 꼴), rows, errs } — 서버(cpwApplyFull)와 같은 거절을 먼저(보내지 않음)
 function planFull(before, o, readFile) {
     const patch = {}, rows = [], errs = [], items = (before && before.items) || [];
-    if (o.name == null && !(o.itemName || []).length && o.detail == null && !o.blocks && !(o.addItem || []).length && o.brand == null && o.brandId == null) errs.push('바꿀 것을 주세요: --name "<글>" | --item-name <vendorItemId>=<새 이름> | --detail <html 파일> | --detail-from-naver <네이버 상품번호> | --add-item "<옵션명>=<가격>=<재고>" | --brand "<브랜드 이름>" [--brand-id KR-숫자]');
+    if (o.name == null && !(o.itemName || []).length && !(o.itemAttr || []).length && o.detail == null && !o.blocks && !(o.addItem || []).length && o.brand == null && o.brandId == null) errs.push('바꿀 것을 주세요: --name "<글>" | --item-name <vendorItemId>=<새 이름> | --item-attr <vendorItemId>="<구매옵션 이름>=<새 값>" | --detail <html 파일> | --detail-from-naver <네이버 상품번호> | --add-item "<옵션명>=<가격>=<재고>" | --brand "<브랜드 이름>" [--brand-id KR-숫자]');
     if (o.detail != null && o.blocks) errs.push('--detail 과 --detail-from-naver 는 하나만');
     if (o.brand == null && o.brandId != null) errs.push('--brand-id 는 --brand 와 같이');   // #924 교차 점검 손질 1
     else if (o.brand != null) {   // #924 브랜드 연결 — 상품 위 칸 brand(이름) · brandId(「KR-숫자」 글자 그대로 · 서버가 같은 꼴 검사)
@@ -217,6 +219,28 @@ function planFull(before, o, readFile) {
             used.add(v); m[k] = v; rows.push({ field: `옵션명(${hit[0].vendorItemId || hit[0].sellerProductItemId || k})`, before: hit[0].itemName || '(없음)', after: v });
         }
         if (Object.keys(m).length) patch.item_names = m;
+    }
+    if ((o.itemAttr || []).length) {   // #1307 기존 옵션 구매옵션 값 — 서버 cpwApplyFull item_attrs 와 같은 거절(번호로만 · 있는 칸만 · 같은 값 · 묶음 겹침)
+        const m = {};
+        for (const raw of o.itemAttr) {
+            const s = String(raw || ''), i = s.indexOf('='), j = i > 0 ? s.indexOf('=', i + 1) : -1;
+            const k = i > 0 ? s.slice(0, i).trim() : '', tn = j > i ? s.slice(i + 1, j).trim() : '', v = j > i ? s.slice(j + 1).trim() : '';
+            if (!/^\d{1,15}$/.test(k) || !tn || !v) { errs.push(`--item-attr 「${raw}」: <vendorItemId>=<구매옵션 이름>=<새 값> 꼴로`); continue; }
+            const hit = items.filter(it => String(it.vendorItemId || '') === k);
+            if (hit.length !== 1) { errs.push(`--item-attr: 옵션 ${k} 를 하나로 찾지 못했어요(${hit.length}개)`); continue; }
+            const a = (hit[0].attributes || []).find(x => x && x.attributeTypeName === tn);
+            if (!a) { errs.push(`--item-attr ${k}: 구매옵션 「${tn}」 칸이 이 옵션에 없어요(새 칸은 안 붙임)`); continue; }
+            if (v.length > 150) { errs.push(`--item-attr ${k}: 값은 150자까지예요`); continue; }
+            if (a.attributeValueName === v) { errs.push(`--item-attr ${k}: 「${tn}」 값이 지금과 같아요`); continue; }
+            (m[k] = m[k] || {})[tn] = v;
+            rows.push({ field: `구매옵션 「${tn}」(${k} · 손님 화면 옵션 글자)`, before: a.attributeValueName || '(빈 값)', after: v });
+        }
+        if (Object.keys(m).length && !errs.length) {
+            const key = it => JSON.stringify(((it.attributes) || []).map(x => [x.attributeTypeName, (m[String(it.vendorItemId || '')] || {})[x.attributeTypeName] != null ? m[String(it.vendorItemId || '')][x.attributeTypeName] : x.attributeValueName]).filter(p => String(p[1] || '') !== '').sort());
+            const seen = new Map();
+            for (const it of items) { const kk = key(it); if (kk === '[]') continue; if (seen.has(kk)) { errs.push(`--item-attr: 구매옵션 값 묶음이 다른 옵션(${seen.get(kk)})과 같아져요`); break; } seen.set(kk, it.itemName); }
+            if (!errs.length) patch.item_attrs = m;
+        }
     }
     if (o.detail != null) {
         let h = null;

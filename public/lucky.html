@@ -250,7 +250,7 @@ body.boot::after{content:'불러오는 중';position:fixed;top:40%;left:0;right:
     <div class="mhero"><img src="img/lucky_winner_hero.webp" alt="" width="900" height="471"><button class="mclose" id="wclose" type="button" aria-label="닫기">✕</button></div>
     <div class="mtitle"><div class="t" id="wtitle">🏆 당첨자 발표</div><div class="s" id="wsub"></div><span class="hand">함께해 주신 모든 분께 감사드립니다! ♡</span></div>
     <div class="mbody" id="wbody"></div>
-    <div class="mfoot"><div class="msg">당첨되신 분께는 <b>순차적으로 연락</b>드리며, 경품은 주문 시 배송지로 보내드립니다 🍊<br>내 당첨 여부는 성함·번호로 조회하세요.</div><button class="ok" id="wok" type="button">확인하고 조회하러 가기</button></div>
+    <div class="mfoot"><div class="msg">당첨되신 분께는 <b>개별 문자</b>로 안내드립니다 🍊<br>내 당첨 여부는 성함·번호로 조회하세요.</div><button class="ok" id="wok" type="button">확인하고 조회하러 가기</button></div>
   </div>
 </div>
 
@@ -275,7 +275,7 @@ const str=v=>typeof v==='string'?v.trim():'';
 const escMl=s=>esc(s).replace(/\r?\n/g,'<br>');   // 직원이 쓴 글 = 이스케이프 + 줄바꿈만
 const safeUrl=u=>{ u=str(u); if(!u) return ''; if(/^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+\/=]+$/.test(u)) return u; if(/^(img\/|\/(?!\/))[^\s"'<>]*$/.test(u)||/^https:\/\/[A-Za-z0-9.\-]+(:\d+)?(\/[^\s"'<>]*)?$/.test(u)) return u; return ''; };
 const imgUrl=v=>safeUrl(typeof v==='string'?v:(v&&(v.url||v.src))||'');
-const SRV_DEF={ prize_head_hand:'제주의 좋은 마음을 선물합니다! ♡', corner_hand:'늘 함께해 주셔서\n감사합니다! ♡', search_hand:'성함·번호로 확인해보세요! ♡', winner_hand:'함께해 주신 모든 분께 감사드립니다! ♡', winner_foot:'당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊', noitem_products:'감귤·황금향 등' };
+const SRV_DEF={ prize_head_hand:'제주의 좋은 마음을 선물합니다! ♡', corner_hand:'늘 함께해 주셔서\n감사합니다! ♡', search_hand:'성함·번호로 확인해보세요! ♡', winner_hand:'함께해 주신 모든 분께 감사드립니다! ♡', winner_foot:'당첨되신 분께는 개별 문자로 안내드립니다 🍊', noitem_products:'감귤·황금향 등' };
 const nlz=s=>String(s==null?'':s).replace(/\r\n/g,'\n').trim();
 function readCfg(j){
   const e=j.event||{}, pick=k=>(e[k]!=null?e[k]:j[k]);
@@ -390,7 +390,7 @@ function show(j,q){
   const first=j.results[0];
   let head='';
   if(first.status==='win'){
-    head=`<div class="res win">${girl}<div class="body"><div class="big">🎊 축하합니다! 당첨되셨어요!</div><div class="sub">${esc(first.buyer||first.recv)} 고객님, 제주아꼼이네를 이용해주셔서 감사합니다.</div></div><div class="prizebox" style="grid-column:1/-1;margin-top:0"><div class="p">🍊 ${esc(first.prize)}</div><div class="s">경품은 주문 시 배송지로 보내드립니다. 문의는 구매 채널로 남겨주세요.</div></div></div>`;
+    head=`<div class="res win">${girl}<div class="body"><div class="big">🎊 축하합니다! 당첨되셨어요!</div><div class="sub">${esc(first.buyer||first.recv)} 고객님, 제주아꼼이네를 이용해주셔서 감사합니다.</div></div><div class="prizebox" style="grid-column:1/-1;margin-top:0"><div class="p">🍊 ${esc(first.prize)}</div><div class="s">당첨되신 분께 개별 문자로 안내드립니다. 문의는 구매 채널로 남겨주세요.</div></div></div>`;
   } else if(first.status==='lose'){
     head=`<div class="res lose">${girl}<div class="body"><div class="big">아쉽지만 다음 기회에… 🙏</div><div class="sub">이번엔 당첨되지 않으셨어요. 다음 이벤트에서 <b>더 좋은 상품으로 보답</b>드리겠습니다. 이용해주셔서 진심으로 감사합니다!</div></div>${deco('다음엔<br>꼭 만나요!')}</div>`;
   } else if(first.status==='noitem'){
@@ -473,19 +473,28 @@ const PROMO={ minStart:'2026-11-20', maxStart:'2026-11-30', until:'2026-11-29',
   fpill:'11/24 발송분부터 응모 · 발표 11/27(금) · 11/29(일) 발송',
   guide:['<b>당첨 상품</b>은 11/29(일)에 보내드려요','<b>주문 1건마다 응모 1번</b>이에요. 여러 번 주문하시면 기회가 늘어요','<b>행사 상품도 같은 귤</b>이에요. 상자·송장에 「행사」 표기가 없어 선물로도 편해요','<b>체험 주문</b>은 응모 대상이 아니에요'] };
 const kstToday=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
+const pubMD=d=>{ const p=String(d||'').split('-'); return p.length===3?`${+p[1]}/${+p[2]}`:''; };   /* #1308 「11/27」 꼴 */
 const promoOn=e=>{ const st=String((e&&e.start)||''); return !!st&&st>=PROMO.minStart&&st<=PROMO.maxStart&&(PREVIEW||kstToday()<=PROMO.until); };
 function drawHead(e){
   const on=promoOn(e)&&CFG.state!=='down';   /* 닫힌 이벤트 = 혜택 머리 끔(「이벤트가 끝났어요」 위에 안 남게) */
   document.documentElement.classList.toggle('winter',on); document.body.classList.toggle('winter',on);   /* #1261 겨울 바탕·색은 이번 행사일 때만 */
   { const tc=document.querySelector('meta[name="theme-color"]'); if(tc) tc.setAttribute('content',on?'#CFE5F7':'#FFE9D2'); }
-  if(on) $('#evWhen').innerHTML=PROMO.when; else $('#evWhen').textContent=e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내';
-  $('#evTitleV').textContent=on?PROMO.title:(CFG.display_title||e.title||'고객 감사 이벤트');
+  const pub=on&&!!e.published;   /* #1308 발표 뒤 = 머리 글만 「당첨자 발표」 꼴(틀·색 그대로) */
+  if(pub) $('#evWhen').textContent=`${pubMD(e.announce)} 당첨자 발표 완료`; else if(on) $('#evWhen').innerHTML=PROMO.when; else $('#evWhen').textContent=e.start&&e.end?`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문`:'이벤트 안내';
+  $('#evTitleV').textContent=pub?'당첨자 발표':on?PROMO.title:(CFG.display_title||e.title||'고객 감사 이벤트');
   $('#evEyebrow').textContent=on?PROMO.eyebrow:''; $('#evEyebrow').hidden=!on; $('#evSign').hidden=!on;
   $('#evLead').hidden=on; if(!on) $('#evLead').textContent=e.announce?`${fmtDate(e.announce)} 당첨자 발표 · 이름이나 번호로 확인해 보세요`:'이름이나 번호로 접수와 당첨을 확인해 보세요';
   if(on) $('#evPeriod').textContent='11/23(월) ~ 11/27(금) 오전 8시 주문까지 · 11/24 발송분부터 응모 · 11/27 당첨 발표';   /* 설정 기간(발송일 기준 11/24~11/27)은 판정에만 · 손님 글은 행사 문안 */
 }
 function drawPromo(e){
   const el=$('#promo'), on=promoOn(e);
+  if(on&&e.published){   /* #1308 발표 뒤 = 끝난 혜택 카드 대신 발표 카드(명단 단추 = openWinners · 조회 칸은 바로 아래 「내 접수 확인」) */
+    const total=(e.prizes||[]).reduce((a,p)=>a+(+p.count||0),0);
+    el.innerHTML=`<article class="bcard pubc"><span class="blab">당첨자 발표</span><p class="bbig">당첨자 발표 완료</p><p class="bsub">총 ${total}분</p>
+      <button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>
+      <p class="bnote2">${PROMO.guide[0]}</p></article>`;
+    el.hidden=false; return;
+  }
   el.innerHTML=on?`<article class="bcard"><span class="blab">혜택 1 · 인기 판매 1·2·3위 품목 행사</span>
       <p class="bhl"><span class="hl">지금 제주아꼼이네에서 가장 많이 팔리는 상품</span></p><p class="bbig">행사가 할인</p>
       <ul class="rlist">${PROMO.rank.map(r=>`<li><span class="rk">${r[0]}</span><b>${r[1]}</b><small>${r[2]}</small><em>${r[3]}</em></li>`).join('')}</ul>

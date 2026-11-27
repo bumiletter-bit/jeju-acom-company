@@ -46,7 +46,7 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     corner_hand: '늘 함께해 주셔서\n감사합니다! ♡',
     search_hand: '성함·번호로 확인해보세요! ♡',
     winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡',
-    winner_foot: '당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊',
+    winner_foot: '당첨되신 분께는 개별 문자로 안내드립니다 🍊',
     noitem_products: '감귤·황금향 등',
     preparing_title: '이벤트 준비 중이에요 🍊',
     preparing_line: '곧 열립니다. 조금만 기다려 주세요!',
