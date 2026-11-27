@@ -532,7 +532,7 @@ function drawHead(e){
   $('#evEyebrow').textContent=pub?'트리플 혜택 이벤트 당첨자 발표':on?PROMO.eyebrow:''; $('#evEyebrow').hidden=!on; $('#evSign').hidden=!on||pub;
   document.body.classList.toggle('evpub',pub);
   $('#evLead').hidden=on; if(!on) $('#evLead').textContent=e.announce?`${fmtDate(e.announce)} 당첨자 발표 · 이름이나 번호로 확인해 보세요`:'이름이나 번호로 접수와 당첨을 확인해 보세요';
-  if(on) $('#evPeriod').textContent='11/23(월) ~ 11/27(금) 오전 8시 주문까지 · 11/24 발송분부터 응모 · 11/27 당첨 발표';   /* 설정 기간(발송일 기준 11/24~11/27)은 판정에만 · 손님 글은 행사 문안 */
+  if(on) $('#evPeriod').textContent=pub?'11/23(월) ~ 11/27(금) 오전 8시 주문 · 11/24~11/27 발송분 응모 · 11/27 당첨 발표 완료':'11/23(월) ~ 11/27(금) 오전 8시 주문까지 · 11/24 발송분부터 응모 · 11/27 당첨 발표';   /* #1320 발표 뒤 = 지난 일로 */   /* 설정 기간(발송일 기준 11/24~11/27)은 판정에만 · 손님 글은 행사 문안 */
 }
 function drawPromo(e){
   const el=$('#promo'), on=promoOn(e);
@@ -560,7 +560,7 @@ function drawPromo(e){
 }
 function drawGuide(e){
   const on=promoOn(e), pub=on&&!!e.published;   /* #1308-2 발표 뒤 = 응모 권유·행사 상품 줄과 「행사 상품 보러 가기」는 뺌(끝난 행사) */
-  const rows=['<b>접수 내역</b>은 상품이 발송된 날 오전 10시부터 보여요'];
+  const rows=pub?[]:['<b>접수 내역</b>은 상품이 발송된 날 오전 10시부터 보여요'];   /* #1320 발표 뒤 = 응모 끝 · 접수 줄 뺌 */
   if(e.announce) rows.push(`<b>당첨 발표 ${fmtDate(e.announce)}</b> · 이 화면에서 바로 확인할 수 있어요`);
   if(pub) rows.push(PROMO.guide[0],PROMO.guide[3]); else if(on) rows.push(...PROMO.guide);
   $('#guideList').innerHTML=rows.map(h=>`<li>${h}</li>`).join('');

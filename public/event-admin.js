@@ -274,7 +274,7 @@
             <div class="ev-head-acts">
                 <span class="ev-dirty" role="status">${S.saving ? '저장하는 중' : (S.dirty ? '저장 안 한 변경 있음' : '')}</span>
                 ${btn(S.saving ? '저장 중' : '변경 저장', `data-ev="save"${S.dirty && !S.saving ? '' : ' disabled'}`, 'primary')}
-                ${isOpen() ? btn('📤 오늘 송장 올리기', 'data-ev="uphead"', 'ev-upgo') : ''}
+                ${stateOf() === 'live' ? btn('📤 오늘 송장 올리기', 'data-ev="uphead"', 'ev-upgo') : ''}
                 ${isOpen() ? `<details class="ev-headmore"><summary class="ev-btn ghost">더 보기</summary><div class="ev-headmore-pop">${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost')}</div></details>`
                     : `${btn('지난 회차 복사', 'data-ev="copy"')}${btn('새 회차', 'data-ev="new"')}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost ev-head-reset')}`}</div>
         </div>`;   // #1270 열린 회차에서는 [새 회차]·[초기화]를 「더 보기」 안으로 물리고 송장 올리기 바로가기를 머리에
