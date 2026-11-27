@@ -404,6 +404,7 @@ async function runKeep(tabs, openTab, code) {
         const st3 = () => { try { return JSON.parse(fs.readFileSync(W.KEEP_STATE, 'utf8')); } catch (e) { return {}; } };
         const wipe = () => { try { fs.unlinkSync(W.KEEP_STATE); } catch (e) { /* 없음 */ } };
         let kills = 0; W._setAsideKill(() => { kills++; return true; });
+        W._setRecycleAt('4');   /* #1314 이 묶음은 종전 「4」(04:00~04:59) 값으로 = 종전 단언 그대로 */
         const at = h => Date.UTC(2026, 10, 22, h - 9, 30, 0);   /* KST h시 30분 */
         const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
         wipe(); W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true);
@@ -456,6 +457,25 @@ async function runKeep(tabs, openTab, code) {
         W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true);
         ok('  (이어서 04시대 · 여유 넉넉) = 안 끔', (await W.asideRecycleMaybe(at(4) + 10 * 60000)) === null && kills === 1);
         ok('끄는 명령 = 데몬 + 앱 본체만 · CLI 경로(\\CLI\\)는 빼고 · taskkill /IM 안 씀', /aside-daemon\.exe/.test(W.ASIDE_KILL_PS) && /Aside\.exe/.test(W.ASIDE_KILL_PS) && /ExecutablePath -notmatch '\\\\CLI\\\\'/.test(W.ASIDE_KILL_PS) && !/taskkill/i.test(W.ASIDE_KILL_PS));
+        /* #1314 기본 06:30 · 「H:MM」 · 60분 창 */
+        const atm = (h, m) => Date.UTC(2026, 10, 22, h - 9, m, 0);
+        W._setRecycleAt(); delete process.env.VM_ASIDE_RECYCLE_HOUR; W._setRecycleAt();
+        ok('#1314 기본 = 06:30', W.recycleLabel(W.parseRecycleAt(undefined)) === '06:30' && W.recycleLabel(W.parseRecycleAt(null)) === '06:30');
+        ok('#1314 값 꼴 = 「6:30」 06:30 · 「4」 04:00 · 「04:05」 · 빈 값·음수·「25」·「6:75」·「abc」 = 끔', W.recycleLabel(W.parseRecycleAt('6:30')) === '06:30' && W.recycleLabel(W.parseRecycleAt('4')) === '04:00' && W.recycleLabel(W.parseRecycleAt('04:05')) === '04:05' && ['', ' ', '-1', '25', '6:75', 'abc'].every(v => W.parseRecycleAt(v) === null));
+        const A630 = W.parseRecycleAt(null), A4 = W.parseRecycleAt('4');
+        ok('#1314 창 = 06:29 아님 · 06:30·06:45·07:29 맞음 · 07:30·07:31 아님', !W.inRecycleWindow(A630, atm(6, 29)) && W.inRecycleWindow(A630, atm(6, 30)) && W.inRecycleWindow(A630, atm(6, 45)) && W.inRecycleWindow(A630, atm(7, 29)) && !W.inRecycleWindow(A630, atm(7, 30)) && !W.inRecycleWindow(A630, atm(7, 31)));
+        ok('#1314 「4」 = 04:00~04:59(종전 그 시 꼴) · 03:59·05:00 아님', W.inRecycleWindow(A4, atm(4, 0)) && W.inRecycleWindow(A4, atm(4, 59)) && !W.inRecycleWindow(A4, atm(3, 59)) && !W.inRecycleWindow(A4, atm(5, 0)));
+        ok('#1314 끔(null) = 창 없음', !W.inRecycleWindow(null, atm(6, 45)));
+        wipe(); W._setMem(() => ({ free_mb: 9000, total_mb: 15339 })); await W.memMaybe(true); W._setAsideKill(() => { kills++; return true; }); kills = 0;
+        ok('#1314 기본값 06:29 = 안 끔', (await W.asideRecycleMaybe(atm(6, 29))) === null && kills === 0);
+        rr = await W.asideRecycleMaybe(atm(6, 45));
+        ok('#1314 기본값 06:45(밀린 틱) = 하루 1번 끔 · 날짜 기록', rr && rr.why === 'daily' && kills === 1 && st3().aside_recycle_day === today, JSON.stringify([rr, st3()]));
+        ok('#1314 같은 날 07:10 다시 = 안 끔', (await W.asideRecycleMaybe(atm(7, 10))) === null && kills === 1);
+        wipe(); ok('#1314 06:30 정각 = 끔', (await W.asideRecycleMaybe(atm(6, 30))) && kills === 2);
+        wipe(); ok('#1314 07:31(창 놓침) = 그날 건너뜀', (await W.asideRecycleMaybe(atm(7, 31))) === null && kills === 2);
+        wipe(); ok('#1314 04:30(옛 시각) = 이제 안 끔', (await W.asideRecycleMaybe(atm(4, 30))) === null && kills === 2);
+        W._setRecycleAt(''); wipe(); ok('#1314 빈 값 = 하루 1번 끔(06:45에도 안 함)', (await W.asideRecycleMaybe(atm(6, 45))) === null && kills === 2);
+        W._setRecycleAt();
         W._setAsideKill(null); W._setMem(null); W._setKeep(null, null); wipe();
     }
 

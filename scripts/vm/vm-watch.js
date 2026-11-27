@@ -62,9 +62,24 @@ const MEM_MS = process.env.VM_MEM_MS != null && process.env.VM_MEM_MS !== '' ? N
 const MEM_LOW_MB = Number(process.env.VM_MEM_LOW_MB) || 1024;
 const MEM = { at: 0, free_mb: null, total_mb: null };   // 마지막으로 잰 값(heartbeat 에 같이 실림)
 // #1242-2 누수 주인 = 어사이드 앱 본체(실측 11/22: 가만히 있어도 핸들이 1초에 1개쯤·커밋이 시간당 0.5GB 늘고, 앱만 끄면 그만큼 돌아옴) → 러너가 어사이드 앱만 끄고(다음에 쓸 때 저절로 다시 켜짐) 메모리를 돌려받음
-//   끄는 때 = ①커밋 여유가 VM_ASIDE_RECYCLE_MB(기본 3,072MB) 아래 ②매일 VM_ASIDE_RECYCLE_HOUR(기본 04시 KST)에 1번 · 둘 다 러너가 쉬는 중·잠금이 비었을 때만 · 끄기 = VM_ASIDE_RECYCLE_MB=0(여유 갈래 · 빈 값은 기본 3,072) · VM_ASIDE_RECYCLE_HOUR 빈 값 또는 음수(하루 1번 갈래)
+//   끄는 때 = ①커밋 여유가 VM_ASIDE_RECYCLE_MB(기본 3,072MB) 아래 ②매일 VM_ASIDE_RECYCLE_HOUR(기본 06:30 KST · #1314 · 「H」·「H:MM」 · 그 시각부터 60분 안)에 1번 · 둘 다 러너가 쉬는 중·잠금이 비었을 때만 · 끄기 = VM_ASIDE_RECYCLE_MB=0(여유 갈래 · 빈 값은 기본 3,072) · VM_ASIDE_RECYCLE_HOUR 빈 값 또는 음수(하루 1번 갈래)
 const ASIDE_RECYCLE_MB = process.env.VM_ASIDE_RECYCLE_MB != null && process.env.VM_ASIDE_RECYCLE_MB !== '' ? Number(process.env.VM_ASIDE_RECYCLE_MB) : 3072;
-const ASIDE_RECYCLE_HOUR = process.env.VM_ASIDE_RECYCLE_HOUR != null ? (process.env.VM_ASIDE_RECYCLE_HOUR === '' ? -1 : Number(process.env.VM_ASIDE_RECYCLE_HOUR)) : 4;
+// #1314(대표 11/27 「새벽 4시 재시작을 6시 반 재시작으로」) 하루 1번 시각 = 기본 06:30 KST · VM_ASIDE_RECYCLE_HOUR 「H」 또는 「H:MM」(「4」 = 04:00 · 「6:30」) · 빈 값·음수·꼴 틀림 = 끔(종전 빈 값·음수 = 끔 그대로)
+//   그 시각이 지났고 그 시각부터 60분 안이며 오늘 아직 안 했으면 1번(러너가 바빠 몇 분 밀려도 창 안에서 1번 · 창을 놓치면 그날은 건너뜀 = 종전 「그 시」 꼴과 같은 폭)
+function parseRecycleAt(v) {
+    if (v == null) return { h: 6, m: 30 };
+    const s = String(v).trim(), mm = /^(\d{1,2})(?::(\d{2}))?$/.exec(s);
+    if (!mm) return null;
+    const h = Number(mm[1]), m = mm[2] == null ? 0 : Number(mm[2]);
+    return h <= 23 && m <= 59 ? { h, m } : null;
+}
+let ASIDE_RECYCLE_AT = parseRecycleAt(process.env.VM_ASIDE_RECYCLE_HOUR);
+const recycleLabel = a => a ? String(a.h).padStart(2, '0') + ':' + String(a.m).padStart(2, '0') : '끔';
+function inRecycleWindow(a, t) {
+    if (!a) return false;
+    const k = new Date(t + 9 * 3600e3), now = k.getUTCHours() * 60 + k.getUTCMinutes(), start = a.h * 60 + a.m;
+    return now >= start && now < start + 60;
+}
 const ASIDE_RECYCLE_GAP_MS = 2 * 3600e3;   // 여유가 낮아 끈 뒤 2시간은 같은 까닭으로 또 끄지 않음(껐는데도 안 돌아오면 = 주인이 다른 것 → 메모리 알림이 맡음)
 const ALLOWED = 'mcp__aside__repl,mcp__aside__exec';   // 어사이드만(교차 점검 2 · 파일 읽기 도구는 .env 유출 길이라 막음)
 const DENIED = 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob';
@@ -577,10 +592,10 @@ function asideKill() {
 }
 const ASIDE_KILL_PS = "$n = 0; Get-CimInstance Win32_Process | ? { ($_.Name -ieq 'aside-daemon.exe') -or (($_.Name -ieq 'Aside.exe') -and ($_.ExecutablePath -notmatch '\\\\CLI\\\\')) } | % { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $n++ } catch { } }; $n";
 async function asideRecycleMaybe(now) {
-    const t = now || Date.now(), st = keepRead(), day = kstDay(), hour = new Date(t + 9 * 3600e3).getUTCHours();
+    const t = now || Date.now(), st = keepRead(), day = kstDay();
     let why = '';
     if (ASIDE_RECYCLE_MB > 0 && MEM.free_mb != null && MEM.free_mb < ASIDE_RECYCLE_MB && !(st.aside_recycle_low_at && t - Date.parse(st.aside_recycle_low_at) < ASIDE_RECYCLE_GAP_MS)) why = 'low';
-    else if (ASIDE_RECYCLE_HOUR >= 0 && hour === ASIDE_RECYCLE_HOUR && st.aside_recycle_day !== day) why = 'daily';
+    else if (inRecycleWindow(ASIDE_RECYCLE_AT, t) && st.aside_recycle_day !== day) why = 'daily';
     if (!why) return null;
     if (busyWhy()) return null;   // 키워드 순위·체험 번호 틱이 어사이드를 쓰는 중 = 다음 주기에
     if (!asideKiller && process.platform !== 'win32') return null;
@@ -590,9 +605,9 @@ async function asideRecycleMaybe(now) {
     const at = new Date(t).toISOString();
     // 끈 뒤 첫 로그인 유지 = 약 75초 뒤(바로 돌면 어사이드가 켜지는 중이라 「Tab … is no longer available」 = 11/22 13:49 실례) · 그 틱이 error 면 90초 뒤 1번 더(keep_retry) · 그래도 error 면 종전 30분
     //   여유가 낮아 끈 것이 마침 하루 1번 시각대면 그날 치도 한 것으로 침(같은 시간대에 두 번 끄지 않게)
-    keepWrite({ aside_recycle_at: at, aside_recycle_why: why, ...(why === 'low' ? { aside_recycle_low_at: at } : {}), ...(why === 'daily' || hour === ASIDE_RECYCLE_HOUR ? { aside_recycle_day: day } : {}), ...(KEEP_MS > 0 ? { at: new Date(t - KEEP_MS + 75000).toISOString(), keep_retry: 1 } : {}) });
+    keepWrite({ aside_recycle_at: at, aside_recycle_why: why, ...(why === 'low' ? { aside_recycle_low_at: at } : {}), ...(why === 'daily' || inRecycleWindow(ASIDE_RECYCLE_AT, t) ? { aside_recycle_day: day } : {}), ...(KEEP_MS > 0 ? { at: new Date(t - KEEP_MS + 75000).toISOString(), keep_retry: 1 } : {}) });
     MEM.at = 0;   // 다음 주기에 메모리를 다시 잼(돌아온 양이 로그에 남음)
-    log(`어사이드 다시 열기 · ${why === 'low' ? '커밋 여유 ' + before + 'MB < ' + ASIDE_RECYCLE_MB + 'MB' : '하루 1번(' + ASIDE_RECYCLE_HOUR + '시)'} · ${killed ? '앱 끔(다음에 쓸 때 저절로 켜짐)' : '끌 앱 없음'}`);
+    log(`어사이드 다시 열기 · ${why === 'low' ? '커밋 여유 ' + before + 'MB < ' + ASIDE_RECYCLE_MB + 'MB' : '하루 1번(' + recycleLabel(ASIDE_RECYCLE_AT) + ')'} · ${killed ? '앱 끔(다음에 쓸 때 저절로 켜짐)' : '끌 앱 없음'}`);
     return { why, killed, before };
 }
 async function keepMaybe(force) {
@@ -684,4 +699,4 @@ async function main() {
     return 0;
 }
 if (require.main === module) main().then(c => process.exit(c), e => { log('러너 오류: ' + (e && e.stack || e)); lockFree(); process.exit(1); });
-module.exports = { skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, JS_KEEP_QUIET, JS_KEEP_RO, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, asideRecycleMaybe, ASIDE_KILL_PS, _setAsideKill: f => { asideKiller = f || null; }, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
+module.exports = { parseRecycleAt, inRecycleWindow, recycleLabel, _setRecycleAt: v => { ASIDE_RECYCLE_AT = v === undefined ? parseRecycleAt(process.env.VM_ASIDE_RECYCLE_HOUR) : parseRecycleAt(v); }, skipWhy, isRank, RANK_RE, isPoint, POINT_RE, POINT_LIMIT_MS, isAddr, isFast, FAST_MODEL, FAST_LIMIT_MS, MODEL, finalSentToday, SENT_LINE, keepMaybe, KEEP_STATE, JS_KEEP, JS_KEEP_QUIET, JS_KEEP_RO, _setKeep: (f, n) => { asideFactory = f || null; keepNotify = n || null; }, memMaybe, MEM, isOomText, asideRecycleMaybe, ASIDE_KILL_PS, _setAsideKill: f => { asideKiller = f || null; }, tellOnce, claudeOnce, _setMem: f => { memReader = f || null; MEM.at = 0; MEM.free_mb = null; MEM.total_mb = null; }, bodyOf, head60, takeAttach, promptFor, busyWhy, inSkip, lockTake, claudeCwd, ALLOWED, DENIED, lockFree, lockBusy, pick, claim, respond, recoverOwn, handle, pollOnce, heartbeat, LOCK, STATE, OUT_DIR, MAX_TRIES, MAX_CLAIMS_DAY };
