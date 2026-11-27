@@ -21,7 +21,7 @@
         try { j = await r.json(); } catch (e) { j = null; }
         return { ok: r.ok && !!j && j.ok !== false, status: r.status, body: j || {} };
     };
-    const errText = b => { const e = b && (b.message || b.error); const M = { SERVER: '서버 오류가 났어요. 잠시 뒤 다시 해 주세요', CONFIRM: '확인이 필요해요', BAD: '보낸 값이 올바르지 않아요', PREPARING: '이벤트가 아직 열리지 않았어요', CLOSED: '이벤트가 내려갔어요', LIVE_ROUND: '진행 중인 이벤트라 확인이 더 필요해요. 화면을 새로 고친 뒤 다시 해 주세요' }; return M[e] || e || '저장하지 못했어요'; };
+    const errText = b => { const e = b && (b.message || b.error); const M = { SERVER: '서버 오류가 났어요. 잠시 뒤 다시 해 주세요', CONFIRM: '확인이 필요해요', BAD: '보낸 값이 올바르지 않아요', PREPARING: '이벤트가 아직 열리지 않았어요', CLOSED: '이벤트가 내려갔어요', LIVE_ROUND: '진행 중인 이벤트라 확인이 더 필요해요. 화면을 새로 고친 뒤 다시 해 주세요', STALE: '다른 곳에서 바뀌었어요. 화면을 새로 고친 뒤 다시 해 주세요(고친 내용은 다시 넣어야 해요)', DB_BUSY: '서버가 잠깐 바빠요. 10초 뒤 다시 눌러 주세요(저장된 것 없음)' }; return M[e] || e || '저장하지 못했어요'; };
     const clone = o => JSON.parse(JSON.stringify(o == null ? null : o));
     const kstToday = () => { const d = new Date(Date.now() + 9 * 3600e3); return d.toISOString().slice(0, 10); };
     const addDays = (ymd, n) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || '')) return ''; const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -711,7 +711,7 @@
         if (!e.bot_reply.custom) e.bot_reply.response = '';
         e.prizes = (e.prizes || []).filter(p => String(p.name || '').trim()).map(p => { const b = p.image_id ? null : brandFor(p.name); return Object.assign({}, p, { name: String(p.name).trim(), count: Math.max(0, Number(p.count) || 0), image_id: p.image_id || (b && b.id) || null }); });   // 그림을 안 고른 경품 = 품목 실사진(설계 0-ㄷ)
         delete e.state; delete e.live_mode; delete e.checklist; delete e.display_title;   // #718 손님 화면 제목 칸 없음 → 안 보냄(서버 옛 값 그대로 · 지금 회차는 빈 값)
-        return { event: e, excluded: S.excluded };
+        return { event: e, excluded: S.excluded, base_updated_at: (S.db && S.db.updatedAt) || '' };   // #1310 C 이 화면이 읽은 회차 시각 — 그 사이 다른 곳에서 저장됐으면 서버가 409 STALE
     }
     async function save(quiet) {
         if (S.saving) return false;

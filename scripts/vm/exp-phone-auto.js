@@ -36,6 +36,39 @@ const PHONE_RE = /01[016789][-\s]?\d{3,4}[-\s]?\d{4}/g;
 const FN_L = 'A-Za-z\\u00C0-\\u024F\\u0400-\\u04FF';
 const FOREIGN_NAME = `[${FN_L}][${FN_L} .'\\-]{0,38}[${FN_L}.]`;
 
+// #1312(대표 11/27) 네이버 예약 파트너센터 「개인정보 조회」 인증 전 = 이름 가운데 별표 · 번호 「***-****-끝4자리」 · 화면 위 PrivacyAuthButton
+//   → 인증은 사람이(VM 어사이드에서 단추 → 휴대폰 인증 · 자동으로 누르거나 번호를 넣지 않음) · 여기는 ①가림 알아채기 ②살아 있으면 종전대로 채움 ③유지 시간 재기(로컬 파일) ④가림 알림은 상태 전체로 1통(서버가 갈래당 하루 1회)
+const MASKED_PHONE_RE = /\*{2,4}[-\s]?\*{3,4}[-\s]?\d{4}/;
+const PRIVACY_FILE = path.join(os.homedir(), '.akkome', 'exp-privacy.json');
+const PRIVACY_REASON = '번호 가림 — 네이버 예약 『개인정보 조회』 인증 필요(나스 VM 어사이드에서 1번)';
+// 줄·화면 → 가림 여부(순수 · verify-1312) — 줄에 가린 번호 꼴이 있거나, 줄에 번호가 하나도 없는데 인증 단추가 「조회 전」으로 보이면 가림
+function isMasked(row, privacy) {
+    const text = String((row && row.text) || '') + ' ' + JSON.stringify((row && row.parts) || {});
+    if (MASKED_PHONE_RE.test(text)) return true;
+    const p = privacy || {};
+    const hasPhone = /01[016789][-\s]?\d{3,4}[-\s]?\d{4}/.test(text);
+    const nameMasked = /[가-힣A-Za-z]\*+[가-힣A-Za-z]?/.test(text);   // 워커2 점검 1 = 둘째 조건은 이름도 별표 꼴일 때만(인증 뒤 단추 글이 그대로여도 번호 안 남긴 한 줄로 틱 전체가 멈추지 않게)
+    return !!(p.btn && !hasPhone && nameMasked && /개인정보\s*조회/.test(String(p.btn_text || '')) && !/해제|조회\s*중|완료/.test(String(p.btn_text || '')));
+}
+// 상태 전이(순수) — prev {state, since, last_open_since?, log:[]} · now 'open'|'masked' → { next, changed, held_ms(open → masked 일 때 직전 open 이 버틴 시간) }
+function privacyStep(prev, now, atIso) {
+    const p = prev && typeof prev === 'object' ? prev : {};
+    const log = Array.isArray(p.log) ? p.log.slice(-29) : [];
+    if (p.state === now) return { next: Object.assign({}, p, { seen_at: atIso, log }), changed: false, held_ms: null };
+    const held = (p.state === 'open' && now === 'masked' && p.since) ? Date.parse(atIso) - Date.parse(p.since) : null;
+    log.push({ from: p.state || null, to: now, at: atIso, ...(held != null ? { held_min: Math.round(held / 60000) } : {}) });
+    return { next: { state: now, since: atIso, seen_at: atIso, ...(now === 'masked' && p.state === 'open' ? { last_open: { since: p.since, until: atIso } } : (p.last_open ? { last_open: p.last_open } : {})), log }, changed: true, held_ms: held };
+}
+function privacyReason(n, st) {
+    const lo = st && st.last_open;
+    const hm = s => { const d = new Date(Date.parse(s) + 9 * 3600e3); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+    const m = lo && lo.since && lo.until ? Math.round((Date.parse(lo.until) - Date.parse(lo.since)) / 60000) : null;
+    const held = m != null && m >= 0 ? ` · 직전 인증 유지 약 ${m >= 60 ? (m / 60).toFixed(1) + '시간' : m + '분'}(${hm(lo.since)}~${hm(lo.until)} 사이 틱 기준)` : '';
+    return `${PRIVACY_REASON} · 번호 빈 예약 ${n >= 20 ? '20건 이상' : n + '건'}${held}`;   // 서버 todo 한 틱 상한 20줄
+}
+function privacyLoad(file) { try { return JSON.parse(fs.readFileSync(file || PRIVACY_FILE, 'utf8')); } catch (e) { return null; } }
+function privacySave(st, file) { try { fs.mkdirSync(path.dirname(file || PRIVACY_FILE), { recursive: true }); fs.writeFileSync(file || PRIVACY_FILE, JSON.stringify(st)); } catch (e) { /* 기록 실패는 무시(번호 채우기와 무관) */ } }
+
 const tail4 = p => p ? '…' + String(p).replace(/\D/g, '').slice(-4) : '-';
 const maskName = s => { const a = [...String(s || '')]; return a.length ? a[0] + '*'.repeat(Math.max(0, a.length - 1)) : '-'; };
 const kstNow = () => new Date(Date.now() + 9 * 3600e3);
@@ -68,7 +101,7 @@ const JS_READ = no => `(() => {
     if (!n.nodeValue || n.nodeValue.indexOf(NO) < 0) continue;
     let el = n.parentElement;
     let row = el && el.closest('tr, [role="row"], li');
-    if (!row && el) { let u = el; for (let i = 0; i < 6 && u && u !== document.body; i++, u = u.parentElement) { if (/01[016789][-\\s]?\\d{3,4}[-\\s]?\\d{4}/.test(u.innerText || '')) { row = u; break; } } }   // 표가 아닌 div 줄 = 번호가 보이는 가장 가까운 묶음
+    if (!row && el) { let u = el; for (let i = 0; i < 6 && u && u !== document.body; i++, u = u.parentElement) { if (/01[016789][-\\s]?\\d{3,4}[-\\s]?\\d{4}|\\*{2,4}[-\\s]?\\*{3,4}[-\\s]?\\d{4}/.test(u.innerText || '')) { row = u; break; } } }   // 표가 아닌 div 줄 = 번호가 보이는 가장 가까운 묶음(#1312 가린 번호 꼴도)
     if (!row || seen.has(row)) continue;
     seen.add(row);
     if (row.closest('input, textarea, [role="search"], form[role="search"]')) continue;   // 검색 칸에 남은 번호는 줄이 아님
@@ -81,7 +114,9 @@ const JS_READ = no => `(() => {
     const parts = { booker: tx(q('[class*="name-ellipsis"]')), label: tx(q('[class*="__label__"]')), sub: tx(q('[class*="sub-text"]')), bphone: pc ? tx([...pc.children].find(c => !/sub-phone/.test(String(c.className || '')))) : '', vphone: tx(q('[class*="sub-phone"]')) };
     rows.push({ text: (row.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600), cells: cs.map((t, i) => ({ h: hs[i] || '', t: t.replace(/\\s+/g, ' ').slice(0, 200) })), parts });
   }
-  return { blocked: '', rows, body_hit: body.indexOf(NO) >= 0 };
+  const pb = document.querySelector('[class*="PrivacyAuthButton"]');   // #1312 「개인정보 조회」 단추(누르지 않음 · 글자·class 만 읽음)
+  const privacy = pb ? { btn: true, btn_text: (pb.innerText || pb.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 40), btn_cls: String(pb.className || '').slice(0, 120) } : { btn: false };
+  return { blocked: '', rows, body_hit: body.indexOf(NO) >= 0, privacy };
 })()`;
 
 // ── 읽은 줄 → 보낼 값(순수 함수 · verify-1040 이 떼어 시험) ──
@@ -170,18 +205,22 @@ function lockTake() {
 }
 function lockFree() { try { if (fs.existsSync(LOCK) && fs.readFileSync(LOCK, 'utf8') === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) { /* 무시 */ } }
 
-async function main() {
-    const args = process.argv.slice(2);
+async function main(deps = {}) {   // deps = 검증용(verify-1312 · api·Aside·privacyFile·noGuards) · 실행은 빈 값 = 종전 그대로
+    const args = deps.args || process.argv.slice(2);
     const DRY = args.includes('--dry'), FORCE = args.includes('--force-window');
-    try { require(path.join(ROOT, 'node_modules', 'dotenv')).config({ path: path.join(ROOT, '.env') }); } catch (e) { /* dotenv 없으면 사용자 환경 변수만 */ }
+    if (!deps.api) { try { require(path.join(ROOT, 'node_modules', 'dotenv')).config({ path: path.join(ROOT, '.env') }); } catch (e) { /* dotenv 없으면 사용자 환경 변수만 */ } }
     const API = String(process.env.EXP_AUTO_API || '').replace(/\/+$/, ''), TOKEN = String(process.env.EXP_AUTO_TOKEN || '');
     const ASIDE_EXE = process.env.ASIDE_EXE || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Aside', 'CLI', 'current', 'aside.exe');
-    if (!/^https?:\/\//.test(API) || TOKEN.length < 32) { log('설정 없음 — .env EXP_AUTO_API·EXP_AUTO_TOKEN 확인'); return 1; }
-    if (!FORCE && !inWindow(LOCAL_WINDOW, kstNow())) { log('시간 밖 — 건너뜀'); return 0; }
-    if (krBusy()) { log('키워드 순위가 어사이드를 쓰는 중(keyword-rank.json 오늘 · 결과 없음) — 건너뜀'); return 0; }
-    if (!lockTake()) { log('다른 틱이 도는 중(잠금 파일) — 건너뜀'); return 0; }
+    if (!deps.api && (!/^https?:\/\//.test(API) || TOKEN.length < 32)) { log('설정 없음 — .env EXP_AUTO_API·EXP_AUTO_TOKEN 확인'); return 1; }
+    if (!deps.noGuards) {
+        if (!FORCE && !inWindow(LOCAL_WINDOW, kstNow())) { log('시간 밖 — 건너뜀'); return 0; }
+        if (krBusy()) { log('키워드 순위가 어사이드를 쓰는 중(keyword-rank.json 오늘 · 결과 없음) — 건너뜀'); return 0; }
+        if (!lockTake()) { log('다른 틱이 도는 중(잠금 파일) — 건너뜀'); return 0; }
+    }
+    const PFILE = deps.privacyFile || PRIVACY_FILE;
+    const privacyMark = (state) => { const st = privacyStep(privacyLoad(PFILE), state, new Date(deps.nowMs ? deps.nowMs() : Date.now()).toISOString()); if (!DRY) privacySave(st.next, PFILE); if (st.changed) log(`  개인정보 조회 상태 ${(st.next.log.slice(-1)[0] || {}).from || '-'} → ${state}${st.held_ms != null ? ' · 직전 인증 유지 ' + Math.round(st.held_ms / 60000) + '분' : ''}`); return st; };
     const t0 = Date.now(); let bad = 0, saved = 0, aside = null;
-    const api = async (method, p, body) => {
+    const api = deps.api || async function (method, p, body) {
         const r = await fetch(API + p, { method, headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30000) });
         let j = null; try { j = await r.json(); } catch (e) { j = {}; }
         return { s: r.status, j };
@@ -193,7 +232,7 @@ async function main() {
         const items = (td.j && td.j.items) || [];
         if (!items.length) { log(`할 일 0${td.j.reason ? ' · ' + td.j.reason : ''}`); return 0; }
         log(`할 일 ${items.length}줄 · 오늘 남은 ${td.j.left}${DRY ? ' · dry' : ''}`);
-        const { Aside } = require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js'));
+        const { Aside } = deps.Aside ? { Aside: deps.Aside } : require(path.join(ROOT, 'scripts', 'desk', 'keyword-rank.js'));
         aside = new Aside(ASIDE_EXE, s => log(s));
         await aside.start();
         for (const it of items) {
@@ -211,7 +250,14 @@ console.log(JSON.stringify(out)); }`);
             if (!got || got.error) { log(`${tag} · 화면 읽기 실패 ${got && got.error || ''}`); await miss(it.id, '예약자관리 화면을 읽지 못함'); bad++; continue; }
             const rows = got.rows || [];
             if (rows.length !== 1) { log(`${tag} · 그 예약번호 줄 ${rows.length}개`); await miss(it.id, rows.length ? `같은 예약번호 줄 ${rows.length}개` : '예약자관리에서 못 찾음'); bad++; continue; }
+            if (isMasked(rows[0], got.privacy)) {   // #1312 가림 = 화면 전체가 인증 전 → 이 틱 멈춤 · 예약마다 miss 를 안 보냄(그 예약이 todo 에서 30분·하루 6번 걸러지지 않게 = 인증 뒤 첫 틱에 밀린 것 전부 채움) · 알림 1통(서버 「g:privacy」 하루 1회)
+                const st = privacyMark('masked');
+                log(`${tag} · 번호 가림(개인정보 조회 전 · 단추 「${(got.privacy && got.privacy.btn_text) || '-'}」) — 이 틱 멈춤 · 번호 빈 예약 ${items.length}건`);
+                await miss(0, privacyReason(items.length, st.next), 'privacy');
+                bad++; break;
+            }
             const p = parseRow(rows[0], it.order_no);
+            if (p.how && (p.visitor_phone || p.booker_phone)) privacyMark('open');   // #1312 번호가 전체로 보임 = 인증 살아 있음(유지 시간 재기)
             log(`${tag} · 읽음(${p.how || '꼴 모름'}) 상태 ${p.status_seen} · ${p.visit_seen.date} ${p.visit_seen.time} · ${maskName(p.name_seen)}${p.how === 'proxy' ? ' (대리예약 · 방문자 ' + maskName(p.visitor_name_seen) + ')' : ''} · 이용고객 ${tail4(p.visitor_phone)} · 예약자 ${tail4(p.booker_phone)}`);
             if (!p.how) { await miss(it.id, '화면 줄 꼴 모름(예약자관리 화면이 바뀌었을 수 있음)'); bad++; continue; }
             if (DRY) continue;
@@ -233,4 +279,4 @@ console.log(JSON.stringify(out)); }`);
 if (require.main === module) {
     main().then(code => process.exit(code), e => { console.error(ts(), '스크립트 오류:', e && e.stack || e); lockFree(); process.exit(1); });
 }
-module.exports = { parseRow, inWindow, krBusy, JS_READ, LIST_URL, VISITOR_RE, BOOKER_RE };
+module.exports = { parseRow, inWindow, krBusy, JS_READ, LIST_URL, VISITOR_RE, BOOKER_RE, isMasked, privacyStep, privacyReason, main, PRIVACY_REASON };

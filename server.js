@@ -20923,8 +20923,22 @@ app.use((err, req, res, next) => {
 
 // #652: 받지 않은 약속 거부 하나로 서버가 통째로 죽지 않게(Node 15+ 기본 = 프로세스 종료 → 그 순간 처리 중이던 문자·발송이 끊긴다) — 로그만 남기고 계속 돈다
 process.on('unhandledRejection', (reason) => { try { console.error('[서버] 받지 않은 약속 거부(계속 실행):', (reason && reason.stack) || reason); } catch (_) { /* 로그 실패는 무시 */ } });
+// #1310 B(대표 11/27 재발 방지 · 11/27 v5.9.859 기동 「DB 초기화 실패: statement timeout」 = 배포 백업과 겹침) — initDB 가 DB 일시 오류면 20초 쉬고 최대 3번(그래도 실패면 종전 exit 1) · 일시 오류가 아니면 바로 종전 exit 1
+//   initDB 는 매 부팅 도는 CREATE/ALTER … IF NOT EXISTS 라 다시 돌려도 같은 결과 · 새 인스턴스가 포트를 열기 전까지 Render 는 옛 인스턴스로 계속 받음
+const BOOT_DB_TRANSIENT = e => { const c = String((e && e.code) || ''), m = String((e && e.message) || ''); return /^(57P01|57P02|57P03|57014|55P03|08000|08001|08003|08004|08006|53300)$/.test(c) || /ECONNRESET|ECONNREFUSED|ETIMEDOUT|Connection terminated|terminating connection|not yet accepting connections|recovery mode|timeout/i.test(c + ' ' + m); };
+async function initDBWithRetry(fn, { tries = 3, waitMs = 20000, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+    for (let i = 1; ; i++) {
+        try { return await fn(); }
+        catch (e) {
+            if (i >= tries || !BOOT_DB_TRANSIENT(e)) throw e;
+            console.error(`DB 초기화 일시 오류(${i}/${tries}) — ${waitMs / 1000}초 뒤 다시:`, String((e && (e.code || e.message)) || e).slice(0, 200));
+            await sleep(waitMs);
+        }
+    }
+}
+// #1310 B 끝
 // 서버 시작
-initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message)))
+initDBWithRetry(initDB).then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message)))
     .then(() => invoiceAuto.initDB().catch(e => console.error('[#838 자동 송장] 표 생성 실패:', e.message)))   // #838-1
     .then(() => smsDesk.initDB().then(() => smsDesk.start()).catch(e => console.error('[문자] 표 생성 실패:', e.message)))   // #610
     .then(() => {

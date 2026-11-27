@@ -176,8 +176,10 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     }
     db.updatedAt = new Date(nowMs()).toISOString();
     const json = JSON.stringify(db);
-    if (cacheId) await pool.query(`UPDATE ${T} SET data=$2::jsonb, title=$3, updated_at=NOW() WHERE id=$1`, [cacheId, json, db.event.title]);
-    else { const r = await pool.query(`INSERT INTO ${T} (title, data, is_current) VALUES ($1, $2::jsonb, TRUE) RETURNING id`, [db.event.title, json]); cacheId = r.rows[0].id; }
+    try {
+      if (cacheId) await pool.query(`UPDATE ${T} SET data=$2::jsonb, title=$3, updated_at=NOW() WHERE id=$1`, [cacheId, json, db.event.title]);
+      else { const r = await pool.query(`INSERT INTO ${T} (title, data, is_current) VALUES ($1, $2::jsonb, TRUE) RETURNING id`, [db.event.title, json]); cacheId = r.rows[0].id; }
+    } catch (e) { cache = null; cacheAt = 0; throw e; }   // #1310 저장 실패 = 캐시 비움(바꾸다 만 db 가 공개 조회에 15초 남지 않게 · 다음 조회는 DB 에서 다시)
     cache = db; cacheAt = nowMs();
   }
   // 쓰기 직렬화 — 동시 업로드·추첨이 서로 덮지 않게
@@ -543,11 +545,15 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     try {
       const r = await withLock(async () => {
         const db = await loadCurrent(true);
+        // #1310 C 낡은 화면 저장 막이 — 화면이 읽은 updatedAt(base_updated_at)보다 서버 것이 새로우면 409(그 사이 다른 곳 저장을 옛 값으로 덮지 않게) · 값이 없으면(옛 화면) 종전대로 통과
+        const base = req.body && req.body.base_updated_at;
+        if (typeof base === 'string' && base && db.updatedAt && Date.parse(db.updatedAt) > Date.parse(base)) return { stale: true };
         applyEventPatch(db, req.body.event || {}, req.body.excluded);
         await save(db);
         const synced = isOpen(stateOf(db)) ? await syncOut(db, req) : { card: false, bot: false };
         return { db, synced };
       });
+      if (r.stale) return res.status(409).json({ error: 'STALE' });
       audit(req, 'lucky_event_settings', { title: r.db.event.title, start: r.db.event.start, end: r.db.event.end, announce: r.db.event.announce, page_until: pageUntilOf(r.db.event), prizes: r.db.event.prizes.map(p => ({ name: p.name, count: p.count })), excludeProducts: r.db.event.excludeProducts, excludedCount: r.db.excluded.length, state: stateOf(r.db) });
       res.json(await withMeta(r.db, { synced: r.synced }));
     } catch (e) { fail(res, e); }
@@ -671,9 +677,26 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     } catch (e) { fail(res, e); }
   });
 
+  // #1310 D [추첨하기]·[발표 시작]이 DB 일시 오류(연결 끊김·recovery·시간 초과)로 실패하면 — 저장 전이면 2초 뒤 1회 다시 · 저장을 시작한 뒤면 다시 안 함(두 번 추첨 막기) · 그래도 실패면 503 DB_BUSY(저장 전일 때만)
+  const DB_TRANSIENT = e => { const c = String((e && e.code) || ''), m = String((e && e.message) || ''); return /^(57P01|57P02|57P03|57014|08000|08001|08003|08004|08006|53300)$/.test(c) || /ECONNRESET|ECONNREFUSED|ETIMEDOUT|Connection terminated|terminating connection|not yet accepting connections|recovery mode|timeout/i.test(c + ' ' + m); };
+  const RETRY_MS = 2000;
+  async function lockRetryBeforeSave(fn) {   // fn(mark) — save 바로 앞에서 mark() 를 부른다
+    for (let i = 0; ; i++) {
+      let saving = false;
+      try { return await withLock(() => fn(() => { saving = true; })); }
+      catch (e) {
+        const t = !saving && DB_TRANSIENT(e);
+        if (i === 0 && t) { console.warn('[lucky] DB 일시 오류 — 2초 뒤 1회 다시:', e && (e.code || e.message)); await new Promise(r => setTimeout(r, RETRY_MS)); continue; }
+        if (t && e && typeof e === 'object') e.dbBusy = true;
+        throw e;
+      }
+    }
+  }
+  const failBusy = (res, e) => { if (e && e.dbBusy) { console.error('[lucky] DB 일시 오류 — 다시 해도 실패:', e.code || e.message); return res.status(503).json({ error: 'DB_BUSY' }); } fail(res, e); };
+
   app.post(A + '/draw', authMiddleware, async (req, res) => {
     try {
-      const out = await withLock(async () => {
+      const out = await lockRetryBeforeSave(async mark => {
         const db = await loadCurrent(true); const eligible = eligibleOf(db);
         const ex = new Set(db.excluded);
         const keep = req.body.keep ? new Set(req.body.keep.map(String)) : null;
@@ -689,20 +712,20 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
         const remaining = slots.slice(); kept.forEach(w => { const i = remaining.indexOf(w.prize); if (i > -1) remaining.splice(i, 1); });
         for (const c of ticketPool) { if (!remaining.length) break; if (used.has(c.key)) continue; used.add(c.key); winners.push({ key: c.key, name: c.name, phone: c.phone, prize: remaining.shift(), orders: c.orders, product: c.first.product, date: c.first.date }); }
         db.winners = winners; db.event.drawnAt = new Date().toISOString(); db.event.published = false;
-        await save(db);
+        mark(); await save(db);
         return { pool: Object.keys(byKey).length, tickets: ticketPool.length, kept: kept.length, db };
       });
       audit(req, 'lucky_draw', { pool: out.pool, tickets: out.tickets, winners: out.db.winners.length, kept: out.kept });
       res.json({ ok: true, pool: out.pool, tickets: out.tickets, db: out.db });
-    } catch (e) { fail(res, e); }
+    } catch (e) { failBusy(res, e); }
   });
 
   app.post(A + '/publish', authMiddleware, async (req, res) => {
     try {
-      const db = await withLock(async () => { const db = await loadCurrent(true); db.event.published = !!req.body.published; await save(db); return db; });
+      const db = await lockRetryBeforeSave(async mark => { const db = await loadCurrent(true); db.event.published = !!req.body.published; mark(); await save(db); return db; });
       audit(req, 'lucky_publish', { published: db.event.published, winners: db.winners.length });
       res.json({ ok: true, db });
-    } catch (e) { fail(res, e); }
+    } catch (e) { failBusy(res, e); }
   });
 
   // 옛 사이트 백업 JSON(또는 이 화면의 백업 파일)으로 현재 회차를 덮어쓰기 — 관리자만(#708 에서도 그대로)
