@@ -159,6 +159,14 @@ body.winter{--bg:#E4F0FA;--card2:#F6FAFE;--ink:#2A1E16;--mid:#5F5650;--light:#7D
 .ord .t{font-weight:700;font-size:14px;word-break:break-all;line-height:1.45}
 .ord .m{color:var(--mid);margin-top:4px;display:flex;flex-wrap:wrap;gap:2px 10px;font-variant-numeric:tabular-nums}
 .ord .tag{display:inline-block;font-size:11.5px;font-weight:800;border-radius:6px;padding:2px 6px;background:#FFF1E2;color:var(--o-ink);vertical-align:1px}
+/* #1308-4 당첨/미당첨 딱지 · 동명이인 손님 묶음 */
+.tag.st{display:inline-block;font-size:11.5px;font-weight:800;border-radius:6px;padding:2px 6px;background:#EEF0F2;color:var(--mid);vertical-align:1px}
+.tag.st.win{background:var(--o);color:var(--o-dark)}
+.cgrp{margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--card2)}
+.cgrp .ghead{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
+.cgrp .ghead .gw b{font-variant-numeric:tabular-nums}
+.cgrp .ghead .tk{margin-left:auto;font-size:13px;color:var(--mid);font-weight:600;white-space:nowrap}
+.cgrp .ghead .tk b{color:var(--o-ink);font-weight:800}
 .prizebox{margin-top:12px;background:#fff;border:1.5px dashed var(--o);border-radius:14px;padding:12px;text-align:center}
 .prizebox .p{font-size:19px;font-weight:800;color:var(--o-ink)}
 .prizebox .s{font-size:12.5px;color:var(--mid);margin-top:4px}
@@ -411,8 +419,13 @@ function show(j,q){
   }
   const rec=j.by==='receiver';
   const first=j.results[0];
+  /* #1308-4 발표 뒤 = 줄마다 당첨/미당첨 딱지 · 이름 조회에 손님(g)이 2명 이상이면 축하·아쉬움 상자 대신 안내 + 손님별 묶음(머리 = 가린 번호 끝 4자리) */
+  const pubRes=j.results.some(o=>o.status==='win'||o.status==='lose');
+  const nG=+j.groups||0, multi=pubRes&&j.mode==='name'&&nG>=2;
   let head='';
-  if(first.status==='win'){
+  if(multi){
+    head=`<div class="res none">${girl}<div class="body"><div class="big">같은 이름으로 주문하신 분이 ${nG}분 있어요</div><div class="sub">정확한 당첨 확인은 <b>휴대폰 번호</b>로 조회해 주세요</div></div></div>`;
+  } else if(first.status==='win'){
     head=`<div class="res win">${girl}<div class="body"><div class="big">🎊 축하합니다! 당첨되셨어요!</div><div class="sub">${esc(first.buyer||first.recv)} 고객님, 제주아꼼이네를 이용해주셔서 감사합니다.</div></div><div class="prizebox" style="grid-column:1/-1;margin-top:0"><div class="p">🍊 ${esc(first.prize)}</div><div class="s">당첨되신 분께 개별 문자로 안내드립니다. 문의는 구매 채널로 남겨주세요.</div></div></div>`;
   } else if(first.status==='lose'){
     head=`<div class="res lose">${girl}<div class="body"><div class="big">아쉽지만 다음 기회에… 🙏</div><div class="sub">이번엔 당첨되지 않으셨어요. 다음 이벤트에서 <b>더 좋은 상품으로 보답</b>드리겠습니다. 이용해주셔서 진심으로 감사합니다!</div></div>${deco('다음엔<br>꼭 만나요!')}</div>`;
@@ -424,8 +437,17 @@ function show(j,q){
     head=`<div class="res ok">${girl}<div class="body"><div class="big">✅ 접수되었습니다!</div><div class="sub">${fmtDate(e.announce)} 당첨자 발표 후 이 화면에서 결과를 확인하세요.</div></div>${deco('행운을<br>빌어요!')}</div>`;
   }
   const ask=rec?`<div class="ask">📦 받는 분 정보로 찾았어요 — 아래 주문이 맞으신가요? (주문자 연락처가 없는 선물하기 주문은 받는 분 기준으로 접수됩니다)</div>`:'';
-  const list=`<div class="orders">${j.results.map(o=>`<div class="ord" style="${o.inRange?'':'opacity:.6'}"><div class="t">${esc(o.product)} <span class="tag">×${o.qty}</span>${o.inRange?'':' <span class="tag" style="background:#fee4e2;color:#b42318">'+(o.noitem?'대상외':'기간외')+'</span>'}</div><div class="m"><span>📅 ${fmtDate(o.date)} 발송</span>${o.recv?`<span>📦 받는 분 ${esc(o.recv)}${o.recvPhone?' ('+o.recvPhone+')':''}</span>`:''}${o.addr?`<span>📍 ${esc(o.addr)}</span>`:''}</div></div>`).join('')}</div>`;
+  const stTag=o=>pubRes&&o.inRange&&(o.status==='win'||o.status==='lose')?` <span class="tag st${o.status==='win'?' win':''}">${o.status==='win'?'당첨':'미당첨'}</span>`:'';
+  const ordH=o=>`<div class="ord" style="${o.inRange?'':'opacity:.6'}"><div class="t">${esc(o.product)} <span class="tag">×${o.qty}</span>${o.inRange?'':' <span class="tag" style="background:#fee4e2;color:#b42318">'+(o.noitem?'대상외':'기간외')+'</span>'}${stTag(o)}</div><div class="m"><span>📅 ${fmtDate(o.date)} 발송</span>${o.recv?`<span>📦 받는 분 ${esc(o.recv)}${o.recvPhone?' ('+o.recvPhone+')':''}</span>`:''}${o.addr?`<span>📍 ${esc(o.addr)}</span>`:''}</div></div>`;
   const tk=j.results.filter(o=>o.inRange).length;   /* #1254 응모권 = 응모 대상 주문 수(주문 1건 = 1장 · 서버가 준 줄 그대로 셈) */
+  if(multi){
+    const gs=[]; j.results.forEach(o=>{ let g=gs.find(x=>x.g===o.g); if(!g){ g={g:o.g,rows:[]}; gs.push(g); } g.rows.push(o); });
+    const tail=g=>{ const r=g.rows[0], p=String((rec?r.recvPhone:r.buyerPhone)||r.buyerPhone||r.recvPhone||'').replace(/\D/g,''); return p.length>=4?p.slice(-4):''; };
+    const body=gs.map(g=>{ const win=g.rows.some(o=>o.status==='win'), lose=g.rows.some(o=>o.status==='lose'), t=tail(g), k=g.rows.filter(o=>o.inRange).length;
+      return `<div class="cgrp"><div class="ghead"><span class="gw">${t?`번호 끝 <b>${t}</b>`:''}</span>${win||lose?`<span class="tag st${win?' win':''}">${win?'당첨':'미당첨'}</span>`:''}<span class="tk">응모권 <b>${k}</b>장</span></div><div class="orders">${g.rows.map(ordH).join('')}</div></div>`; }).join('');
+    box.innerHTML=head+ask+`<div class="ordhead"><span>접수 내역 ${j.results.length}건</span></div>`+body; return;
+  }
+  const list=`<div class="orders">${j.results.map(ordH).join('')}</div>`;
   const oh=`<div class="ordhead"><span>접수 내역 ${j.results.length}건</span><span class="tk">응모권 <b>${tk}</b>장</span></div>`;
   box.innerHTML=head+ask+oh+list;
 }
@@ -497,7 +519,9 @@ const PROMO={ minStart:'2026-11-20', maxStart:'2026-11-30', until:'2026-11-29',
   guide:['<b>당첨 상품</b>은 11/29(일)에 보내드려요','<b>주문 1건마다 응모 1번</b>이에요. 여러 번 주문하시면 기회가 늘어요','<b>행사 상품도 같은 귤</b>이에요. 상자·송장에 「행사」 표기가 없어 선물로도 편해요','<b>체험 주문</b>은 응모 대상이 아니에요'] };
 const kstToday=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
 const pubMD=d=>{ const p=String(d||'').split('-'); return p.length===3?`${+p[1]}/${+p[2]}`:''; };   /* #1308 「11/27」 꼴 */
-const promoOn=e=>{ const st=String((e&&e.start)||''); return !!st&&st>=PROMO.minStart&&st<=PROMO.maxStart&&(PREVIEW||kstToday()<=PROMO.until); };
+/* #1308-3(대표 11/27 「12월 3일까지 오늘 만든 화면 유지」) 겨울 판 끝 날 = 발표 중(published)이면 내리는 날(page_until · 서버 값 · 날짜 꼴일 때만) · 그 밖·값 없음 = 종전 PROMO.until */
+const promoUntil=e=>{ const pu=String((e&&e.page_until)||''); return e&&e.published&&/^\d{4}-\d{2}-\d{2}$/.test(pu)&&pu>PROMO.until?pu:PROMO.until; };
+const promoOn=e=>{ const st=String((e&&e.start)||''); return !!st&&st>=PROMO.minStart&&st<=PROMO.maxStart&&(PREVIEW||kstToday()<=promoUntil(e)); };
 function drawHead(e){
   const on=promoOn(e)&&CFG.state!=='down';   /* 닫힌 이벤트 = 혜택 머리 끔(「이벤트가 끝났어요」 위에 안 남게) */
   document.documentElement.classList.toggle('winter',on); document.body.classList.toggle('winter',on);   /* #1261 겨울 바탕·색은 이번 행사일 때만 */

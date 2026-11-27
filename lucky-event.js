@@ -421,9 +421,12 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
       found.sort((a, b) => (eligible(b.o) - eligible(a.o)) || String(b.o.date).localeCompare(String(a.o.date)));
       const wm = {}; db.winners.forEach(w => { wm[w.key] = w; });
       const pub = db.event.published;
+      const gOf = new Map();   // #1308-4 손님 묶음 번호(같은 custKey = 같은 번호 · 1부터 · 키는 안 내보냄) — 이름 조회 동명이인 구분용
       const out = found.slice(0, 30).map(({ o, by }) => {
-        const w = wm[custKey(o)]; const inr = eligible(o);
+        const ck = custKey(o); if (!gOf.has(ck)) gOf.set(ck, gOf.size + 1);
+        const w = wm[ck]; const inr = eligible(o);
         return {
+          g: gOf.get(ck),
           by, inRange: inr, noitem: inRange(o) && exProd(o), date: String(o.date || '').slice(0, 10), vendor: o.vendor || '', product: o.product || '', qty: o.qty || 1,
           buyer: maskName(o.buyer), buyerPhone: maskPhone(o.buyerPhone), recv: maskName(o.recv), recvPhone: maskPhone(o.recvPhone), addr: maskAddr(o.addr),
           tracking: o.tracking ? String(o.tracking).replace(/\d(?=\d{4})/g, '*') : '',
@@ -431,7 +434,7 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
         };
       });
       const assets = await assetMetaFor(db);
-      res.json({ ok: true, mode: phoneMode ? 'phone' : 'name', by: out.length ? out[0].by : null, results: out, event: publicEvent(db, assets, st0, true) });
+      res.json({ ok: true, mode: phoneMode ? 'phone' : 'name', by: out.length ? out[0].by : null, results: out, groups: gOf.size, event: publicEvent(db, assets, st0, true) });
     } catch (e) { fail(res, e); }
   });
 
