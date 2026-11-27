@@ -238,6 +238,28 @@ function renderTpl(tpl, b) {
 const KEY_AUTO = 'experience_auto', KEY_AUTO_MISS = 'experience_auto_miss', AUTO_BY = 'aside-auto';
 const AUTO_DEFAULT = { enabled: false, token: '', daily_max: 30, hours: [8, 21], skip: ['09:25', '09:45'] };   // 설정이 없으면 잠김(503) · 값 넣기 = 총괄(배포 뒤 UPDATE + audit)
 const AUTO_MISS_MAX = 6, AUTO_MISS_GAP_MS = 30 * 60000, AUTO_TICK_MAX = 20;   // 같은 예약 하루 6번 · 실패 뒤 30분 · 한 틱 20줄
+// #1312-2(대표 11/27 「하루 한 통이면 너무 늦게 확인 · 1통 오고 계속 안 될 시 1시간마다」) 네이버 예약 「개인정보 조회」 가림(kind privacy) 알림 주기 — 이 갈래만 · 다른 갈래(login·center·vm·예약별)는 종전 하루 1회
+//   첫 가림 = 바로 1통(밤이어도) · 이어지면 마지막 알림 뒤 repeat 분 지난 틱에 1통(번호 빈 예약 1건 이상일 때만 · 밤 quiet 시간엔 안 보내고 그 뒤 첫 틱에) · 번호 저장 성공(인증 살아남) 또는 12시간 넘게 가림 보고가 없으면 처음부터
+//   설정 = experience_auto.privacy_repeat_min(기본 60) · privacy_quiet [시작시, 끝시](기본 [22, 7] · KST) · 상태 = 설정 줄 experience_auto_privacy(날이 바뀌어도 이어짐)
+const KEY_AUTO_PRIVACY = 'experience_auto_privacy', PRIVACY_STALE_MS = 12 * 3600e3;
+function privacyQuiet(q, nowMs) {
+    const h = new Date(nowMs + 9 * 3600e3).getUTCHours(), s = Number(q[0]), e = Number(q[1]);
+    return s > e ? (h >= s || h < e) : (h >= s && h < e);
+}
+function privacyTellStep(st, nowMs, pending, cfg) {
+    const repeatMs = Math.max(10, Number(cfg && cfg.privacy_repeat_min) || 60) * 60000;
+    const q = Array.isArray(cfg && cfg.privacy_quiet) && cfg.privacy_quiet.length === 2 ? cfg.privacy_quiet : [22, 7];
+    const nowIso = new Date(nowMs).toISOString();
+    let s = st && typeof st === 'object' && st.first_at ? { ...st } : null;
+    if (s && (!s.seen_at || nowMs - Date.parse(s.seen_at) > PRIVACY_STALE_MS)) s = null;   // 오래 끊겼으면 새 가림으로 봄
+    if (!(Number(pending) > 0)) return { tell: false, next: s ? { ...s, seen_at: nowIso } : null, why: 'no_pending' };
+    if (!s) return { tell: true, nth: 1, hours: 0, next: { first_at: nowIso, last_told_at: nowIso, n: 1, seen_at: nowIso }, why: 'first' };
+    s.seen_at = nowIso;
+    if (privacyQuiet(q, nowMs)) return { tell: false, next: s, why: 'quiet' };
+    if (nowMs - Date.parse(s.last_told_at) < repeatMs) return { tell: false, next: s, why: 'wait' };
+    s.n = (Number(s.n) || 1) + 1; s.last_told_at = nowIso;
+    return { tell: true, nth: s.n, hours: Math.floor((nowMs - Date.parse(s.first_at)) / 3600e3), next: s, why: 'repeat' };
+}
 // 🔴 번호 고르기 = 이용고객(방문자) 번호 먼저 · 없거나 꼴이 틀리면 예약자 번호(대표 11/6 「예약자랑 이용고객은 다를 거야 · 이용고객 번호를 적으면 돼」)
 const PHONE_PICK_ORDER = ['visitor_phone', 'booker_phone'];
 const autoPhoneOk = p => /^01\d{8,9}$/.test(p);
@@ -1009,6 +1031,7 @@ module.exports = function mountExperience(app, deps) {
             await audit('experience_phone_auto', id, { before: { name: row.name, phone: tail4(row.phone) }, after: { name: chk.name, phone: tail4(chk.phone), picked: chk.picked },
                 seen: { order_no: String(body.order_no_seen || ''), status: String(body.status_seen || ''), visit: body.visit_seen || null, visitor: tail4(digits(body.visitor_phone)), booker: tail4(digits(body.booker_phone)) }, dup_ids: dup }, AUTO_ACTOR);
             try { const m = await missGet(); if (m[String(id)]) { delete m[String(id)]; await cfgSet(KEY_AUTO_MISS, m); } } catch (_) { }
+            try { const pvs = await cfgGet(KEY_AUTO_PRIVACY); if (pvs && pvs.first_at) await cfgSet(KEY_AUTO_PRIVACY, {}); } catch (_) { }   // #1312-2 번호 저장 성공 = 「개인정보 조회」 인증 살아 있음 → 가림 알림 횟수·시각 초기화
             let sent = null; try { sent = await sendRecvNow(id); } catch (e) { sent = 'later:' + String(e.message || e).slice(0, 80); }   // 화면 저장(PATCH :788)과 같은 길 · 안 되면 10분 틱이 나중에
             res.json({ ok: true, id, picked: chk.picked, dup_ids: dup, sent });
         } catch (e) { console.error('[#1040] 저장:', e.message); res.status(500).json({ error: '저장하지 못했어요', reason: 'server' }); }
@@ -1025,13 +1048,25 @@ module.exports = function mountExperience(app, deps) {
             const key = id ? String(id) : 'g:' + kind;
             const cur = m[key] || { day: today, n: 0, notified: false };
             cur.n++; cur.last_at = new Date().toISOString(); cur.reason = reason; cur.kind = kind;
-            let told = false;
-            if (!cur.notified && deps.notifyTelegram) {
+            let told = false, pv = null;
+            if (!id && kind === 'privacy') {   // #1312-2 이 갈래만 = 첫 1통 + 이어지면 repeat 분마다(밤 quiet 제외 · 번호 빈 예약 0건이면 0) · 상태는 따로(날 바뀜에도 이어짐)
+                const nowMs = typeof deps.now === 'function' ? deps.now() : Date.now();
+                const prevPv = await cfgGet(KEY_AUTO_PRIVACY);
+                const pn = body.pending == null || body.pending === '' ? NaN : Number(body.pending), pend = Number.isFinite(pn) ? pn : 1;   // 워커2 점검 = pending 을 안 보내는 VM 코드(#1312 1차)는 「모름 = 1건 이상」으로 · 0 을 실제로 보낸 때만 0통
+                pv = privacyTellStep(prevPv, nowMs, pend, c);
+                if (pv.tell && deps.notifyTelegram) {
+                    try { deps.notifyTelegram(missTgText(row, kind, reason) + (pv.nth > 1 ? ` · ${pv.nth}번째 알림 · 가림 ${pv.hours}시간째` : '')); told = true; } catch (_) { }
+                    if (!told && pv.nth === 1) pv.next = null;   // 첫 통이 안 나갔으면 다음 틱에 다시 첫 통
+                }
+                const seenFresh = prevPv && prevPv.seen_at && nowMs - Date.parse(prevPv.seen_at) < 30 * 60000;
+                if (!(!pv.tell && (pv.why === 'wait' || pv.why === 'quiet') && seenFresh)) await cfgSet(KEY_AUTO_PRIVACY, pv.next || {});   // 기다림·밤 틱은 seen_at 이 30분 넘었을 때만 씀(10분 틱마다 쓰지 않게 · 12시간 끊김 판정엔 충분)
+                cur.notified = cur.notified || told;
+            } else if (!cur.notified && deps.notifyTelegram) {
                 try { deps.notifyTelegram(missTgText(row, kind, reason)); told = true; } catch (_) { }
                 cur.notified = told;
             }
             m[key] = cur; await cfgSet(KEY_AUTO_MISS, m);
-            await audit('experience_phone_auto_miss', id || null, { kind, reason, n: cur.n, told }, AUTO_ACTOR);
+            await audit('experience_phone_auto_miss', id || null, { kind, reason, n: cur.n, told, ...(pv ? { privacy: { why: pv.why, nth: pv.nth || null, pending: Number(body.pending) || 0 } } : {}) }, AUTO_ACTOR);
             res.json({ ok: true, n: cur.n, told });
         } catch (e) { console.error('[#1040] miss:', e.message); res.status(500).json({ error: '기록하지 못했어요' }); }
     });
@@ -1050,4 +1085,4 @@ module.exports = function mountExperience(app, deps) {
     return { collectStore, collectPlace, collectSms, todoLine, summary, mailProbe, probeTick, ready, sendRecvNow, _t: { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, upsertStore, tplFor } };
 };
 module.exports._t = { parseStoreOption, parseTime, parsePlaceMail, parseMail, renderTpl, imapFromCrit, maskSubject, imapOpen, imapDate, alimVars, fillAlim, EXP_ALIMTALK, tplFor, buildXlsx, fmtTelXl };
-module.exports._auto = { autoCheck, autoNameOk, autoPickPhone, autoInWindow, PHONE_PICK_ORDER, AUTO_DEFAULT, KEY_AUTO, AUTO_BY };   // #1040 검증용
+module.exports._auto = { autoCheck, autoNameOk, autoPickPhone, autoInWindow, PHONE_PICK_ORDER, AUTO_DEFAULT, KEY_AUTO, AUTO_BY, privacyTellStep, privacyQuiet, KEY_AUTO_PRIVACY };   // #1040 검증용

@@ -225,7 +225,7 @@ async function main(deps = {}) {   // deps = 검증용(verify-1312 · api·Aside
         let j = null; try { j = await r.json(); } catch (e) { j = {}; }
         return { s: r.status, j };
     };
-    const miss = async (id, reason, kind) => { if (DRY) { log(`  (dry) miss ${id} · ${reason}`); return; } try { await api('POST', `/api/experience/auto/${id}/miss`, { reason, kind }); } catch (e) { log('  miss 못 보냄: ' + e.message); } };
+    const miss = async (id, reason, kind, extra) => { if (DRY) { log(`  (dry) miss ${id} · ${reason}`); return; } try { await api('POST', `/api/experience/auto/${id}/miss`, { reason, kind, ...(extra || {}) }); } catch (e) { log('  miss 못 보냄: ' + e.message); } };
     try {
         const td = await api('GET', '/api/experience/auto/todo');
         if (td.s !== 200) { log(`todo ${td.s} · ${td.j && td.j.error || ''}`); return td.s === 403 ? 0 : 2; }   // 403 = 꺼짐(정상 건너뜀)
@@ -253,7 +253,7 @@ console.log(JSON.stringify(out)); }`);
             if (isMasked(rows[0], got.privacy)) {   // #1312 가림 = 화면 전체가 인증 전 → 이 틱 멈춤 · 예약마다 miss 를 안 보냄(그 예약이 todo 에서 30분·하루 6번 걸러지지 않게 = 인증 뒤 첫 틱에 밀린 것 전부 채움) · 알림 1통(서버 「g:privacy」 하루 1회)
                 const st = privacyMark('masked');
                 log(`${tag} · 번호 가림(개인정보 조회 전 · 단추 「${(got.privacy && got.privacy.btn_text) || '-'}」) — 이 틱 멈춤 · 번호 빈 예약 ${items.length}건`);
-                await miss(0, privacyReason(items.length, st.next), 'privacy');
+                await miss(0, privacyReason(items.length, st.next), 'privacy', { pending: items.length });   // #1312-2 서버가 번호 빈 예약 수로 다시 알림 여부를 정함
                 bad++; break;
             }
             const p = parseRow(rows[0], it.order_no);

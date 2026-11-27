@@ -117,6 +117,74 @@ function fakeTick(screen, opt = {}) {
     let parsed = true; try { new Function('return ' + VM.JS_READ('1400000001')); } catch (e) { parsed = false; }
     ok('JS_READ 문법 OK(PrivacyAuthButton 읽기 · 가린 번호 꼴 포함)', parsed && /PrivacyAuthButton/.test(VM.JS_READ('1')) && /\\\*\{2,4\}/.test(VM.JS_READ('1')));
     fs.rmSync(tmp, { recursive: true, force: true });
+
+    console.log('\n[6] #1312-2 가림 알림 주기(서버 privacyTellStep 순수)');
+    const EXP = require(path.join(__dirname, '..', 'experience.js'));
+    const S = EXP._auto.privacyTellStep, C = { privacy_repeat_min: 60, privacy_quiet: [22, 7] };
+    const at = (d, h, m) => Date.UTC(2026, 10, d, h - 9, m);   // KST d일 h:m
+    let r = S(null, at(27, 13, 0), 3, C);
+    ok('첫 가림 = 바로 1통(nth 1)', r.tell && r.nth === 1 && r.why === 'first');
+    let st6 = r.next;
+    r = S(st6, at(27, 13, 59), 3, C); ok('59분 = 0통', !r.tell && r.why === 'wait'); st6 = r.next;
+    r = S(st6, at(27, 14, 1), 3, C); ok('61분 = 1통 · 2번째 · 1시간째', r.tell && r.nth === 2 && r.hours === 1, JSON.stringify(r)); st6 = r.next;
+    r = S(st6, at(27, 14, 30), 3, C); ok('그 뒤 29분 = 0통', !r.tell); st6 = r.next;
+    r = S(st6, at(27, 15, 5), 0, C); ok('번호 빈 예약 0건 = 0통', !r.tell && r.why === 'no_pending'); st6 = r.next;
+    r = S(st6, at(27, 22, 30), 2, C); ok('밤 22:30 = 0통(quiet)', !r.tell && r.why === 'quiet'); st6 = r.next;
+    r = S(st6, at(28, 3, 0), 2, C); ok('새벽 03:00 = 0통 · 날 바뀌어도 이어짐', !r.tell && r.why === 'quiet'); st6 = r.next;
+    r = S(st6, at(28, 7, 0), 2, C); ok('07:00 뒤 첫 틱 = 1통 · 3번째 · 18시간째', r.tell && r.nth === 3 && r.hours === 18, JSON.stringify(r)); st6 = r.next;
+    r = S(null, at(27, 23, 40), 1, C); ok('첫 알림은 밤이어도 보냄', r.tell && r.nth === 1);
+    r = S({}, at(27, 13, 0), 1, C); ok('초기화({}) 뒤 = 다시 첫 통', r.tell && r.nth === 1);
+    r = S({ first_at: new Date(at(26, 9, 0)).toISOString(), last_told_at: new Date(at(26, 9, 0)).toISOString(), n: 1, seen_at: new Date(at(26, 9, 0)).toISOString() }, at(27, 13, 0), 1, C);
+    ok('12시간 넘게 가림 보고 없음 = 새 가림(첫 통)', r.tell && r.nth === 1);
+    r = S(null, at(27, 13, 0), 1, {}); let r2 = S(r.next, at(27, 14, 0), 1, {}); ok('설정 없음 = 기본 60분', r2.tell && r2.nth === 2);
+    r2 = S(r.next, at(27, 14, 0), 1, { privacy_repeat_min: 120 }); ok('privacy_repeat_min 120 = 60분엔 0통', !r2.tell);
+    ok('quiet [22,7] 경계 = 21:59 아님 · 22:00 · 06:59 맞음 · 07:00 아님', !EXP._auto.privacyQuiet([22, 7], at(27, 21, 59)) && EXP._auto.privacyQuiet([22, 7], at(27, 22, 0)) && EXP._auto.privacyQuiet([22, 7], at(28, 6, 59)) && !EXP._auto.privacyQuiet([22, 7], at(28, 7, 0)));
+
+    console.log('\n[7] #1312-2 라우트 왕복(pglite · experience.js 실제 mount · now 주입)');
+    const PGL = process.env.PGLITE_PATH;
+    if (!PGL) { fail++; console.log('  ❌ PGLITE_PATH 가 없어 라우트 왕복을 못 돌림'); }
+    else {
+        const http = require('http'), express = require(path.join(__dirname, '..', 'node_modules', 'express'));
+        const { PGlite } = require(PGL); const pdb = new PGlite();
+        const conv = v => (v && typeof v === 'object' && !(v instanceof Date)) ? JSON.stringify(v) : v;
+        const q = async (sql, p = []) => { const x = await pdb.query(sql, p.map(conv)); return { rows: x.rows, rowCount: x.affectedRows != null ? x.affectedRows : x.rows.length }; };
+        const pool = { query: q, connect: async () => ({ query: q, release() { } }) };
+        await pdb.query(`CREATE TABLE agent_office_config (key TEXT PRIMARY KEY, value JSONB)`);
+        const tg = []; let NOW = at(27, 13, 0);
+        const app = express(); app.use(express.json());
+        const ex = EXP(app, { pool, authMiddleware: (a, b, n) => n(), adminOnly: (a, b, n) => n(), writeAudit: async () => { }, notifyTelegram: m => { tg.push(m); }, noTimers: true, now: () => NOW,
+            kakaoNotify: { sendAlimtalk: async () => ({ status: 'sent' }), sendLms: async () => ({ status: 'sent' }), smsSafe: s => s } });
+        await ex.ready;
+        const TOKEN = 'a'.repeat(64);
+        await q(`INSERT INTO agent_office_config (key, value) VALUES ('experience_auto', $1)`, [{ enabled: true, token: TOKEN, daily_max: 30, hours: [0, 24], skip: [] }]);
+        const PORT = Number(process.env.PORT1312 || 3458);
+        const srv = await new Promise(rs => { const s = http.createServer(app).listen(PORT, () => rs(s)); });
+        const call = async (u, b) => { const x = await fetch(`http://127.0.0.1:${PORT}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN }, body: JSON.stringify(b) }); return x.json(); };
+        try {
+            const P = n => call('/api/experience/auto/0/miss', { reason: VM.privacyReason(n, null), kind: 'privacy', pending: n });
+            await P(3); ok('라우트 첫 가림 = 텔레그램 1 · 「네이버 인증 필요」', tg.length === 1 && /네이버 인증 필요/.test(tg[0]) && !/번째 알림/.test(tg[0]), tg[0]);
+            NOW = at(27, 13, 59); await P(3); ok('라우트 59분 = 그대로 1', tg.length === 1);
+            NOW = at(27, 14, 1); await P(3); ok('라우트 61분 = 2 · 「2번째 알림 · 가림 1시간째」', tg.length === 2 && /2번째 알림 · 가림 1시간째/.test(tg[1]), tg[1]);
+            NOW = at(27, 22, 30); await P(3); ok('라우트 밤 = 그대로 2', tg.length === 2);
+            NOW = at(28, 7, 5); await P(3); ok('라우트 날 바뀐 07:05 = 3 · 3번째(하루 1회 묶음에 안 걸림)', tg.length === 3 && /3번째 알림/.test(tg[2]), tg[2]);
+            NOW = at(28, 9, 0); await P(0); ok('라우트 빈 예약 0건 = 그대로 3', tg.length === 3);
+            NOW = at(28, 8, 10); await call('/api/experience/auto/0/miss', { reason: VM.privacyReason(2, null), kind: 'privacy' });
+            ok('pending 안 보낸 옛 VM 코드 = 1건 이상으로 봄(61분 지나 4번째 · 0통으로 멈추지 않음)', tg.length === 4 && /4번째 알림/.test(tg[3]), tg[3]);
+            NOW = at(28, 9, 20); await call('/api/experience/auto/0/miss', { reason: VM.privacyReason(2, null), kind: 'privacy', pending: 'x' });
+            ok('pending 이 숫자 아님 = 1건 이상으로 봄(61분 지나 5번째)', tg.length === 5 && /5번째 알림/.test(tg[4]), tg[4]);
+            ok('privacy 알림 머리 = 「네이버 인증 필요」 · 「어사이드 멈춤」 0', tg.slice(0, 5).filter((x, i) => i !== 3 || true).filter(x => /번호 가림/.test(x)).every(x => /^🍊 체험 번호 자동 입력 멈춤 · 네이버 인증 필요 · /.test(x) && !/어사이드 멈춤/.test(x)));
+            tg.pop(); tg.pop();
+            await call('/api/experience/auto/0/miss', { reason: '어사이드 네이버 로그인 풀림', kind: 'login' });
+            await call('/api/experience/auto/0/miss', { reason: '어사이드 네이버 로그인 풀림', kind: 'login' });
+            ok('다른 갈래(login) = 종전 하루 1통 · 「어사이드 멈춤」', tg.length === 4 && /어사이드 멈춤/.test(tg[3]));
+            // 번호 저장 성공 = 초기화 → 다음 가림은 첫 통
+            const id = (await q(`INSERT INTO experience_bookings (source, ext_key, order_no, name, visit_date, visit_time, date_ok, exp_count, status) VALUES ('place','place:9','9001','박*현',$1,'12:30',TRUE,1,'confirmed') RETURNING id`, ['2026-11-29'])).rows[0].id;
+            const pr = await fetch(`http://127.0.0.1:${PORT}/api/experience/auto/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN }, body: JSON.stringify({ order_no_seen: '9001', status_seen: '확정', visit_seen: { date: '2026-11-29', time: '12:30' }, name_seen: '박지현', visitor_phone: '010-1111-2222', booker_phone: '' }) });
+            const stAfter = (await q(`SELECT value FROM agent_office_config WHERE key='experience_auto_privacy'`)).rows[0];
+            ok('번호 저장 200 → 가림 상태 초기화', pr.status === 200 && stAfter && !stAfter.value.first_at, pr.status + ' ' + JSON.stringify(stAfter));
+            NOW = at(28, 9, 10); await P(2); ok('초기화 뒤 가림 = 다시 첫 통', tg.length === 5 && !/번째 알림/.test(tg[4]));
+        } finally { srv.close(); await pdb.close(); }
+    }
     console.log(`\n${pass}/${pass + fail}`);
     process.exit(fail ? 1 : 0);
 })().catch(e => { console.log = console.log; console.error(e); process.exit(1); });
